@@ -1,152 +1,155 @@
 # PI Desktop
 
+**English** | [简体中文](./README.zh-CN.md)
+
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](./LICENSE)
 
 **The desktop workspace for AI coding agents.** Bring your own model. Open any local project. Let agents work — while you stay in control.
 
-PI Desktop 是一个以本地 **pi CLI 为内核** 的桌面工作台。UI 参考 [vastsa/PI-Desktop](https://github.com/vastsa/PI-Desktop)，共享本机 pi 的模型配置、会话和已安装资源。
+PI Desktop is a desktop workbench powered by your local **pi CLI**. The UI takes inspiration from [vastsa/PI-Desktop](https://github.com/vastsa/PI-Desktop) and shares your machine's pi model configuration, sessions, and installed resources.
 
-## 设置页功能
+> Development docs under [`docs/`](./docs) are written in Chinese.
 
-AI 默认行为、快捷键、指令、技能、MCP、扩展、子代理、连接与存储、导入、项目页面已接上实际功能。MCP 支持 stdio / Streamable HTTP 并注册到 pi 工具；子代理按本地定义作为独立 pi 会话运行。详细操作与边界见 [设置页面实现与验收](./docs/settings-implementation.md)。
+## Settings, wired to real features
 
-## 当前开发方向
+AI default behavior, shortcuts, commands, skills, MCP, extensions, subagents, connection & storage, import, and project pages are all backed by real functionality. MCP supports stdio / Streamable HTTP and registers tools into pi; subagents run as standalone pi sessions based on local definitions. See [设置页面实现与验收](./docs/settings-implementation.md) (Chinese) for details and boundaries.
 
-第二阶段本地 pi 接入已实现，生产入口使用 `pi --mode rpc`；第一阶段 UI 复刻仍在并行开发。现已支持：
+## Current focus
 
-- **CLI session 自动可见**：无需导入或添加项目，按 cwd 分组，自动跟随已落盘的历史。
-- **桌面接续副本**：保留 CLI 原文件，通过本机 pi 发送消息、选择模型、排队、停止。
-- **本地插件与资源**：静态发现全局/项目资源，显示实际命令，桥接标准 Extension UI。
-- **工具逐次确认**：独立的 pi 扩展负责允许、拒绝与取消；不是操作系统沙箱。
-- **真实 Review**：查看工作区相对 Git HEAD 的净变化，不冒充当前会话独占修改。
-- **内置终端**：node-pty + xterm 的多 tab 终端面板（顶栏切换，会话后台保活），与 ZCode 侧板终端同级体验。
-- **计划查看器**：计划模式下实时渲染计划文档与任务清单进度，支持快照回看与一键按计划执行。
+Phase 2 — local pi integration — is implemented, with `pi --mode rpc` as the production entry; the Phase 1 UI replica continues in parallel. Shipped today:
 
-本机已验证 pi **0.85.1+ / macOS**；未知版本执行禁用但历史可读。认证由 pi 自身管理，不复制到前端。Desktop 设置只保存路径。现有 CLI 会话默认只读，执行前显式创建副本。
+- **CLI sessions appear automatically**: no import needed; grouped by cwd and follow on-disk history.
+- **Desktop continuation copies**: the CLI original stays untouched; send messages, switch models, queue, and stop through your local pi.
+- **Local plugins & resources**: statically discovers global/project resources, shows real commands, bridges the standard Extension UI.
+- **Per-action tool confirmation**: a dedicated pi extension handles allow / deny / cancel — this is not an OS sandbox.
+- **Real Review**: inspect the net workspace diff against Git HEAD; it never claims another session's changes as its own.
+- **Integrated terminal**: a multi-tab terminal panel (node-pty + xterm) toggled from the top bar; sessions stay alive in the background — on par with ZCode's side-pane terminal.
+- **Plan viewer**: in plan mode the plan document and checklist progress render live, with snapshot recall and one-click "execute plan".
 
-- [第二阶段交付与验证](./docs/pi-integration-verification.md)：启动、截图、代码导航、测试及已知限制。
-- [RPC 协议基线](./docs/pi-protocol-baseline.md) · [工具权限边界](./docs/pi-permission-boundary.md)。
-- [UI 复刻规格](./docs/ui-replica-spec.md) · [本地 pi 内核流程](./docs/coding-agent-workflow.md) · [Agent 领取板](./docs/agent-task-board.md)。
+Verified locally against pi **0.85.1+ on macOS**; unknown versions are disabled for execution but remain readable. Authentication stays inside pi — never copied to the frontend. Desktop settings only store paths. Existing CLI sessions are read-only by default; a continuation copy is created explicitly before executing.
 
-以下“原型”章节仅作历史说明。旧循环、Provider、safeStorage 模型表单和旧模式未在当前生产入口启用；旧数据保留，尚未提供格式迁移 UI。
+- [Phase 2 delivery & verification](./docs/pi-integration-verification.md): startup, screenshots, code navigation, tests, known limitations. (Chinese)
+- [RPC protocol baseline](./docs/pi-protocol-baseline.md) · [Tool permission boundary](./docs/pi-permission-boundary.md). (Chinese)
+- [UI replica spec](./docs/ui-replica-spec.md) · [Local pi kernel flow](./docs/coding-agent-workflow.md) · [Agent task board](./docs/agent-task-board.md). (Chinese)
 
-## 原型功能
+The "prototype" sections below are historical. The legacy loop, providers, safeStorage model forms, and legacy modes are not enabled in the current production entry; old data is preserved but there is no migration UI yet.
 
-- **项目 / 会话**：添加任意本地目录作为项目；会话支持置顶、归档、重命名、搜索、删除
-- **三种工作模式**：`Agent`（直接干活）/ `Plan`（先研究并产出实施计划，批准后才能改文件）/ `Goal`（目标与验收标准优先）
-- **多提供商模型**：OpenAI、Anthropic，以及任意 OpenAI 兼容 API（DeepSeek、Ollama、LM Studio、vLLM、各类网关）；每个会话可随时切换模型
-- **流式输出**：SSE 流式渲染 Markdown（GFM、代码高亮），支持随时中断、运行中排队追问
-- **权限系统**：读操作放行；编辑与命令执行默认询问（本次允许 / 本会话始终允许 / 拒绝），可按需切换为自动允许编辑或完全放行
-- **内置工具**：`list_dir` / `read_file` / `grep` / `write_file` / `edit_file` / `run_command`，全部限制在项目根目录内
-- **变更审查**：Review 面板汇总会话内所有文件改动（行级 diff）
-- **@ 文件引用**：输入 `@` 模糊引用项目内文件
-- **中英双语**：设置中一键切换
+## Prototype features
 
-## 快速开始
+- **Projects / sessions**: add any local directory as a project; pin, archive, rename, search, and delete sessions
+- **Three work modes**: `Agent` (get it done) / `Plan` (research first, produce an implementation plan, file edits gated on approval) / `Goal` (objective & acceptance criteria first)
+- **Multi-provider models**: OpenAI, Anthropic, and any OpenAI-compatible API (DeepSeek, Ollama, LM Studio, vLLM, gateways); switch models per session at any time
+- **Streaming output**: SSE-rendered Markdown (GFM, code highlighting), interrupt anytime, queue follow-ups while running
+- **Permission system**: reads allowed; edits and command execution ask by default (allow once / always for this session / deny), switchable to auto-edit or full access
+- **Built-in tools**: `list_dir` / `read_file` / `grep` / `write_file` / `edit_file` / `run_command`, all confined to the project root
+- **Change review**: the Review panel aggregates all file changes within a session (line-level diff)
+- **@ file references**: type `@` to fuzzy-reference files in the project
+- **Bilingual UI**: switch between Chinese and English in settings
 
-环境要求：Node.js ≥ 20、pnpm ≥ 10（仓库使用 pnpm 11 开发）。
+## Quick start
+
+Requirements: Node.js ≥ 20, pnpm ≥ 10 (the repo is developed on pnpm 11).
 
 ```bash
 pnpm install
 
-# 开发模式（Vite 热更新 + Electron）
+# Dev mode (Vite HMR + Electron)
 pnpm dev
 
-# 生产构建并启动
+# Production build and run
 pnpm build
 pnpm start
 
-# UI 复刻预览（第一阶段交付；纯 Web，无需 Electron / 模型 Key / 用户文件）
+# UI replica preview (Phase 1 deliverable; pure web, no Electron / model keys / user files)
 pnpm preview:ui
-# 打开 http://127.0.0.1:5174/?preview=1
+# Open http://127.0.0.1:5174/?preview=1
 
-# 校验
+# Checks
 pnpm typecheck
 pnpm test
 ```
 
-> 若 Electron 二进制未随 `pnpm install` 下载（pnpm 10+ 默认拦截依赖构建脚本），执行：
-> `pnpm rebuild electron`，或在 package.json 的 `pnpm.onlyBuiltDependencies` 中确认包含 `electron` 后重装。
+> If the Electron binary was not downloaded during `pnpm install` (pnpm 10+ blocks dependency build scripts by default), run `pnpm rebuild electron`, or confirm `electron` is listed in `pnpm.onlyBuiltDependencies` in package.json and reinstall.
 
-### 首次使用
+### First run
 
-1. 先在终端确认本地 pi 可用；认证和模型使用 pi 自己的配置。
-2. 启动 Desktop，左侧自动出现 CLI 会话；选择即可只读查看。
-3. 点击“在 Desktop 接续副本”或“新建 pi 会话”，选择项目信任与工具权限。
-4. 选择 pi 模型后发送任务；插件页可查看本地资源，输入 `/` 可查看实际命令。
-5. 如未发现安装，使用“连接设置”指定 pi 路径与目录。
+1. Verify local pi works in a terminal first; auth and models are managed by pi itself.
+2. Start Desktop — CLI sessions appear on the left automatically; select one to browse read-only.
+3. Click "Continue in Desktop" or "New pi session", choosing project trust and tool permissions.
+4. Pick a pi model and send a task; the plugins page lists local resources, and `/` shows real commands.
+5. If the installation is not detected, point to your pi path and directory in "Connection settings".
 
-真实进程隔离联调（无外部模型调用）：
+Real process-isolation test run (no external model calls):
 
 ```bash
 PI_TEST_EXECUTABLE=/opt/homebrew/bin/pi pnpm exec vitest run tests
 ```
 
-## 现有原型架构（待迁移）
+## Prototype architecture (legacy, pending migration)
 
 ```
-┌────────────── Renderer（React + Vite + Tailwind，无 Node）──────────────┐
+┌────────────── Renderer (React + Vite + Tailwind, no Node) ──────────────┐
 │  Sidebar │ TopBar │ ChatView │ Composer │ ReviewPanel │ Settings        │
 └───────────────────────────┬────────────────────────────────────────────┘
-                            │ contextBridge（window.pi，类型化 IPC）
+                            │ contextBridge (window.pi, typed IPC)
 ┌───────────────────────────▼ Preload ────────────────────────────────────┐
 └───────────────────────────┬────────────────────────────────────────────┘
 ┌───────────────────────────▼ Electron Main ──────────────────────────────┐
 │  Store          settings / models / projects / sessions(JSONL)          │
-│  AgentRuntime   流式循环 · 工具执行 · 队列 · 中断 · 计划模式状态机        │
-│  Permissions    ask / autoEdit / fullAccess · 会话级授权 · 计划门控      │
-│  Providers      OpenAI 兼容 / Anthropic（SSE 流式，增量工具调用解析）     │
+│  AgentRuntime   streaming loop · tools · queue · interrupt · plan FSM   │
+│  Permissions    ask / autoEdit / fullAccess · session grants · plan gate│
+│  Providers      OpenAI-compatible / Anthropic (SSE, incremental tools)  │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
-- **渲染层**：`src/renderer` — React 18 + zustand，事件驱动（主进程推送 `agent` / `permission` 事件）
-- **共享层**：`src/shared` — IPC 协议与领域类型（`types.ts`、`api.ts`）、纯函数 diff 工具
-- **主进程**：`src/main` — 宿主核心与 Agent 运行时；窗口通过 `contextIsolation + sandbox` 加固
+- **Renderer**: `src/renderer` — React 18 + zustand, event-driven (main process pushes `agent` / `permission` events)
+- **Shared**: `src/shared` — IPC protocol & domain types (`types.ts`, `api.ts`), pure-function diff utilities
+- **Main**: `src/main` — host core & agent runtime; windows hardened with `contextIsolation + sandbox`
 
-### 数据落盘位置（Electron userData）
+### On-disk layout (Electron userData)
 
 ```
-settings.json                    应用设置
-models.json                      提供商与模型（API Key 经 safeStorage 加密）
-projects.json                    项目注册表
+settings.json                    app settings
+models.json                      providers & models (API keys encrypted via safeStorage)
+projects.json                    project registry
 sessions/<projectId>/<sessionId>/
-  meta.json                      会话元数据（标题/置顶/归档/模型/模式/计划状态）
-  events.jsonl                   追加式会话记录（消息、工具调用、结果、diff）
+  meta.json                      session metadata (title/pin/archive/model/mode/plan state)
+  events.jsonl                   append-only session log (messages, tool calls, results, diffs)
 ```
 
-## 现有原型与参考项目的差异
+## Differences from the reference project
 
-参考项目（vastsa/PI-Desktop）采用 Electron + Rust 宿主核心 + pi Agent Harness 的多进程架构，并包含插件市场、MCP、子代理、会话导入等完整生态。本项目是其核心体验的独立精简实现：以 Node 主进程承担宿主核心职责（无 Rust 工具链依赖），自研 Agent 循环与工具协议，聚焦"打开项目 → 配置模型 → 授权监督下的代理编程"这条主路径。插件系统、MCP、会话导入等可作为后续方向。
+The reference project (vastsa/PI-Desktop) uses Electron + a Rust host core + the pi Agent Harness in a multi-process architecture, with a plugin marketplace, MCP, subagents, session import, and more. This project is an independent, minimal implementation of its core experience: a Node main process carries the host-core responsibilities (no Rust toolchain), with a self-built agent loop and tool protocol, focused on the main path of "open project → configure model → supervised agent coding". Plugins, MCP, and session import are potential future directions.
 
-## 项目结构
+## Project structure
 
 ```
 pi-desktop/
-├── scripts/dev.mjs          # 开发编排（Vite + tsc + Electron）
+├── scripts/dev.mjs          # dev orchestration (Vite + tsc + Electron)
 ├── src/
-│   ├── shared/              # 类型协议、PiApi、diff
-│   ├── main/                # Electron 主进程
-│   │   ├── index.ts         # 入口：窗口、菜单、IPC 注册
-│   │   ├── store.ts         # 本地持久化（JSON / JSONL）
-│   │   ├── secrets.ts       # safeStorage 密钥加密
-│   │   ├── agent/           # 运行时、工具、权限、提示词
-│   │   └── providers/       # OpenAI 兼容 / Anthropic 流式
-│   ├── preload/             # contextBridge 桥接
+│   ├── shared/              # type protocol, PiApi, diff
+│   ├── main/                # Electron main process
+│   │   ├── index.ts         # entry: window, menu, IPC registration
+│   │   ├── store.ts         # local persistence (JSON / JSONL)
+│   │   ├── secrets.ts       # safeStorage key encryption
+│   │   ├── agent/           # runtime, tools, permissions, prompts
+│   │   └── providers/       # OpenAI-compatible / Anthropic streaming
+│   ├── preload/             # contextBridge bridge
 │   └── renderer/            # React UI
-├── tests/                   # vitest 单元测试
+├── tests/                   # vitest unit tests
 ├── LICENSE                  # Apache-2.0
 └── NOTICE
 ```
 
-## 参与贡献
+## Contributing
 
-欢迎 Issue 和 PR。提交前请先开 Issue 讨论方案；`pnpm typecheck && pnpm test` 通过后再提交。
+Issues and PRs are welcome. Please open an issue to discuss the approach first; make sure `pnpm typecheck && pnpm test` passes before submitting.
 
-## 致谢
+## Acknowledgements
 
-- 产品形态与架构思路参考 [vastsa/PI-Desktop](https://github.com/vastsa/PI-Desktop)（LGPL-3.0），本项目未复用其代码
+- Product shape and architecture ideas reference [vastsa/PI-Desktop](https://github.com/vastsa/PI-Desktop) (LGPL-3.0); no code was reused
 - [Electron](https://www.electronjs.org/) · [React](https://react.dev/) · [Vite](https://vite.dev/) · [Tailwind CSS](https://tailwindcss.com/) · [zustand](https://zustand.docs.pmnd.rs/) · [react-markdown](https://github.com/remarkjs/react-markdown) · [highlight.js](https://highlightjs.org/)
 
-## 许可证
+## License
 
-本项目基于 [Apache License 2.0](./LICENSE) 开源。
+Licensed under the [Apache License 2.0](./LICENSE).
