@@ -87,11 +87,31 @@ export function executionTurns(messages: ChatMessage[]): ChatTurn[] {
         existing.tool = toolName;
       }
     }
-    // Chronological segments: a text (or error) conclusion closes the current
-    // steps disclosure; later tools open a NEW one after it. All text stays
-    // visible outside the disclosures, so the final result is never buried.
+    // 过程文本收进思考块：后面仍有工具/思考的文本都是过程叙述（路由把推理以普通
+    // 文本泄漏时也一样），归并进最近的前置思考块（无则新建）；只有最后一个 steps
+    // 之后的文本才是结论，保持直接可见。
+    let lastStepsIndex = -1;
+    for (let i = flattened.length - 1; i >= 0; i -= 1) {
+      const k = flattened[i]!.kind;
+      if (k === 'tool' || k === 'thinking') { lastStepsIndex = i; break; }
+    }
+    const folded: MessagePart[] = [];
+    flattened.forEach((part, index) => {
+      if (part.kind === 'text' && index < lastStepsIndex) {
+        let at = -1;
+        for (let i = folded.length - 1; i >= 0; i -= 1) { if (folded[i]!.kind === 'thinking') { at = i; break; } }
+        if (at >= 0) {
+          const prev = folded[at]! as Extract<MessagePart, { kind: 'thinking' }>;
+          folded[at] = { ...prev, text: prev.text ? `${prev.text}\n\n${part.text}` : part.text };
+        } else {
+          folded.push({ kind: 'thinking', id: `${part.id}-process`, text: part.text });
+        }
+        return;
+      }
+      folded.push(part);
+    });
     const segments: ChatSegment[] = [];
-    for (const part of flattened) {
+    for (const part of folded) {
       const kind: ChatSegment['kind'] = part.kind === 'tool' || part.kind === 'thinking' ? 'steps' : 'text';
       const currentSeg = segments[segments.length - 1];
       if (currentSeg && currentSeg.kind === kind) currentSeg.parts.push(part);

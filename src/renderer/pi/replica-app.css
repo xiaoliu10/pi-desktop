@@ -189,181 +189,73 @@
   gap: 8px;
 }
 
-.pireplica .pi-remote__qrwrap {
-  display: flex;
-  gap: 16px;
-  align-items: center;
-  flex-wrap: wrap;
-}
+/* === 移动端远程控制（照 ZCode WebRemoteControl） === */
+.pi-remote { display: flex; flex-direction: column; gap: 20px; }
 
-.pireplica .pi-remote__qr {
-  width: 220px;
-  height: 220px;
-  border-radius: 12px;
-  border: 1px solid var(--pi-border);
-  flex-shrink: 0;
-}
+/* 头部：图标盒 + 标题 + 描述 */
+.pi-remote__header { display: flex; align-items: flex-start; gap: 12px; }
+.pi-remote__headericon { display: flex; align-items: center; justify-content: center; width: 40px; height: 40px; border-radius: 10px; border: 1px solid var(--pi-border); background: var(--pi-bg-inset); color: var(--pi-text); flex: none; }
+.pi-remote__headertext { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.pi-remote__title { font-size: 15px; font-weight: 600; margin: 0; }
+.pi-remote__desc { font-size: 13px; color: var(--pi-text-secondary); margin: 0; line-height: 1.5; }
 
-.pireplica .pi-remote__qr--loading {
-  background: var(--pi-bg-inset);
-}
+/* 主区域：左右双栏（窄屏堆叠） */
+.pi-remote__grid { display: grid; grid-template-columns: minmax(0, 1.45fr) minmax(280px, 1fr); gap: 16px; }
+@media (max-width: 760px) { .pi-remote__grid { grid-template-columns: 1fr; } }
 
-.pireplica .pi-remote__urls {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  min-width: 0;
-}
+/* 共享的子标题（图标 + 标题 + 描述） */
+.pi-remote__subhead { display: flex; align-items: flex-start; gap: 8px; margin-bottom: 16px; color: var(--pi-text-tertiary); }
+.pi-remote__subheadtext { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.pi-remote__subheadtitle { font-size: 14px; font-weight: 500; color: var(--pi-text); }
+.pi-remote__subheaddesc { font-size: 13px; color: var(--pi-text-secondary); line-height: 1.5; margin: 0; }
 
-.pireplica .pi-remote__urls .pi-btn {
-  text-align: left;
-  overflow-wrap: anywhere;
-  white-space: normal;
-  height: auto;
-  padding: 6px 10px;
-}
+/* 扫码卡 */
+.pi-remote__scancard { display: flex; flex-direction: column; min-height: 360px; border: 1px solid var(--pi-border); border-radius: 12px; background: var(--pi-bg-card); padding: 16px; }
 
-/* Mobile-remote card layout (after the ZCode reference). */
-.pireplica .pi-remote__card {
-  display: flex;
-  gap: 24px;
-  align-items: center;
-  flex-wrap: wrap;
-  border: 1px dashed var(--pi-border);
-  border-radius: 14px;
-  padding: 22px;
-  margin: 12px 0 4px;
-  background: var(--pi-bg-card);
-}
+/* 状态条 */
+.pi-remote__statusbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; border-radius: 8px; background: var(--pi-bg-inset); padding: 8px 12px; margin-bottom: 12px; }
+.pi-remote__statusleft { display: flex; flex-direction: column; gap: 4px; min-width: 0; flex: 1; }
+.pi-remote__statuslabel { font-size: 13px; font-weight: 500; color: var(--pi-text); }
+.pi-remote__statusvalue { display: flex; align-items: center; gap: 8px; }
+.pi-remote__statuslabelval { font-size: 13px; font-weight: 500; color: var(--pi-text); }
+.pi-remote__pill { display: inline-flex; align-items: center; gap: 6px; border-radius: 99px; background: var(--pi-bg-card); border: 1px solid var(--pi-border); padding: 2px 8px; font-size: 11px; font-weight: 500; color: var(--pi-text-secondary); }
+.pi-remote__pill-dot { width: 6px; height: 6px; border-radius: 50%; flex: none; }
+.pi-remote__pill-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pi-remote__statusdetail { font-size: 13px; color: var(--pi-text-secondary); line-height: 1.5; }
+.pi-remote__stopbtn, .pi-remote__startbtn { display: inline-flex; align-items: center; gap: 6px; flex: none; }
 
-.pireplica .pi-remote__card--on {
-  border-style: solid;
-}
+/* 复制链接行 */
+.pi-remote__linkrow { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; border-top: 1px solid var(--pi-border); padding-top: 12px; margin-bottom: 12px; }
+.pi-remote__linkdesc { font-size: 13px; color: var(--pi-text-secondary); flex: 1; min-width: 180px; }
+.pi-remote__linkbtns { display: flex; gap: 8px; flex-wrap: wrap; }
+.pi-remote__linkbtns .pi-btn { display: inline-flex; align-items: center; gap: 6px; }
 
-.pireplica .pi-remote__qrside {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 10px;
-  flex-shrink: 0;
-}
+/* QR 区：虚线框居中 */
+.pi-remote__qrarea { display: flex; flex: 1; min-height: 0; align-items: center; justify-content: center; border: 1px dashed var(--pi-border); border-radius: 12px; background: var(--pi-bg-inset); padding: 16px; }
+.pi-remote__qrimg { width: 256px; max-width: 100%; border-radius: 8px; background: #fff; padding: 12px; }
+.pi-remote__qrgenerating { display: flex; flex-direction: column; align-items: center; gap: 8px; text-align: center; font-size: 13px; color: var(--pi-text-secondary); }
+.pi-remote__qrgenerating .pi-icon { animation: pi-spin 1s linear infinite; }
+@keyframes pi-spin { to { transform: rotate(360deg); } }
+.pi-remote__qridle { display: flex; flex-direction: column; align-items: center; gap: 8px; text-align: center; font-size: 13px; color: var(--pi-text-tertiary); }
 
-.pireplica .pi-remote__qr {
-  width: 240px;
-  height: 240px;
-  border-radius: 12px;
-  border: 1px solid var(--pi-border);
-  background: #fff;
-}
+/* Bot 频道卡 */
+.pi-remote__botcard { display: flex; flex-direction: column; border: 1px solid var(--pi-border); border-radius: 12px; background: var(--pi-bg-card); padding: 16px; }
+.pi-remote__channellist { display: grid; gap: 8px; flex: 1; }
+.pi-remote__channelitem { display: flex; align-items: flex-start; gap: 12px; text-align: left; border: 1px solid transparent; border-radius: 8px; background: var(--pi-bg-inset); padding: 12px; cursor: pointer; transition: border-color 0.15s, background 0.15s; }
+.pi-remote__channelitem:hover { border-color: var(--pi-border-strong); background: var(--pi-bg-hover); }
+.pi-remote__channelitem--on { border-color: var(--pi-text); }
+.pi-remote__channelitem--off { opacity: 0.5; cursor: not-allowed; }
+.pi-remote__channelicon { display: flex; align-items: center; justify-content: center; width: 40px; height: 40px; border-radius: 10px; border: 1px solid var(--pi-border); background: var(--pi-bg); color: var(--pi-text-secondary); flex: none; }
+.pi-remote__channelbody { display: flex; flex-direction: column; gap: 3px; min-width: 0; flex: 1; }
+.pi-remote__channelname { display: flex; align-items: center; gap: 6px; font-size: 14px; font-weight: 500; color: var(--pi-text); }
+.pi-remote__channelnametext { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pi-remote__channelbadge { display: inline-flex; align-items: center; height: 18px; border-radius: 99px; border: 1px solid var(--pi-border); padding: 0 6px; font-size: 10px; font-weight: 500; color: var(--pi-text-secondary); flex: none; }
+.pi-remote__channelhint { font-size: 12px; color: var(--pi-text-secondary); line-height: 1.4; }
+.pi-remote__channelpact { font-size: 12px; color: var(--pi-text); margin-top: 2px; }
 
-.pireplica .pi-remote__state {
-  font-size: 13px;
-  color: var(--pi-text-tertiary);
-}
-
-.pireplica .pi-remote__state--on {
-  color: #0a7d33;
-}
-
-.pireplica .pi-remote__actions {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  min-width: 260px;
-  flex: 1;
-}
-
-.pireplica .pi-remote__btns {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.pireplica .pi-remote__urls {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.pireplica .pi-remote__url {
-  text-align: left;
-  overflow-wrap: anywhere;
-  white-space: normal;
-  height: auto;
-  padding: 6px 10px;
-}
-
-.pireplica .pi-remote__hint {
-  font-size: 13px;
-  color: var(--pi-text-secondary);
-}
-
-.pireplica .pi-remote__off {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 14px;
-  width: 100%;
-  padding: 10px 0;
-}
-
-.pireplica .pi-remote__placeholder {
-  width: 160px;
-  height: 160px;
-  border-radius: 12px;
-  border: 1px solid var(--pi-border);
-  background: var(--pi-bg-inset);
-  color: var(--pi-text-tertiary);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 13px;
-}
-
-.pireplica .pi-remote__channels {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-  gap: 10px;
-  margin: 12px 0;
-}
-
-.pireplica .pi-remote__channel {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 4px;
-  text-align: left;
-  border: 1px solid var(--pi-border);
-  border-radius: 12px;
-  background: var(--pi-bg-card);
-  padding: 14px;
-}
-
-.pireplica .pi-remote__channel--on {
-  border-color: var(--pi-accent);
-}
-
-.pireplica .pi-remote__channel--off {
-  opacity: 0.55;
-}
-
-.pireplica .pi-remote__channelname {
-  font-weight: 600;
-  font-size: 14px;
-}
-
-.pireplica .pi-remote__channelhint {
-  font-size: 12px;
-  color: var(--pi-text-secondary);
-}
-
-.pireplica .pi-remote__channelpact {
-  font-size: 12px;
-  color: var(--pi-text);
-  text-decoration: underline;
-  text-underline-offset: 3px;
-  margin-top: 4px;
-}
+/* 表单区 */
+.pi-remote__form { margin-top: 8px; }
+.pi-remote__formbtns { display: flex; gap: 8px; }
 
 .pireplica .pi-access { position: relative; }
 .pireplica .pi-access__trigger { display: flex; align-items: center; gap: 5px; padding: 5px 8px; border: 0; border-radius: 7px; color: var(--pi-text-secondary); background: transparent; cursor: pointer; font-size: 12px; white-space: nowrap; }
@@ -379,8 +271,46 @@
 .pireplica .pi-plan-ready { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0 24px 12px; padding: 12px; border: 1px solid var(--pi-border); border-radius: 10px; font-size: 13px; }
 .pireplica .pi-plan-ready__actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
 
+/* Plan preview card: ZCode SwitchModeToolCallBlock 复刻。 */
+.pi-plan-card { margin: 0 24px 8px; border: 1px solid var(--pi-border); border-radius: 12px; background: var(--pi-bg-card, var(--pi-bg)); overflow: hidden; cursor: pointer; transition: border-color .15s; }
+.pi-plan-card:hover, .pi-plan-card:focus-visible { border-color: var(--pi-border-strong, var(--pi-border)); outline: none; }
+.pi-plan-card__head { display: flex; align-items: center; gap: 8px; padding: 12px 16px 0; color: var(--pi-text-secondary); }
+.pi-plan-card__head svg { flex-shrink: 0; }
+.pi-plan-card__head h3 { margin: 0; font-size: 14px; font-weight: 500; }
+.pi-plan-card__head .pi-iconbtn { margin-left: auto; }
+.pi-plan-card__body { position: relative; }
+.pi-plan-card__markdown { max-height: 256px; overflow: hidden; padding: 8px 16px 48px; -webkit-mask-image: linear-gradient(to bottom, black 0%, black 30%, transparent 100%); mask-image: linear-gradient(to bottom, black 0%, black 30%, transparent 100%); }
+.pi-plan-card__viewfull { position: absolute; bottom: 24px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 6px; padding: 8px 18px; border: 1px solid var(--pi-border); border-radius: 999px; background: var(--pi-bg-card, var(--pi-bg)); color: var(--pi-text); font-size: 13px; cursor: pointer; box-shadow: 0 2px 8px #0002; }
+.pi-plan-card__viewfull:hover { border-color: var(--pi-border-strong, var(--pi-border)); }
+
+/* Plan approval card: ZCode ElicitationDialog plan_approval 复刻。 */
+.pi-plan-approval { margin: 0 24px 12px; border: 1px solid var(--pi-border); border-radius: 16px; background: var(--pi-bg-card, var(--pi-bg)); display: flex; flex-direction: column; padding: 12px; outline: none; }
+.pi-plan-approval__body { display: flex; flex-direction: column; gap: 12px; }
+.pi-plan-approval__header { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.pi-plan-approval__badge { flex-shrink: 0; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 2px 8px; border: 1px solid var(--pi-border); border-radius: 6px; font-size: 13px; font-weight: 500; color: var(--pi-text-secondary); }
+.pi-plan-approval__question { min-width: 0; flex: 1; font-size: 13px; font-weight: 500; color: var(--pi-text); line-height: 1.5; overflow-wrap: anywhere; }
+.pi-plan-approval__pager { flex-shrink: 0; display: flex; align-items: center; gap: 2px; font-size: 13px; font-weight: 500; color: var(--pi-muted); }
+.pi-plan-approval__pager .pi-iconbtn:disabled { opacity: 0.35; cursor: default; }
+.pi-plan-approval__pager-count { min-width: 40px; text-align: center; }
+.pi-plan-approval__options { display: grid; gap: 4px; }
+.pi-plan-approval__option, .pi-plan-approval__inputrow { display: flex; align-items: center; gap: 12px; width: 100%; border: 0; border-radius: 12px; padding: 8px 12px; text-align: left; background: transparent; cursor: pointer; transition: background-color .12s; }
+.pi-plan-approval__inputrow { cursor: text; align-items: flex-start; }
+.pi-plan-approval__option:hover, .pi-plan-approval__inputrow:hover { background: var(--pi-bg-hover, rgba(0,0,0,0.04)); }
+.pi-plan-approval__option.is-selected, .pi-plan-approval__inputrow.is-selected { background: var(--pi-bg-selected, rgba(0,0,0,0.06)); }
+.pi-plan-approval__num { flex-shrink: 0; width: 20px; font-size: 13px; font-weight: 500; color: var(--pi-muted); }
+.pi-plan-approval__num.is-on { color: var(--pi-text); }
+.pi-plan-approval__inputrow .pi-plan-approval__num { margin-top: 1px; }
+.pi-plan-approval__option-label { font-size: 13px; font-weight: 500; color: var(--pi-text); white-space: nowrap; }
+.pi-plan-approval__option-desc { font-size: 13px; color: var(--pi-text-secondary); overflow-wrap: anywhere; }
+.pi-plan-approval__feedback { flex: 1; min-width: 0; max-height: 110px; overflow-y: auto; border: 0; background: transparent; color: var(--pi-text); font: inherit; font-size: 13px; font-weight: 500; line-height: 1.5; resize: none; outline: none; padding: 0; }
+.pi-plan-approval__feedback::placeholder { color: var(--pi-muted); }
+.pi-plan-approval__footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 4px 4px 0; }
+.pi-plan-approval__hint { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 13px; color: var(--pi-text-secondary); }
+.pi-plan-approval__hint svg { flex-shrink: 0; color: var(--pi-text); }
+.pi-plan-approval__actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+
 /* Plan viewer: ZCode plan-detail 侧板的复刻。 */
-.pi-plan-viewer { width: min(480px, 50vw); min-width: 320px; flex-shrink: 0; height: 100%; border-left: 1px solid var(--pi-border); background: var(--pi-bg); display: flex; flex-direction: column; overflow: hidden; }
+.pi-plan-viewer { width: var(--pi-plan-width, 480px); flex-shrink: 0; height: 100%; border-left: 1px solid var(--pi-border); background: var(--pi-bg); display: flex; flex-direction: column; overflow: hidden; }
 .pi-plan-viewer > header { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 16px 20px; border-bottom: 1px solid var(--pi-border); }
 .pi-plan-viewer > header strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; }
 .pi-plan-viewer__actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
@@ -400,7 +330,7 @@
 .pi-plan-viewer small { color: var(--pi-muted); font-size: 11px; line-height: 1.6; }
 
 /* Terminal panel: ZCode 侧板终端复刻。 */
-.pi-terminal-panel { width: min(640px, 60vw); min-width: 360px; flex-shrink: 0; height: 100%; border-left: 1px solid var(--pi-border); background: var(--pi-bg); display: flex; flex-direction: column; overflow: hidden; }
+.pi-terminal-panel { width: var(--pi-terminal-width, 640px); flex-shrink: 0; height: 100%; border-left: 1px solid var(--pi-border); background: var(--pi-bg); display: flex; flex-direction: column; overflow: hidden; }
 .pi-terminal-panel__tabs { display: flex; align-items: center; gap: 6px; padding: 8px 10px; border-bottom: 1px solid var(--pi-border); overflow-x: auto; }
 .pi-terminal-panel__brand { display: flex; align-items: center; gap: 6px; flex-shrink: 0; padding: 0 6px 0 8px; color: var(--pi-text-secondary); font-size: 12px; }
 .pi-terminal-panel__tab { display: flex; align-items: center; gap: 2px; flex-shrink: 0; max-width: 200px; border: 1px solid var(--pi-border); border-radius: 8px; background: transparent; }
@@ -639,3 +569,15 @@
   background: var(--pi-text-tertiary);
   width: 2px;
 }
+
+/* 顶栏「打开方式」分割按钮：主按钮打开当前项目，下拉选择并记住外部应用。 */
+.pi-openwith { position: relative; display: flex; }
+.pi-openwith__split { display: flex; align-items: stretch; border: 1px solid var(--pi-border); border-radius: 8px; overflow: hidden; background: var(--pi-bg-card); }
+.pi-openwith__main { display: flex; align-items: center; gap: 6px; border: 0; background: none; color: var(--pi-text); font: inherit; font-size: 12px; padding: 4px 9px; cursor: pointer; }
+.pi-openwith__main:not(:disabled):hover { background: var(--pi-bg-hover); }
+.pi-openwith__main:disabled { opacity: 0.5; cursor: default; }
+.pi-openwith__main img { border-radius: 3px; }
+.pi-openwith__caret { display: inline-flex; align-items: center; border: 0; border-left: 1px solid var(--pi-border); background: none; color: var(--pi-text-secondary); padding: 0 6px; cursor: pointer; }
+.pi-openwith__caret:hover { background: var(--pi-bg-hover); color: var(--pi-text); }
+.pi-openwith__menu img { border-radius: 3px; }
+.pi-openwith__menu button[aria-checked="true"] { color: var(--pi-text); }

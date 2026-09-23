@@ -1,4 +1,4 @@
-import { enableOfficialSubagent, officialSubagentStatus } from './pi/official-subagent';
+import { enableOfficialSubagent, officialSubagentStatus, recoverSubagents, cleanupSubagents } from './pi/official-subagent';
 import { TerminalService } from './pi/terminal-service';
 import { filePreview } from './pi/file-preview';
 import { gitStatus } from './pi/git-status';
@@ -6,6 +6,7 @@ import fs from 'node:fs/promises';
 import { AutomationService } from './pi/automation-service';
 import { importAttachments, clipboardAttachments, readAttachment } from './pi/attachments';
 import { createProjectWorktree } from './pi/project-worktree';
+import { authorizeProjectCwd, listExternalApps, openWithApp } from './pi/open-with';
 import { canonical } from './pi/session-index';
 import { SessionArchive } from './pi/session-archive';
 import { autoArchiveKeys } from './pi/auto-archive';
@@ -177,6 +178,8 @@ function registerIpc() {
   handle('filePreview', (cwd, file) => filePreview(cwd, file));
   handle('officialSubagentStatus', () => officialSubagentStatus(host.environment.agentDir));
   handle('enableOfficialSubagent', () => enableOfficialSubagent(host.environment.agentDir));
+  handle('recoverSubagents', (key: string) => recoverSubagents(host.environment.agentDir, key));
+  handle('cleanupSubagents', (key: string) => cleanupSubagents(host.environment.agentDir, key));
   handle('modelCatalog', () => host.modelCatalog());
   handle('accountLogin', provider => host.accounts.start(provider));
   handle('accountStatus', id => host.accounts.status(id));
@@ -191,6 +194,18 @@ function registerIpc() {
   handle('revealPath', p => {
     if (typeof p !== 'string' || !path.isAbsolute(p)) throw new Error('路径无效');
     shell.showItemInFolder(p);
+  });
+  // 外部应用打开当前项目：真实系统图标（best effort），白名单探测 + argv 启动。
+  const fileIcon = async (p: string) => {
+    try { const icon = await app.getFileIcon(p, { size: 'normal' }); return icon.isEmpty() ? undefined : icon.toDataURL(); } catch { return undefined; }
+  };
+  handle('externalApps', () => listExternalApps({ fileIcon }));
+  handle('openWith', (cwd, appId) => {
+    const known = [...settings.preferences().projects.map(p => p.path), ...host.index.scan().map(s => s.cwd), ...host.backend.runs().map(r => r.cwd)];
+    const real = authorizeProjectCwd(cwd, known);
+    return openWithApp(real, appId, {
+      openPath: async target => { const failed = await shell.openPath(target); if (failed) throw new Error(failed); },
+    });
   });
   handle('remoteStart', () => remote.start());
   handle('remoteStop', () => remote.stop());

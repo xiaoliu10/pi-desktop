@@ -82,6 +82,12 @@ export interface SidebarProps {
   archivedCount?: number;
   notificationsCount?: number;
   activeOverlay?: 'plugins' | 'settings' | 'notifications' | 'automations' | null;
+  /** 前进/后退导航（ZCode 顶栏按钮复刻）；preview 不传则不渲染。 */
+  onNavBack?: () => void;
+  onNavForward?: () => void;
+  canNavBack?: boolean;
+  canNavForward?: boolean;
+  navLabels?: { back: string; forward: string };
 }
 
 export interface SidebarLabels {
@@ -110,6 +116,8 @@ export interface TopBarProps {
   /** 内置终端切换（pi 集成传入；demo 预览不传则不渲染）。 */
   onToggleTerminal?: () => void;
   terminalOpen?: boolean;
+  /** 顶栏「打开方式」分割按钮插槽（pi 集成传入；demo 预览不传）。 */
+  openWith?: ReactNode;
 }
 
 export interface TopBarLabels {
@@ -267,7 +275,7 @@ export interface NoticePart {
 export type MessagePart =
   | { kind: 'image'; id: string; data: string; mimeType: string }
   | { kind: 'text'; id: string; text: string }
-  | { kind: 'thinking'; id: string; text: string }
+  | { kind: 'thinking'; id: string; text: string; durationMs?: number }
   | ToolPart
   | ErrorPart
   | NoticePart;

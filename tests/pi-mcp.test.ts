@@ -1,4 +1,13 @@
-import { expect,it } from 'vitest';import path from 'node:path';import http from 'node:http';
+import { expect,it } from 'vitest';import path from 'node:path';import http from 'node:http';import fs from 'node:fs';import os from 'node:os';
 const {McpClient}=require('../extensions/desktop-policy/mcp-client.cjs');
+const {resolveImports,readTomlServers}=require('../extensions/desktop-policy/mcp-imports.cjs');
+it('preserves Codex TOML disabled and enabled flags when importing MCP servers',()=>{
+ const dir=fs.mkdtempSync(path.join(os.tmpdir(),'pi-mcp-import-'));const file=path.join(dir,'config.toml');
+ fs.writeFileSync(file,['[mcp_servers.off]','command = "false"','args = []','disabled = true','','[mcp_servers.on]','command = "true"','args = []','enabled = true','','[mcp_servers.implicit]','command = "true"','args = []'].join('\n'));
+ const parsed=readTomlServers(file);
+ expect(parsed.off).toMatchObject({command:'false',disabled:true});
+ expect(parsed.on).toMatchObject({command:'true',enabled:true});
+ expect(parsed.implicit.enabled).toBeUndefined();
+});
 it('initializes stdio MCP, lists and invokes tools, cancels calls and closes pending work',async()=>{const c=new McpClient({command:process.execPath,args:[path.resolve('tests/fixtures/fake-mcp.cjs')]},process.cwd());try{await c.connect();expect((await c.tools())[0].name).toBe('echo');expect(await c.request('tools/call',{name:'echo',arguments:{text:'hello'}})).toMatchObject({content:[{text:'hello'}]});const abort=new AbortController();const waiting=c.request('tools/call',{name:'echo',arguments:{text:'wait'}},abort.signal);abort.abort();await expect(waiting).rejects.toThrow('取消');const pending=c.request('tools/call',{name:'echo',arguments:{text:'wait'}});c.close();await expect(pending).rejects.toThrow('关闭');}finally{c.close();}});
 it('supports Streamable HTTP JSON and SSE with session headers',async()=>{let seen=false;const server=http.createServer(async(req,res)=>{let raw='';for await(const chunk of req)raw+=chunk;const r=JSON.parse(raw);if(r.method==='initialize'){res.setHeader('Mcp-Session-Id','test-session');res.setHeader('Content-Type','application/json');res.end(JSON.stringify({jsonrpc:'2.0',id:r.id,result:{protocolVersion:'2025-03-26'}}));}else if(!r.id){res.statusCode=202;res.end();}else{seen=req.headers['mcp-session-id']==='test-session';res.setHeader('Content-Type','text/event-stream');res.end('data: '+JSON.stringify({jsonrpc:'2.0',id:r.id,result:{tools:[]}})+'\n\n');}});await new Promise<void>(r=>server.listen(0,'127.0.0.1',r));const c=new McpClient({url:`http://127.0.0.1:${(server.address() as any).port}/mcp`},process.cwd());try{await c.connect();expect(await c.tools()).toEqual([]);expect(seen).toBe(true);}finally{c.close();server.closeAllConnections();await new Promise<void>(r=>server.close(()=>r()));}});

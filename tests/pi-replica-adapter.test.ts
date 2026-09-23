@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildPiSidebar,
+  conversationMessages,
   groupModels,
   historyToMessages,
   liveToMessages,
@@ -65,6 +66,75 @@ describe('P08 live streaming map', () => {
     );
     expect(msgs[0].parts[0]).toMatchObject({ kind: 'text', text: '正在写代码' });
     expect(msgs[1].parts[0]).toMatchObject({ kind: 'tool', tool: 'edit', status: 'running' });
+  });
+});
+
+describe('P08 conversationMessages 工具进度归位', () => {
+  const branch: PiEntry[] = [
+    { id: 'u1', type: 'message', message: { role: 'user', content: '旧请求' } },
+    {
+      id: 'a1',
+      type: 'message',
+      timestamp: 100,
+      message: {
+        role: 'assistant',
+        content: [
+          { type: 'toolCall', id: 'tc-old-saved', name: 'read', arguments: { path: 'a.ts' } },
+          { type: 'toolCall', id: 'tc-old-unsaved', name: 'bash', arguments: { command: 'pwd' } },
+        ],
+      },
+    },
+    {
+      id: 'r1',
+      type: 'message',
+      message: { role: 'toolResult', toolCallId: 'tc-old-saved', toolName: 'read', content: 'saved result', isError: false },
+    },
+    { id: 'u2', type: 'message', message: { role: 'user', content: '新请求' } },
+    {
+      id: 'a2',
+      type: 'message',
+      timestamp: 200,
+      message: { role: 'assistant', content: [{ type: 'toolCall', id: 'tc-new', name: 'grep', arguments: { pattern: 'x' } }] },
+    },
+  ];
+
+  it('旧轮次已落盘结果优先，残留 progress 不追加到末尾', () => {
+    const msgs = conversationMessages(branch, undefined, [
+      { toolCallId: 'tc-old-saved', name: 'read', text: 'stale progress', status: 'running' },
+    ]);
+    expect(msgs.map((m) => m.id)).toEqual(['u1', 'a1', 'r1', 'u2', 'a2']);
+    expect(msgs.some((m) => m.parts.some((p) => p.kind === 'tool' && p.summary === 'stale progress'))).toBe(false);
+  });
+
+  it('旧轮次调用未落盘结果时，实时结果归回原消息而不是新轮次末尾', () => {
+    const msgs = conversationMessages(branch, undefined, [
+      { toolCallId: 'tc-old-unsaved', name: 'bash', text: 'old output', status: 'done', phase: 'result' },
+    ]);
+    expect(msgs.map((m) => m.id)).toEqual(['u1', 'a1', 'r1', 'u2', 'a2']);
+    const oldAssistant = msgs[1];
+    expect(oldAssistant.parts.some((p) => p.kind === 'tool' && p.callId === 'tc-old-unsaved' && p.summary === 'old output')).toBe(true);
+    expect(msgs.some((m) => m.id === 'live-tools')).toBe(false);
+  });
+
+  it('新 call 尚不在历史/实时消息中时，工具仍追加末尾供执行组显示', () => {
+    const msgs = conversationMessages(branch, undefined, [
+      { toolCallId: 'tc-brand-new', name: 'edit', text: 'new tool', status: 'running' },
+    ]);
+    const tail = msgs.at(-1);
+    expect(tail?.id).toBe('live-tools');
+    expect(tail?.parts[0]).toMatchObject({ kind: 'tool', callId: 'tc-brand-new', summary: 'new tool' });
+  });
+
+  it('live 助手消息中的未落盘调用也按 callId 归位', () => {
+    const live = {
+      300: { role: 'assistant', content: [{ type: 'toolCall', id: 'tc-live', name: 'edit', arguments: { path: 'b.ts' } }] },
+    };
+    const msgs = conversationMessages(branch, live, [
+      { toolCallId: 'tc-live', name: 'edit', text: 'live output', status: 'done', phase: 'result' },
+    ]);
+    const liveAssistant = msgs.find((m) => m.id === 'live-300');
+    expect(liveAssistant?.parts.some((p) => p.kind === 'tool' && p.callId === 'tc-live' && p.summary === 'live output')).toBe(true);
+    expect(msgs.at(-1)?.id).toBe('live-300');
   });
 });
 

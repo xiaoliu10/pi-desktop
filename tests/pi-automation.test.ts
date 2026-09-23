@@ -1,6 +1,7 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import fs from 'node:fs';import os from 'node:os';import path from 'node:path';
-import { AutomationService, nextSchedule, validateWorkflow, workflowPrompts } from '../src/main/pi/automation-service';
+import { AutomationService, nextSchedule, validateWorkflow } from '../src/main/pi/automation-service';
+import { workflowPrompts } from '../src/shared/automation';
 import type { AutomationTask, SavedWorkflow } from '../src/shared/automation';
 import type { PiBackend } from '../src/main/pi/backend';
 const roots:string[]=[];const services:AutomationService[]=[];

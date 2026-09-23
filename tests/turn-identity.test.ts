@@ -15,7 +15,8 @@ const raw = Array.from({ length: total }, (_, i) => {
         { type: 'toolCall', id: `t${i}`, name: 'read', arguments: { path: `src/file-${i}.ts` } },
         { type: 'text', text: `回复 ${i}` },
       ];
-  return { type: 'message', message: { role, timestamp: 1700000000000 + i, content } };
+  // 真实 pi entry 每条都有稳定 uuid id；缓存按 id+timestamp 命中，身份保持靠它。
+  return { type: 'message', id: `e${i}`, timestamp: 1700000000000 + i, message: { role, timestamp: 1700000000000 + i, content } };
 });
 
 describe('turn identity stability for memoized rows', () => {

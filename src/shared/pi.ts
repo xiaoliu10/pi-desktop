@@ -26,7 +26,7 @@ export interface PiResource { id: string; name: string; kind: string; path: stri
 export interface PiCommand { name: string; description?: string; source?: string; path?: string }
 export interface PiModel { id: string; name: string; provider: string; reasoning?: boolean; input?: string[] }
 export interface PiUiRequest { id: string; method: string; title?: string; message?: string; options?: string[]; placeholder?: string; prefill?: string; timeout?: number; [key: string]: unknown }
-export interface PiRun { queue?: {text: string; behavior: 'steer' | 'followUp'; images?: PiImage[]}[]; pendingModel?: { provider: string; id: string }; pendingThinking?: ThinkingLevel; thinkingLevel?: ThinkingLevel; thinkingLevels?: ThinkingLevel[]; planReady?: boolean; accessMode?: AccessMode; executionMode?: Exclude<AccessMode, 'plan'>; timing?: { startedAt: number; endedAt?: number }; key: string; generation: string; cwd: string; file: string; status: 'starting' | 'idle' | 'running' | 'stopping' | 'error'; model?: PiModel; models: PiModel[]; commands: PiCommand[]; pending: number; error?: string; contextDetails?: import('./context-details').ContextDetails; contextUsage?: { tokens: number; contextWindow: number; percent: number }; stats?: PiSessionStats }
+export interface PiRun { queue?: {text: string; behavior: 'steer' | 'followUp'; images?: PiImage[]; pendingSync?: boolean}[]; pendingModel?: { provider: string; id: string }; pendingThinking?: ThinkingLevel; thinkingLevel?: ThinkingLevel; thinkingLevels?: ThinkingLevel[]; planReady?: boolean; accessMode?: AccessMode; executionMode?: Exclude<AccessMode, 'plan'>; timing?: { startedAt: number; endedAt?: number }; key: string; generation: string; cwd: string; file: string; status: 'starting' | 'idle' | 'running' | 'stopping' | 'error'; model?: PiModel; models: PiModel[]; commands: PiCommand[]; pending: number; error?: string; contextDetails?: import('./context-details').ContextDetails; contextUsage?: { tokens: number; contextWindow: number; percent: number }; stats?: PiSessionStats }
 export interface PiSessionStats { tokens: { input: number; output: number; cacheRead: number; cacheWrite: number; total: number }; cost?: number; totalMessages?: number; toolCalls?: number }
 export type PiEvent = { type: 'sessions-changed' } | { type: 'resources-changed' } | { type: 'run'; run: PiRun } | { type: 'rpc'; key: string; generation: string; event: Record<string, unknown> } | { type: 'ui'; key: string; generation: string; request: PiUiRequest } | { type: 'closed'; key: string; generation: string };
 export interface PiReview { root: string; baseline: string; diff: string; untracked: string[]; untrackedFiles?: { path: string; lines: number }[]; warning?: string }
@@ -117,8 +117,10 @@ export interface LocalPiApi extends importSettingsApi {
   filePreview(cwd: string, file: string): Promise<{path: string; content?: string; diff: string; note: string}>;
   gitStatus(cwd: string): Promise<import('./conversation-status').GitStatus>;
   review(cwd: string): Promise<PiReview>;
-  officialSubagentStatus(): Promise<{installed:boolean;scoutExists:boolean;path:string}>;
-  enableOfficialSubagent(): Promise<{path:string}>;
+  officialSubagentStatus(): Promise<{installed:boolean;thirdParty:boolean;thirdPartySource?:string;outdated:boolean;scoutExists:boolean;path:string}>;
+  enableOfficialSubagent(): Promise<{path:string;upgraded:boolean}>;
+  recoverSubagents(sessionKey: string): Promise<Array<{callId:string;status:string;details?:unknown;error?:string;startedAt?:number;updatedAt?:number}>>;
+  cleanupSubagents(sessionKey: string): Promise<void>;
   modelCatalog(): Promise<PiModelCatalog>;
   planQuota(provider: string): Promise<import('./context-details').PlanQuota>;
   accountLogin(provider:string): Promise<PiAccountLogin>;
@@ -135,6 +137,10 @@ export interface LocalPiApi extends importSettingsApi {
   pickDirectory(): Promise<string | null>;
   /** Show a local file/folder in the OS file manager (session context menu). */
   revealPath(path: string): Promise<void>;
+  /** 已安装的外部应用白名单（用外部应用打开当前项目）。 */
+  externalApps(): Promise<import('./open-with').ExternalApp[]>;
+  /** 用白名单内的外部应用打开项目目录；cwd 必须是已授权项目/会话/运行中工作区。 */
+  openWith(cwd: string, appId: string): Promise<void>;
   /** 内置终端：pty 会话（主进程 node-pty，渲染端 xterm）。 */
   terminalCreate(input?: import('./terminal').TerminalCreateInput): Promise<import('./terminal').TerminalInfo>;
   terminalWrite(id: string, data: string): Promise<void>;

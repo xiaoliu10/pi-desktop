@@ -1,4 +1,5 @@
 import { contextPrompt, parseContextPrompt, type ContextItem, type ThinkingLevel } from '../../shared/composer';
+import { applyAssistantStreamDelta } from './stream-delta';
 import { type AccessMode } from '../../shared/access-mode';
 import type { DesktopPreferences } from '../../shared/settings';
 import type { SettingsNavId } from '../replica/contracts';
@@ -13,6 +14,16 @@ import type { SettingsNavId } from '../replica/contracts';
  */
 
 import { create } from 'zustand';
+import {
+  createNavHistory,
+  canGoBack as navCanGoBack,
+  canGoForward as navCanGoForward,
+  navBack as navHistoryBack,
+  navForward as navHistoryForward,
+  pushNavEntry,
+  type NavEntry,
+  type NavHistory,
+} from './navigation-history';
 import type {
   ChatMessage,
   DemoFileDiff,
@@ -75,22 +86,33 @@ function messageTime(value: unknown): number | undefined {
   return Number.isFinite(time) ? time : undefined;
 }
 
-// 历史分支对象在两次 refreshHistory 之间身份稳定；流式事件会以每秒数条的频率重建整个
-// messages 数组。这里按源 entry 缓存映射结果，让未变化的消息保持对象身份——配合
-// TurnArticle 的 React.memo，长会话（千条级）流式时重渲染成本从全量降到只有活动轮。
-const messageCache = new WeakMap<PiEntry, ChatMessage>();
+// pi 的 jsonl entry 是 append-only 的（id 稳定、内容不可变）。缓存必须按 entry.id
+// 而不是对象身份：refreshHistory 走 IPC 结构化克隆后所有 entry 都是新对象，按身份
+// 缓存会 100% 失效 → 每次刷新全量重建 + 全量重渲染（千条会话秒级卡死）。
+const messageCache = new Map<string, ChatMessage>();
 
 export function historyToMessages(branch: PiEntry[]): ChatMessage[] {
   const out: ChatMessage[] = [];
   // thunk 形式：缓存命中时连构造都跳过（工具参数 JSON.stringify、工具结果全文 clean 是主要开销）。
-  const push = (entry: PiEntry, build: () => ChatMessage | undefined) => {
-    const hit = messageCache.get(entry);
-    if (hit) { out.push(hit); return; }
+  // 仅 entry.id（稳定 uuid）可作缓存键；无 id 的条目走 index 兜底，切分支会串位，不缓存。
+  const push = (entry: PiEntry, id: string, build: () => ChatMessage | undefined) => {
+    // id + 落盘时间做键：entry append-only 内容不可变；合成/测试数据可能复用 id，
+    // 带上 timestamp 指纹避免跨分支误命中。
+    const stable = entry.id ? `${entry.id}:${(entry.timestamp as string | number | undefined) ?? ''}` : undefined;
+    if (stable) {
+      const hit = messageCache.get(stable);
+      if (hit) { out.push(hit); return; }
+      if (messageCache.size > 30_000) messageCache.clear();
+      const built = build();
+      if (!built) return;
+      messageCache.set(stable, built);
+      out.push(built);
+      return;
+    }
     const msg = build();
-    if (!msg) return;
-    messageCache.set(entry, msg);
-    out.push(msg);
+    if (msg) out.push(msg);
   };
+  let prevAt: number | undefined;
   branch.forEach((entry, index) => {
     const id = String(entry.id ?? `entry-${index}`);
     if (entry.type === 'message' && entry.message) {
@@ -98,20 +120,27 @@ export function historyToMessages(branch: PiEntry[]): ChatMessage[] {
       const role = String(m.role ?? '');
       // Entry timestamps are recorded when a completed message is appended.
       const timestamp = messageTime(entry.timestamp) ?? messageTime(m.timestamp);
+      // 「思考 · 用时 N 秒」的时长：与上一条落盘消息的时间差近似生成耗时。
+      const sincePrevMs = prevAt !== undefined && timestamp !== undefined ? Math.max(0, timestamp - prevAt) : undefined;
+      if (timestamp !== undefined) prevAt = timestamp;
       const content = m.content;
       if (role === 'user') {
         const text = contentText(content);
-        push(entry, () => ({ id, timestamp, role: 'user', parts: [{ kind: 'text', id: `${id}-t`, text }, ...(Array.isArray(content) ? content.flatMap((b: any, i: number): MessagePart[] => b.type === 'image' && typeof b.data === 'string' && /^image\/(png|jpeg|webp|gif)$/.test(b.mimeType) ? [{kind:'image',id:`${id}-image-${i}`,data:b.data,mimeType:b.mimeType}] : []) : [])] }));
+        push(entry, id, () => ({ id, timestamp, role: 'user', parts: [{ kind: 'text', id: `${id}-t`, text }, ...(Array.isArray(content) ? content.flatMap((b: any, i: number): MessagePart[] => b.type === 'image' && typeof b.data === 'string' && /^image\/(png|jpeg|webp|gif)$/.test(b.mimeType) ? [{kind:'image',id:`${id}-image-${i}`,data:b.data,mimeType:b.mimeType}] : []) : [])] }));
         return;
       }
       if (role === 'assistant') {
-        push(entry, () => {
+        push(entry, id, () => {
           const parts: MessagePart[] = [];
+          let firstThinking = true;
           if (typeof content === 'string') parts.push({ kind: 'text', id: `${id}-t`, text: content });
           if (Array.isArray(content)) {
             for (const [index, block] of content.entries()) {
               if (block?.type === 'text') parts.push({ kind: 'text', id: `${id}-text-${index}`, text: clean(block.text) });
-              if (block?.type === 'thinking' && block.thinking) parts.push({ kind: 'thinking', id: `${String(m.timestamp ?? id)}-thinking-${index}`, text: clean(block.thinking) });
+              if (block?.type === 'thinking' && block.thinking) {
+                parts.push({ kind: 'thinking', id: `${String(m.timestamp ?? id)}-thinking-${index}`, text: clean(block.thinking), ...(firstThinking && sincePrevMs !== undefined ? { durationMs: sincePrevMs } : {}) });
+                firstThinking = false;
+              }
               if (block?.type === 'toolCall') {
                 const args = JSON.stringify((block as { arguments?: unknown }).arguments ?? {}, null, 2);
                 parts.push({
@@ -135,7 +164,7 @@ export function historyToMessages(branch: PiEntry[]): ChatMessage[] {
         return;
       }
       if (role === 'toolResult') {
-        push(entry, () => {
+        push(entry, id, () => {
           const text = contentText(content);
           const firstLine = clean(text).split('\n')[0] ?? '';
           return {
@@ -158,7 +187,7 @@ export function historyToMessages(branch: PiEntry[]): ChatMessage[] {
       return;
     }
     if (['compaction', 'branch_summary'].includes(entry.type)) {
-      push(entry, () => ({
+      push(entry, id, () => ({
         id,
         role: 'assistant',
         parts: [{ kind: 'notice', id: `${id}-n`, text: entry.type === 'compaction' ? '上下文压缩记录' : '分支摘要' }],
@@ -167,7 +196,7 @@ export function historyToMessages(branch: PiEntry[]): ChatMessage[] {
     }
     if (entry.customType === 'desktop-policy-audit') return;
     if (['custom', 'custom_message'].includes(entry.type)) {
-      push(entry, () => ({
+      push(entry, id, () => ({
         id,
         role: 'assistant',
         parts: [{ kind: 'notice', id: `${id}-n`, text: `扩展记录 · ${clean((entry as { customType?: string }).customType ?? entry.type)}` }],
@@ -175,6 +204,18 @@ export function historyToMessages(branch: PiEntry[]): ChatMessage[] {
     }
   });
   return out;
+}
+
+/** ToolProgress → tool 部件（尾部追加与归位拼接共用同一份映射）。 */
+function progressToPart(t: ToolProgress): MessagePart {
+  return {
+    kind: 'tool' as const,
+    id: `prog-${t.toolCallId}`, callId: t.toolCallId, phase: t.phase??'progress', resultDetails:t.details, resultDetailsFinal:t.detailsFinal, argumentsText: t.argumentsText,
+    tool: t.name,
+    summary: t.text.slice(0, 80),
+    status: t.status,
+    detailLines: [t.text],
+  };
 }
 
 /** Live (not yet persisted) streaming assistant messages + tool progress. */
@@ -208,14 +249,7 @@ export function liveToMessages(
     out.push({
       id: 'live-tools',
       role: 'assistant',
-      parts: tools.map((t) => ({
-        kind: 'tool' as const,
-        id: `prog-${t.toolCallId}`, callId: t.toolCallId, phase: t.phase??'progress', resultDetails:t.details, resultDetailsFinal:t.detailsFinal, argumentsText: t.argumentsText,
-        tool: t.name,
-        summary: t.text.slice(0, 80),
-        status: t.status,
-        detailLines: [t.text],
-      })),
+      parts: tools.map(progressToPart),
     });
   }
   return out;
@@ -225,7 +259,44 @@ export function liveToMessages(
 export function conversationMessages(branch: PiEntry[], live: Record<string, Record<string, unknown>> | undefined, tools: ToolProgress[] | undefined): ChatMessage[] {
   const saved = new Set(branch.filter(e => e.message?.role === 'assistant').map(e => String(e.message?.timestamp)));
   const pending = Object.fromEntries(Object.entries(live || {}).filter(([id]) => !saved.has(id)));
-  return [...historyToMessages(branch), ...liveToMessages(pending, tools)];
+  const history = historyToMessages(branch);
+  const liveMessages = liveToMessages(pending, undefined);
+  if (!tools?.length) return [...history, ...liveMessages];
+  // 工具进度按 toolCallId 归位，而不是无条件整份追加到末尾（那样旧轮次残留的
+  // progress/result 会被挂到新的用户消息之后）：
+  // 1. 历史已落盘同 callId 的 result → 已保存结果优先，残留 progress 直接丢弃；
+  // 2. 历史/实时消息里只有 call 没有 result → 把未落盘的 progress/result 拼回原始
+  //    调用所在消息（保持旧轮次位置，由 executionTurns 按 callId 去重合并）；
+  // 3. 完全不认识的 callId（新一轮实时工具，call 块尚未流出）→ 追加到末尾。
+  const savedResults = new Set<string>();
+  const callAt = new Map<string, number>();
+  const index = (messages: ChatMessage[], offset: number, historical: boolean) => {
+    messages.forEach((msg, i) => {
+      for (const part of msg.parts) {
+        if (part.kind !== 'tool' || !part.callId) continue;
+        if (part.phase === 'result') { if (historical) savedResults.add(part.callId); }
+        else if (!callAt.has(part.callId)) callAt.set(part.callId, offset + i);
+      }
+    });
+  };
+  index(history, 0, true);
+  index(liveMessages, history.length, false);
+  const splices = new Map<number, MessagePart[]>();
+  const trailing: ToolProgress[] = [];
+  for (const t of tools) {
+    if (savedResults.has(t.toolCallId)) continue;
+    const at = callAt.get(t.toolCallId);
+    if (at === undefined) { trailing.push(t); continue; }
+    const list = splices.get(at) ?? [];
+    list.push(progressToPart(t));
+    splices.set(at, list);
+  }
+  const all = [...history, ...liveMessages];
+  // 只给被拼入的消息换新对象，其余消息保持缓存身份（turn 级 memo 依赖它）。
+  const placed = splices.size
+    ? all.map((m, i) => (splices.has(i) ? { ...m, parts: [...m.parts, ...splices.get(i)!] } : m))
+    : all;
+  return [...placed, ...liveToMessages(undefined, trailing)];
 }
 
 /** Parse a unified `git diff` text into per-file replica diffs. */
@@ -435,6 +506,10 @@ export interface PiReplicaState {
   renames: Record<string, string>;
 
   view: 'home' | 'chat' | 'plugins' | 'settings' | 'automations';
+  /** 浏览器式前进/后退历史（复刻 ZCode taskNavigationHistory），见 navigation-history.ts。 */
+  navHistory: NavHistory;
+  /** 自动化“立即运行”的乐观气泡：点击瞬间就进对话，pi 会话建立后无缝切换。 */
+  automationLaunch?: { name: string; prompt: string; startedAt: number; sessionKey?: string };
   settingsPage: SettingsNavId;
   desktopPreferences?: DesktopPreferences;
   sidebarCollapsed: boolean;
@@ -452,6 +527,8 @@ export interface PiReplicaState {
   pendingPrompt?: string;
   /** 最近一次发送的时间点（按会话记）：pi 应答 prompt 到 agent_start 之间界面也能立刻计时。 */
   sentAt?: { key: string; at: number };
+  /** 父会话重启后从磁盘恢复的子代理进度（扩展在 onUpdate 时持久化的快照）。 */
+  recoveredSubagents?: Array<{ callId: string; status: string; details?: unknown; error?: string; startedAt?: number; updatedAt?: number }>;
   /** pi 全局 settings.json 的 AI 默认值（通用设置页内联展示与保存）。 */
   aiSettings?: import('../../shared/settings').SettingsSnapshot['ai'];
   draftCwd?: string;
@@ -488,6 +565,11 @@ export interface PiReplicaState {
 
 export interface PiReplicaActions {
   init: () => void;
+  /** 前进/后退（浏览器式历史回放，不产生新的历史条目）。 */
+  navBack: () => void;
+  navForward: () => void;
+  /** 自动化立即运行：先乐观切入对话（预览气泡），会话就绪后切换过去。 */
+  runAutomationNow: (task: { id: string; name: string; previewPrompt: string }) => void;
   navigate: (view: PiReplicaState['view']) => void;
   openSettings: (page: PiReplicaState['settingsPage']) => void;
   backToApp: () => void;
@@ -512,7 +594,8 @@ export interface PiReplicaActions {
   startNewSession: () => void;
   chooseWorkspace: () => void;
   setAccessMode: (mode: AccessMode) => Promise<boolean>;
-  executePlan: () => void;
+  executePlan: (feedback?: string) => void;
+  declinePlan: (feedback?: string) => void;
   addProject: () => void;
   setTheme: (t: 'light' | 'dark') => void;
   setLang: (l: 'en' | 'zh') => void;
@@ -553,6 +636,8 @@ function currentRun(state: PiReplicaState): PiRun | undefined {
   return state.runs.find((r) => r.key === state.selectedKey);
 }
 
+let navPlayback = false;
+
 export const usePiStore = create<PiReplicaStore>((set, get) => {
   const pushNotice = (text: string) => set({ notice: text });
   const pushNotification = (n: Omit<NotificationItem, 'id' | 'read'>) => {
@@ -568,9 +653,14 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
     }
   };
 
-  const refreshHistory = async (): Promise<boolean> => {
+  // 历史刷新合并：message_end（每条助手消息一个）与 agent_settled 会背靠背触发；
+  // get_messages 要在 pi 里序列化整个会话（大会话 MB 级），风暴式调用会把 pi 与
+  // 主进程同时拖住。400ms 内的多次请求合并成一次，进行中的请求直接复用。
+  let historyDebounce: ReturnType<typeof setTimeout> | null = null;
+  let historyInFlight: Promise<boolean> | null = null;
+  const doRefreshHistory = async (): Promise<boolean> => {
     const state = get();
-    const api = window.localPi;
+    const api = typeof window !== 'undefined' ? window.localPi : undefined;
     const key = state.selectedKey;
     if (!api || !key) return false;
     const seq = ++loadSeq;
@@ -583,6 +673,17 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
       // 保留旧 history：一次 IPC 失败不该把整条对话从界面上清空
       return false;
     }
+  };
+  const refreshHistory = async (): Promise<boolean> => {
+    if (historyInFlight) return historyInFlight;
+    return new Promise<boolean>((resolve) => {
+      if (historyDebounce) clearTimeout(historyDebounce);
+      historyDebounce = setTimeout(() => {
+        historyDebounce = null;
+        historyInFlight = doRefreshHistory().finally(() => { historyInFlight = null; });
+        void historyInFlight.then(resolve);
+      }, 400);
+    });
   };
 
   const reloadSessions = async () => {
@@ -601,6 +702,11 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
   // message list and starves typing. Buffer them and flush on a short timer.
   const pendingLive = new Map<string, Record<string, Record<string, unknown>>>();
   const pendingTools = new Map<string, ToolProgress[]>();
+  // RPC message_update 的 delta 累积态（按会话）：text/thinking/toolCall 块逐段拼装，
+  // message_end 的整条权威消息到达后清掉（见 handleRpcEvent）。
+  const streamBlocks = new Map<string, Record<string, unknown>[]>();  // 每个会话的工具事件水位：agent_settled 的异步 refreshHistory 期间若新一轮
+  // （如排队 follow-up）已开始产生工具事件，水位会变化，据此避免误清新一轮工具。
+  const toolEventEpoch = new Map<string, number>();
   let streamFlushTimer: ReturnType<typeof setTimeout> | null = null;
   const flushStreamEvents = () => {
     streamFlushTimer = null;
@@ -630,6 +736,7 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
     const type = String(raw.type ?? '');
     const state = get();
     if (['tool_execution_start', 'tool_execution_update', 'tool_execution_end'].includes(type)) {
+      toolEventEpoch.set(key, (toolEventEpoch.get(key) ?? 0) + 1);
       const toolCallId = String(raw.toolCallId ?? '');
       const previous=(pendingTools.get(key)??state.toolProgress[key]??[]).find(t=>t.toolCallId===toolCallId);
       const list = (pendingTools.get(key) ?? state.toolProgress[key] ?? []).filter((t) => t.toolCallId !== toolCallId);
@@ -656,14 +763,36 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
       // 一轮落地：重试状态随轮结束清掉（auto_retry_end 通常已先到，这里是兜底，防 pi 某些路径不发 end）
       const prevRetry = get().retrying[key];
       if (prevRetry) set({ retrying: { ...get().retrying, [key]: null } });
-      // 先确认该轮已成功落库再清实时工具步骤，否则历史刷新失败时刚跑完的过程信息会凭空消失
+      // 先确认该轮已成功落库再清实时工具步骤，否则历史刷新失败时刚跑完的过程信息会凭空消失；
+      // 且刷新期间若下一轮工具事件已到（水位变化），不能把它们一并清掉。
+      const epoch = toolEventEpoch.get(key) ?? 0;
       void refreshHistory().then((ok) => {
-        if (ok) set({ toolProgress: { ...get().toolProgress, [key]: [] } });
+        if (ok && (toolEventEpoch.get(key) ?? 0) === epoch) set({ toolProgress: { ...get().toolProgress, [key]: [] } });
       });
       void reloadSessions();
       return;
     }
     if (['message_update', 'message_end'].includes(type)) {
+      // pi ≥0.87 的 RPC message_update 只带增量（assistantMessageEvent，partial 快照被
+      // toJsonEvent 剥掉），不处理 delta 的话流式文本只能等 message_end 落盘才出现——
+      // CLI 逐 token 直写终端而 GUI 干等整条消息，正是「CLI 快 GUI 慢」的主因。
+      const delta = (raw as { assistantMessageEvent?: Record<string, unknown> }).assistantMessageEvent;
+      if (type === 'message_update' && delta && typeof delta.type === 'string') {
+        const blocks = streamBlocks.get(key) ?? [];
+        const finished = applyAssistantStreamDelta(blocks, delta);
+        if (finished) {
+          streamBlocks.delete(key);
+        } else {
+          streamBlocks.set(key, blocks);
+          const bucket = pendingLive.get(key) ?? {};
+          // 快照拷贝：flush 与下一个 delta 之间不让渲染层看到半写的块。
+          bucket['live-stream'] = { role: 'assistant', content: blocks.map(b => ({ ...b })) };
+          pendingLive.set(key, bucket);
+          scheduleStreamFlush();
+          if (get().retrying[key]) set({ retrying: { ...get().retrying, [key]: null } });
+        }
+        return;
+      }
       const message = raw.message as Record<string, unknown> | undefined;
       if (message && message.role === 'assistant') {
         const id = String(message.timestamp ?? 'stream');
@@ -674,7 +803,13 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
         // 重试后模型开始流式输出 → 重试已生效，清掉残留的「正在重试」状态（auto_retry_end 兜底）
         if (get().retrying[key]) set({ retrying: { ...get().retrying, [key]: null } });
       }
-      if (type === 'message_end') void refreshHistory();
+      if (type === 'message_end') {
+        // 整条权威消息已到：清掉 delta 累积态，避免与落盘消息双份显示。
+        streamBlocks.delete(key);
+        const bucket = pendingLive.get(key);
+        if (bucket) delete bucket['live-stream'];
+        void refreshHistory();
+      }
       return;
     }
     if (type === 'auto_retry_start') {
@@ -700,6 +835,25 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
     }
   };
 
+  // 导航回放期间置位：订阅器不再把回放产生的视图/会话变化当作新条目入栈，
+  // 否则会截断前进分支（浏览器式语义的关键）。
+  const applyNavEntry = (result: { history: NavHistory; entry: NavEntry }, setNow: typeof set, getNow: typeof get, refresh: () => void) => {
+    navPlayback = true;
+    try {
+      const entry = result.entry;
+      if (entry.view === 'chat' && entry.key) {
+        setNow({ selectedKey: entry.key, leaf: undefined, history: undefined, review: undefined, view: 'chat', draftText: '', contextItems: [], recoveredSubagents: [], navHistory: result.history });
+        refresh();
+      } else if (entry.view === 'chat') {
+        setNow({ view: 'home', selectedKey: null, history: undefined, leaf: undefined, review: undefined, navHistory: result.history });
+      } else {
+        setNow({ view: entry.view, notificationsOpen: false, navHistory: result.history });
+      }
+    } finally {
+      navPlayback = false;
+    }
+  };
+
   return {
     ready: false,
     env: undefined,
@@ -722,6 +876,7 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
     renames: {},
 
     view: 'home',
+    navHistory: pushNavEntry(createNavHistory(), { view: 'home' }),
     settingsPage: 'general',
     sidebarCollapsed: false,
     expandedProjects: [],
@@ -738,6 +893,7 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
     connecting: false,
     addingProject: false,
     changingAccessMode: false,
+    recoveredSubagents: [],
     paths: { runtime:'auto', executable: '', agentDir: '', sessionDirs: '' },
 
     workbenchOpen: false,
@@ -807,12 +963,21 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
             get().scanResources();
             get().loadPackages();
             break;
-          case 'run':
-            set({ runs: [...state.runs.filter((r) => r.key !== event.run.key), event.run] });
+          case 'run': {
+            // pi 的 queue_update 要等当前轮次告一段落才来，期间流式 run 事件会整包覆盖
+            // store、把乐观入队的追问“抹掉”近一分钟。后端视图未带回队列时保留仍处于
+            // pendingSync 的乐观项；任何权威队列（queue_update/队列管理）都用无标记项
+            // 整体替换，自然解除保留。
+            const prevRun = state.runs.find((r) => r.key === event.run.key);
+            const preserved = (prevRun?.queue ?? []).filter((q) => q.pendingSync);
+            const mergedRun = preserved.length && !event.run.queue?.length && ['running', 'starting'].includes(event.run.status)
+              ? { ...event.run, queue: preserved, pending: Math.max(event.run.pending ?? 0, preserved.length) }
+              : event.run;
+            set({ runs: [...state.runs.filter((r) => r.key !== event.run.key), mergedRun] });
             // 任务真正开始/停止/出错后，发送空窗的即时计时完成使命
             if (['running', 'stopping', 'error'].includes(event.run.status)) set({ sentAt: undefined });
             if (event.run.error) set({ error: event.run.error });
-            break;
+            break; }
           case 'closed':
             set({
               runs: state.runs.filter((r) => !(r.key === event.key && r.generation === event.generation)),
@@ -821,6 +986,10 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
             // pi 退出（含崩溃）前已完成的内容都已落盘——立即从会话文件补齐，
             // 避免 UI 停留在最后一帧 live 状态、看起来像卡死。
             void refreshHistory();
+            // 尝试从磁盘恢复未完成的子代理进度（扩展在 onUpdate 时持久化）。
+            void window.localPi!.recoverSubagents(event.key).then((recovered: unknown) => {
+              if (Array.isArray(recovered) && recovered.length) set({ recoveredSubagents: recovered as PiReplicaState['recoveredSubagents'] });
+            }).catch(() => undefined);
             break;
           case 'ui': {
             const r = event.request;
@@ -863,6 +1032,40 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
     },
 
     navigate: (view) => set({ view, notificationsOpen: false }),
+    navBack: () => {
+      const result = navHistoryBack(get().navHistory);
+      if (!result) return;
+      applyNavEntry(result, set, get, () => void refreshHistory());
+    },
+    navForward: () => {
+      const result = navHistoryForward(get().navHistory);
+      if (!result) return;
+      applyNavEntry(result, set, get, () => void refreshHistory());
+    },
+    runAutomationNow: (task) => {
+      const startedAt = Date.now();
+      // 乐观跳转：点击瞬间就看到指令飞进对话（气泡带发送动画），pi 会话建立后无缝切过去。
+      set({ view: 'chat', selectedKey: null, history: undefined, leaf: undefined, review: undefined, automationLaunch: { name: task.name, prompt: task.previewPrompt, startedAt } });
+      void (async () => {
+        try {
+          const run = await window.localPi!.automationRunTask(task.id);
+          // automation-changed 随 run 变化推送；sessionKey 就绪即切入真实会话，计时从点击时刻起跳。
+          const off = window.localPi!.onAutomationChanged(() => {
+            void window.localPi!.automationSnapshot().then(snap => {
+              const key = snap.runs.find(r => r.id === run.id)?.sessionKey;
+              if (!key) return;
+              off();
+              set(s => ({ automationLaunch: s.automationLaunch ? { ...s.automationLaunch, sessionKey: key } : s.automationLaunch, sentAt: { key, at: startedAt } }));
+              get().selectSession(key);
+            }).catch(() => undefined);
+          });
+          const timer = setTimeout(off, 120_000) as { unref?: () => void };
+          timer.unref?.();
+        } catch (e) {
+          set({ error: String((e as Error).message || e), automationLaunch: undefined, view: 'automations' });
+        }
+      })();
+    },
     openSettings: (page) => set({ view: 'settings', settingsPage: page, notificationsOpen: false }),
     backToApp: () => set({ view: get().selectedKey ? 'chat' : 'home' }),
     toggleSidebar: () => set({ sidebarCollapsed: !get().sidebarCollapsed }),
@@ -884,7 +1087,7 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
       return true;
     },
     selectSession: (key) => {
-      set((s) => ({ selectedKey: key, leaf: undefined, history: undefined, review: undefined, view: 'chat', draftText: '', contextItems: [] }));
+      set((s) => ({ selectedKey: key, leaf: undefined, history: undefined, review: undefined, view: 'chat', draftText: '', contextItems: [], recoveredSubagents: [] }));
       void refreshHistory();
     },
     setDraftText: (draftText) => set({ draftText }),
@@ -897,6 +1100,9 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
       const behavior = state.behavior;
       // 乐观发送：文字进气泡、附件 chips 同步清空——失败时一并恢复，避免「文字已发出、图片还挂在输入框」的半程状态。
       set({ connecting: !existing, pendingPrompt: text, draftText: '', contextItems: [] });
+      // 草稿首发立即切到 chat 视图：connect 空窗（pi 启动加载扩展可达 10s+）里 working bar、
+      // 待发气泡、停止按钮都只存在于 ChatView——停在 home 的话用户只看到输入被清空，毫无反馈。
+      if (!existing && get().view !== 'chat') set({ view: 'chat' });
       void (async () => {
         try {
           const message = contextPrompt(text.trim() || '请查看所附文件。', state.contextItems);
@@ -919,7 +1125,7 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
           // Show the queued prompt immediately; pi's queue_update event will
           // replace this optimistic entry with the authoritative queue.
           if (run.status === 'running' || run.status === 'starting') {
-            const optimistic = { ...run, queue: [...(run.queue ?? []), { text: message, behavior, ...(images.length ? { images } : {}) }], pending: (run.pending ?? 0) + 1 };
+            const optimistic = { ...run, queue: [...(run.queue ?? []), { text: message, behavior, pendingSync: true as const, ...(images.length ? { images } : {}) }], pending: (run.pending ?? 0) + 1 };
             set({ runs: [...get().runs.filter(r => r.key !== run.key), optimistic] });
           }
           // 记录发送时刻：prompt 应答后到 agent_start 之间的空窗，聊天界面照样立刻转圈计时
@@ -1070,14 +1276,24 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
       set({ changingAccessMode: false });
       return !!result;
     },
-    executePlan: () => {
+    executePlan: (feedback) => {
       const state = get();
       const run = currentRun(state);
       const key = state.selectedKey;
       if (!run || run.accessMode !== 'plan' || run.status !== 'idle') return;
       void get().setAccessMode(run.executionMode ?? 'ask').then(ok => {
-        if (ok && get().selectedKey === key) get().send('请按刚才的计划开始执行。');
+        if (ok && get().selectedKey === key) {
+          // 附带反馈时将其作为审批注释发给 agent（ZCode plan_approval_feedback）
+          get().send(feedback ? `计划已批准。${feedback}\n\n请按刚才的计划开始执行。` : '请按刚才的计划开始执行。');
+        }
       });
+    },
+    declinePlan: (feedback) => {
+      const state = get();
+      const run = currentRun(state);
+      if (!run || run.accessMode !== 'plan' || run.status !== 'idle') return;
+      // 退回计划：把修改意见发给 agent，保持在计划模式内修订
+      if (feedback) get().send(feedback);
     },
     chooseWorkspace: () => {
       void attempt(async () => {
@@ -1275,6 +1491,44 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
   };
 });
 
+/**
+ * 导航历史记录器：任何视图/会话切换（用户点击、程序化兜底跳转）都入栈，
+ * 相邻重复去重、上限 50。navPlayback 置位期间（前进/后退回放）不记录，
+ * 否则回放会截断前进分支。与 ZCode 只在“用户主动选择”处 push 等价，
+ * 因为这里的入口动作本来就全部源自用户操作。
+ */
+usePiStore.subscribe((state, prev) => {
+  if (navPlayback) return;
+  if (state.view === prev.view && state.selectedKey === prev.selectedKey) return;
+  const entry: NavEntry = state.view === 'chat' && state.selectedKey ? { view: 'chat', key: state.selectedKey } : { view: state.view };
+  const next = pushNavEntry(state.navHistory, entry);
+  if (next !== state.navHistory) usePiStore.setState({ navHistory: next });
+});
+
+export function canNavBack(state: PiReplicaState): boolean {
+  return navCanGoBack(state.navHistory);
+}
+
+export function canNavForward(state: PiReplicaState): boolean {
+  return navCanGoForward(state.navHistory);
+}
+
+/**
+ * 自动化乐观气泡的可见文本：会话建立前显示在临时聊天面（selectedKey 为空），
+ * 切到目标会话后一直显示到真实消息回显进历史（hasUserMessage）为止。
+ * 用户中途切到别的会话则隐藏，不打扰。
+ */
+export function automationLaunchPrompt(
+  state: { automationLaunch?: { prompt: string; sessionKey?: string }; selectedKey: string | null },
+  hasUserMessage: boolean,
+): string | undefined {
+  const launch = state.automationLaunch;
+  if (!launch || hasUserMessage) return undefined;
+  return launch.sessionKey === undefined
+    ? (state.selectedKey ? undefined : launch.prompt)
+    : (state.selectedKey === launch.sessionKey ? launch.prompt : undefined);
+}
+
 // -- derived selectors (pure, exported for tests) -------------------------------
 
 export function currentRunOf(state: PiReplicaStore): PiRun | undefined {
@@ -1289,9 +1543,12 @@ export function sessionTitleOf(state: PiReplicaStore): string {
   const run = currentRunOf(state);
   if (run) return state.titles[run.key] ?? state.renames[run.key] ?? currentSessionOf(state)?.name ?? state.pendingPrompt ?? '新桌面会话';
   const session = currentSessionOf(state);
-  return session ? state.renames[session.key] ?? session.name : '';
+  return session ? state.renames[session.key] ?? session.name : state.automationLaunch?.name ?? '';
 }
 
 export function cwdOf(state: PiReplicaStore): string | undefined {
   return currentRunOf(state)?.cwd ?? currentSessionOf(state)?.cwd;
 }
+
+// dev 调试出口：CDP/控制台可直接读 store 快照（生产构建为 no-op）。
+if (typeof window !== 'undefined' && (import.meta as { env?: { DEV?: boolean } }).env?.DEV) (window as unknown as Record<string, unknown>).__piStore = usePiStore;
