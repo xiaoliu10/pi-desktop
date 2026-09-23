@@ -1,0 +1,56 @@
+/* Preview container extras (U07): fixed preview badge and CLI read-only banner. */
+
+.pireplica .pi-previewbadge {
+  position: fixed;
+  top: 68px;
+  right: 14px;
+  z-index: 70;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--pi-text-secondary);
+  background: var(--pi-bg);
+  border: 1px solid var(--pi-border-strong);
+  border-radius: var(--pi-radius-pill);
+  padding: 4px 6px 4px 10px;
+  box-shadow: var(--pi-shadow-composer);
+  pointer-events: auto;
+}
+
+.pireplica .pi-previewbadge__reset {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  color: var(--pi-text-tertiary);
+}
+
+.pireplica .pi-previewbadge__reset:hover {
+  background: var(--pi-bg-hover);
+  color: var(--pi-text);
+}
+
+/* CLI session read-only observation banner */
+.pireplica .pi-clibanner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 48px 4px;
+  padding: 7px 14px;
+  border: 1px dashed var(--pi-border-strong);
+  border-radius: var(--pi-radius-md);
+  font-size: var(--pi-font-size-sm);
+  color: var(--pi-text-secondary);
+  background: var(--pi-bg-card);
+}
+
+@media (max-width: 1024px) {
+  .pireplica .pi-clibanner {
+    margin: 0 16px 4px;
+  }
+}

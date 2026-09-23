@@ -27,3 +27,17 @@ venv/
 .env
 .env.*
 !.env.example
+
+# 打包输出
+release/
+*.tsbuildinfo
+
+# Generated platform-specific private runtime stamp
+resources/pi-runtime/runtime.json
+# 运行时依赖由 scripts/prepare-runtime.mjs 安装，不入库
+resources/pi-runtime/node_modules/
+
+# 本地产物与截图
+output/
+.playwright-cli/
+.zcodeignore

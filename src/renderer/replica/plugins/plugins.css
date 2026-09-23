@@ -1,0 +1,410 @@
+/* Plugins page styles (U04). */
+
+.pireplica .pi-plugins {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+  padding: 26px 40px 48px;
+}
+
+.pireplica .pi-plugins__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 18px;
+}
+
+.pireplica .pi-plugins__title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--pi-text);
+}
+
+.pireplica .pi-plugins__title h1 {
+  font-size: var(--pi-font-size-title);
+  font-weight: 700;
+  margin: 0;
+}
+
+.pireplica .pi-plugins__headactions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.pireplica .pi-plugins__banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: var(--pi-green-bg);
+  border-radius: var(--pi-radius-md);
+  padding: 10px 14px;
+  margin-bottom: 16px;
+}
+
+.pireplica .pi-plugins__bannericon {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--pi-green-icon) 18%, transparent);
+  color: var(--pi-green);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.pireplica .pi-plugins__bannertext {
+  flex: 1;
+  font-weight: 600;
+  font-size: var(--pi-font-size-md);
+  color: var(--pi-text);
+}
+
+.pireplica .pi-plugins__filterrow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 10px;
+}
+
+.pireplica .pi-plugins__tabs {
+  display: inline-flex;
+  gap: 2px;
+  background: var(--pi-bg-inset);
+  border-radius: var(--pi-radius-pill);
+  padding: 3px;
+}
+
+.pireplica .pi-plugins__tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: var(--pi-radius-pill);
+  padding: 6px 14px;
+  font-size: var(--pi-font-size-sm);
+  font-weight: 500;
+  color: var(--pi-text-secondary);
+}
+
+.pireplica .pi-plugins__tab--on {
+  background: var(--pi-bg);
+  color: var(--pi-text);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+}
+
+.pireplica .pi-plugins__tabcount {
+  color: var(--pi-text-tertiary);
+  font-weight: 400;
+}
+
+.pireplica .pi-plugins__search {
+  width: 320px;
+  max-width: 40%;
+  border: none;
+  background: var(--pi-bg-inset);
+  border-radius: var(--pi-radius-pill);
+  padding: 8px 14px;
+  font-size: var(--pi-font-size-sm);
+}
+
+.pireplica .pi-plugins__search:focus {
+  outline: none;
+  background: var(--pi-bg-card);
+}
+
+.pireplica .pi-plugins__note {
+  font-size: var(--pi-font-size-xs);
+  color: var(--pi-text-tertiary);
+  margin: 2px 2px 12px;
+}
+
+.pireplica .pi-plugins__grouplabel {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 14px 2px 8px;
+}
+
+.pireplica .pi-pluginrow {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  background: var(--pi-bg-card);
+  border-radius: var(--pi-radius-md);
+  padding: 14px 16px;
+  margin-bottom: 8px;
+}
+
+.pireplica .pi-pluginrow__icon {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: var(--pi-bg);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--pi-text-secondary);
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.pireplica .pi-pluginrow__icon--bad {
+  background: var(--pi-red-bg);
+  color: var(--pi-red);
+}
+
+.pireplica .pi-pluginrow__body {
+  flex: 1;
+  min-width: 0;
+}
+
+.pireplica .pi-pluginrow__name {
+  font-weight: 600;
+  font-size: var(--pi-font-size-body);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.pireplica .pi-pluginrow__badge {
+  font-size: 10px;
+  font-weight: 600;
+  background: var(--pi-bg-inset);
+  color: var(--pi-text-secondary);
+  border-radius: 5px;
+  padding: 1px 6px;
+}
+
+.pireplica .pi-pluginrow__pkg {
+  font-family: var(--pi-font-mono);
+  font-size: 12px;
+  color: var(--pi-text-tertiary);
+  margin-top: 2px;
+}
+
+.pireplica .pi-pluginrow__error {
+  color: var(--pi-red);
+  font-size: var(--pi-font-size-sm);
+  margin-top: 5px;
+}
+
+.pireplica .pi-pluginrow__details {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--pi-text-secondary);
+  font-size: var(--pi-font-size-sm);
+  margin-top: 7px;
+}
+
+.pireplica .pi-pluginrow__details:hover {
+  color: var(--pi-text);
+}
+
+.pireplica .pi-pluginrow__detailbody {
+  margin-top: 8px;
+  border-top: 1px solid var(--pi-border);
+  padding-top: 8px;
+}
+
+.pireplica .pi-pluginrow__detailbody p {
+  margin: 3px 0;
+  font-size: var(--pi-font-size-sm);
+  color: var(--pi-text-secondary);
+}
+
+.pireplica .pi-pluginrow__actions {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+/* marketplace */
+.pireplica .pi-plugins__source {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  background: var(--pi-bg-card);
+  border-radius: var(--pi-radius-md);
+  padding: 14px 18px;
+  margin-top: 10px;
+}
+
+.pireplica .pi-plugins__sourcetitle {
+  font-weight: 600;
+  font-size: var(--pi-font-size-body);
+}
+
+.pireplica .pi-plugins__sourceselect {
+  border: none;
+  background: var(--pi-bg);
+  border-radius: var(--pi-radius-sm);
+  padding: 8px 12px;
+  font: inherit;
+  font-size: var(--pi-font-size-sm);
+  color: var(--pi-text);
+  min-width: 220px;
+}
+
+.pireplica .pi-plugins__tags {
+  display: flex;
+  gap: 8px;
+  margin: 16px 0;
+  flex-wrap: wrap;
+}
+
+.pireplica .pi-plugins__tag {
+  border-radius: var(--pi-radius-pill);
+  padding: 6px 14px;
+  background: var(--pi-bg-inset);
+  color: var(--pi-text-secondary);
+  font-size: var(--pi-font-size-sm);
+}
+
+.pireplica .pi-plugins__tag--on {
+  background: var(--pi-bg-active);
+  color: var(--pi-text);
+  font-weight: 500;
+}
+
+.pireplica .pi-plugins__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 14px;
+}
+
+.pireplica .pi-marketcard {
+  background: var(--pi-bg-card);
+  border-radius: var(--pi-radius-lg);
+  padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.pireplica .pi-marketcard__head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.pireplica .pi-marketcard__avatar {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: var(--pi-bg);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+/* 有封面时换成圆角方形缩略图，图未就绪时保持首字母圆标尺寸避免跳动 */
+.pireplica .pi-marketcard__avatar--cover {
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.pireplica .pi-marketcard__avatar--cover img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.pireplica .pi-marketcard__name {
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.pireplica .pi-marketcard__verified {
+  color: var(--pi-green);
+  display: inline-flex;
+}
+
+.pireplica .pi-marketcard__meta {
+  font-size: var(--pi-font-size-sm);
+  color: var(--pi-text-tertiary);
+}
+
+.pireplica .pi-marketcard__desc {
+  margin: 0;
+  font-size: var(--pi-font-size-sm);
+  color: var(--pi-text-secondary);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.pireplica .pi-marketcard__perms {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.pireplica .pi-marketcard__perm {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--pi-bg-inset);
+  color: var(--pi-text-secondary);
+  font-size: 11px;
+  border-radius: 6px;
+  padding: 3px 8px;
+}
+
+.pireplica .pi-marketcard__perm--risky {
+  background: var(--pi-orange-bg);
+  color: var(--pi-orange-text);
+}
+
+.pireplica .pi-marketcard__foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 2px;
+}
+
+.pireplica .pi-marketcard__installstate {
+  font-size: var(--pi-font-size-sm);
+  color: var(--pi-text-tertiary);
+}
+
+.pireplica .pi-marketcard__installed {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--pi-green);
+  font-size: var(--pi-font-size-sm);
+  font-weight: 500;
+}
+
+/* empty states */
+.pireplica .pi-plugins__empty {
+  padding: 48px 0;
+  text-align: center;
+  color: var(--pi-text-tertiary);
+  font-size: var(--pi-font-size-md);
+}
+
+.pireplica .pi-plugins__emptytitle {
+  font-weight: 600;
+  color: var(--pi-text-secondary);
+  margin-bottom: 6px;
+}
+
+.pireplica .pi-plugins__emptyhint {
+  font-size: var(--pi-font-size-sm);
+}

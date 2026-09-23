@@ -1,0 +1,641 @@
+/* Production replica app extras (P08): banners, CLI session toolbar,
+ * connect modal and pi extension dialog, all scoped to .pireplica. */
+
+.pireplica .pireplica__main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+
+/* error / notice banners */
+.pireplica .pi-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 20px 6px;
+  padding: 8px 14px;
+  border-radius: var(--pi-radius-md);
+  background: var(--pi-bg-card);
+  border: 1px solid var(--pi-border);
+  font-size: var(--pi-font-size-sm);
+  color: var(--pi-text-secondary);
+}
+
+.pireplica .pi-banner--error {
+  background: var(--pi-red-bg);
+  border-color: color-mix(in srgb, var(--pi-red) 40%, transparent);
+  color: var(--pi-red);
+}
+
+.pireplica .pi-banner button {
+  color: inherit;
+  font-size: 14px;
+  padding: 0 4px;
+  border-radius: 6px;
+}
+
+.pireplica .pi-history-branch {
+  max-width: 130px;
+  border: 0;
+  background: transparent;
+  font-size: var(--pi-font-size-xs);
+  color: var(--pi-text-secondary);
+}
+
+/* modals (connect / extension UI) reuse the search overlay backdrop */
+.pireplica .pi-connectmodal {
+  width: min(520px, calc(100vw - 64px));
+  background: var(--pi-bg);
+  border-radius: var(--pi-radius-lg);
+  box-shadow: var(--pi-shadow-popover);
+  padding: 22px 24px;
+}
+
+.pireplica .pi-connectmodal h2 {
+  margin: 4px 0 10px;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.pireplica .pi-connectmodal p {
+  margin: 6px 0;
+  font-size: var(--pi-font-size-sm);
+  color: var(--pi-text-secondary);
+}
+
+.pireplica .pi-connectmodal__tag {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--pi-text-tertiary);
+}
+
+.pireplica .pi-connectmodal__check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--pi-font-size-sm);
+  margin: 8px 0;
+}
+
+.pireplica .pi-connectmodal__hint {
+  font-size: var(--pi-font-size-xs);
+  color: var(--pi-text-tertiary);
+}
+
+.pireplica .pi-connectmodal__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.pireplica .pi-connectmodal__options {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 12px 0;
+}
+
+.pireplica .pi-connectmodal__editor,
+.pireplica .pi-connectmodal__input {
+  width: 100%;
+  border: 1px solid var(--pi-border);
+  background: var(--pi-bg-card);
+  border-radius: var(--pi-radius-sm);
+  padding: 9px 12px;
+  font-size: var(--pi-font-size-md);
+  resize: vertical;
+  margin: 10px 0 2px;
+}
+
+.pireplica .pi-connectmodal__message {
+  white-space: pre-wrap;
+  font-size: var(--pi-font-size-sm);
+  background: var(--pi-bg-card);
+  border-radius: var(--pi-radius-sm);
+  padding: 10px 12px;
+  max-height: 200px;
+  overflow: auto;
+}
+
+/* unavailable screen */
+.pireplica .pi-unavailable {
+  align-items: center;
+  justify-content: center;
+  display: flex;
+}
+
+.pireplica .pi-unavailable__card {
+  max-width: 420px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 32px;
+  border: 1px solid var(--pi-border);
+  border-radius: var(--pi-radius-lg);
+  background: var(--pi-bg-card);
+}
+
+.pireplica .pi-unavailable__title {
+  font-size: 17px;
+  font-weight: 600;
+}
+
+.pireplica .pi-unavailable__card p {
+  margin: 0;
+  font-size: var(--pi-font-size-sm);
+  color: var(--pi-text-secondary);
+}
+
+.pireplica .pi-unavailable__card code {
+  font-family: var(--pi-font-mono);
+  font-size: 12px;
+  background: var(--pi-bg-inset);
+  border-radius: 6px;
+  padding: 4px 8px;
+  width: fit-content;
+  margin: 0 auto;
+}
+
+.pireplica .pi-unavailable__card .btn {
+  align-self: center;
+}
+
+/* macOS hiddenInset window: keep the settings "返回应用" nav button clear of
+   the floating traffic-light cluster. Only mounted in the production app. */
+.pireplica .pi-settings-wrap {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.pireplica .pi-dragstrip {
+  height: 38px;
+  flex-shrink: 0;
+  -webkit-app-region: drag;
+}
+
+.pireplica .pi-providerform__check {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+}
+
+.pireplica .pi-remote__qrwrap {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.pireplica .pi-remote__qr {
+  width: 220px;
+  height: 220px;
+  border-radius: 12px;
+  border: 1px solid var(--pi-border);
+  flex-shrink: 0;
+}
+
+.pireplica .pi-remote__qr--loading {
+  background: var(--pi-bg-inset);
+}
+
+.pireplica .pi-remote__urls {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.pireplica .pi-remote__urls .pi-btn {
+  text-align: left;
+  overflow-wrap: anywhere;
+  white-space: normal;
+  height: auto;
+  padding: 6px 10px;
+}
+
+/* Mobile-remote card layout (after the ZCode reference). */
+.pireplica .pi-remote__card {
+  display: flex;
+  gap: 24px;
+  align-items: center;
+  flex-wrap: wrap;
+  border: 1px dashed var(--pi-border);
+  border-radius: 14px;
+  padding: 22px;
+  margin: 12px 0 4px;
+  background: var(--pi-bg-card);
+}
+
+.pireplica .pi-remote__card--on {
+  border-style: solid;
+}
+
+.pireplica .pi-remote__qrside {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.pireplica .pi-remote__qr {
+  width: 240px;
+  height: 240px;
+  border-radius: 12px;
+  border: 1px solid var(--pi-border);
+  background: #fff;
+}
+
+.pireplica .pi-remote__state {
+  font-size: 13px;
+  color: var(--pi-text-tertiary);
+}
+
+.pireplica .pi-remote__state--on {
+  color: #0a7d33;
+}
+
+.pireplica .pi-remote__actions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 260px;
+  flex: 1;
+}
+
+.pireplica .pi-remote__btns {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.pireplica .pi-remote__urls {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.pireplica .pi-remote__url {
+  text-align: left;
+  overflow-wrap: anywhere;
+  white-space: normal;
+  height: auto;
+  padding: 6px 10px;
+}
+
+.pireplica .pi-remote__hint {
+  font-size: 13px;
+  color: var(--pi-text-secondary);
+}
+
+.pireplica .pi-remote__off {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  padding: 10px 0;
+}
+
+.pireplica .pi-remote__placeholder {
+  width: 160px;
+  height: 160px;
+  border-radius: 12px;
+  border: 1px solid var(--pi-border);
+  background: var(--pi-bg-inset);
+  color: var(--pi-text-tertiary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+}
+
+.pireplica .pi-remote__channels {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 10px;
+  margin: 12px 0;
+}
+
+.pireplica .pi-remote__channel {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  text-align: left;
+  border: 1px solid var(--pi-border);
+  border-radius: 12px;
+  background: var(--pi-bg-card);
+  padding: 14px;
+}
+
+.pireplica .pi-remote__channel--on {
+  border-color: var(--pi-accent);
+}
+
+.pireplica .pi-remote__channel--off {
+  opacity: 0.55;
+}
+
+.pireplica .pi-remote__channelname {
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.pireplica .pi-remote__channelhint {
+  font-size: 12px;
+  color: var(--pi-text-secondary);
+}
+
+.pireplica .pi-remote__channelpact {
+  font-size: 12px;
+  color: var(--pi-text);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  margin-top: 4px;
+}
+
+.pireplica .pi-access { position: relative; }
+.pireplica .pi-access__trigger { display: flex; align-items: center; gap: 5px; padding: 5px 8px; border: 0; border-radius: 7px; color: var(--pi-text-secondary); background: transparent; cursor: pointer; font-size: 12px; white-space: nowrap; }
+.pireplica .pi-access__trigger:hover { background: var(--pi-bg-hover); }
+.pireplica .pi-access__trigger--full { color: var(--pi-orange-text); }
+.pireplica .pi-access__menu { position: absolute; z-index: 60; bottom: calc(100% + 10px); left: 0; width: 280px; max-width: calc(100vw - 32px); padding: 6px; border: 1px solid var(--pi-border); border-radius: 12px; background: var(--pi-bg); box-shadow: var(--pi-shadow-popover); }
+.pireplica .pi-access__menu > button { width: 100%; display: flex; align-items: center; gap: 10px; padding: 10px; border: 0; border-radius: 7px; background: transparent; text-align: left; color: var(--pi-text); cursor: pointer; }
+.pireplica .pi-access__menu > button:hover { background: var(--pi-bg-hover); }
+.pireplica .pi-access__menu > button > span { flex: 1; }
+.pireplica .pi-access__menu strong { display: block; font-size: 13px; font-weight: 500; }
+.pireplica .pi-access__menu small { display: block; margin-top: 5px; font-size: 11px; color: var(--pi-text-tertiary); }
+.pireplica .pi-access__menu p { margin: 4px 8px; padding-top: 8px; border-top: 1px solid var(--pi-border); color: var(--pi-text-tertiary); font-size: 11px; }
+.pireplica .pi-plan-ready { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0 24px 12px; padding: 12px; border: 1px solid var(--pi-border); border-radius: 10px; font-size: 13px; }
+.pireplica .pi-plan-ready__actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+
+/* Plan viewer: ZCode plan-detail 侧板的复刻。 */
+.pi-plan-viewer { width: min(480px, 50vw); min-width: 320px; flex-shrink: 0; height: 100%; border-left: 1px solid var(--pi-border); background: var(--pi-bg); display: flex; flex-direction: column; overflow: hidden; }
+.pi-plan-viewer > header { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 16px 20px; border-bottom: 1px solid var(--pi-border); }
+.pi-plan-viewer > header strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; }
+.pi-plan-viewer__actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.pi-plan-viewer__body { flex: 1; min-height: 0; overflow: auto; padding: 16px 20px; overflow-wrap: anywhere; }
+.pi-plan-viewer__todo { margin-top: 20px; padding-top: 14px; border-top: 1px solid var(--pi-border); }
+.pi-plan-viewer__todo-head { display: flex; justify-content: space-between; align-items: center; color: var(--pi-text-secondary); font-size: 12px; }
+.pi-plan-viewer__todo-head b { font-size: 11px; font-weight: 400; color: #008b35; }
+.pi-plan-viewer__todo ol { margin: 10px 0 0; padding: 0; list-style: none; display: grid; gap: 8px; }
+.pi-plan-viewer__todo li { display: flex; align-items: baseline; gap: 8px; font-size: 13px; }
+.pi-plan-viewer__todo li > svg { flex-shrink: 0; transform: translateY(2px); }
+.pi-plan-viewer__todo li small { margin-left: auto; flex-shrink: 0; color: var(--pi-muted); font-size: 11px; }
+.pi-plan-viewer__todo li.is-completed { color: var(--pi-text-secondary); }
+.pi-plan-viewer__todo li.is-completed > svg { color: #28864b; }
+.pi-plan-viewer__todo li.is-in_progress > svg { color: #3977bc; }
+.pi-plan-viewer__todo li.is-pending > svg { color: var(--pi-muted); }
+.pi-plan-viewer > footer { border-top: 1px solid var(--pi-border); padding: 10px 18px; }
+.pi-plan-viewer small { color: var(--pi-muted); font-size: 11px; line-height: 1.6; }
+
+/* Terminal panel: ZCode 侧板终端复刻。 */
+.pi-terminal-panel { width: min(640px, 60vw); min-width: 360px; flex-shrink: 0; height: 100%; border-left: 1px solid var(--pi-border); background: var(--pi-bg); display: flex; flex-direction: column; overflow: hidden; }
+.pi-terminal-panel__tabs { display: flex; align-items: center; gap: 6px; padding: 8px 10px; border-bottom: 1px solid var(--pi-border); overflow-x: auto; }
+.pi-terminal-panel__brand { display: flex; align-items: center; gap: 6px; flex-shrink: 0; padding: 0 6px 0 8px; color: var(--pi-text-secondary); font-size: 12px; }
+.pi-terminal-panel__tab { display: flex; align-items: center; gap: 2px; flex-shrink: 0; max-width: 200px; border: 1px solid var(--pi-border); border-radius: 8px; background: transparent; }
+.pi-terminal-panel__tab > button:first-child { border: 0; background: transparent; color: var(--pi-text-secondary); font-size: 12px; padding: 5px 4px 5px 10px; border-radius: 8px 0 0 8px; cursor: pointer; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pi-terminal-panel__tab--on { border-color: var(--pi-border-strong); background: var(--pi-bg-hover); }
+.pi-terminal-panel__tab--on > button:first-child { color: var(--pi-text); }
+.pi-terminal-panel__tab--dead > button:first-child { opacity: 0.55; }
+.pi-terminal-panel__tabclose { border: 0; background: transparent; color: var(--pi-muted); cursor: pointer; padding: 5px 8px 5px 2px; border-radius: 0 8px 8px 0; display: flex; align-items: center; }
+.pi-terminal-panel__tabclose:hover { color: var(--pi-text); }
+.pi-terminal-panel__close { margin-left: auto; }
+.pi-terminal-panel__body { flex: 1; min-height: 0; position: relative; padding: 6px 2px 2px 10px; }
+.pi-terminal-panel__term { width: 100%; height: 100%; }
+.pi-terminal-panel__term .xterm { width: 100%; height: 100%; padding: 4px 0; }
+.pi-terminal-panel__hint { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: var(--pi-muted); font-size: 12px; pointer-events: none; padding: 0 24px; text-align: center; }
+
+/* Composer: project context above the input, capabilities above the + button. */
+.pi-project-header {display:flex;align-items:center;gap:18px;padding:9px 14px;background:var(--pi-bg-card);border-radius:14px 14px 0 0;font-size:12px;}
+.pi-project-header button,.pi-project-header__branch {display:flex;align-items:center;gap:7px;background:none;border:0;color:inherit;font:inherit;}
+.pi-project-header button:disabled {opacity:1;cursor:default;}
+.pi-project-header__branch {color:var(--pi-text-secondary);}
+
+.pi-add__menu {position:absolute;z-index:40;bottom:calc(100% + 8px);left:0;right:0;background:var(--pi-bg,#fff);color:var(--pi-text,#222);border:1px solid var(--pi-border,#e5e5e5);border-radius:14px;box-shadow:0 8px 30px #0002;padding:10px;}
+.pi-add__menu input {width:100%;box-sizing:border-box;padding:10px;border:0;border-bottom:1px solid var(--pi-border,#eee);background:transparent;color:inherit;outline:none;font:inherit;}
+.pi-add__tabs {display:flex;gap:8px;padding:8px 0;}
+.pi-add__tabs button {border:0;border-radius:7px;padding:6px 10px;background:transparent;color:inherit;cursor:pointer;}
+.pi-add__tabs button[aria-pressed=true] {background:var(--pi-bg-hover);}
+.pi-add__list {max-height:min(330px,45vh);overflow:auto;}
+.pi-add__list>button {display:flex;align-items:center;gap:10px;padding:9px 10px;width:100%;text-align:left;border:0;border-radius:8px;background:transparent;color:inherit;font:inherit;cursor:pointer;}
+.pi-add__list>button:hover,.pi-add__list>button:focus-visible {background:var(--pi-bg-hover);}
+.pi-add__list>button>span {min-width:0;overflow-wrap:anywhere;}
+.pi-add__list small {display:block;font-size:11px;color:var(--pi-text-secondary);margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:650px;}
+.pi-add__heading,.pi-add__list p,.pi-add__menu footer {font-size:11px;color:var(--pi-text-secondary);padding:8px 10px;}
+.pi-add__menu footer {border-top:1px solid var(--pi-border,#eee);margin-top:5px;}
+.pi-add__error {color:#c64732;font-size:12px;padding:4px 10px;}
+.pi-context-chips {display:flex;flex-wrap:wrap;align-items:center;gap:10px;padding:2px 2px 8px;}
+.pi-context-chips>span {display:flex;align-items:center;gap:6px;max-width:100%;overflow-wrap:anywhere;background:transparent;border:1px solid var(--pi-border);border-radius:10px;padding:8px 10px;font-size:12px;}
+.pi-context-chips button {display:flex;border:0;background:none;color:inherit;cursor:pointer;}
+.pi-thinking {display:flex;align-items:center;gap:4px;font-size:12px;color:var(--pi-text-secondary);}
+.pi-thinking select {max-width:95px;background:transparent;border:0;color:inherit;font:inherit;outline:none;cursor:pointer;}
+.pi-thinking:focus-within {outline:1px solid var(--pi-border,#ccc);border-radius:5px;}
+.pi-add__menu input:focus,.pi-add__menu input:focus-visible {outline:none !important;box-shadow:none !important;border-bottom-color:var(--pi-border-strong);}
+.pi-archive-dialog {width:min(680px,90vw);max-height:80vh;display:flex;flex-direction:column;padding:22px;background:var(--pi-bg-card);color:var(--pi-text);border:1px solid var(--pi-border);border-radius:16px;box-shadow:0 12px 50px #0003;}
+.pi-archive-dialog header {display:flex;align-items:center;justify-content:space-between;}
+.pi-archive-dialog h2 {font-size:18px;margin:0;}
+.pi-archive-dialog p {font-size:12px;color:var(--pi-text-secondary);margin:12px 0;}
+.pi-archive-dialog input {padding:10px;border:1px solid var(--pi-border);border-radius:8px;background:var(--pi-bg);color:inherit;font:inherit;}
+.pi-archive-dialog__list {overflow:auto;margin-top:12px;}
+.pi-archive-dialog__row {display:flex;align-items:center;gap:12px;padding:12px 0;border-bottom:1px solid var(--pi-border);}
+.pi-archive-dialog__row>div {flex:1;min-width:0;}
+.pi-archive-dialog__row strong,.pi-archive-dialog__row small {display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.pi-archive-dialog__row strong {font-size:13px;font-weight:500;}
+.pi-archive-dialog__row small {font-size:11px;color:var(--pi-text-secondary);margin-top:5px;}
+.pi-project-actions {display:flex;align-items:center;}
+.pireplica .pi-sidebar__projectmore {display:none;border:0;background:transparent;color:var(--pi-text-secondary);padding:3px;border-radius:5px;}
+.pi-sidebar__projrow:hover .pi-sidebar__projectmore,.pi-sidebar__projrow:focus-within .pi-sidebar__projectmore {display:flex;}
+/* 项目行「新建会话」+（照 ZCode：浅灰小图标，悬停行时出现，点击加深） */
+.pireplica .pi-sidebar__projectnew {display:none;align-items:center;border:0;background:transparent;color:var(--pi-text-tertiary);padding:3px;border-radius:5px;cursor:pointer;}
+.pireplica .pi-sidebar__projectnew:hover {color:var(--pi-text);background:var(--pi-bg-hover);}
+.pi-sidebar__projrow:hover .pi-sidebar__projectnew,.pi-sidebar__projrow:focus-within .pi-sidebar__projectnew {display:flex;}
+.pi-project-menu {position:fixed;z-index:100;width:220px;border:1px solid var(--pi-border);border-radius:12px;background:var(--pi-bg-card);padding:6px;box-shadow:0 8px 24px #0002;}
+.pi-project-menu button {display:flex;align-items:center;gap:10px;width:100%;padding:8px;border:0;border-radius:6px;background:none;color:var(--pi-text);font:inherit;text-align:left;cursor:pointer;}
+.pi-project-menu button:hover {background:var(--pi-bg-hover);}
+.pi-project-menu small {margin-left:auto;max-width:65px;overflow:hidden;text-overflow:ellipsis;}
+.pi-project-menu hr {border:0;border-top:1px solid var(--pi-border);margin:5px;}
+.pi-project-menu p {font-size:12px;color:#b44838;}
+.pi-project-dialog {width:min(520px,85vw);max-height:85vh;overflow:auto;background:var(--pi-bg-card);color:var(--pi-text);padding:24px;border:1px solid var(--pi-border);border-radius:16px;box-shadow:0 12px 40px #0003;font-size:13px;cursor:default;}
+.pi-project-dialog h2 {font-size:18px;margin:0 0 12px;}
+.pi-project-dialog label {display:block;margin:14px 0;}
+.pi-project-dialog input {display:block;width:100%;box-sizing:border-box;padding:9px;margin-top:7px;border:1px solid var(--pi-border);border-radius:7px;background:var(--pi-bg);color:inherit;font:inherit;}
+.pi-project-dialog__path {overflow-wrap:anywhere;color:var(--pi-text-secondary);font-size:12px;}
+.pi-project-dialog footer {display:flex;justify-content:flex-end;gap:8px;margin-top:20px;}
+.pi-project-dialog__error {color:#bd4938;}
+.pi-sidebar__sectionlabel {padding:12px 10px 5px;}
+
+.pi-context-chips > .pi-context-chip--image { position:relative; padding:0; border-radius:10px; }
+.pi-attachment-thumbnail { display:block; width:56px; height:56px; object-fit:cover; border-radius:9px; cursor:zoom-in; }
+.pi-context-chip { display:inline-flex; align-items:center; gap:5px; font-size:12px; color:var(--pi-text-tertiary); padding:2px 8px; border:1px solid var(--pi-border); border-radius:999px; }
+.pi-context-chip__track { fill:none; stroke:var(--pi-border); stroke-width:2; }
+.pi-context-chip__value { fill:none; stroke:currentColor; stroke-width:2; stroke-linecap:round; transition:stroke-dasharray .2s ease; }
+.pi-context-chip--warn { color:var(--pi-orange-text); }
+.pi-context-chip--danger { color:var(--pi-red); }
+.pireplica .pi-context-chip { cursor:pointer; background:transparent; min-width:24px; min-height:24px; }
+.pireplica .pi-context-chip:focus-visible { outline:2px solid var(--pi-text-secondary); outline-offset:2px; }
+.pireplica .pi-context-popover { position:fixed; z-index:1200; width:320px; max-width:calc(100vw - 16px); max-height:calc(100vh - 16px); overflow:auto; padding:14px; box-sizing:border-box; background:var(--pi-bg); color:var(--pi-text); border:1px solid var(--pi-border-strong); border-radius:12px; box-shadow:var(--pi-shadow-popover); font-size:12px; line-height:1.5; }
+.pi-context-popover__heading { display:flex; justify-content:space-between; gap:12px; }
+.pi-context-popover__heading span { font-variant-numeric:tabular-nums; color:var(--pi-text-secondary); }
+.pi-context-popover__model { margin:4px 0 0; color:var(--pi-text-secondary); overflow-wrap:anywhere; }
+.pi-context-popover__bar { height:7px; background:var(--pi-bg-inset); border-radius:4px; overflow:hidden; margin:12px 0; }
+.pi-context-popover__bar > span { display:block; height:100%; background:#3285ff; border-radius:inherit; }
+.pi-context-popover__stats { margin:0; }
+.pi-context-popover__stats > div { display:flex; justify-content:space-between; gap:12px; margin:6px 0; }
+.pi-context-popover__stats dt { color:var(--pi-text-secondary); }
+.pi-context-popover__stats dd { margin:0; font-variant-numeric:tabular-nums; }
+.pi-context-popover__note, .pi-context-popover__quota p { margin:8px 0 0; color:var(--pi-text-secondary); }
+.pi-context-popover__quota { margin-top:12px; padding-top:10px; border-top:1px solid var(--pi-border); }
+.pi-lightbox { position:fixed; inset:0; z-index:1000; display:flex; align-items:center; justify-content:center; padding:32px; background:rgba(8,10,14,.72); backdrop-filter:blur(4px); animation:pi-lightbox-in .16s ease; cursor:zoom-out; }
+.pi-lightbox img { max-width:min(100%,1080px); max-height:calc(100vh - 96px); object-fit:contain; border-radius:12px; box-shadow:0 18px 60px rgba(0,0,0,.45); }
+@keyframes pi-lightbox-in { from { opacity:0; } to { opacity:1; } }
+.pi-context-chip--image button { position:absolute; top:-6px; right:-6px; width:20px; height:20px; align-items:center; justify-content:center; border:1px solid var(--pi-border-strong); border-radius:50%; background:var(--pi-bg); opacity:0; transition:opacity 120ms; }
+.pi-context-chip--image:hover button, .pi-context-chip--image:focus-within button { opacity:1; }
+@media (hover:none) { .pi-context-chip--image button { opacity:1; } }
+.pi-message-image { display: block; max-width: min(100%, 480px); max-height: 360px; object-fit: contain; border-radius: 10px; margin: 8px 0; }
+
+.pi-attachment-loading { padding: 8px 14px; font-size: 12px; color: var(--pi-text-muted, #888); }
+.pi-project-picker{position:relative;min-width:0}
+.pi-project-picker>button{padding:4px 8px;border-radius:7px;max-width:260px}.pi-project-picker>button:hover:not(:disabled){background:var(--pi-bg-hover)}.pi-project-picker>button>span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pi-project-picker__popover{position:absolute;bottom:calc(100% + 10px);left:0;width:288px;max-width:calc(100vw - 60px);background:var(--pi-bg);border:1px solid var(--pi-border);border-radius:10px;box-shadow:0 4px 14px #00000016;z-index:80;padding:0;overflow:hidden;font-size:13px;color:var(--pi-text)}
+.pi-project-picker__search{display:flex;align-items:center;gap:8px;padding:11px 12px;border-bottom:1px solid var(--pi-border);color:var(--pi-text-tertiary)}
+.pi-project-picker__search input{width:100%;min-width:0;border:0;background:transparent;outline:none;box-shadow:none;color:var(--pi-text);font:inherit}
+.pi-project-picker__list{max-height:min(260px,40vh);overflow-y:auto;padding:5px}.pi-project-picker__popover button{width:100%;padding:8px;gap:9px;text-align:left;border-radius:5px;cursor:pointer}.pi-project-picker__popover button:hover,.pi-project-picker__popover button:focus-visible{background:var(--pi-bg-hover);outline:none}.pi-project-picker__popover button>span{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.pi-project-picker__popover button svg{flex-shrink:0;color:var(--pi-text-secondary)}.pi-project-picker__list p{margin:12px;color:var(--pi-text-secondary)}
+.pi-project-picker__actions{border-top:1px solid var(--pi-border);padding:5px}
+
+/* Usage statistics pane */
+.pireplica .pi-usage__cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 10px;
+  margin: 8px 0;
+}
+
+.pireplica .pi-usage__card {
+  background: var(--pi-bg-inset);
+  border-radius: 12px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.pireplica .pi-usage__card small {
+  color: var(--pi-text-secondary);
+  font-size: 12px;
+}
+
+.pireplica .pi-usage__card strong {
+  font-size: 20px;
+  font-weight: 650;
+}
+
+.pireplica .pi-usage__tokens {
+  display: flex;
+  gap: 18px;
+  flex-wrap: wrap;
+  font-size: 13px;
+  color: var(--pi-text-secondary);
+  margin: 6px 0 4px;
+}
+
+.pireplica .pi-usage__tokens b { color: var(--pi-text); font-variant-numeric: tabular-nums; }
+
+.pireplica .pi-usage h3 {
+  font-size: 14px;
+  font-weight: 600;
+  margin: 18px 0 8px;
+}
+
+.pireplica .pi-usage__days {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  min-height: 96px;
+}
+
+.pireplica .pi-usage__day {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+}
+
+.pireplica .pi-usage__bar {
+  width: 100%;
+  max-width: 34px;
+  border-radius: 6px 6px 2px 2px;
+  background: var(--pi-accent);
+  opacity: 0.85;
+  min-height: 4px;
+}
+
+.pireplica .pi-usage__daylabel {
+  font-size: 10px;
+  color: var(--pi-text-tertiary);
+  white-space: nowrap;
+}
+/* 上下文占用圆环（工具栏内，模型胶囊左侧，与 ZCode 对齐） */
+.pireplica .pi-context-chip--compact { padding: 2px; border: none; align-self: center; }
+.pireplica .pi-composer__right .pi-context-chip--compact { display: inline-flex; align-items: center; }
+/* 供应商品牌图标（模型配置页） */
+.pi-provider-logo { display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; line-height: 0; }
+.pi-provider-logo--fallback { border-radius: 5px; color: #fff; font-size: 11px; font-weight: 600; font-family: var(--pi-font-mono, ui-monospace, monospace); }
+/* ask_user_question 富问题卡片（desktop-ask 扩展） */
+.pi-ask { display: flex; flex-direction: column; gap: 14px; margin: 10px 0 4px; max-height: 55vh; overflow: auto; }
+.pi-ask__question { display: flex; flex-direction: column; gap: 8px; }
+.pi-ask__head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.pi-ask__chip { font-size: 11px; padding: 2px 8px; border-radius: 99px; background: var(--pi-accent-soft, rgba(59,130,246,.12)); color: var(--pi-accent, #3b82f6); font-weight: 600; }
+.pi-ask__text { font-size: 14px; font-weight: 600; color: var(--pi-text); }
+.pi-ask__multi { font-size: 11px; color: var(--pi-text-tertiary); }
+.pi-ask__options { display: flex; flex-direction: column; gap: 6px; }
+.pi-ask__option { display: flex; align-items: flex-start; gap: 10px; padding: 9px 12px; border: 1px solid var(--pi-border); border-radius: 10px; background: var(--pi-bg); cursor: pointer; text-align: left; }
+.pi-ask__option:hover { border-color: var(--pi-text-tertiary); }
+.pi-ask__option--on { border-color: var(--pi-accent, #3b82f6); background: var(--pi-accent-soft, rgba(59,130,246,.08)); }
+.pi-ask__optionmark { flex: none; width: 18px; height: 18px; margin-top: 1px; border: 1.5px solid var(--pi-border); border-radius: 5px; display: inline-flex; align-items: center; justify-content: center; font-size: 12px; color: var(--pi-accent, #3b82f6); }
+.pi-ask__option--on .pi-ask__optionmark { border-color: var(--pi-accent, #3b82f6); }
+.pi-ask__optionbody { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.pi-ask__optionbody b { font-size: 13px; color: var(--pi-text); }
+.pi-ask__optionbody small { font-size: 12px; color: var(--pi-text-secondary); overflow-wrap: anywhere; }
+.pi-ask__other { margin: 4px 0 0 28px; width: calc(100% - 40px); padding: 7px 10px; border: 1px solid var(--pi-accent, #3b82f6); border-radius: 8px; background: var(--pi-bg); color: var(--pi-text); font-size: 13px; outline: none; }
+
+/* -- panel resize handles ---------------------------------------------------- */
+
+.pireplica .pi-resizehandle {
+  flex: 0 0 5px;
+  align-self: stretch;
+  cursor: col-resize;
+  background: transparent;
+  z-index: 25;
+  position: relative;
+}
+
+.pireplica .pi-resizehandle::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 2px;
+  width: 1px;
+  background: transparent;
+  transition: background 0.12s ease;
+}
+
+.pireplica .pi-resizehandle:hover::after,
+.pireplica .pi-resizehandle:active::after {
+  /* 灰色提示线；accent 在浅色主题下是纯黑，太突兀 */
+  background: var(--pi-text-tertiary);
+  width: 2px;
+}

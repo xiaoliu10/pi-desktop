@@ -1,0 +1,97 @@
+{
+  "name": "pi-desktop",
+  "productName": "PI Desktop",
+  "version": "0.1.0",
+  "description": "Local-first AI coding agent desktop: Electron host core + agent runtime + multi-provider models",
+  "license": "Apache-2.0",
+  "author": "xiaoliu10",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/xiaoliu10/pi-desktop.git"
+  },
+  "bugs": {
+    "url": "https://github.com/xiaoliu10/pi-desktop/issues"
+  },
+  "homepage": "https://github.com/xiaoliu10/pi-desktop#readme",
+  "main": "dist/main/index.js",
+  "private": true,
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "preview:ui": "node scripts/preview-ui.mjs",
+    "build": "tsc -p tsconfig.main.json && vite build",
+    "postinstall": "node scripts/fix-node-pty.mjs",
+    "start": "electron .",
+    "typecheck": "tsc -p tsconfig.main.json --noEmit && tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "smoke": "PI_SMOKE=1 electron .",
+    "dist": "pnpm runtime:prepare && pnpm build && electron-builder",
+    "runtime:prepare": "node scripts/prepare-runtime.mjs"
+  },
+  "dependencies": {
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
+    "croner": "^9.1.0",
+    "highlight.js": "^11.10.0",
+    "mammoth": "^1.12.3",
+    "node-pty": "^1.1.0",
+    "pdf-parse": "1.1.1",
+    "qrcode": "^1.5.4",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-markdown": "^9.0.1",
+    "rehype-highlight": "^7.0.1",
+    "remark-gfm": "^4.0.0",
+    "ws": "^8.21.3",
+    "zustand": "^5.0.2"
+  },
+  "devDependencies": {
+    "@electron/rebuild": "^4.2.0",
+    "@types/node": "^22.10.2",
+    "@types/pdf-parse": "^1.1.5",
+    "@types/qrcode": "^1.5.6",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@types/ws": "^8.18.1",
+    "@vitejs/plugin-react": "^4.3.4",
+    "autoprefixer": "^10.4.20",
+    "concurrently": "^9.1.0",
+    "electron": "^33.2.1",
+    "electron-builder": "^25.1.8",
+    "postcss": "^8.4.49",
+    "tailwindcss": "^3.4.17",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.3",
+    "vitest": "^2.1.8",
+    "wait-on": "^8.0.1"
+  },
+  "build": {
+    "appId": "works.pi.desktop",
+    "productName": "PI Desktop",
+    "files": [
+      "dist/**/*"
+    ],
+    "asarUnpack": [
+      "node_modules/node-pty/**"
+    ],
+    "extraResources": [
+      "resources/icon.png",
+      "resources/icon.icns"
+    ],
+    "mac": {
+      "icon": "resources/icon.icns",
+      "target": [
+        "dmg"
+      ]
+    },
+    "win": {
+      "icon": "resources/icon.png"
+    },
+    "linux": {
+      "icon": "resources/icon.png"
+    }
+  }
+}

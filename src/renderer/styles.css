@@ -1,0 +1,122 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+    overflow: hidden;
+  }
+  body {
+    @apply bg-ink-950 text-ink-100 font-sans antialiased;
+    font-size: 14px;
+  }
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-thumb {
+    @apply bg-ink-700 rounded-full border-2 border-solid border-transparent bg-clip-content;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-ink-600;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+}
+
+@layer components {
+  .btn {
+    @apply inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors
+      disabled:opacity-40 disabled:cursor-not-allowed;
+  }
+  .btn-primary {
+    @apply btn bg-accent text-white hover:bg-accent-hover;
+  }
+  .btn-ghost {
+    @apply btn text-ink-300 hover:bg-ink-800 hover:text-ink-100;
+  }
+  .btn-outline {
+    @apply btn border border-ink-700 text-ink-200 hover:border-ink-500 hover:text-ink-100;
+  }
+  .btn-danger {
+    @apply btn text-red-400 hover:bg-red-500/10 hover:text-red-300;
+  }
+  .input {
+    @apply w-full rounded-md border border-ink-700 bg-ink-900 px-2.5 py-1.5 text-xs text-ink-100
+      placeholder-ink-500 outline-none focus:border-accent;
+  }
+  .card {
+    @apply rounded-lg border border-ink-800 bg-ink-900;
+  }
+  .chip {
+    @apply inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide;
+  }
+}
+
+/* markdown */
+.md {
+  @apply text-sm leading-relaxed break-words;
+}
+.md > *:first-child {
+  margin-top: 0;
+}
+.md > *:last-child {
+  margin-bottom: 0;
+}
+.md p {
+  @apply my-2;
+}
+.md h1, .md h2, .md h3, .md h4 {
+  @apply mt-4 mb-2 font-semibold text-ink-100;
+}
+.md h1 { @apply text-lg; }
+.md h2 { @apply text-base; }
+.md h3 { @apply text-sm; }
+.md ul {
+  @apply my-2 list-disc pl-5;
+}
+.md ol {
+  @apply my-2 list-decimal pl-5;
+}
+.md li {
+  @apply my-0.5;
+}
+.md a {
+  @apply text-accent underline underline-offset-2;
+}
+.md blockquote {
+  @apply my-2 border-l-2 border-ink-600 pl-3 text-ink-300;
+}
+.md code:not(pre code) {
+  @apply rounded bg-ink-800 px-1 py-0.5 font-mono text-[12px] text-ink-200;
+}
+.md pre {
+  @apply my-2 overflow-x-auto rounded-md border border-ink-800 bg-[#0d1117] p-3 text-[12px];
+}
+.md pre code {
+  @apply font-mono;
+}
+.md table {
+  @apply my-2 w-full border-collapse text-xs;
+}
+.md th, .md td {
+  @apply border border-ink-700 px-2 py-1 text-left;
+}
+.md hr {
+  @apply my-3 border-ink-800;
+}
+
+/* diff lines */
+.diff-line-add {
+  @apply bg-emerald-500/10 text-emerald-200;
+}
+.diff-line-del {
+  @apply bg-red-500/10 text-red-200;
+}
+.diff-line-ctx {
+  @apply text-ink-300;
+}

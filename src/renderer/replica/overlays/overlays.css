@@ -1,0 +1,223 @@
+/* Overlay styles (U06): global search card + notifications popover. */
+
+.pireplica .pi-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  background: rgba(0, 0, 0, 0.32);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 14vh;
+}
+
+.pireplica .pi-search {
+  width: min(680px, calc(100vw - 64px));
+  background: var(--pi-bg);
+  border-radius: var(--pi-radius-lg);
+  box-shadow: var(--pi-shadow-popover);
+  overflow: hidden;
+  padding: 8px;
+}
+
+.pireplica .pi-search__inputrow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--pi-text-tertiary);
+  padding: 8px 10px;
+}
+
+.pireplica .pi-search__input {
+  flex: 1;
+  border: none;
+  outline: none;
+  background: transparent;
+  font-size: 16px;
+  color: var(--pi-text);
+}
+
+.pireplica .pi-search__group {
+  font-size: var(--pi-font-size-xs);
+  font-weight: 600;
+  color: var(--pi-text-tertiary);
+  padding: 8px 12px 4px;
+}
+
+.pireplica .pi-search__row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  text-align: left;
+  padding: 9px 12px;
+  border-radius: var(--pi-radius-sm);
+  font-size: var(--pi-font-size-md);
+  color: var(--pi-text);
+}
+
+.pireplica .pi-search__row:hover,
+.pireplica .pi-search__row--sel {
+  background: var(--pi-bg-hover);
+}
+
+.pireplica .pi-search__row--newtask {
+  margin-top: 4px;
+  font-weight: 500;
+}
+
+.pireplica .pi-search__title {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pireplica .pi-search__source {
+  color: var(--pi-text-tertiary);
+  font-size: var(--pi-font-size-sm);
+  flex-shrink: 0;
+}
+
+.pireplica .pi-search__empty {
+  padding: 22px;
+  text-align: center;
+  color: var(--pi-text-tertiary);
+  font-size: var(--pi-font-size-sm);
+}
+
+.pireplica .pi-search__list {
+  max-height: 380px;
+  overflow-y: auto;
+  padding-bottom: 4px;
+}
+
+/* notifications */
+.pireplica .pi-notifwrap {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+}
+
+.pireplica .pi-notif {
+  position: absolute;
+  left: 12px;
+  bottom: 64px;
+  width: 360px;
+  max-height: 60vh;
+  overflow-y: auto;
+  background: var(--pi-bg);
+  border: 1px solid var(--pi-border);
+  border-radius: var(--pi-radius-md);
+  box-shadow: var(--pi-shadow-popover);
+  padding: 8px;
+}
+
+.pireplica .pi-notif__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 8px 8px;
+}
+
+.pireplica .pi-notif__title {
+  font-weight: 600;
+  font-size: var(--pi-font-size-md);
+}
+
+.pireplica .pi-notif__row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: 100%;
+  text-align: left;
+  padding: 9px 10px;
+  border-radius: var(--pi-radius-sm);
+}
+
+.pireplica .pi-notif__row:hover {
+  background: var(--pi-bg-hover);
+}
+
+.pireplica .pi-notif__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-top: 6px;
+  flex-shrink: 0;
+}
+
+.pireplica .pi-notif__dot--info {
+  background: var(--pi-text-tertiary);
+}
+
+.pireplica .pi-notif__dot--ok {
+  background: var(--pi-green-icon);
+}
+
+.pireplica .pi-notif__dot--bad {
+  background: var(--pi-red);
+}
+
+.pireplica .pi-notif__dot--req {
+  background: var(--pi-orange-text);
+}
+
+.pireplica .pi-notif__dot--read {
+  opacity: 0.35;
+}
+
+.pireplica .pi-notif__body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.pireplica .pi-notif__rowtitle {
+  font-size: var(--pi-font-size-sm);
+  font-weight: 500;
+  color: var(--pi-text);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.pireplica .pi-notif__req {
+  font-style: normal;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  color: var(--pi-orange-text);
+  border: 1px solid currentColor;
+  border-radius: 4px;
+  padding: 0 4px;
+}
+
+.pireplica .pi-notif__rowbody {
+  font-size: var(--pi-font-size-xs);
+  color: var(--pi-text-tertiary);
+}
+
+.pireplica .pi-notif__time {
+  font-size: var(--pi-font-size-xs);
+  color: var(--pi-text-tertiary);
+  flex-shrink: 0;
+}
+
+.pireplica .pi-notif__empty {
+  padding: 26px;
+  text-align: center;
+  color: var(--pi-text-tertiary);
+  font-size: var(--pi-font-size-sm);
+}
+
+.pireplica .pi-notif__note {
+  font-size: 10px;
+  color: var(--pi-text-tertiary);
+  padding: 8px 10px 4px;
+  border-top: 1px solid var(--pi-border);
+  margin-top: 6px;
+}
