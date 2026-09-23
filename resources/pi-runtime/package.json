@@ -1,0 +1,9 @@
+{
+  "name": "pi-desktop-private-runtime",
+  "private": true,
+  "version": "1.0.0",
+  "dependencies": {
+    "node": "22.22.0",
+    "@earendil-works/pi-coding-agent": "0.86.0"
+  }
+}

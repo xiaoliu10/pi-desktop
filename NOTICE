@@ -1,4 +1,15 @@
 pi-desktop
-Copyright 2026 jason
+Copyright 2026 xiaoliu10
 
-This product includes software developed by jason.
+This product includes software developed by xiaoliu10.
+
+Bundled third-party components (installed at build time, not committed):
+
+* pi coding agent CLI (`@earendil-works/pi-coding-agent`) — Apache License 2.0,
+  fetched by `scripts/prepare-runtime.mjs` as the local agent kernel.
+* node-pty — MIT License, used for the integrated terminal.
+* @xterm/xterm — MIT License, used for the integrated terminal UI.
+
+The UI design references ZCode (Apache License 2.0) and PI-Desktop
+(https://github.com/vastsa/PI-Desktop). This project is an independent
+implementation and does not include their source code.

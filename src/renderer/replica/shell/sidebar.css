@@ -1,0 +1,298 @@
+/* Sidebar styles (U02) — scoped to .pireplica, see tokens.css for variables. */
+
+.pireplica .pi-sidebar {
+  width: var(--pi-sidebar-width);
+  flex-shrink: 0;
+  background: var(--pi-bg-sidebar);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding-top: env(titlebar-area-height, 0px);
+  /* hiddenInset window: sidebar top strip doubles as the title bar. */
+  -webkit-app-region: drag;
+}
+
+/* Interactive sidebar elements must stay clickable inside the drag region. */
+.pireplica .pi-sidebar button,
+.pireplica .pi-sidebar input,
+.pireplica .pi-sidebar [role='button'] {
+  -webkit-app-region: no-drag;
+}
+
+.pireplica .pi-sidebar--collapsed {
+  position: absolute;
+  z-index: 20;
+  top: 14px;
+  left: 16px;
+  width: 32px;
+  height: 32px;
+  min-height: 0;
+  align-items: center;
+  padding: 0;
+  background: transparent;
+  -webkit-app-region: no-drag;
+}
+
+.pireplica .pi-sidebar__top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 12px 14px 4px;
+}
+
+.pireplica .pi-sidebar__topspacer {
+  flex: 1;
+}
+
+.pireplica .pi-sidebar__scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 10px 12px;
+}
+
+.pireplica .pi-sidebar__grouplabel {
+  padding: 14px 8px 6px;
+}
+
+.pireplica .pi-sidebar__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.pireplica .pi-sidebar__list--nested {
+  margin-top: 1px;
+}
+
+.pireplica .pi-sidebar__row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 37px;
+  padding: 0 10px;
+  border-radius: var(--pi-radius-md);
+  cursor: pointer;
+  color: var(--pi-text);
+  position: relative;
+}
+
+.pireplica .pi-sidebar__row:hover {
+  background: var(--pi-bg-hover);
+}
+
+.pireplica .pi-sidebar__row--active {
+  background: var(--pi-bg-active);
+}
+
+.pireplica .pi-sidebar__rowicon {
+  display: inline-flex;
+  color: var(--pi-text-secondary);
+  flex-shrink: 0;
+}
+
+.pireplica .pi-sidebar__rowtitle {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: var(--pi-font-size-body);
+}
+
+.pireplica .pi-sidebar__edit {
+  flex: 1;
+  min-width: 0;
+  border: 1px solid var(--pi-accent);
+  border-radius: 6px;
+  background: var(--pi-bg);
+  color: var(--pi-text);
+  font-size: var(--pi-font-size-body);
+  padding: 2px 6px;
+  outline: none;
+}
+
+/* 会话运行中的菊花指示器复用 .pi-spinner（见 chat.css） */
+
+.pireplica .pi-sidebar__rowmeta {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.pireplica .pi-sidebar__sync {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--pi-text-tertiary);
+  border: 1px solid var(--pi-border);
+  border-radius: 5px;
+  padding: 0 4px;
+  line-height: 14px;
+}
+
+.pireplica .pi-sidebar__time {
+  font-size: var(--pi-font-size-xs);
+  color: var(--pi-text-tertiary);
+  visibility: hidden;
+}
+
+.pireplica .pi-sidebar__row:hover .pi-sidebar__time {
+  visibility: visible;
+}
+
+.pireplica .pi-sidebar__more {
+  display: none;
+  color: var(--pi-text-tertiary);
+  border-radius: 6px;
+  padding: 2px;
+}
+
+.pireplica .pi-sidebar__row:hover .pi-sidebar__more {
+  display: inline-flex;
+}
+
+.pireplica .pi-sidebar__more:hover {
+  color: var(--pi-text);
+  background: var(--pi-bg-hover);
+}
+
+.pireplica .pi-sidebar__empty {
+  padding: 8px 12px;
+  color: var(--pi-text-tertiary);
+  font-size: var(--pi-font-size-md);
+}
+
+.pireplica .pi-sidebar__showall {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 12px;
+  color: var(--pi-text-tertiary);
+  font-size: var(--pi-font-size-sm);
+  border-radius: var(--pi-radius-md);
+}
+
+.pireplica .pi-sidebar__showall:hover {
+  color: var(--pi-text);
+  background: var(--pi-bg-hover);
+}
+
+.pireplica .pi-sidebar__project {
+  margin-top: 2px;
+}
+
+.pireplica .pi-sidebar__projrow {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  height: 37px;
+  padding: 0 10px;
+  border-radius: var(--pi-radius-md);
+  cursor: pointer;
+  color: var(--pi-text);
+  font-size: var(--pi-font-size-body);
+}
+
+.pireplica .pi-sidebar__projrow:hover {
+  background: var(--pi-bg-hover);
+}
+
+.pireplica .pi-sidebar__chevron {
+  display: inline-flex;
+  color: var(--pi-text-tertiary);
+  transition: transform 0.15s ease;
+}
+
+.pireplica .pi-sidebar__chevron--open {
+  transform: rotate(0deg);
+}
+
+.pireplica .pi-sidebar__chevron:not(.pi-sidebar__chevron--open) {
+  transform: rotate(-90deg);
+}
+
+.pireplica .pi-sidebar__list--nested .pi-sidebar__row {
+  padding-left: 10px;
+}
+.pireplica .pi-sidebar__rowslot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 15px;
+  flex-shrink: 0;
+  color: var(--pi-text-secondary);
+}
+
+.pireplica .pi-sidebar__footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px 14px;
+}
+
+.pireplica .pi-sidebar__footericons {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.pireplica .pi-iconbtn--on {
+  background: var(--pi-bg-active);
+  color: var(--pi-text);
+}
+
+.pireplica .pi-iconbtn--dot {
+  position: relative;
+}
+
+.pireplica .pi-iconbtn--dot::after {
+  content: '';
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--pi-red);
+}
+
+.pireplica .pi-sidebar__version {
+  font-size: var(--pi-font-size-sm);
+  color: var(--pi-text-tertiary);
+}
+
+/* narrow viewports: sidebar slides under content */
+@media (max-width: 1080px) {
+  .pireplica .pi-sidebar {
+    min-width: var(--pi-sidebar-collapsed-width);
+  }
+}
+
+/* Fixed primary actions above the independently scrolling project list. */
+.pireplica .pi-sidebar__actions { flex-shrink: 0; display: flex; flex-direction: column; gap: 2px; margin: 10px 10px 8px; }
+.pireplica .pi-sidebar__action { width: 100%; min-height: 36px; display: flex; align-items: center; gap: 10px; padding: 0 10px; border: 0; border-radius: 7px; background: transparent; color: var(--pi-text); text-align: left; font-size: 13px; cursor: pointer; -webkit-app-region: no-drag; }
+.pireplica .pi-sidebar__action svg { flex-shrink: 0; color: var(--pi-text-secondary); }
+.pireplica .pi-sidebar__action span { flex: 1; }
+.pireplica .pi-sidebar__action kbd { color: var(--pi-text-tertiary); font: inherit; font-size: 10px; white-space: nowrap; }
+.pireplica .pi-sidebar__action:hover:not(:disabled) { background: var(--pi-bg-hover); }
+.pireplica .pi-sidebar__action--active { background: var(--pi-bg-active); }
+
+/* The collapsed sidebar is a title-bar toggle, not a vertical icon rail. */
+.pireplica:has(.pi-sidebar--collapsed) .pi-topbar { padding-left: 64px; }
+.pireplica--mac .pi-sidebar--collapsed { left: 96px; }
+.pireplica--mac:has(.pi-sidebar--collapsed) .pi-topbar { padding-left: 144px; }
+.pireplica:has(.pi-sidebar--collapsed) .pi-plugins { padding-top: 64px; }
+
+.pireplica .pi-sidebar__projectheading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.pireplica .pi-sidebar__projectheading .pi-iconbtn { width: 24px; height: 24px; color: var(--pi-text-secondary); }
+.pi-sidebar__session {position:relative;}
+.pi-sidebar__sessionmenu {position:fixed;z-index:50;min-width:150px;padding:5px;border:1px solid var(--pi-border);border-radius:9px;background:var(--pi-bg-card);box-shadow:0 5px 18px #0002;}
+.pi-sidebar__sessionmenu button {display:flex;align-items:center;gap:8px;width:100%;border:0;border-radius:5px;padding:8px 10px;background:transparent;color:var(--pi-text);text-align:left;font:inherit;cursor:pointer;}
+.pi-sidebar__sessionmenu button:hover {background:var(--pi-bg-hover);}
+.pi-sidebar__sessionmenu button:disabled {opacity:.4;cursor:default;}
+.pireplica .pi-sidebar__session:focus-within .pi-sidebar__more {display:inline-flex;}

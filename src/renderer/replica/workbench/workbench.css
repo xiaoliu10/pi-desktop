@@ -1,0 +1,179 @@
+/* Workbench panel styles (U06). */
+
+.pireplica .pi-workbench {
+  width: var(--pi-workbench-width);
+  flex-shrink: 0;
+  border-left: 1px solid var(--pi-border);
+  background: var(--pi-bg);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+@media (max-width: 1180px) {
+  .pireplica .pi-workbench {
+    position: absolute;
+    right: 0;
+    top: var(--pi-topbar-height);
+    bottom: 0;
+    z-index: 20;
+    box-shadow: var(--pi-shadow-popover);
+  }
+}
+
+.pireplica .pi-workbench__tabs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 12px 12px 10px;
+  border-bottom: 1px solid var(--pi-border);
+  flex-shrink: 0;
+}
+
+.pireplica .pi-workbench__tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: var(--pi-radius-pill);
+  padding: 6px 12px;
+  font-size: var(--pi-font-size-sm);
+  color: var(--pi-text-secondary);
+}
+
+.pireplica .pi-workbench__tab:hover {
+  background: var(--pi-bg-hover);
+  color: var(--pi-text);
+}
+
+.pireplica .pi-workbench__tab--on {
+  background: var(--pi-bg-active);
+  color: var(--pi-text);
+  font-weight: 500;
+}
+
+.pireplica .pi-workbench__close {
+  margin-left: auto;
+}
+
+.pireplica .pi-workbench__body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.pireplica .pi-workbench__filehead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  padding: 8px 10px;
+  border-radius: var(--pi-radius-sm);
+  font-family: var(--pi-font-mono);
+  font-size: 12px;
+  color: var(--pi-text);
+}
+
+.pireplica .pi-workbench__filehead:hover {
+  background: var(--pi-bg-hover);
+}
+
+.pireplica .pi-workbench__filepath {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+  color: var(--pi-text);
+}
+
+.pireplica .pi-workbench__filepath:hover {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.pireplica .pi-workbench__stat {
+  font-family: var(--pi-font-body);
+  font-family: var(--pi-font-mono);
+  font-size: 11px;
+  flex-shrink: 0;
+}
+
+.pireplica .pi-workbench__filebody {
+  padding: 0 4px 4px;
+}
+
+.pireplica .pi-workbench__fileselect {
+  border: 1px solid var(--pi-border);
+  background: var(--pi-bg-card);
+  border-radius: var(--pi-radius-sm);
+  padding: 8px 10px;
+  font: inherit;
+  font-size: var(--pi-font-size-sm);
+  color: var(--pi-text);
+}
+
+.pireplica .pi-workbench__code {
+  font-family: var(--pi-font-mono);
+  font-size: 12px;
+  line-height: 1.7;
+  background: var(--pi-code-bg);
+  border-radius: var(--pi-radius-md);
+  padding: 12px 14px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: 0;
+}
+
+.pireplica .pi-workbench__empty {
+  margin: auto;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 40px 20px;
+}
+
+.pireplica .pi-workbench__emptyicon {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: var(--pi-bg-card);
+  color: var(--pi-text-secondary);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.pireplica .pi-workbench__emptytitle {
+  font-weight: 600;
+  color: var(--pi-text);
+}
+
+.pireplica .pi-workbench__emptyhint {
+  font-size: var(--pi-font-size-sm);
+  color: var(--pi-text-tertiary);
+  max-width: 240px;
+}
+.pireplica .pi-workbench__preview-note { padding: 10px 14px; margin: 0; font-size: 12px; color: var(--pi-text-secondary); border-bottom: 1px solid var(--pi-border); }
+.pireplica .pi-file-code{display:flex;overflow:auto;max-height:calc(100vh - 230px);font:12px/20px ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--pi-bg);color:var(--pi-text);border:1px solid var(--pi-border);border-radius:8px;margin-top:8px}
+.pireplica .pi-file-code__lines{position:sticky;left:0;flex-shrink:0;user-select:none;text-align:right;padding:12px 10px;min-width:38px;color:var(--pi-text-tertiary);background:var(--pi-bg-sidebar);border-right:1px solid var(--pi-border)}
+.pireplica .pi-file-code__lines .is-focused{color:var(--pi-text);font-weight:700;background:var(--pi-bg-active)}
+.pireplica .pi-file-code pre{margin:0;padding:12px;overflow:visible;background:transparent;font:inherit}.pireplica .pi-file-code code{font:inherit;white-space:pre;color:inherit;background:transparent}
+.pireplica .pi-file-code .hljs-keyword{color:#a626a4}.pireplica .pi-file-code .hljs-string{color:#397b33}.pireplica .pi-file-code .hljs-number,.pireplica .pi-file-code .hljs-literal{color:#986801}.pireplica .pi-file-code .hljs-comment{color:#82858b}.pireplica .pi-file-code .hljs-title,.pireplica .pi-file-code .hljs-attr{color:#236aa5}
+.pireplica--dark .pi-file-code .hljs-keyword{color:#c792ea}.pireplica--dark .pi-file-code .hljs-string{color:#a7ce8a}.pireplica--dark .pi-file-code .hljs-title,.pireplica--dark .pi-file-code .hljs-attr{color:#82aaff}.pireplica--dark .pi-file-code .hljs-number,.pireplica--dark .pi-file-code .hljs-literal{color:#f0ba78}
+.pireplica .pi-workbench__filetoolbar{display:flex;align-items:center;gap:6px;min-width:0;padding-right:6px}
+.pireplica .pi-workbench__filetoolbar>.pi-workbench__filehead{flex:1;min-width:0}
+.pireplica .pi-workbench__filename{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:10px;font-size:12px;color:var(--pi-text-secondary)}
+.pireplica .pi-file-path-menu{position:relative;flex-shrink:0;margin-left:auto}
+.pireplica .pi-file-path-menu__popup{position:absolute;right:0;top:calc(100% + 4px);width:188px;padding:5px;z-index:30;background:var(--pi-bg);border:1px solid var(--pi-border);border-radius:10px;box-shadow:0 5px 18px #0002}
+.pireplica .pi-file-path-menu__popup button{display:flex;align-items:center;gap:9px;width:100%;padding:9px 10px;background:transparent;border:0;border-radius:6px;text-align:left;color:var(--pi-text);font:inherit;font-size:12px;cursor:pointer}
+.pireplica .pi-file-path-menu__popup button:hover,.pireplica .pi-file-path-menu__popup button:focus-visible{background:var(--pi-bg-hover)}
+.pireplica .pi-file-path-menu__popup button:disabled{opacity:.45;cursor:default}
+.pireplica .pi-file-path-menu__feedback{position:absolute;right:32px;top:4px;white-space:nowrap;background:var(--pi-bg);color:var(--pi-text-secondary);font-size:12px;padding:2px 6px;z-index:2}

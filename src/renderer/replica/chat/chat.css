@@ -1,0 +1,941 @@
+/* Chat replica styles (U03): messages, markdown, tools, rail, composer, home. */
+
+/* -- conversation ---------------------------------------------------------- */
+
+.pireplica .pi-chat {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+.pireplica .pi-chat__scroll {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+  overflow-x: hidden; /* 横向溢出由内容自适应吸收；代码块/表格在自身内部滚动 */
+  user-select: text;
+}
+
+.pireplica .pi-chat__inner {
+  max-width: 860px;
+  margin: 0 auto;
+  padding: 28px 48px 40px 56px;
+  display: flex;
+  flex-direction: column;
+  gap: 56px;
+}
+
+/* 中间对话自适应：消息块可收缩到容器宽，长代码/长 token 不再把聊天区撑出横向滚动条。 */
+.pireplica .pi-chat__inner > * {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.pireplica .pi-msg--user {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+}
+
+/* 用户消息结构（参考 ZCode）：图片先独立展示在上（无气泡底），文字气泡在下。 */
+.pireplica .pi-msg--user .pi-msg__image {
+  display: block;
+  max-width: min(100%, 320px);
+  max-height: 240px;
+  object-fit: cover;
+  border-radius: 12px;
+  border: 1px solid var(--pi-border);
+  margin-bottom: 6px;
+}
+
+.pireplica .pi-msg--user .pi-msg__bubble {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  background: var(--pi-bubble-user);
+  border-radius: var(--pi-radius-lg);
+  padding: 10px 16px;
+  max-width: 68%;
+  width: fit-content;
+  overflow-wrap: anywhere;
+}
+
+.pireplica .pi-msg--assistant > * {
+  margin: 0;
+}
+
+.pireplica .pi-msg__simtag {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: var(--pi-font-size-xs);
+  color: var(--pi-text-tertiary);
+  border: 1px solid var(--pi-border);
+  border-radius: var(--pi-radius-pill);
+  padding: 2px 8px;
+  margin-bottom: 10px;
+  width: fit-content;
+}
+
+.pireplica .pi-chat__working {
+  color: var(--pi-text-tertiary);
+  font-size: var(--pi-font-size-sm);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* 当前正在做什么：工具名 + 首行参数，单行省略，始终可见 */
+.pireplica .pi-chat__working-now {
+  color: var(--pi-text-secondary);
+  font-size: var(--pi-font-size-xs, 12px);
+  max-width: 360px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 乐观展示的待回显用户气泡：比已确认消息稍淡 */
+.pireplica .pi-msg--pending { opacity: 0.72; }
+
+/* 「回到最新」浮动按钮：用户滚离底部时出现，点击回到当前任务位置 */
+.pireplica .pi-chat__jumpbottom {
+  position: absolute;
+  left: 50%;
+  bottom: 16px;
+  transform: translateX(-50%);
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--pi-bg);
+  border: 1px solid var(--pi-border);
+  color: var(--pi-text-secondary);
+  box-shadow: var(--pi-shadow-popover);
+  cursor: pointer;
+  z-index: 20;
+  transition: color 0.12s ease, border-color 0.12s ease;
+}
+
+.pireplica .pi-chat__jumpbottom:hover {
+  color: var(--pi-text);
+  border-color: var(--pi-text-tertiary);
+}
+
+.pireplica .pi-chat__caret {
+  width: 8px;
+  height: 14px;
+  background: var(--pi-text-tertiary);
+  animation: pi-blink 1s steps(2) infinite;
+}
+
+@keyframes pi-blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+/* markdown */
+.pireplica .pi-md {
+  font-size: var(--pi-font-size-body);
+  line-height: 1.65;
+  overflow-wrap: break-word;
+}
+
+.pireplica .pi-md > *:first-child {
+  margin-top: 0;
+}
+
+.pireplica .pi-md > *:last-child {
+  margin-bottom: 0;
+}
+
+.pireplica .pi-md p {
+  margin: 0 0 10px;
+}
+
+.pireplica .pi-md ul,
+.pireplica .pi-md ol {
+  margin: 8px 0;
+  padding-left: 22px;
+}
+
+.pireplica .pi-md h1,
+.pireplica .pi-md h2,
+.pireplica .pi-md h3 {
+  margin: 18px 0 8px;
+  font-weight: 600;
+}
+
+.pireplica .pi-md code {
+  font-family: var(--pi-font-mono);
+  font-size: 13px;
+  background: var(--pi-code-bg);
+  border-radius: 6px;
+  padding: 1.5px 6px;
+}
+
+.pireplica .pi-md pre {
+  background: var(--pi-code-bg);
+  border-radius: var(--pi-radius-md);
+  padding: 14px 16px;
+  overflow-x: auto;
+  margin: 10px 0;
+}
+
+.pireplica .pi-md pre code {
+  background: none;
+  padding: 0;
+}
+
+.pireplica .pi-md img,
+.pireplica .pi-message-image {
+  max-width: 100%;
+  border-radius: var(--pi-radius-sm);
+}
+
+.pireplica .pi-md a {
+  color: inherit;
+}
+
+.pireplica .pi-md table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto; /* 宽表格在自身内部横向滚动，不撑开对话区 */
+  border-collapse: collapse;
+  margin: 10px 0;
+  font-size: var(--pi-font-size-sm);
+}
+
+.pireplica .pi-md th,
+.pireplica .pi-md td {
+  border: 1px solid var(--pi-border);
+  padding: 6px 10px;
+}
+
+/* notice & error */
+.pireplica .pi-notice {
+  font-size: var(--pi-font-size-sm);
+  color: var(--pi-text-tertiary);
+  margin: 8px 0;
+}
+
+.pireplica .pi-error {
+  background: var(--pi-red-bg);
+  color: var(--pi-red);
+  border-radius: var(--pi-radius-md);
+  padding: 10px 14px;
+  font-size: var(--pi-font-size-sm);
+  margin: 8px 0;
+}
+
+/* tool card */
+.pireplica .pi-tool {
+  margin: 10px 0;
+}
+
+.pireplica .pi-tool__summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  list-style: none;
+  cursor: pointer;
+  color: var(--pi-text-secondary);
+  font-size: var(--pi-font-size-sm);
+  padding: 6px 10px;
+  margin-left: -10px;
+  border-radius: var(--pi-radius-sm);
+}
+
+.pireplica .pi-tool__summary::-webkit-details-marker {
+  display: none;
+}
+
+.pireplica .pi-tool__summary:hover {
+  background: var(--pi-bg-hover);
+  color: var(--pi-text);
+}
+
+.pireplica .pi-tool__name {
+  font-family: var(--pi-font-mono);
+  font-size: 12.5px;
+}
+
+.pireplica .pi-tool__arg {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: var(--pi-font-mono);
+  font-size: 12px;
+}
+
+.pireplica .pi-tool__status {
+  flex-shrink: 0;
+  font-size: var(--pi-font-size-xs);
+}
+
+.pireplica .pi-tool__status--done {
+  color: var(--pi-green);
+}
+
+.pireplica .pi-tool__status--running {
+  color: var(--pi-text-tertiary);
+}
+
+.pireplica .pi-tool__status--error {
+  color: var(--pi-red);
+}
+
+.pireplica .pi-tool__detail {
+  border-left: 2px solid var(--pi-border);
+  margin: 6px 0 6px 6px;
+  padding-left: 14px;
+}
+
+.pireplica .pi-tool__output {
+  font-family: var(--pi-font-mono);
+  font-size: 12px;
+  color: var(--pi-text-secondary);
+  background: var(--pi-code-bg);
+  border-radius: var(--pi-radius-sm);
+  padding: 10px 12px;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  margin: 0 0 8px;
+}
+
+/* diff */
+.pireplica .pi-diff {
+  border: 1px solid var(--pi-border);
+  border-radius: var(--pi-radius-md);
+  overflow: hidden;
+  margin-bottom: 8px;
+}
+
+.pireplica .pi-diff__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px;
+  background: var(--pi-bg-card);
+  border-bottom: 1px solid var(--pi-border);
+  font-family: var(--pi-font-mono);
+  font-size: 12px;
+}
+
+.pireplica .pi-diff__path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pireplica .pi-chip {
+  font-size: 10px;
+  font-weight: 600;
+  border-radius: 5px;
+  padding: 1px 6px;
+}
+
+.pireplica .pi-chip--new {
+  background: var(--pi-green-bg);
+  color: var(--pi-green);
+}
+
+.pireplica .pi-diff__stat--add {
+  color: var(--pi-green);
+}
+
+.pireplica .pi-diff__stat--del {
+  color: var(--pi-red);
+}
+
+.pireplica .pi-diff__line {
+  display: flex;
+  font-family: var(--pi-font-mono);
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+/* 行号列：右对齐等宽，删=旧行号、上下文/增=新行号（照 ZCode 的单列行号） */
+.pireplica .pi-diff__num {
+  width: 38px;
+  flex-shrink: 0;
+  text-align: right;
+  padding-right: 8px;
+  color: var(--pi-text-tertiary);
+  font-size: 11px;
+  user-select: none;
+}
+
+.pireplica .pi-diff__sign {
+  width: 20px;
+  flex-shrink: 0;
+  text-align: center;
+  color: var(--pi-text-tertiary);
+  user-select: none;
+}
+
+.pireplica .pi-diff__text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere; /* 超长未断行（压缩 JS 等）折行显示，不撑宽 diff */
+  min-width: 0;
+  padding-right: 12px;
+}
+
+.pireplica .pi-diff__line--add {
+  background: color-mix(in srgb, var(--pi-green) 9%, transparent);
+}
+
+.pireplica .pi-diff__line--del {
+  background: color-mix(in srgb, var(--pi-red) 9%, transparent);
+}
+
+/* nav rail */
+.pireplica .pi-rail {
+  width: var(--pi-rail-width);
+  flex-shrink: 0;
+  position: relative;
+  min-height: 0;
+}
+.pireplica .pi-rail__inner {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: 14px 0;
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+.pireplica .pi-rail__inner::-webkit-scrollbar { display: none; }
+.pireplica .pi-rail__slot {
+  flex: 1 0 auto;
+  min-height: 14px;
+  display: flex;
+  align-items: center;
+}
+
+.pireplica .pi-rail__mark {
+  margin-left: 6px;
+  width: 12px;
+  height: 2.5px;
+  border-radius: 2px;
+  background: var(--pi-border-strong);
+  opacity: 0.65;
+  transition: transform 0.1s ease, background 0.1s ease, opacity 0.1s ease;
+}
+
+.pireplica .pi-rail__mark--user {
+  width: 16px;
+  opacity: 0.85;
+}
+
+.pireplica .pi-rail__mark--active {
+  width: 22px;
+  background: var(--pi-text-secondary);
+  opacity: 1;
+}
+
+.pireplica .pi-rail__mark:hover,
+.pireplica .pi-rail__mark:focus-visible {
+  /* ZCode 用灰色悬浮提示，纯文本色（近黑）太突兀 */
+  background: var(--pi-text-secondary);
+  opacity: 1;
+  transform: scaleX(1.15);
+}
+
+.pireplica .pi-rail__tip {
+  position: absolute;
+  left: calc(100% + 4px);
+  transform: translateY(-50%);
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 6px 10px;
+  border: 1px solid var(--pi-border);
+  border-radius: 8px;
+  background: var(--pi-bg-elevated, var(--pi-bg));
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+  pointer-events: none;
+  white-space: nowrap;
+  max-width: 320px;
+}
+.pireplica .pi-rail__tip b { font-size: 11px; font-weight: 600; color: var(--pi-text-secondary); }
+.pireplica .pi-rail__tip em { font-style: normal; font-size: 12px; color: var(--pi-text); overflow: hidden; text-overflow: ellipsis; }
+
+/* -- composer --------------------------------------------------------------- */
+
+.pireplica .pi-composer-wrap {
+  position: relative;
+  width: min(var(--pi-composer-max-width), calc(100% - 48px));
+  margin: 0 auto;
+}
+
+.pireplica .pi-composer {
+  background: var(--pi-bg);
+  border: 1px solid var(--pi-border-strong);
+  border-radius: 20px;
+  box-shadow: none;
+  padding: 12px 14px;
+}
+
+.pireplica .pi-composer--running {
+  border-color: var(--pi-border-strong);
+}
+
+.pireplica .pi-composer__input {
+  display: block;
+  width: 100%;
+  border: none;
+  outline: none;
+  resize: none;
+  background: transparent;
+  min-height: 76px;
+  max-height: 180px;
+  padding: 10px 2px 12px;
+  font-size: var(--pi-font-size-body);
+  line-height: 1.5;
+}
+
+.pireplica .pi-composer__input::placeholder {
+  color: var(--pi-text-tertiary);
+}
+
+/* The composer already supplies a boundary; avoid a second box around text. */
+.pireplica .pi-composer__input:focus,
+.pireplica .pi-composer__input:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+
+.pireplica .pi-composer__toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 0 0;
+}
+
+.pireplica .pi-composer__left,
+.pireplica .pi-composer__right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.pireplica .pi-composer__pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 10px;
+  border-radius: var(--pi-radius-pill);
+  color: var(--pi-text-secondary);  font-size: var(--pi-font-size-sm);
+  white-space: nowrap;
+}
+
+.pireplica .pi-composer__pill:hover {
+  background: var(--pi-bg-hover);
+  color: var(--pi-text);
+}
+
+.pireplica .pi-composer__pill--on {
+  background: var(--pi-bg-active);
+  color: var(--pi-text);
+}
+
+/* Full-access permission reads as "elevated" — orange, like the reference. */
+.pireplica .pi-composer__pill--warn {
+  color: #e07b00;
+}
+
+.pireplica .pi-composer__pill--warn:hover {
+  color: #c96f00;
+  background: rgba(224, 123, 0, 0.08);
+}
+
+.pireplica .pi-composer__send {
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  background: var(--pi-text);
+  color: var(--pi-bg);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.pireplica .pi-composer__send:hover:not(:disabled) {
+  opacity: 0.82;
+}
+
+.pireplica .pi-composer__send:disabled {
+  background: var(--pi-bg-inset);
+  color: var(--pi-text-tertiary);
+  opacity: 1;
+}
+
+/* Stop 态（ZCode 风格）：浅底 + 中心深色小圆角方块，与发送态的深底白箭头区分 */
+.pireplica .pi-composer__send--stop {
+  background: var(--pi-bg-inset);
+  color: var(--pi-text);
+}
+
+.pireplica .pi-composer__send--stop:hover:not(:disabled) {
+  background: var(--pi-border);
+  color: var(--pi-text);
+  opacity: 1;
+}
+
+/* popovers */
+.pireplica .pi-composer__menu {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 10px);
+  min-width: 260px;
+  max-width: 340px;
+  /* 模型列表可能很长：限制高度并滚动，避免撑出屏幕选不到底部 */
+  max-height: min(60vh, 420px);
+  overflow-y: auto;
+  scrollbar-width: thin;
+  background: var(--pi-bg);
+  border: 1px solid var(--pi-border);
+  border-radius: var(--pi-radius-md);
+  box-shadow: var(--pi-shadow-popover);
+  padding: 5px;
+  z-index: 30;
+}
+
+.pireplica .pi-composer__menu--left {
+  left: 8px;
+  right: auto;
+  bottom: calc(100% + 10px);
+}
+
+.pireplica .pi-composer__menurow {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  text-align: left;
+  padding: 9px 11px;
+  border-radius: var(--pi-radius-sm);
+  font-size: var(--pi-font-size-md);
+  color: var(--pi-text);
+}
+
+.pireplica .pi-composer__menurow:hover,
+.pireplica .pi-composer__menurow--on {
+  background: var(--pi-bg-hover);
+}
+
+.pireplica .pi-composer__menurow--sub {
+  padding-left: 34px;
+}
+
+.pireplica .pi-composer__menuvalue {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--pi-text-tertiary);
+  font-size: var(--pi-font-size-sm);
+}
+
+.pireplica .pi-composer__menugroup {
+  font-size: var(--pi-font-size-xs);
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--pi-text-tertiary);
+  padding: 8px 11px 3px;
+}
+
+.pireplica .pi-composer__menunote {
+  font-size: var(--pi-font-size-xs);
+  color: var(--pi-text-tertiary);
+  padding: 7px 11px 5px;
+  border-top: 1px solid var(--pi-border);
+  margin-top: 4px;
+}
+
+.pireplica .pi-composer__popup {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(100% + 10px);
+  background: var(--pi-bg);
+  border: 1px solid var(--pi-border);
+  border-radius: var(--pi-radius-md);
+  box-shadow: var(--pi-shadow-popover);
+  padding: 5px;
+  max-height: 280px;
+  overflow-y: auto;
+  z-index: 30;
+}
+
+.pireplica .pi-composer__opt {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  width: 100%;
+  text-align: left;
+  padding: 8px 11px;
+  border-radius: var(--pi-radius-sm);
+  font-size: var(--pi-font-size-md);
+}
+
+.pireplica .pi-composer__opt:hover,
+.pireplica .pi-composer__opt--sel {
+  background: var(--pi-bg-hover);
+}
+
+.pireplica .pi-composer__opt--file {
+  align-items: center;
+  font-family: var(--pi-font-mono);
+  font-size: 12.5px;
+}
+
+.pireplica .pi-composer__optname {
+  font-weight: 500;
+}
+
+.pireplica .pi-composer__opt--file .pi-composer__optname {
+  font-weight: 400;
+}
+
+.pireplica .pi-composer__optdesc {
+  color: var(--pi-text-tertiary);
+  font-size: var(--pi-font-size-sm);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* -- home -------------------------------------------------------------------- */
+
+.pireplica .pi-home {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  padding-bottom: 20px;
+}
+
+.pireplica .pi-home__center {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 26px;
+}
+
+.pireplica .pi-home__mascot {
+  color: var(--pi-text);
+}
+
+.pireplica .pi-home__greeting {
+  font-size: var(--pi-font-welcome);
+  font-weight: 400;
+  color: var(--pi-text);
+  text-align: center;
+  padding: 0 24px;
+}
+
+/* 固定 agent 快捷入口：输入卡下方一排胶囊（对齐参考布局） */
+.pireplica .pi-home__presets {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  padding: 0 24px;
+  margin-top: 14px;
+}
+
+.pireplica .pi-home__preset {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border: 1px solid var(--pi-border);
+  border-radius: 999px;
+  background: var(--pi-bg-elevated, transparent);
+  color: var(--pi-text-secondary);
+  font-size: var(--pi-font-size-xs, 12px);
+  cursor: pointer;
+  transition: color 0.12s ease, border-color 0.12s ease, background 0.12s ease;
+}
+
+.pireplica .pi-home__preset:hover {
+  color: var(--pi-text);
+  border-color: var(--pi-border-strong);
+  background: var(--pi-hover, rgba(255, 255, 255, 0.04));
+}
+
+.pireplica .pi-home__demo {
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: var(--pi-font-size-xs);
+  color: var(--pi-text-tertiary);
+  border: 1px solid var(--pi-border);
+  border-radius: var(--pi-radius-pill);
+  padding: 3px 10px;
+  background: var(--pi-bg);
+}
+
+/* narrow screens: keep the composer usable */
+@media (max-width: 1024px) {
+  .pireplica .pi-chat__inner {
+    padding: 20px 16px 32px 34px;
+  }
+
+  .pireplica .pi-composer-wrap {
+    width: calc(100% - 28px);
+  }
+}
+
+/* One disclosure for the whole run, then individual tools / reasoning. */
+.pireplica .pi-execution { margin: 0 0 18px; border: 0; border-radius: 0; background: transparent; min-width: 0; }
+.pireplica .pi-msg--assistant > .pi-execution { margin-bottom: 18px; }
+.pireplica .pi-execution summary { list-style: none; cursor: pointer; }
+.pireplica .pi-execution summary::-webkit-details-marker { display: none; }
+.pireplica .pi-execution summary:focus-visible { outline: 2px solid var(--pi-text-secondary); outline-offset: 3px; border-radius: 6px; }
+.pireplica .pi-execution__summary { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 4px 0 10px; border-bottom: 1px solid var(--pi-border); color: var(--pi-text-secondary); font-size: 14px; line-height: 22px; }
+.pireplica .pi-execution__title { color: var(--pi-text-secondary); font-weight: 400; }
+.pireplica .pi-execution__thinking { color: var(--pi-text); font-weight: 600; }
+.pireplica .pi-execution__counts { color: var(--pi-text-secondary); }
+.pireplica .pi-execution__failure { color: var(--pi-red); }
+.pireplica .pi-execution__chevron { flex-shrink: 0; transition: transform .12s ease, opacity .16s ease; }
+/* 展开箭头靠行末（ZCode ToolSummaryRow 同位）：默认隐藏，悬停/聚焦时显现，展开时常显并旋转 90°。 */
+.pireplica .pi-tool__summary > .pi-execution__chevron,
+.pireplica .pi-execution__summary > .pi-execution__chevron,
+.pireplica .pi-execution__note > summary > .pi-execution__chevron { margin-left: auto; color: var(--pi-text-tertiary); opacity: 0; }
+.pireplica .pi-tool__summary:hover > .pi-execution__chevron,
+.pireplica .pi-tool__summary:focus-visible > .pi-execution__chevron,
+.pireplica .pi-execution__summary:hover > .pi-execution__chevron,
+.pireplica .pi-execution__summary:focus-visible > .pi-execution__chevron,
+.pireplica .pi-execution__note > summary:hover > .pi-execution__chevron,
+.pireplica .pi-execution__note > summary:focus-visible > .pi-execution__chevron,
+.pireplica details[open] > summary > .pi-execution__chevron { opacity: 1; }
+.pireplica details[open] > summary > .pi-execution__chevron { transform: rotate(90deg); }
+.pireplica .pi-execution__steps { margin: 18px 0 0; padding: 0; }
+.pireplica .pi-execution__steps .pi-tool { margin: 5px 0; background: transparent; border: 0; }
+.pireplica .pi-execution__steps .pi-tool__summary { padding: 9px 4px; }
+.pireplica .pi-execution__steps .pi-tool__detail { margin: 2px 0 12px; padding: 12px; border: 1px solid var(--pi-border); background: var(--pi-bg); border-radius: 8px; }
+.pireplica .pi-execution__steps .pi-tool__detail h4 { font-size: 11px; color: var(--pi-text-secondary); margin: 0 0 8px; font-weight: 500; }
+.pireplica .pi-execution__steps .pi-tool__output { max-height: 380px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; margin: 0 0 12px; }
+.pireplica .pi-execution__note > summary { display: flex; align-items: center; gap: 8px; padding: 10px 4px; color: var(--pi-text-secondary); font-size: 12px; }
+.pireplica .pi-execution__excerpt { min-width: 0; flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--pi-text-secondary); }
+/* 思考块正文：照 ZCode——无底色填充，仅左侧 1px 边线，max-h 240px 内滚动，文字用最浅档 */
+.pireplica .pi-execution__note-body { margin: 0 0 12px; padding: 2px 0 2px 14px; border-left: 1px solid var(--pi-border); background: transparent; max-height: 240px; overflow: auto; }
+.pireplica .pi-execution__note-body .pi-md { font-size: 13px; color: var(--pi-text-tertiary); white-space: pre-wrap; }
+.pireplica .pi-execution__hint { font-size: 12px; color: var(--pi-text-tertiary); }
+.pireplica .pi-execution__pulse { width: 6px; height: 6px; border-radius: 50%; background: var(--pi-text-secondary); animation: pi-blink 1s ease-in-out infinite; }
+
+/* Chrysanthemum loader (ZCode/iOS style): 8 petals around the center, the whole
+   flower ticks in 8 steps per revolution. Petal transforms come from the JSX. */
+.pireplica .pi-spinner {
+  position: relative;
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  display: inline-block;
+  animation: pi-spin 0.9s steps(8) infinite;
+}
+
+.pireplica .pi-spinner i {
+  position: absolute;
+  /* petal sits at the top rim; rotating around the flower center (7px down) spreads the 8 petals */
+  left: calc(50% - 0.8px);
+  top: 0;
+  width: 1.6px;
+  height: 4.2px;
+  border-radius: 1px;
+  background: var(--pi-text-secondary);
+  transform-origin: 50% 7px;
+}
+
+/* trailing petals fade like the iOS chrysanthemum tail */
+.pireplica .pi-spinner i:nth-child(1) { opacity: 1; }
+.pireplica .pi-spinner i:nth-child(2) { opacity: 0.85; }
+.pireplica .pi-spinner i:nth-child(3) { opacity: 0.7; }
+.pireplica .pi-spinner i:nth-child(4) { opacity: 0.55; }
+.pireplica .pi-spinner i:nth-child(5) { opacity: 0.4; }
+.pireplica .pi-spinner i:nth-child(6) { opacity: 0.3; }
+.pireplica .pi-spinner i:nth-child(7) { opacity: 0.2; }
+.pireplica .pi-spinner i:nth-child(8) { opacity: 0.12; }
+
+@keyframes pi-spin { to { transform: rotate(360deg); } }
+
+@media (prefers-reduced-motion: reduce) { .pireplica .pi-execution__pulse { animation: none; } .pireplica .pi-spinner { animation: none; } .pireplica .pi-execution__chevron { transition: none; } }
+
+.pireplica .pi-execution__elapsed { flex-shrink: 0; color: var(--pi-text-secondary); font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.pireplica .pi-chat__elapsed { margin-bottom: 10px; }
+.pireplica .pi-chat__elapsed:empty { display: none; }
+
+.pireplica .pi-execution__summary .pi-execution__elapsed { font-size: 14px; }
+.pireplica .pi-execution__summary:hover { color: var(--pi-text); }
+.pireplica .pi-execution__commentary { margin: 18px 0; }
+.pireplica .pi-execution__steps .pi-tool__summary { padding: 10px 0; color: var(--pi-text-secondary); }
+.pireplica .pi-execution__note > summary { padding: 10px 0; font-size: 13px; }
+.pireplica .pi-chat__elapsed:not(:empty) { padding: 4px 0 10px; border-bottom: 1px solid var(--pi-border); margin-bottom: 18px; }
+.pireplica .pi-chat__elapsed .pi-execution__elapsed { font-size: 14px; }
+
+.pireplica .pi-prompt-queue { margin: 0 0 8px; display: flex; flex-direction: column; gap: 6px; max-height: 180px; overflow: auto; }
+.pireplica .pi-prompt-queue__row { display: flex; align-items: center; gap: 8px; padding: 7px 10px; border: 1px solid var(--pi-border); border-radius: 8px; background: var(--pi-bg); font-size: 12.5px; color: var(--pi-text-secondary); }
+.pireplica .pi-prompt-queue__row > .pi-iconbtn, .pireplica .pi-prompt-queue__row > svg:first-child { color: var(--pi-text-tertiary); flex: none; }
+.pireplica .pi-prompt-queue__text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* 队列里附带图片的缩略图 */
+.pireplica .pi-prompt-queue__thumbs { flex: none; display: flex; gap: 4px; }
+.pireplica .pi-prompt-queue__thumb { width: 32px; height: 32px; object-fit: cover; border-radius: 6px; border: 1px solid var(--pi-border); }
+.pireplica .pi-prompt-queue__tag { flex: none; font-size: 10.5px; padding: 1px 6px; border-radius: 99px; border: 1px solid var(--pi-border); color: var(--pi-text-tertiary); }
+.pireplica .pi-prompt-queue__now { flex: none; display: inline-flex; align-items: center; gap: 4px; padding: 3px 9px; font-size: 12px; color: var(--pi-bg); background: var(--pi-text); border: 1px solid var(--pi-text); border-radius: 7px; cursor: pointer; }
+.pireplica .pi-prompt-queue__now:hover { opacity: 0.85; }
+.pireplica .pi-prompt-queue__btn { flex: none; width: 24px; height: 24px; }
+.pireplica .pi-prompt-queue__row--editing { padding: 5px 10px; }
+.pireplica .pi-prompt-queue__input { flex: 1; min-width: 0; border: none; outline: none; background: transparent; color: var(--pi-text); font: inherit; }
+.pireplica .pi-tool__file-icon { display: inline-flex; align-items: center; flex-shrink: 0; color: #149eca; }
+.pireplica .pi-tool__file-icon b { font-size: 9px; background: #3178c6; color: white; padding: 1px 2px; border-radius: 1px; }
+.pireplica .pi-tool__directory { color: var(--pi-text-tertiary); margin-left: 8px; }
+.pireplica .pi-tool__file-link { border:0; padding:0; background:none; color:inherit; font:inherit; cursor:pointer; text-decoration:underline; text-decoration-color:var(--pi-border-strong); text-underline-offset:3px; }
+.pireplica .pi-tool__file-link:hover { color:var(--pi-text); text-decoration-color:currentColor; }
+/* 待生效标记：运行中选择的模型/思考等级，下一次模型调用边界才应用 */
+.pireplica .pi-composer__pending { font-size: 10px; line-height: 1; padding: 2px 6px; border-radius: 99px; border: 1px solid var(--pi-border); color: var(--pi-text-tertiary); }
+.pireplica .pi-thinking-wrap { display: inline-flex; align-items: center; gap: 4px; }
+.pireplica .pi-pending-tag { font-size: 10px; line-height: 1; padding: 2px 6px; border-radius: 99px; border: 1px solid var(--pi-border); color: var(--pi-text-tertiary); }
+
+/* Terminal output 照 ZCode ExecuteOutput：扁平无自框（外层 pi-tool__detail 是唯一卡片），
+   命令区 60px、输出区仅 5 行（100px）内滚动，输出用浅灰。 */
+.pireplica .pi-terminal{min-width:0;max-width:100%;margin:0}
+.pireplica .pi-terminal pre{margin:0;font:12px/20px var(--pi-font-mono);white-space:pre-wrap;overflow-wrap:anywhere;background:transparent}
+.pireplica .pi-terminal__command{padding:0 0 12px;color:var(--pi-text);max-height:60px;overflow:auto;scrollbar-width:none}
+.pireplica .pi-terminal__command::-webkit-scrollbar{display:none}
+.pireplica .pi-terminal__prompt{color:var(--pi-text-tertiary)}
+.pireplica .pi-terminal__output{padding:0;color:var(--pi-text-secondary);max-height:100px;overflow-y:scroll;overflow-x:auto;overscroll-behavior:contain;scrollbar-gutter:stable;scrollbar-width:thin;scrollbar-color:var(--pi-border) transparent}
+.pireplica .pi-terminal__output::-webkit-scrollbar{width:8px;height:8px}
+.pireplica .pi-terminal__output::-webkit-scrollbar-thumb{background:var(--pi-border);border:2px solid var(--pi-bg);border-radius:8px}
+.pireplica .pi-terminal__output:focus-visible{outline:1px solid var(--pi-border);outline-offset:-2px}
+
+/* File-type badge icon (shared FileIcon component) */
+.pireplica .pi-fileicon { display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; border-radius: 3px; line-height: 1; font-weight: 600; letter-spacing: -0.3px; vertical-align: middle; }
+.pireplica .pi-fileicon--badge { font-family: var(--pi-mono, ui-monospace, SFMono-Regular, monospace); }
+.pireplica .pi-tool__file-icon .pi-fileicon { width: 17px; height: 17px; }
+
+/* Tool summary line change stats (+N / −M) */
+.pireplica .pi-tool__stat { display: inline-flex; gap: 6px; font-variant-numeric: tabular-nums; font-size: 11px; padding-right: 6px; flex-shrink: 0; }
+.pireplica .pi-tool__stat--add { color: #2ea043; }
+.pireplica .pi-tool__stat--del { color: #d73a49; }

@@ -1,0 +1,22 @@
+.pi-status-rail{flex:0 0 294px;width:294px;padding:20px 16px 16px 0;min-width:0;align-self:flex-start;max-height:100%;overflow:auto}
+.pi-status-rail.is-expanded{flex-basis:370px;width:370px}
+.pi-status-card{position:relative;border:1px solid var(--pi-border);border-radius:18px;background:var(--pi-bg);box-shadow:0 2px 4px #0000000c;padding:10px 9px;color:var(--pi-text);font-size:13px}
+.pi-status-card header{display:flex;align-items:center;gap:8px;padding:2px 5px 8px;color:var(--pi-text-secondary)}
+.pi-status-card header button{display:flex;align-items:center;gap:5px;padding:4px;border-radius:5px}.pi-status-card header button:first-child{flex:1;text-align:left}
+.pi-status-card button:hover{background:var(--pi-bg-hover)}
+.pi-status-row{display:flex;align-items:center;gap:9px;width:100%;padding:7px 8px;text-align:left;border-radius:6px}
+.pi-status-count{margin-left:auto;display:flex;gap:9px;font-variant-numeric:tabular-nums}.pi-status-count b{color:#008b35;font-weight:400}.pi-status-count em{color:#ed3547;font-style:normal}
+.pi-status-git small{display:block;padding:1px 8px 5px;color:var(--pi-text-secondary);font-size:11px}
+.pi-status-branches summary{display:flex;align-items:center;gap:9px;padding:7px 8px;cursor:pointer;list-style:none}.pi-status-branches summary::-webkit-details-marker{display:none}.pi-status-branches summary span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.pi-status-branches>div{max-height:160px;overflow:auto;padding:6px;background:var(--pi-bg);border-radius:7px}.pi-status-branches button{display:block;text-align:left;width:100%;padding:6px;overflow-wrap:anywhere}.pi-status-branches button:disabled{opacity:.5}
+.pi-status-plan{border-top:1px solid var(--pi-border);margin-top:7px;padding:15px 7px 2px}.pi-status-plan-head{display:flex;gap:24px;align-items:center;color:var(--pi-text-secondary);font-size:12px}.pi-status-plan-head b{font-size:11px;font-weight:400;color:#008b35}.pi-status-plan-head .pi-status-plan-open{display:flex;align-items:center;gap:4px;margin-left:auto;border:0;background:transparent;color:var(--pi-text-secondary);font-size:11px;cursor:pointer;padding:2px 4px;border-radius:6px}.pi-status-plan-head .pi-status-plan-open:hover{background:var(--pi-bg-hover);color:var(--pi-text)}
+.pi-status-plan ol{padding:0;margin:12px 0 0;list-style:none;max-height:320px;overflow:auto}.pi-status-rail.is-expanded ol{max-height:65vh}.pi-status-plan li{display:flex;gap:8px;align-items:flex-start;margin:0 0 12px;line-height:1.6;color:var(--pi-text-secondary);overflow-wrap:anywhere}.pi-status-plan li>svg{flex-shrink:0;margin-top:4px}.pi-status-plan li.is-completed>span:first-of-type{text-decoration:line-through;opacity:.62}.pi-status-plan li.is-completed>svg{color:#27ad61}.pi-status-plan li.is-in_progress{color:var(--pi-text)}.pi-status-plan li.is-in_progress>svg{color:#27ad61}
+.pi-status-hint{font-size:12px;line-height:1.6;color:var(--pi-text-secondary);padding:3px 7px}.pi-status-error{font-size:11px;color:var(--pi-red);overflow-wrap:anywhere}.pi-status-menu{border:1px solid var(--pi-border);padding:5px;border-radius:8px}.pi-status-menu button{display:flex;align-items:center;gap:8px;padding:6px;width:100%;text-align:left}.pi-status-sr{position:absolute;clip-path:inset(50%);width:1px;height:1px;overflow:hidden}.pi-status-rail.is-collapsed{flex-basis:190px;width:190px}
+@media(max-width:1000px){.pi-status-rail{flex-basis:225px;width:225px}.pi-status-rail.is-expanded{flex-basis:270px;width:270px}}
+@media(max-width:760px){.pi-status-rail{position:absolute;right:8px;top:0;z-index:4;padding:4px;width:220px;max-height:60%;box-shadow:0 4px 15px #0001}.pi-status-rail.is-collapsed{width:155px}.pi-status-card{font-size:12px}}
+
+/* 会话统计（tokens/费用/消息数）网格 */
+.pi-status-stats { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--pi-border, rgba(0,0,0,.08)); }
+.pi-status-statgrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px 10px; margin-top: 6px; }
+.pi-status-statgrid > div { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.pi-status-statgrid small { color: var(--pi-text-tertiary, #8a8a8a); font-size: 10px; }
+.pi-status-statgrid b { font-size: 12px; font-variant-numeric: tabular-nums; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

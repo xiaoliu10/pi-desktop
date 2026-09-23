@@ -1,0 +1,31 @@
+appId: com.pidesktop.app
+productName: PI Desktop
+directories:
+  output: release
+files:
+  - dist/**/*
+  - package.json
+beforePack: scripts/check-runtime.cjs
+extraResources:
+  - from: resources/pi-runtime
+    to: pi-runtime
+    filter:
+      - "**/*"
+      - "!node_modules/.cache/**/*"
+  - from: extensions/desktop-policy
+    to: desktop-policy
+  - from: extensions/desktop-ask
+    to: desktop-ask
+mac:
+  category: public.app-category.developer-tools
+  target:
+    - dmg
+    - zip
+win:
+  target:
+    - nsis
+linux:
+  target:
+    - AppImage
+    - deb
+  category: Development

@@ -1,0 +1,13 @@
+import {spawnSync} from 'node:child_process';
+import fs from 'node:fs';
+import path from 'node:path';
+import {fileURLToPath} from 'node:url';
+const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'../resources/pi-runtime');
+const result=spawnSync(process.platform==='win32'?'npm.cmd':'npm',['ci','--omit=dev','--no-audit','--no-fund'],{cwd:root,stdio:'inherit',shell:process.platform==='win32'});
+if(result.error || result.status!==0)throw new Error('内置运行时安装失败');
+const executable=path.join(root,'node_modules/node/bin',process.platform==='win32'?'node.exe':'node');
+const cli=path.join(root,'node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js');
+const version=spawnSync(executable,[cli,'--version'],{encoding:'utf8',env:{...process.env,ELECTRON_RUN_AS_NODE:undefined}});
+if(version.status!==0 || version.stdout.trim()!=='0.86.0')throw new Error('内置 pi 版本验证失败');
+fs.writeFileSync(path.join(root,'runtime.json'),JSON.stringify({platform:process.platform,arch:process.arch,pi:'0.86.0',node:'22.22.0'},null,2));
+console.log(`Private runtime ready: ${process.platform}/${process.arch}, pi 0.86.0, Node 22.22.0`);

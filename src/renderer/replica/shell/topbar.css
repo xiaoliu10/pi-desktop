@@ -1,0 +1,36 @@
+/* Top bar styles (U02). */
+
+.pireplica .pi-topbar {
+  height: var(--pi-topbar-height);
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 0 18px 0 22px;
+  padding-top: env(titlebar-area-height, 0px);
+  /* hiddenInset window: the top bar doubles as the title bar. */
+  -webkit-app-region: drag;
+}
+
+.pireplica .pi-topbar button {
+  -webkit-app-region: no-drag;
+}
+
+.pireplica .pi-topbar__title {
+  font-size: var(--pi-font-size-body);
+  font-weight: 600;
+  margin: 0;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  user-select: none;
+}
+
+.pireplica .pi-topbar__actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}

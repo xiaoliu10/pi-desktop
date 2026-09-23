@@ -1,0 +1,249 @@
+/**
+ * PI Desktop replica design tokens (U01).
+ *
+ * Scope: every replica component lives under `.pireplica`, so all variables
+ * and resets are contained there. Dark theme is `.pireplica--dark`.
+ * Values are derived from the 1600×1067 reference screenshots (see
+ * docs/ui-reference-baseline.md); they are estimates, not upstream CSS.
+ */
+
+.pireplica {
+  /* surfaces */
+  --pi-bg: #ffffff;
+  --pi-bg-sidebar: #f6f6f7;
+  --pi-bg-card: #f7f7f8;
+  --pi-bg-inset: #f2f2f3;
+  --pi-bg-hover: rgba(0, 0, 0, 0.045);
+  --pi-bg-active: rgba(0, 0, 0, 0.075);
+  --pi-border: rgba(0, 0, 0, 0.08);
+  --pi-border-strong: rgba(0, 0, 0, 0.14);
+
+  /* text */
+  --pi-text: #1d1d1f;
+  --pi-text-secondary: #6e6e73;
+  --pi-text-tertiary: #a1a1a6;
+  --pi-text-on-accent: #ffffff;
+
+  /* accents (restrained, status only) */
+  --pi-accent: #1d1d1f; /* primary buttons are black */
+  --pi-green: #248a3d;
+  --pi-green-bg: #e9f6ee;
+  --pi-green-icon: #34c759;
+  --pi-red: #d92c20;
+  --pi-red-bg: #fdeceb;
+  --pi-orange-text: #b45309;
+  --pi-orange-bg: #fdf1e2;
+
+  /* chat */
+  --pi-bubble-user: #f2f2f3;
+  --pi-code-bg: #f2f2f3;
+
+  /* layout metrics */
+  --pi-sidebar-width: 366px;
+  --pi-sidebar-collapsed-width: 52px;
+  --pi-topbar-height: 60px;
+  --pi-composer-max-width: 980px;
+  --pi-workbench-width: 415px;
+  --pi-rail-width: 26px;
+
+  /* radii */
+  --pi-radius-sm: 8px;
+  --pi-radius-md: 12px;
+  --pi-radius-lg: 16px;
+  --pi-radius-pill: 999px;
+
+  /* type scale (base 14，与 ZCode 的 --ui-font-size 默认值一致) */
+  --pi-font-size-xs: 11px;
+  --pi-font-size-sm: 12.5px;
+  --pi-font-size-md: 14px;
+  --pi-font-size-body: 14px;
+  --pi-font-size-title: 22px;
+  --pi-font-page-title: 32px;
+  --pi-font-welcome: 30px;
+
+  /* shadows */
+  --pi-shadow-popover: 0 10px 38px rgba(0, 0, 0, 0.14), 0 2px 8px rgba(0, 0, 0, 0.08);
+  --pi-shadow-composer: 0 1px 3px rgba(0, 0, 0, 0.05), 0 8px 28px rgba(0, 0, 0, 0.05);
+
+  --pi-font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI',
+    'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans CJK SC', sans-serif;
+  /* 与 ZCode 一致：等宽栈显式加入各平台 CJK 无衬线，避免中文代码落在宋体。 */
+  --pi-font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New',
+    'Microsoft YaHei UI', 'Microsoft YaHei', 'PingFang SC', 'Noto Sans CJK SC', monospace;
+
+  background: var(--pi-bg);
+  color: var(--pi-text);
+  font-family: var(--pi-font-family);
+  font-size: var(--pi-font-size-md);
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+}
+
+.pireplica--dark {
+  --pi-bg: #101010;
+  --pi-bg-sidebar: #171718;
+  --pi-bg-card: #1e1e1f;
+  --pi-bg-inset: #262627;
+  --pi-bg-hover: rgba(255, 255, 255, 0.06);
+  --pi-bg-active: rgba(255, 255, 255, 0.1);
+  --pi-border: rgba(255, 255, 255, 0.1);
+  --pi-border-strong: rgba(255, 255, 255, 0.18);
+
+  --pi-text: #ececec;
+  --pi-text-secondary: #a0a0a5;
+  --pi-text-tertiary: #6c6c71;
+  --pi-text-on-accent: #ffffff;
+
+  --pi-accent: #ececec;
+  --pi-green: #4cd964;
+  --pi-green-bg: #17301f;
+  --pi-green-icon: #34c759;
+  --pi-red: #ff6b5e;
+  --pi-red-bg: #3a1715;
+  --pi-orange-text: #f0a44a;
+  --pi-orange-bg: #3a2a14;
+
+  --pi-bubble-user: #262627;
+  --pi-code-bg: #262627;
+
+  --pi-shadow-popover: 0 12px 40px rgba(0, 0, 0, 0.55), 0 2px 8px rgba(0, 0, 0, 0.4);
+  --pi-shadow-composer: 0 1px 3px rgba(0, 0, 0, 0.4), 0 8px 28px rgba(0, 0, 0, 0.35);
+}
+
+/* scoped resets for the replica tree */
+.pireplica,
+.pireplica *,
+.pireplica *::before,
+.pireplica *::after {
+  box-sizing: border-box;
+}
+
+.pireplica {
+  display: flex;
+  height: 100%;
+  overflow: hidden;
+  user-select: none;
+}
+
+.pireplica button {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+}
+
+.pireplica button:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+.pireplica button:focus-visible,
+.pireplica input:focus-visible,
+.pireplica textarea:focus-visible,
+.pireplica [role='option']:focus-visible,
+.pireplica [role='menuitem']:focus-visible {
+  outline: 2px solid var(--pi-text-secondary);
+  outline-offset: 1px;
+}
+
+.pireplica input,
+.pireplica textarea {
+  font: inherit;
+  color: inherit;
+  user-select: text;
+}
+
+.pireplica ::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.pireplica ::-webkit-scrollbar-thumb {
+  background: var(--pi-border-strong);
+  border-radius: 8px;
+}
+
+.pireplica ::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* shared primitives used by replica pages */
+.pireplica .pi-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: var(--pi-radius-pill);
+  padding: 7px 14px;
+  font-size: var(--pi-font-size-sm);
+  font-weight: 500;
+  transition: background 0.12s ease, opacity 0.12s ease;
+  white-space: nowrap;
+}
+
+.pireplica .pi-btn--primary {
+  background: var(--pi-accent);
+  color: var(--pi-text-on-accent);
+}
+
+.pireplica .pi-btn--primary:hover {
+  opacity: 0.85;
+}
+
+.pireplica .pi-btn--outline {
+  background: var(--pi-bg);
+  border: 1px solid var(--pi-border-strong);
+}
+
+.pireplica .pi-btn--outline:hover {
+  background: var(--pi-bg-hover);
+}
+
+.pireplica .pi-btn--ghost {
+  color: var(--pi-text-secondary);
+}
+
+.pireplica .pi-btn--ghost:hover {
+  background: var(--pi-bg-hover);
+  color: var(--pi-text);
+}
+
+.pireplica .pi-iconbtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: var(--pi-radius-sm);
+  /* 铅笔/垃圾桶等编辑图标：原 secondary 太浅，加深到介于 secondary 与 text 之间。 */
+  color: color-mix(in oklab, var(--pi-text) 72%, var(--pi-text-secondary));
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.pireplica .pi-iconbtn:hover {
+  background: var(--pi-bg-hover);
+  color: var(--pi-text);
+}
+
+.pireplica .pi-group-label {
+  font-size: var(--pi-font-size-xs);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--pi-text-tertiary);
+}
+
+.pireplica .pi-count-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: var(--pi-radius-pill);
+  background: var(--pi-bg-inset);
+  color: var(--pi-text-secondary);
+  font-size: 11px;
+  font-weight: 500;
+}
