@@ -41,3 +41,6 @@ resources/pi-runtime/node_modules/
 output/
 .playwright-cli/
 .zcodeignore
+
+# 本地会话记忆/计划（ZCode 工作区产物，不入库）
+.zcode/
