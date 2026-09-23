@@ -150,6 +150,14 @@ it('queueEdit removes, edits and promotes queued follow-ups via clear + re-queue
  await expect(backend.queueEdit(run.key,{type:'edit',index:0,text:'  '})).rejects.toThrow('内容为空');
  await backend.stop(run.key);
 });
+it('reads back xhigh, max and off from the CLI after switching',async()=>{
+ const {root,backend}=setup(); const run=await backend.connect({cwd:root,trustProject:false,permission:'ask'});
+ for (const level of ['xhigh','max','off'] as const) {
+  const updated=await backend.thinking(run.key,level);
+  expect(updated.thinkingLevel).toBe(level);
+  expect(backend.runs()[0].thinkingLevel).toBe(level);
+ }
+});
 it('model and thinking switches made while running queue up and apply at the next message boundary',async()=>{
  const {root,backend}=setup(); const run=await backend.connect({cwd:root,trustProject:false,permission:'ask'});
  await backend.prompt(run.key,'/long','followUp');
@@ -162,7 +170,7 @@ it('model and thinking switches made while running queue up and apply at the nex
  expect(backend.runs()[0].pendingThinking).toBe('high');
  // 无效模型仍然立即报错
  await expect(backend.model(run.key,'test','nope')).rejects.toThrow('可用列表');
- await expect(backend.thinking(run.key,'bogus' as any)).rejects.toThrow('不支持');
+ await expect(backend.thinking(run.key,'bogus' as any)).rejects.toThrow('未知的思考等级');
  // 一次模型调用结束（assistant message_end 边界）→ 挂起项统一下发
  await backend.prompt(run.key,'/boundary','followUp');
  await vi.waitFor(()=>expect(backend.runs()[0].pendingModel).toBeUndefined());

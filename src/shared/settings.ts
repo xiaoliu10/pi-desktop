@@ -29,6 +29,8 @@ export interface DesktopPreferences {
   defaultThinkingLevel?: ThinkingLevel;
   /** 固定 agent 快捷入口；缺省用 DEFAULT_AGENT_PRESETS。 */
   agentPresets?: AgentPreset[];
+  /** 顶栏「打开方式」记住的外部应用 id（externalApps() 白名单之一）。 */
+  openWithApp?: string;
 }
 export const ARCHIVE_RETENTION_DAYS = [7, 30, 90] as const;
 export const DEFAULT_ARCHIVE_RETENTION_DAYS = 30;
@@ -50,7 +52,7 @@ export interface SettingsSnapshot {
 }
 export interface SettingsApi {
   settingsSnapshot(cwd?: string): Promise<SettingsSnapshot>;
-  saveDesktopSettings(patch: Partial<Pick<DesktopPreferences, 'behavior' | 'permission' | 'shortcuts' | 'sessionRenames' | 'sessionAccessModes' | 'autoArchive' | 'archiveRetentionDays' | 'defaultThinkingLevel'>>): Promise<void>;
+  saveDesktopSettings(patch: Partial<Pick<DesktopPreferences, 'behavior' | 'permission' | 'shortcuts' | 'sessionRenames' | 'sessionAccessModes' | 'autoArchive' | 'archiveRetentionDays' | 'defaultThinkingLevel' | 'openWithApp'>>): Promise<void>;
   saveAiSettings(value: SettingsSnapshot['ai']): Promise<void>;
   resourceRead(id: string, cwd?: string): Promise<ResourceDocument>;
   resourceSave(input: { id: string; text: string; revision: string; cwd?: string }): Promise<void>;

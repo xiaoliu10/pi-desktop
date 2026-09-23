@@ -6,9 +6,10 @@ import {historyToMessages} from '../src/renderer/pi/adapter';import {projectSuba
 it('runs the official plugin via bundled pi and restores child transcript from persisted parent history',async()=>{
  const root=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'pi-subagent-integration-'))),agent=path.join(root,'agent'),project=path.join(root,'project'),owned=path.join(agent,'sessions/desktop');
  fs.mkdirSync(project);fs.mkdirSync(agent);
- expect(officialSubagentStatus(agent)).toMatchObject({installed:false,scoutExists:false});
+ // 无第三方插件时 desktop 后备实现默认生效（installed=true）；enable 仅创建 scout 定义。
+ expect(officialSubagentStatus(agent)).toMatchObject({installed:true,thirdParty:false,scoutExists:false});
  enableOfficialSubagent(agent);
- expect(officialSubagentStatus(agent)).toMatchObject({installed:true,scoutExists:true});
+ expect(officialSubagentStatus(agent)).toMatchObject({installed:true,thirdParty:false,scoutExists:true});
  let requests=0;const server=http.createServer(async(req,res)=>{
   for await(const _ of req){};requests++;
   res.writeHead(200,{'Content-Type':'text/event-stream'});

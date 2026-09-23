@@ -7,6 +7,7 @@ import type { PiEnvironment, PiEvent, PiRun, PiUiRequest } from '../../shared/pi
 import { PiRpcClient } from './rpc-client';
 import { SessionIndex, fileKey } from './session-index';
 import { summarizeContext } from './context-details';
+import { detectThirdPartySubagent, migrateOldSubagentExtension, persistSubagentEvent } from './official-subagent';
 interface Running { policyReady: boolean; client: PiRpcClient; view: PiRun; input: { cwd: string; trustProject: boolean; permission: AccessMode; executionMode?: Exclude<AccessMode, 'plan'>; file: string; origin: string; systemPrompt?: string; tools?: string[]; model?: string }; dialogs: Map<string, { timer?: ReturnType<typeof setTimeout>; method: string }> }
 export class PiBackend {
   private active = new Map<string, Running>();
@@ -15,6 +16,7 @@ export class PiBackend {
   runs() { return [...this.active.values()].map(x => x.view); }
   private get(key: string) { const run = this.active.get(key); if (!run) throw new Error('会话未由 Desktop 连接'); return run; }
   async connect(input: { sourceKey?: string; cwd?: string; trustProject: boolean; permission: AccessMode; executionMode?: Exclude<AccessMode, 'plan'>; systemPrompt?: string; tools?: string[]; model?: string }): Promise<PiRun> {
+    fs.appendFileSync('/tmp/connect-timing.log', `backend.connect enter ${new Date().toISOString()}\n`);
     if (input.executionMode !== undefined && (!isAccessMode(input.executionMode) || (input.executionMode as string) === 'plan')) throw new Error('无效执行模式');
     if (!isAccessMode(input.permission)) throw new Error('无效访问模式');
     if (!this.env.supported || !this.env.executable) throw new Error(this.env.diagnostics.join('\n'));
@@ -56,6 +58,9 @@ export class PiBackend {
     return this.launch({ cwd, file, origin, trustProject: input.trustProject, permission: input.permission, executionMode: input.executionMode, systemPrompt: input.systemPrompt, tools: input.tools, model: input.model });
   }
   private contextRequests = new WeakMap<Running, number>();
+  /** 上次明细拉取时间：get_messages 会序列化全量消息（大会话 MB 级），pi 与主进程都会被阻塞，
+   *  流式期间按调用频率拉会把事件流掐出空窗（表现为进度卡住后集中刷出）。 */
+  private lastBreakdownAt = new WeakMap<Running, number>();
   private refreshContextUsage(run: Running) {
     const { key, generation } = run.view;
     const sequence = (this.contextRequests.get(run) ?? 0) + 1;
@@ -82,7 +87,12 @@ export class PiBackend {
         };
       }
       this.emit({ type: 'run', run: { ...active.view } });
-      // Proportional breakdown + cache-hit stats from the same stats snapshot.
+      // Proportional breakdown + cache-hit stats：明细是悬浮展示，允许滞后。流式运行中限频 15s 一次；
+      // 任务收尾（idle）与首轮始终计算。
+      const now = Date.now();
+      const busy = active.view.status === 'running' || active.view.status === 'starting';
+      if (busy && now - (this.lastBreakdownAt.get(run) ?? 0) < 15_000) return;
+      this.lastBreakdownAt.set(run, now);
       try {
         const { messages } = await run.client.request('get_messages', {}, 10_000);
         if (this.active.get(key) !== active || this.contextRequests.get(run) !== sequence) return;
@@ -108,6 +118,13 @@ export class PiBackend {
     // Desktop 自带的 ask_user_question 扩展（随 Desktop 默认加载；缺失不阻塞会话）。
     const askPath = path.join(path.dirname(this.policyPath), '..', 'desktop-ask', 'index.mjs');
     const askArgs = fs.existsSync(askPath) ? ['-e', askPath] : [];
+    // Subagent fallback：仅在用户没有安装第三方 subagent 插件时加载。
+    // 检测 agentDir/extensions/ + settings.json packages 里的 subagent 扩展。
+    // 旧版 desktop-official-subagent 在 agentDir/extensions/ 里会和 npm 包冲突，
+    // 迁移时自动删除旧目录，改用 -e 加载消除冲突。
+    migrateOldSubagentExtension(this.env.agentDir);
+    const subagentPath = path.join(path.dirname(this.policyPath), '..', 'desktop-subagent', 'index.mjs');
+    const subagentArgs = fs.existsSync(subagentPath) && !detectThirdPartySubagent(this.env.agentDir).detected ? ['-e', subagentPath] : [];
     const args = [
       ...(this.env.launchArgs || []),
       '--mode', 'rpc',
@@ -117,6 +134,7 @@ export class PiBackend {
       '-e', this.policyPath,
       '-e', path.join(path.dirname(this.policyPath), 'mcp-bridge.mjs'),
       ...askArgs,
+      ...subagentArgs,
       ...(input.systemPrompt ? ['--append-system-prompt', input.systemPrompt] : []),
       ...(input.permission === 'plan'
         // 计划模式：只读工具 + ask_user_question（提问无副作用，正好用于澄清需求）+ 任务清单。
@@ -186,8 +204,15 @@ export class PiBackend {
       run.view.queue = (['steering','followUp'] as const).flatMap(kind => (Array.isArray(event[kind]) ? event[kind] : []).map((item: any) => ({text: typeof item === 'string' ? item : String(item.text ?? item.message ?? ''), behavior: kind === 'steering' ? 'steer' as const : 'followUp' as const})));
       run.view.pending = run.view.queue.length;
     }
+    // Event-level subagent persistence: works for ANY subagent implementation
+    // (official, npm pi-subagents, custom) by observing RPC events, not extension internals.
+    if (['tool_execution_start', 'tool_execution_update', 'tool_execution_end'].includes(event.type) && event.toolName === 'subagent') {
+      persistSubagentEvent(this.env.agentDir, key, String(event.toolCallId ?? ''), event);
+    }
     this.emit({ type: 'rpc', key, generation, event });
-    this.emit({ type: 'run', run: { ...run.view } });
+    // message_update / tool_execution_update 逐 delta 到达（每秒几十个），上面的分支
+    // 不会在它们上改 view；逐条重发完整 run 视图只会让渲染层每秒白渲染几十次。
+    if (event.type !== 'message_update' && event.type !== 'tool_execution_update') this.emit({ type: 'run', run: { ...run.view } });
   }
   async prompt(key: string, text: string, behavior: 'steer' | 'followUp', images?: import('../../shared/composer').PiImage[]) {
     if (!text.trim() || text.length > 200_000) throw new Error('输入为空或超过 200000 字符');
@@ -274,7 +299,9 @@ export class PiBackend {
   }
   async thinking(key: string, level: ThinkingLevel) {
     const run = this.get(key);
-    if (!THINKING_LEVELS.includes(level) || !run.view.thinkingLevels?.includes(level)) throw new Error('当前模型不支持该思考等级。');
+    // 只校验等级名本身；能力钳制交给 pi（set_thinking_level 内部 clampThinkingLevel），
+    // 实际生效值由 get_state 回读，绝不显示与运行不一致的等级。
+    if (!THINKING_LEVELS.includes(level)) throw new Error('未知的思考等级。');
     if (run.view.status === 'running' || run.view.status === 'starting') {
       if (run.view.thinkingLevel === level) return { ...run.view };
       run.view.pendingThinking = level;
@@ -296,7 +323,7 @@ export class PiBackend {
     this.emit({ type: 'run', run: { ...run.view } });
   }
   private async applyThinking(run: Running, level: ThinkingLevel) {
-    if (!THINKING_LEVELS.includes(level) || !run.view.thinkingLevels?.includes(level)) throw new Error('当前模型不支持该思考等级。');
+    if (!THINKING_LEVELS.includes(level)) throw new Error('未知的思考等级。');
     await run.client.request('set_thinking_level', {level});
     const state = await run.client.request('get_state');
     run.view.thinkingLevel = state.thinkingLevel;

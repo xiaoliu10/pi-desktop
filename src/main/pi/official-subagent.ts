@@ -1,48 +1,125 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import {discoverPi} from './environment';
-/** Disk status is separate from whether a running session has loaded the extension. */
-export function officialSubagentStatus(agentDir:string) {
- const file=path.join(agentDir,'extensions','desktop-official-subagent','index.ts');
- const scout=path.join(agentDir,'agents','desktop-scout.md');
- return {installed:fs.existsSync(file)&&fs.readFileSync(file,'utf8').startsWith('// PI Desktop official-subagent adapter v1'),scoutExists:fs.existsSync(scout),path:file};
-}
-/** Explicit opt-in, never silently replaces an existing subagent plugin or agent. */
-export function enableOfficialSubagent(agentDir:string) {
- const runtime=discoverPi({runtime:'bundled',agentDir});
- if(!runtime.launchArgs?.[0])throw new Error('内置 pi 运行时缺失，请先修复内核。');
- const source=path.resolve(path.dirname(runtime.launchArgs[0]),'../../examples/extensions/subagent/index.ts');
- if(!fs.existsSync(source))throw new Error('内置 pi 官方 subagent 示例缺失');
- const root=path.join(agentDir,'extensions','desktop-official-subagent'),file=path.join(root,'index.ts');
- const marker='// PI Desktop official-subagent adapter v1';
- if(fs.existsSync(file)&&!fs.readFileSync(file,'utf8').startsWith(marker))throw new Error('目标扩展已存在，未覆盖。');
- const settings=fs.existsSync(path.join(agentDir,'settings.json'))?JSON.parse(fs.readFileSync(path.join(agentDir,'settings.json'),'utf8')):{};
- if((settings.packages??[]).some((p:any)=>/subagents?/i.test(typeof p==='string'?p:p?.source??'')))throw new Error('已配置其他 subagent 插件，请先在扩展管理中停用它，避免同名工具冲突。');
- const extensions=path.join(agentDir,'extensions');
- if(fs.existsSync(extensions)&&fs.readdirSync(extensions).some(name=>name!=='desktop-official-subagent'&&/subagents?/i.test(name)))throw new Error('已发现其他 subagent 扩展，未重复安装。');
- fs.mkdirSync(root,{recursive:true});
- const code=`${marker}
-import official from ${JSON.stringify(source)};
-import fs from 'node:fs';
-export default function(pi:any) {
- official({...pi,registerTool(tool:any){
-  pi.registerTool({...tool, async execute(...args:any[]){
-   let mode=process.env.PI_DESKTOP_PERMISSION;
-   try {if(process.env.PI_DESKTOP_MODE_FILE)mode=fs.readFileSync(process.env.PI_DESKTOP_MODE_FILE,'utf8').trim();}catch{}
-   if(mode&&mode!=='fullAccess')throw new Error('官方 subagent 插件的子进程不支持 Desktop 独立审批。请使用完全访问模式，或使用设置中的独立会话。');
-   const controller=new AbortController();
-   const parent=args[2];
-   args[2]=parent?AbortSignal.any([parent,controller.signal]):controller.signal;
-   const timer=setInterval(()=>{try{if(process.env.PI_DESKTOP_MODE_FILE&&fs.readFileSync(process.env.PI_DESKTOP_MODE_FILE,'utf8').trim()!=='fullAccess')controller.abort();}catch{controller.abort();}},250);
-   try{return await tool.execute(...args);}finally{clearInterval(timer);}
 
-  }});
- }});
+/**
+ * Detect whether a third-party subagent extension/package is installed.
+ * Desktop's fallback subagent loads via -e ONLY when this returns false.
+ * Checks: settings.json packages for npm:*subagent*, and agentDir/extensions/
+ * for any directory with "subagent" in the name (except desktop's own).
+ */
+export function detectThirdPartySubagent(agentDir: string): { detected: boolean; source?: string } {
+  // Check settings.json packages
+  try {
+    const settings = JSON.parse(fs.readFileSync(path.join(agentDir, 'settings.json'), 'utf8'));
+    const pkgs = (settings.packages ?? []) as any[];
+    for (const p of pkgs) {
+      const s = typeof p === 'string' ? p : p?.source ?? '';
+      if (/subagents?/i.test(s) && !/desktop/i.test(s)) return { detected: true, source: s };
+    }
+  } catch { /* settings may not exist yet */ }
+  // Check agentDir/extensions/ for user-installed subagent extensions
+  const extDir = path.join(agentDir, 'extensions');
+  if (fs.existsSync(extDir)) {
+    for (const name of fs.readdirSync(extDir)) {
+      if (/subagents?/i.test(name) && name !== 'desktop-official-subagent' && name !== 'desktop-subagent') {
+        return { detected: true, source: name };
+      }
+    }
+  }
+  return { detected: false };
 }
-`;
- fs.writeFileSync(file,code,{mode:0o600});
- const agentRoot=path.join(agentDir,'agents');fs.mkdirSync(agentRoot,{recursive:true});
- const scout=path.join(agentRoot,'desktop-scout.md');
- if(!fs.existsSync(scout))fs.writeFileSync(scout,'---\nname: desktop-scout\ndescription: 只读检查项目并汇总发现\ntools: read, grep, find, ls\n---\n你是只读研究助手。检查任务涉及的代码，报告结论、证据和不确定性。不要修改文件。\n',{mode:0o600});
- return {path:file};
+
+/**
+ * Migrate: remove the old desktop-official-subagent from agentDir/extensions/.
+ * Desktop now loads its fallback subagent via -e flag, not from the discovery path.
+ * This eliminates the conflict with npm:pi-subagents.
+ */
+export function migrateOldSubagentExtension(agentDir: string): boolean {
+  const oldDir = path.join(agentDir, 'extensions', 'desktop-official-subagent');
+  if (!fs.existsSync(oldDir)) return false;
+  try { fs.rmSync(oldDir, { recursive: true, force: true }); return true; } catch { return false; }
+}
+
+/** Status for the UI: is desktop's fallback active, or is a third-party plugin in use? */
+export function officialSubagentStatus(agentDir: string) {
+  const thirdParty = detectThirdPartySubagent(agentDir);
+  const oldDir = path.join(agentDir, 'extensions', 'desktop-official-subagent');
+  const outdated = fs.existsSync(oldDir);
+  const scout = path.join(agentDir, 'agents', 'desktop-scout.md');
+  return {
+    installed: !thirdParty.detected,        // desktop fallback is active when no third-party present
+    thirdParty: thirdParty.detected,
+    thirdPartySource: thirdParty.source,
+    outdated,                               // old extension still in agentDir/extensions/ (needs migration)
+    scoutExists: fs.existsSync(scout),
+    path: path.join(agentDir, 'extensions', 'desktop-official-subagent', 'index.ts'),
+  };
+}
+
+/**
+ * Enable desktop's subagent support: create the scout agent definition.
+ * The fallback extension itself is loaded via -e in backend.launch(), not from disk.
+ * This is idempotent and safe to call repeatedly.
+ */
+export function enableOfficialSubagent(agentDir: string) {
+  migrateOldSubagentExtension(agentDir);
+  const agentRoot = path.join(agentDir, 'agents');
+  fs.mkdirSync(agentRoot, { recursive: true });
+  const scout = path.join(agentRoot, 'desktop-scout.md');
+  if (!fs.existsSync(scout)) {
+    fs.writeFileSync(scout, '---\nname: desktop-scout\ndescription: 只读检查项目并汇总发现\ntools: read, grep, find, ls\n---\n你是只读研究助手。检查任务涉及的代码，报告结论、证据和不确定性。不要修改文件。\n', { mode: 0o600 });
+  }
+  return { path: scout, upgraded: true };
+}
+
+/** Read persisted subagent files for a session (recovery after parent restart). */
+export function recoverSubagents(agentDir: string, sessionKey: string): Array<{ callId: string; status: string; details?: unknown; error?: string; startedAt?: number; updatedAt?: number }> {
+  const dir = path.join(agentDir, 'subagents');
+  if (!fs.existsSync(dir)) return [];
+  const prefix = sessionKey + '_';
+  const files = fs.readdirSync(dir).filter(f => f.startsWith(prefix) && f.endsWith('.json'));
+  return files.map(f => {
+    try {
+      const data = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8'));
+      if (data.status === 'completed') {
+        try { fs.unlinkSync(path.join(dir, f)); } catch {}
+        return null;
+      }
+      return data;
+    } catch { return null; }
+  }).filter(Boolean) as any;
+}
+
+/** Clean up all persisted subagent files for a session (on disconnect/close). */
+export function cleanupSubagents(agentDir: string, sessionKey: string) {
+  const dir = path.join(agentDir, 'subagents');
+  if (!fs.existsSync(dir)) return;
+  const prefix = sessionKey + '_';
+  for (const f of fs.readdirSync(dir).filter(f => f.startsWith(prefix) && f.endsWith('.json'))) {
+    try { fs.unlinkSync(path.join(dir, f)); } catch {}
+  }
+}
+
+/**
+ * Event-level subagent progress persistence. Called from backend.onEvent for any
+ * tool_execution_start / message_update / tool_execution_end where tool === 'subagent'.
+ * Works for ALL subagent implementations (official, npm pi-subagents, custom) because
+ * it observes RPC events, not the extension's internal onUpdate callback.
+ */
+export function persistSubagentEvent(agentDir: string, sessionKey: string, callId: string, event: Record<string, any>) {
+  const dir = path.join(agentDir, 'subagents');
+  const file = path.join(dir, `${sessionKey}_${callId}.json`);
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    const details = event.partialResult?.details ?? event.result?.details;
+    const status = event.type === 'tool_execution_end' ? 'completed' : 'running';
+    const payload: Record<string, unknown> = { callId, startedAt: Date.now(), status, updatedAt: Date.now() };
+    if (details) payload.details = details;
+    if (event.type === 'tool_execution_end' && event.result?.isError) payload.status = 'failed';
+    fs.writeFileSync(file, JSON.stringify(payload), { mode: 0o600 });
+    // Clean up on success after 5s (session file is source of truth)
+    if (status === 'completed') {
+      setTimeout(() => { try { fs.unlinkSync(file); } catch {} }, 5000).unref?.();
+    }
+  } catch { /* best-effort */ }
 }

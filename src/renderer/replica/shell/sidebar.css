@@ -36,13 +36,28 @@
 .pireplica .pi-sidebar__top {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 6px;
   padding: 12px 14px 4px;
 }
 
-.pireplica .pi-sidebar__topspacer {
-  flex: 1;
+/* macOS hiddenInset 红绿灯占左上角，按钮组整体让出安全区（ZCode DesktopTopOverlay 同款 96px）。 */
+.pireplica--mac .pi-sidebar__top {
+  padding-left: 96px;
+}
+
+.pireplica .pi-sidebar__nav {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.pireplica .pi-sidebar__nav .pi-iconbtn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.pireplica .pi-sidebar__nav .pi-iconbtn:disabled:hover {
+  background: transparent;
 }
 
 .pireplica .pi-sidebar__scroll {

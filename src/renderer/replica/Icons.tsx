@@ -14,7 +14,8 @@ export type IconName =
   | 'book' | 'stack' | 'box' | 'download' | 'archive' | 'info' | 'instructions'
   | 'file' | 'code' | 'globe' | 'diff' | 'check' | 'check-circle' | 'x' | 'warning'
   | 'refresh' | 'download-cloud' | 'link' | 'trash' | 'pencil' | 'circle' | 'more' | 'copy'
-  | 'globe-scope' | 'edit-files' | 'read-files' | 'network' | 'terminal' | 'switch' | 'grip' | 'arrow-up' | 'panel-right';
+  | 'globe-scope' | 'edit-files' | 'read-files' | 'network' | 'terminal' | 'switch' | 'grip' | 'arrow-up' | 'panel-right'
+  | 'smartphone' | 'loader' | 'notepad' | 'arrow-right' | 'arrow-left';
 
 const paths: Record<IconName, ReactNode> = {
   'expand-diagonal': <><path d="M14 3h7v7M21 3l-7 7M10 21H3v-7M3 21l7-7"/></>,
@@ -61,6 +62,13 @@ const paths: Record<IconName, ReactNode> = {
       <path d="M9.5 10l2.5 2.5L9.5 15" />
     </>
   ),
+  smartphone: (
+    <>
+      <rect x="7" y="2" width="10" height="20" rx="2.5" />
+      <path d="M11 18h2" />
+    </>
+  ),
+  loader: <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83" />,
   settings: (
     <>
       <circle cx="12" cy="12" r="3" />
@@ -296,6 +304,15 @@ const paths: Record<IconName, ReactNode> = {
       <circle cx="16.5" cy="12" r="3" fill="currentColor" stroke="none" />
     </>
   ),
+  notepad: (
+    <>
+      <path d="M8 2v4M12 2v4M16 2v4" />
+      <rect width="16" height="18" x="4" y="4" rx="2" />
+      <path d="M8 10h6M8 14h8M8 18h5" />
+    </>
+  ),
+  'arrow-right': <><path d="M5 12h14" /><path d="m12 5 7 7-7 7" /></>,
+  'arrow-left': <><path d="M19 12H5" /><path d="m12 19-7-7 7-7" /></>,
 };
 
 export interface IconProps {

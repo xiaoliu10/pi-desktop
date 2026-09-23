@@ -5,7 +5,7 @@ import { officialSubagentDetails, SubagentNavigation } from '../../pi/subagents'
  * message nav rail, composer with menus, and the conversation/home views.
  */
 
-import { memo, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type {
@@ -132,7 +132,7 @@ function MessageParts({ parts, labels, onOpenToolFile }: { parts: MessagePart[];
           case 'text':
             return <ChatMarkdown key={p.id} text={p.text} />;
           case 'thinking':
-            return <ExecutionNote key={p.id} title={labels.you === '你' ? '思考' : 'Thinking'} text={p.text} />;
+            return <ExecutionNote key={p.id} title={`${labels.you === '你' ? '思考' : 'Thought'}${p.durationMs !== undefined ? ` · ${labels.you === '你' ? `用时 ${Math.max(1, Math.ceil(p.durationMs / 1000))} 秒` : `took ${Math.max(1, Math.ceil(p.durationMs / 1000))}s`}` : ''}`} text={p.text} />;
           case 'tool':
             return <ToolCard key={p.id} part={p} labels={labels} onOpenToolFile={onOpenToolFile} />;
           case 'notice':
@@ -169,10 +169,8 @@ function ExecutionNote({ title, text }: { title: string; text: string }) {
   // 受控开合：流式渲染每 ~150ms 重渲染，非受控 details 的 open 会被 React 重置，
   // 用户点开后立即被关上 → 看不到正文。用 state 跟随 toggle。
   const [open, setOpen] = useState(false);
-  // 摘要片段要纯文本：模型常把思考标题写成 `**Doing X**`，折叠态若原样显示会露出字面星号。
-  const excerpt = text.replace(/\*\*(.+?)\*\*/g, '$1').replace(/\*(.+?)\*/g, '$1').replace(/`([^`]+?)`/g, '$1').replace(/\s+/g, ' ').trim().slice(0, 110);
   return <details className="pi-execution__note" open={open} onToggle={(e) => setOpen(e.currentTarget.open)}>
-    <summary><Icon name="brain" size={17}/><span>{title}</span><span className="pi-execution__excerpt">{excerpt}</span><Icon name="chevron-right" size={12} className="pi-execution__chevron" /></summary>
+    <summary><Icon name="brain" size={17}/><span>{title}</span><Icon name="chevron-right" size={12} className="pi-execution__chevron" /></summary>
     <div className="pi-execution__note-body"><ChatMarkdown text={text} /></div>
   </details>;
 }
@@ -189,12 +187,13 @@ export function ElapsedTime({ startedAt, endedAt, running, zh }: { startedAt?: n
   return <span className="pi-execution__elapsed">{running ? (zh ? '已工作 ' : 'Working for ') : (zh ? '用时 ' : 'Took ')}{formatElapsed((running ? now : endedAt!) - startedAt, zh)}</span>;
 }
 
-export function ExecutionGroup({ turn, parts, running, active, showElapsed, labels, onOpenToolFile }: { turn: ChatTurn; parts: MessagePart[]; running: boolean; /** 仅最后一个 steps 段为 active：转圈/计时/正在思考只出现一处 */ active?: boolean; showElapsed?: boolean; labels: ChatViewProps['labels']; onOpenToolFile?: ChatViewProps['onOpenToolFile'] }) {
+export function ExecutionGroup({ turn, parts, running, active, expanded, showElapsed, labels, onOpenToolFile }: { turn: ChatTurn; parts: MessagePart[]; running: boolean; /** 仅最后一个 steps 段为 active：转圈/计时/正在思考只出现一处 */ active?: boolean; /** 回合进行中：所有过程段都保持展开（用户要求），完成态不传即默认折叠 */ expanded?: boolean; showElapsed?: boolean; labels: ChatViewProps['labels']; onOpenToolFile?: ChatViewProps['onOpenToolFile'] }) {
   const zh = labels.you === '你';
   const live = active ?? running;
   const [userOpen, setUserOpen] = useState(false);
-  // running 时强制展开；否则跟随用户手动开合。和 ExecutionNote 同理：非受控会被流式 re-render 重置。
-  const open = running || userOpen;
+  // 回合进行中强制展开（expanded 覆盖所有段，不限最后一个）；完成态跟随用户手动开合。
+  // 非受控会被流式 re-render 重置，open 必须是受控推导。
+  const open = running || expanded || userOpen;
   const hasTiming = showElapsed && turn.startedAt !== undefined && (live || turn.endedAt !== undefined);
   const failures = parts.filter(p => p.kind === 'error' || (p.kind === 'tool' && p.status === 'error')).length;
   // 模型此刻正在流式输出思考（最新内容是 thinking）→ 加粗「正在思考」，与 ZCode 一致。
@@ -216,13 +215,14 @@ export function ExecutionGroup({ turn, parts, running, active, showElapsed, labe
 
 function firstText(parts: MessagePart[]): string {
   const hit = parts.find((p): p is Extract<MessagePart, { kind: 'text' }> => p.kind === 'text' && p.text.trim().length > 0);
-  return hit ? hit.text.trim().replace(/\s+/g, ' ') : '';
+  // 先截断再压缩空白：rail 每次流式刷新都会扫全部轮次，对整段文本跑正则是白烧 CPU。
+  return hit ? hit.text.trim().slice(0, 64).replace(/\s+/g, ' ').trim() : '';
 }
 
 function lastText(parts: MessagePart[]): string {
   for (let i = parts.length - 1; i >= 0; i--) {
     const p = parts[i];
-    if (p.kind === 'text' && p.text.trim().length > 0) return p.text.trim().replace(/\s+/g, ' ');
+    if (p.kind === 'text' && p.text.trim().length > 0) return p.text.trim().slice(-64).replace(/\s+/g, ' ').trim();
   }
   return '';
 }
@@ -337,7 +337,7 @@ export function MessageNav({ turns, listRef, onJump }: { turns: ChatTurn[]; list
 // own props changed.
 /** 单轮消息：memo 化 + turn/消息身份稳定（adapter 缓存 + executionTurns 缓存），
  *  千条级会话流式时每次事件只重渲染活动轮，而不是全量 600+ 行。 */
-const TurnArticle = memo(function TurnArticle({ m, liveTurn, labels, onOpenToolFile }: { m: ChatTurn; liveTurn: boolean; labels: ChatViewProps['labels']; onOpenToolFile?: ChatViewProps['onOpenToolFile'] }) {
+export const TurnArticle = memo(function TurnArticle({ m, liveTurn, labels, onOpenToolFile }: { m: ChatTurn; liveTurn: boolean; labels: ChatViewProps['labels']; onOpenToolFile?: ChatViewProps['onOpenToolFile'] }) {
   return (
     <article data-msg={m.id} className={`pi-msg pi-msg--${m.role}`}>
       {m.simulated && (
@@ -350,11 +350,12 @@ const TurnArticle = memo(function TurnArticle({ m, liveTurn, labels, onOpenToolF
         ? <UserMessageParts parts={m.answer} labels={labels} onOpenToolFile={onOpenToolFile} />
         : (() => {
           if (liveTurn) {
-            // 活动轮：保持时间顺序，逐步段渲染，过程可见
+            // 活动轮：保持时间顺序，逐步段渲染；所有过程段保持展开（用户要求：
+            // 工作进行中进度可见，中途出现结论文字也不折叠，完成态才统一收起）
             return <>{m.segments.map((seg, si) => {
               const liveSegment = si === m.segments.length - 1;
               if (seg.kind === 'steps' && seg.parts.length > 0) {
-                return <ExecutionGroup key={`${m.id}-seg-${si}`} turn={m} parts={seg.parts} running={liveSegment} active={liveSegment} showElapsed={liveSegment} labels={labels} onOpenToolFile={onOpenToolFile} />;
+                return <ExecutionGroup key={`${m.id}-seg-${si}`} turn={m} parts={seg.parts} running={liveSegment} active={liveSegment} expanded showElapsed={liveSegment} labels={labels} onOpenToolFile={onOpenToolFile} />;
               }
               if (seg.kind === 'text' && seg.parts.length > 0) {
                 return <div key={`${m.id}-seg-${si}`} className="pi-msg__answer"><MessageParts parts={seg.parts} labels={labels} onOpenToolFile={onOpenToolFile} /></div>;
@@ -362,7 +363,7 @@ const TurnArticle = memo(function TurnArticle({ m, liveTurn, labels, onOpenToolF
               return null;
             })}</>;
           }
-          // 完成态：收缩成三段——用时行（折叠的过程）+ 结论
+          // 完成态：思考与工具都是任务过程产物，统一收进「用时」折叠块，结论直接可见
           const allSteps = m.segments.filter((s) => s.kind === 'steps').flatMap((s) => s.parts);
           const allText = m.segments.filter((s) => s.kind === 'text').flatMap((s) => s.parts);
           const zh = labels.you === '你';
@@ -464,13 +465,59 @@ export const ChatView = memo(function ChatView(props: ChatViewProps) {
     setShowJump(false);
   };
 
+  // 长会话只渲染尾部窗口：全量 2000+ 轮一次性上 DOM 是打开大会话秒级长帧的主因
+  // （布局/绘制成本也随总节点数走，流式期间每次 flush 都在付）。顶部滚动到近处
+  // 自动补载更早消息（并保留视口锚点），顶部常驻一条「更早消息」提示可手动点。
+  const TAIL_WINDOW = 60;
+  const LOAD_STEP = 60;
+  const [renderLimit, setRenderLimit] = useState(TAIL_WINDOW);
+  const limitEpochRef = useRef('');
+  const firstTurnId = turns[0]?.id ?? '';
+  useEffect(() => {
+    // 切会话（首条 turn 变化）时重置窗口；同会话内 turns 增长不重置。
+    if (limitEpochRef.current !== firstTurnId) {
+      limitEpochRef.current = firstTurnId;
+      setRenderLimit(TAIL_WINDOW);
+    }
+  }, [firstTurnId]);
+  const hiddenCount = Math.max(0, turns.length - renderLimit);
+  const visibleTurns = hiddenCount > 0 ? turns.slice(turns.length - renderLimit) : turns;
+  const prependAnchorRef = useRef<{ height: number } | null>(null);
+  const loadEarlier = useCallback(() => {
+    const list = listRef.current;
+    if (list) prependAnchorRef.current = { height: list.scrollHeight };
+    setRenderLimit((limit) => Math.min(turns.length, limit + LOAD_STEP));
+  }, [turns.length]);
+  useLayoutEffect(() => {
+    // 补载在头部插入节点：把新增高度补进 scrollTop，视口锚定在原来那条消息上。
+    const anchor = prependAnchorRef.current;
+    const list = listRef.current;
+    if (!anchor || !list) return;
+    prependAnchorRef.current = null;
+    if (list.scrollHeight > anchor.height) list.scrollTop += list.scrollHeight - anchor.height;
+  });
+  useEffect(() => {
+    const list = listRef.current;
+    if (!list || hiddenCount === 0) return;
+    const onScroll = () => {
+      if (list.scrollTop < 240) loadEarlier();
+    };
+    list.addEventListener('scroll', onScroll, { passive: true });
+    return () => list.removeEventListener('scroll', onScroll);
+  }, [hiddenCount, loadEarlier]);
+
   return (
     <div className="pi-chat">
       <MessageNav turns={turns} listRef={listRef} onJump={jump} />
       <div className="pi-chat__scroll" ref={listRef}>
         <div className="pi-chat__inner">
-          {turns.map((m, index) => (
-            <TurnArticle key={m.id} m={m} liveTurn={props.running && index === turns.length - 1} labels={props.labels} onOpenToolFile={props.onOpenToolFile} />
+          {hiddenCount > 0 && (
+            <button type="button" className="pi-chat__earlier" onClick={loadEarlier}>
+              {props.labels.you === '你' ? `更早的消息 · 还有 ${hiddenCount} 轮` : `Earlier messages · ${hiddenCount} more`}
+            </button>
+          )}
+          {visibleTurns.map((m) => (
+            <TurnArticle key={m.id} m={m} liveTurn={props.running && m === turns[turns.length - 1]} labels={props.labels} onOpenToolFile={props.onOpenToolFile} />
           ))}
           {props.sending && props.sendingText && (
             <article className="pi-msg pi-msg--user pi-msg--pending">
@@ -566,14 +613,26 @@ function QueueRow({ item, labels, onNow, onRecall, onRemove }: {
 }
 
 export function Composer(props: ComposerProps) {
-  // 本地优先：按键只更新本地状态，store 异步镜像；外部变更（发送清空、注入文本）同步回本地。
+  // 本地优先：按键只更新本地状态，store 镜像防抖 200ms（对齐 ZCode：键入不碰全局状态，
+  // 否则每键触发整棵应用树重渲染造成输入卡顿）；发送/卸载时立即冲刷，外部注入同步回本地。
   const [localText, setLocalText] = useState(props.draftText ?? '');
   const text = localText;
+  const draftRef = useRef(props.draftText ?? '');
+  const draftTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const flushDraft = () => {
+    if (draftTimer.current) { clearTimeout(draftTimer.current); draftTimer.current = null; }
+    if (props.onDraftChange && draftRef.current !== props.draftText) props.onDraftChange(draftRef.current);
+  };
+  useEffect(() => () => flushDraft(), []);
   useEffect(() => { if (props.draftText !== undefined) setLocalText(props.draftText); }, [props.draftText]);
   const setText = (value: React.SetStateAction<string>) => {
     const next = typeof value === 'function' ? value(text) : value;
     setLocalText(next);
-    if (props.onDraftChange) props.onDraftChange(next);
+    draftRef.current = next;
+    if (props.onDraftChange) {
+      if (draftTimer.current) clearTimeout(draftTimer.current);
+      draftTimer.current = setTimeout(() => { draftTimer.current = null; props.onDraftChange?.(draftRef.current); }, 200);
+    }
   };
   const [menu, setMenu] = useState<OpenMenu>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
@@ -599,6 +658,7 @@ export function Composer(props: ComposerProps) {
   }, [menu]);
 
   const submit = () => {
+    flushDraft();
     const value = text.trim();
     if ((!value && !props.hasAttachments) || props.preparing) return;
     setText('');

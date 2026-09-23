@@ -14,6 +14,7 @@ export function TopBar(props: TopBarProps) {
         {props.title}
       </h1>
       <div className="pi-topbar__actions">
+        {props.openWith}
         <button className="pi-iconbtn" onClick={props.onNewSession} aria-label={props.labels.newSession} title={props.labels.newSession}>
           <Icon name="plus-square" />
         </button>

@@ -4,11 +4,14 @@ import { AccountLoginDialog } from './AccountLoginDialog';
 import { ConversationStatusPanel } from './ConversationStatusPanel';
 import { TerminalPanel } from './TerminalPanel';
 import { PlanViewer } from './PlanViewer';
+import { PlanCard } from './PlanCard';
+import { PlanApprovalCard } from './PlanApprovalCard';
 import { planDocument, planFromMarkdown } from './plan-document';
 import { conversationPlan } from './conversation-plan';
 import { AutomationsPage } from './AutomationsPage';
 import { toolFilePreview } from './tool-file-preview';
 import { ProjectActions } from './ProjectActions';
+import { OpenWithMenu } from './OpenWithMenu';
 import { ProviderLogo } from './ProviderLogo';
 import { ArchivedSessions } from './ArchivedSessions';
 import { ComposerAdd, ContextChips, ContextUsageChip, ProjectHeader, ThinkingMenu } from './ComposerTools';
@@ -48,6 +51,9 @@ import type {
 import type { AccessMode } from '../../shared/access-mode';
 import {
   buildPiSidebar,
+  canNavBack,
+  canNavForward,
+  automationLaunchPrompt,
   currentRunOf,
   currentSessionOf,
   cwdOf,
@@ -206,9 +212,14 @@ export default function PiReplicaApp() {
     () => conversationMessages(s.history?.branch ?? [], s.live[s.selectedKey ?? ''], s.toolProgress[s.selectedKey ?? '']),
     [s.history, s.live, s.toolProgress, s.selectedKey],
   );
+  // 自动化“立即运行”的乐观气泡：点击瞬间进对话，真实消息回显后自动让位。
+  const launchPrompt = automationLaunchPrompt(s, messages.some(m => m.role === 'user'));
   const [subagentPanel,setSubagentPanel]=useState<{callId?:string}|null>(null);
+  const [subagentSeen,setSubagentSeen]=useState(0);
   const parentRunning=Boolean(run&&['starting','running','stopping'].includes(run.status));
-  const subagents=useMemo(()=>projectSubagents(messages,parentRunning),[messages,parentRunning]);
+  const subagents=useMemo(()=>projectSubagents(messages,parentRunning,s.recoveredSubagents),[messages,parentRunning,s.recoveredSubagents]);
+  // 红色计数徽章：未查看的已结束子代理数量（completed/failed/interrupted/recovered）。
+  const subagentUnseen=Math.max(0, subagents.filter(c=>['completed','failed','interrupted','recovered'].includes(c.status)).length - subagentSeen);
   // 计划查看器（复刻 ZCode plan-detail 侧板）：与会话绑定，切换会话时关闭。
   const [planOpen,setPlanOpen]=useState(false);
   // 内置终端（ZCode 侧板终端）：面板常挂载，切换会话不关闭。
@@ -243,6 +254,10 @@ export default function PiReplicaApp() {
   const [filePreviewVersion, setFilePreviewVersion] = useState(0);
   const [sidebarWidth, setSidebarWidth, resetSidebarWidth] = usePanelWidth('pi.sidebarWidth', 366, 220, 520);
   const [workbenchWidth, setWorkbenchWidth, resetWorkbenchWidth] = usePanelWidth('pi.workbenchWidth', 415, 300, 700);
+  // 右侧三个互叠的侧板（子代理/计划/终端）同样可拖宽，ZCode 侧板均带 col-resize。
+  const [subagentWidth, setSubagentWidth, resetSubagentWidth] = usePanelWidth('pi.subagentWidth', 440, 300, 720);
+  const [planWidth, setPlanWidth, resetPlanWidth] = usePanelWidth('pi.planWidth', 480, 320, 720);
+  const [terminalWidth, setTerminalWidth, resetTerminalWidth] = usePanelWidth('pi.terminalWidth', 640, 360, 900);
   const previewRequest = useRef(0);
   useEffect(() => { previewRequest.current++; setFilePreview(null); }, [s.selectedKey]);
   // 切到插件市场 tab 时若列表为空则自动搜索一次（覆盖任何进入路径，不单靠 tab 点击回调）。
@@ -303,7 +318,7 @@ export default function PiReplicaApp() {
       headerSlot={<ProjectHeader cwd={composerCwd} locked={!!s.selectedKey || s.connecting} onChoose={s.chooseWorkspace} projects={sidebar.projects.map(p=>({path:p.path,name:p.name}))} onSelect={path=>usePiStore.setState({draftCwd:path})} />}
       addSlot={<ComposerAdd cwd={composerCwd} disabled={s.connecting} onAdd={s.addContext} />}
       contextSlot={<><ContextChips items={s.contextItems} remove={s.removeContext} />{attachmentLoading && <div className="pi-attachment-loading" role="status">正在读取附件…</div>}</>}
-      reasoningSlot={<ThinkingMenu value={run?.thinkingLevel ?? s.desktopPreferences?.defaultThinkingLevel ?? 'off'} levels={run ? ((run.thinkingLevels?.length ?? 0) > 1 ? [...new Set([...(run.thinkingLevels ?? []), 'xhigh', 'max'] as const)] : run.thinkingLevels ?? []) : draftModel?.reasoning ? ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const : []} disabled={s.connecting} pending={run?.pendingThinking} onChange={s.pickThinking} />}
+      reasoningSlot={<ThinkingMenu value={run?.thinkingLevel ?? s.desktopPreferences?.defaultThinkingLevel ?? 'off'} levels={run ? (run.thinkingLevels ?? []) : draftModel?.reasoning ? ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const : []} disabled={s.connecting} pending={run?.pendingThinking} onChange={s.pickThinking} />}
       leftSlot={
         <>
           <AccessModeMenu value={run?.accessMode ?? s.draftAccessMode ?? s.desktopPreferences?.sessionAccessModes?.[s.selectedKey ?? ''] ?? s.desktopPreferences?.permission ?? 'ask'} disabled={s.connecting} changing={s.changingAccessMode} zh={s.lang === 'zh'} onChange={s.setAccessMode} />
@@ -465,7 +480,7 @@ export default function PiReplicaApp() {
     <SubagentNavigation.Provider value={callId=>{setSubagentPanel({callId});usePiStore.setState({workbenchOpen:false});}}>
     <div
       className={rootClass}
-      style={{ height: '100vh', fontSize: `${s.fontScale}%`, ...(fontFamily ? { fontFamily } : {}), '--pi-sidebar-width': `${sidebarWidth}px`, '--pi-workbench-width': `${workbenchWidth}px` } as React.CSSProperties}
+      style={{ height: '100vh', fontSize: `${s.fontScale}%`, ...(fontFamily ? { fontFamily } : {}), '--pi-sidebar-width': `${sidebarWidth}px`, '--pi-workbench-width': `${workbenchWidth}px`, '--pi-subagent-width': `${subagentWidth}px`, '--pi-plan-width': `${planWidth}px`, '--pi-terminal-width': `${terminalWidth}px` } as React.CSSProperties}
       data-pi-ready={s.env ? 'true' : undefined}
     >
       {loginProvider&&<AccountLoginDialog provider={loginProvider} onClose={()=>setLoginProvider(null)} onDone={s.loadCatalog}/>}
@@ -581,6 +596,11 @@ export default function PiReplicaApp() {
             onRenameSession={(id, name) => s.renameSession(id, name)}
             notificationsCount={s.notifications.filter((n) => !n.read).length}
             activeOverlay={s.view === 'automations' ? 'automations' : s.view === 'plugins' ? 'plugins' : s.notificationsOpen ? 'notifications' : null}
+            onNavBack={s.navBack}
+            onNavForward={s.navForward}
+            canNavBack={canNavBack(s)}
+            canNavForward={canNavForward(s)}
+            navLabels={{ back: s.lang === 'zh' ? '后退' : 'Back', forward: s.lang === 'zh' ? '前进' : 'Forward' }}
           />
           {!s.sidebarCollapsed && <ResizeHandle side="left" width={sidebarWidth} min={220} max={520} onChange={setSidebarWidth} onReset={resetSidebarWidth} label="项目侧栏宽度" />}
           <div className="pireplica__main" style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', position: 'relative' }}>
@@ -594,6 +614,7 @@ export default function PiReplicaApp() {
                 workbenchOpen={s.workbenchOpen}
                 onToggleTerminal={()=>setTerminalOpen(value=>!value)}
                 terminalOpen={terminalOpen}
+                openWith={<OpenWithMenu cwd={cwd ?? s.draftCwd} lang={s.lang} />}
               />
             )}
             {s.error && (
@@ -629,15 +650,16 @@ export default function PiReplicaApp() {
               })()}
               {s.view === 'chat' && (
                 <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
-                  {run?.accessMode === 'plan' && run.status === 'idle' && run.planReady && <div className="pi-plan-ready"><span>{s.lang === 'zh' ? '计划模式 · 确认计划后开始执行' : 'Plan mode · Start when the plan is ready'}</span><span className="pi-plan-ready__actions"><button className="pi-btn" onClick={()=>setPlanOpen(true)}>{s.lang === 'zh' ? '查看计划' : 'View plan'}</button><button className="pi-btn pi-btn--primary" disabled={s.changingAccessMode} onClick={s.executePlan}>{s.lang === 'zh' ? '按计划执行' : 'Execute plan'}</button></span></div>}
+                  {run?.accessMode === 'plan' && run.status === 'idle' && run.planReady && planDoc && <PlanCard doc={planDoc} lang={s.lang} onViewPlan={()=>setPlanOpen(true)} />}
+                  {run?.accessMode === 'plan' && run.status === 'idle' && run.planReady && <PlanApprovalCard lang={s.lang} executing={Boolean(s.changingAccessMode)} onApprove={s.executePlan} onDecline={s.declinePlan} />}
                   <ChatView
                     messages={messages}
                     runTiming={run?.timing}
                     running={Boolean(run && ['running', 'stopping'].includes(run.status))}
                     queued={run?.pending ?? 0}
-                    sending={Boolean(s.pendingPrompt) || run?.status === 'starting' || Boolean(s.sentAt && s.sentAt.key === s.selectedKey && run?.status === 'idle')}
-                    sendingText={s.connecting ? s.pendingPrompt : undefined}
-                    sendingAt={s.sentAt?.key === s.selectedKey ? s.sentAt.at : undefined}
+                    sending={Boolean(s.pendingPrompt) || run?.status === 'starting' || Boolean(s.sentAt && s.sentAt.key === s.selectedKey && run?.status === 'idle') || Boolean(launchPrompt)}
+                    sendingText={s.connecting ? s.pendingPrompt : launchPrompt}
+                    sendingAt={launchPrompt ? s.automationLaunch!.startedAt : s.sentAt?.key === s.selectedKey ? s.sentAt.at : undefined}
                     retrying={s.selectedKey ? s.retrying?.[s.selectedKey] ?? undefined : undefined}
                     queue={run?.queue}
                     demo={false}
@@ -648,7 +670,7 @@ export default function PiReplicaApp() {
                   <div style={{ padding: run ? '0 24px 20px' : '0 24px 20px' }}>{composer}</div>
                 </div>
               )}
-              {s.view === 'automations' && <AutomationsPage projects={[...new Set([...(s.desktopPreferences?.projects.map(p=>p.path)||[]),...s.sessions.map(session=>session.cwd)])]} models={(s.catalog?.providers||[]).flatMap(p=>p.models.map(m=>({id:`${p.id}/${m.id}`,name:`${p.id} / ${m.name||m.id}`})))} onOpenSession={key=>s.selectSession(key)} />}
+              {s.view === 'automations' && <AutomationsPage projects={[...new Set([...(s.desktopPreferences?.projects.map(p=>p.path)||[]),...s.sessions.map(session=>session.cwd)])]} models={(s.catalog?.providers||[]).flatMap(p=>p.models.map(m=>({id:`${p.id}/${m.id}`,name:`${p.id} / ${m.name||m.id}`})))} onOpenSession={key=>s.selectSession(key)} onRunTask={task=>s.runAutomationNow(task)} />}
               {s.view === 'plugins' && (
                 <PluginsPage
                   tab={pluginTab}
@@ -709,9 +731,12 @@ export default function PiReplicaApp() {
                   onApplyUpdates={() => undefined}
                 />
               )}
-              {s.view === 'chat' && subagents.length>0 && !subagentPanel && <button className="pi-btn pi-btn--outline pi-subagents-entry" onClick={()=>{setSubagentPanel({});usePiStore.setState({workbenchOpen:false});}}>子代理 · {subagents.length}</button>}
+              {s.view === 'chat' && subagents.length>0 && !subagentPanel && <button className="pi-btn pi-btn--outline pi-subagents-entry" onClick={()=>{setSubagentPanel({});setSubagentSeen(subagents.filter(c=>['completed','failed','interrupted','recovered'].includes(c.status)).length);usePiStore.setState({workbenchOpen:false});}}>子代理 · {subagents.length}{subagentUnseen>0 && <span className="pi-subagents-badge">{subagentUnseen}</span>}</button>}
+              {subagentPanel && s.view==='chat' && <ResizeHandle side="right" width={subagentWidth} min={300} max={720} onChange={setSubagentWidth} onReset={resetSubagentWidth} label="子代理面板宽度" />}
               {subagentPanel && s.view==='chat' && <SubagentPanel key={`${s.selectedKey}:${subagentPanel.callId||''}`} children={subagents} initialCall={subagentPanel.callId} parentRunning={parentRunning} onClose={()=>setSubagentPanel(null)} onStop={s.stop}/>}
+              {s.view==='chat' && planOpen && <ResizeHandle side="right" width={planWidth} min={320} max={720} onChange={setPlanWidth} onReset={resetPlanWidth} label="计划面板宽度" />}
               {s.view==='chat' && planOpen && <PlanViewer key={s.selectedKey||'draft'} doc={planDoc} checklist={planChecklist} lang={s.lang} running={Boolean(run&&['running','stopping'].includes(run.status))} planMode={run?.accessMode==='plan'} onClose={()=>setPlanOpen(false)} onExecute={s.executePlan}/>}
+              {s.view==='chat' && terminalStarted && terminalOpen && <ResizeHandle side="right" width={terminalWidth} min={360} max={900} onChange={setTerminalWidth} onReset={resetTerminalWidth} label="终端面板宽度" />}
               {s.view==='chat' && terminalStarted && <TerminalPanel open={terminalOpen} cwd={composerCwd} lang={s.lang} dark={s.theme==='dark'} onClose={()=>setTerminalOpen(false)}/>}
               {s.view === 'chat' && !s.workbenchOpen && !subagentPanel && !planOpen && <ConversationStatusPanel key={s.selectedKey || 'draft'} cwd={cwd} messages={messages} running={Boolean(run && ['running','stopping'].includes(run.status))} stats={run?.stats} onReview={()=>{setFilePreview(null);s.selectWorkbenchTab('review');}} onRequest={text=>{s.setDraftText(s.draftText ? `${s.draftText}\n\n${text}` : text);}} onOpenPlan={()=>setPlanOpen(true)} planAvailable={Boolean(planDoc||planChecklist.length)} />}
               {s.workbenchOpen && (s.view === 'chat' || s.view === 'home') && <ResizeHandle side="right" width={workbenchWidth} min={300} max={700} onChange={setWorkbenchWidth} onReset={resetWorkbenchWidth} label="工作面板宽度" />}

@@ -37,4 +37,27 @@ describe('read-only native pi sessions',()=>{
   index.start(changed);
   try {fs.mkdirSync(nested);write(path.join(nested,'s.jsonl'),[header,user]);await vi.waitFor(()=>expect(changed).toHaveBeenCalled(),{timeout:1900,interval:100});expect(index.scan()).toHaveLength(1);}finally{index.close();}
  });
+ it('defers re-parsing large growing files until history() asks for them',()=>{
+  // 流式会话每个 delta 都在追加；大文件变更只更新元数据（脏标记），全量解析
+  // 延后到 history() 请求该会话时同步做——否则主进程会被持续重解析拖死。
+  const root=temp(), file=path.join(root,'big.jsonl');
+  const pad='x'.repeat(300*1024);
+  write(file,[header,{...user,message:{...user.message,content:pad}}]);
+  const index=new SessionIndex([root],path.join(root,'desktop'));
+  const key=index.scan()[0].key;
+  const before=index.history(key);
+  fs.appendFileSync(file,JSON.stringify({type:'message',id:'b',parentId:'a',message:{role:'assistant',content:'appended while streaming'}})+'\n');
+  const reads=vi.spyOn(fs,'readFileSync');
+  try {
+    // 脏期间 scan() 不再重读大文件（watch/轮询每次都调 scan，重读就是持续空转）。
+    const scanned=index.scan();
+    expect(scanned[0].size).toBe(fs.statSync(file).size);
+    expect(reads).not.toHaveBeenCalled();
+    // history() 对脏会话强制同步重解析 → 拿到完整尾部。
+    const fresh=index.history(key);
+    expect(fresh.entries).toHaveLength(2);
+    expect(fresh.entries[1]?.id).toBe('b');
+    expect(fresh).not.toBe(before);
+  } finally { reads.mockRestore(); }
+ });
 });

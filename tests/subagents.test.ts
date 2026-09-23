@@ -6,7 +6,7 @@ const part=(phase:ToolPart['phase'],results:unknown[],mode='single'):ToolPart=>(
 const messages=(...parts:ToolPart[]):ChatMessage[]=>[{id:'m',role:'assistant',parts}];
 it('does not mistake exitCode=0 in streaming snapshots for completion',()=>{
  expect(projectSubagents(messages(part('progress',[result()])),true)[0].status).toBe('running');
- expect(projectSubagents(messages(part('progress',[result()])),false)[0].status).toBe('unknown');
+ expect(projectSubagents(messages(part('progress',[result()])),false)[0].status).toBe('interrupted');
  expect(projectSubagents(messages(part('result',[result()])),false)[0].status).toBe('completed');
 });
 it('keeps stable sibling identities and handles mixed terminal outcomes',()=>{
@@ -30,4 +30,28 @@ it('retains the last snapshot as interrupted when abort has no final plugin deta
  const end:ToolPart={...part('result',[]),resultDetails:undefined,resultDetailsFinal:false,status:'error'};
  const children=projectSubagents(messages(progress,end),false);
  expect(children[0].status).toBe('interrupted');expect(children[0].messages).toHaveLength(1);
+});
+
+it('merges disk-recovered subagents not in the session file', () => {
+  // Session file has one completed subagent call
+  const done = part('result', [result()]);
+  // Disk recovery has a different callId that was interrupted
+  const recovered = [{ callId: 'call-2', status: 'failed', details: { mode: 'single', agentScope: 'user', projectAgentsDir: null, results: [result('scout', 1)] } }];
+  const out = projectSubagents(messages(done), false, recovered as any);
+  expect(out).toHaveLength(2);
+  expect(out[0].callId).toBe('call-1');
+  expect(out[0].status).toBe('completed');
+  expect(out[1].callId).toBe('call-2');
+  expect(out[1].status).toBe('recovered');
+  expect(out[1].recovered).toBe(true);
+  expect(out[1].messages).toHaveLength(1);
+});
+
+it('does not duplicate subagents already in the session file', () => {
+  const done = part('result', [result()]);
+  const recovered = [{ callId: 'call-1', status: 'running', details: { mode: 'single', agentScope: 'user', projectAgentsDir: null, results: [result()] } }];
+  const out = projectSubagents(messages(done), false, recovered as any);
+  // Only the session-file version should appear (call-1:0 completed)
+  expect(out).toHaveLength(1);
+  expect(out[0].status).toBe('completed');
 });

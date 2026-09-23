@@ -39,6 +39,9 @@ function readTomlServers(file) {
     const key = kv[1], val = kv[2].trim();
     if (key === 'command') servers[cur].command = val.replace(/^["']|["']$/g, '');
     else if (key === 'url') servers[cur].url = val.replace(/^["']|["']$/g, '');
+    else if (key === 'disabled' || key === 'enabled') {
+      if (val === 'true' || val === 'false') servers[cur][key] = val === 'true';
+    }
     else if (key === 'args') {
       try { servers[cur].args = JSON.parse(val.replace(/'/g, '"')); } catch { /* array literals vary */ }
     }
@@ -66,4 +69,4 @@ function resolveImports(imports) {
   return out;
 }
 
-module.exports = { resolveImports, SOURCES };
+module.exports = { resolveImports, readTomlServers, SOURCES };

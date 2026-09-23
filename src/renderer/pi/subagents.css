@@ -1,5 +1,86 @@
-.pi-subagents{width:min(440px,48vw);min-width:300px;flex-shrink:0;height:100%;border-left:1px solid var(--pi-border);background:var(--pi-bg);display:flex;flex-direction:column;overflow:hidden}
+.pi-subagents{width:var(--pi-subagent-width,440px);flex-shrink:0;height:100%;border-left:1px solid var(--pi-border);background:var(--pi-bg);display:flex;flex-direction:column;overflow:hidden}
 .pi-subagents>header{display:flex;justify-content:space-between;align-items:center;padding:18px 20px;border-bottom:1px solid var(--pi-border)}
-.pi-subagents nav{display:flex;gap:6px;padding:12px}.pi-subagents nav button{border:0;background:transparent;color:var(--pi-muted);padding:7px;border-radius:8px;cursor:pointer}.pi-subagents nav button[aria-pressed=true]{background:var(--pi-hover);color:var(--pi-text)}
-.pi-subagents__list,.pi-subagents__transcript{flex:1;min-height:0;overflow:auto;padding:12px 18px;overflow-wrap:anywhere}.pi-subagent-row{display:block;width:100%;text-align:left;padding:12px;margin-bottom:8px;border:1px solid var(--pi-border);border-radius:10px;background:transparent;color:var(--pi-text);cursor:pointer}.pi-subagent-row:hover{background:var(--pi-hover)}.pi-subagent-row p{margin:7px 0 0;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}.pi-subagents [data-status]{display:inline-block;font-size:11px;color:var(--pi-muted);margin-left:8px}.pi-subagents [data-status=completed]{color:#28864b}.pi-subagents [data-status=failed]{color:#bd403b}.pi-subagents [data-status=running]{color:#3977bc}
-.pi-subagents__meta{padding:0 20px 10px;border-bottom:1px solid var(--pi-border);max-height:32%;overflow:auto}.pi-subagents__meta h3{display:inline;font-size:15px}.pi-subagents__meta p{white-space:pre-wrap;overflow-wrap:anywhere}.pi-subagents small{color:var(--pi-muted);font-size:11px;line-height:1.6}.pi-subagent-message{margin-bottom:18px}.pi-subagent-message pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px}.pi-subagents footer{border-top:1px solid var(--pi-border);padding:12px 18px;display:grid;gap:10px}.pi-subagents-entry{align-self:flex-start;margin:4px 24px}
+.pi-subagents>header strong{font-size:14px;font-weight:600}
+
+/* 返回按钮 */
+.pi-subagents__back{display:inline-flex;align-items:center;gap:6px;padding:8px 20px;border:0;background:transparent;color:var(--pi-text-secondary);cursor:pointer;font-size:13px}
+.pi-subagents__back:hover{color:var(--pi-text)}
+
+/* 列表区 */
+.pi-subagents__list{flex:1;min-height:0;overflow-y:auto;padding:12px 8px}
+
+/* 分区标题（照 ZCode: 小字 + count） */
+.pi-subagents__section{font-size:12px;font-weight:500;color:var(--pi-text-tertiary);padding:6px 12px 4px}
+.pi-subagents__ended{margin-top:20px}
+.pi-subagents__sectionempty{padding:8px 12px;font-size:13px;color:var(--pi-text-tertiary)}
+
+/* 无卡片边框行（照 ZCode DirectoryRow: rounded-lg + hover bg） */
+.pi-subagent-row{display:flex;width:100%;align-items:flex-start;gap:10px;padding:8px 12px;border:0;border-radius:8px;background:transparent;color:var(--pi-text);cursor:pointer;text-align:left;transition:background 0.12s}
+.pi-subagent-row:hover{background:var(--pi-bg-hover)}
+.pi-subagent-row:focus-visible{outline:2px solid var(--pi-border-strong);outline-offset:-2px}
+
+/* 状态图标 */
+.pi-subagent-row__icon{margin-top:1px;color:var(--pi-text-tertiary);flex:none}
+.pi-subagent-statusicon--spin{animation:pi-spin 1s linear infinite}
+.pi-subagent-statusicon--ok{color:var(--pi-green)}
+.pi-subagent-statusicon--err{color:var(--pi-red)}
+.pi-subagent-statusicon--warn{color:var(--pi-text-tertiary)}
+
+/* 行内容 */
+.pi-subagent-row__body{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+.pi-subagent-row__title{display:flex;align-items:center;gap:6px;min-width:0}
+.pi-subagent-row__name{font-size:13px;font-weight:500;color:var(--pi-text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pi-subagent-row__status{font-size:11px;color:var(--pi-text-tertiary);flex-shrink:0}
+.pi-subagent-row__status[data-status=completed]{color:var(--pi-green)}
+.pi-subagent-row__status[data-status=failed]{color:var(--pi-red)}
+.pi-subagent-row__status[data-status=running]{color:var(--pi-blue)}
+.pi-subagent-row__summary{font-size:12px;color:var(--pi-text-secondary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;line-height:1.4}
+
+/* 显示更多 */
+.pi-subagents__more{margin:4px 12px;width:calc(100% - 24px);text-align:center}
+
+/* 详情视图 meta */
+.pi-subagents__meta{padding:12px 20px;border-bottom:1px solid var(--pi-border);max-height:32%;overflow:auto}
+.pi-subagents__metahead{display:flex;align-items:center;gap:8px}
+.pi-subagents__metahead h3{font-size:15px;font-weight:600;margin:0}
+.pi-subagents__metastatus{font-size:11px;color:var(--pi-text-tertiary)}
+.pi-subagents__metastatus[data-status=completed]{color:var(--pi-green)}
+.pi-subagents__metastatus[data-status=failed]{color:var(--pi-red)}
+.pi-subagents__metastatus[data-status=running]{color:var(--pi-blue)}
+.pi-subagents__metatask{font-size:13px;color:var(--pi-text-secondary);margin:6px 0 4px;white-space:pre-wrap;overflow-wrap:anywhere}
+.pi-subagents__metastats{display:flex;align-items:center;gap:4px;font-size:11px;color:var(--pi-text-tertiary);flex-wrap:wrap}
+
+/* 转录区 */
+.pi-subagents__transcript{flex:1;min-height:0;overflow:auto;padding:12px 20px;overflow-wrap:anywhere}
+.pi-subagents__transcript>.pi-msg{margin-bottom:18px}
+.pi-subagents__error{color:var(--pi-red);font-size:13px;margin-bottom:12px}
+.pi-subagents__empty{color:var(--pi-text-tertiary);font-size:13px}
+
+/* 子代理消息（转录内） */
+.pi-subagent-message{margin-bottom:18px}
+.pi-subagent-message pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px}
+
+/* 底栏 */
+.pi-subagents footer{border-top:1px solid var(--pi-border);padding:12px 18px;display:grid;gap:10px}
+.pi-subagents footer small{color:var(--pi-text-tertiary);font-size:11px;line-height:1.6}
+
+/* 入口按钮 */
+.pi-subagents-entry{align-self:flex-start;margin:4px 24px}
+
+/* 红色计数徽章（照 iOS 通知计数：红底白字，右上角） */
+.pi-subagents-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  border-radius: 99px;
+  background: #ff3b30;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  padding: 0 5px;
+  margin-left: 6px;
+  vertical-align: middle;
+}

@@ -21,8 +21,9 @@ describe('nested execution transcript',()=>{
     const tools=turn.steps.filter(p=>p.kind==='tool') as ToolPart[];expect(tools).toHaveLength(2);
     expect(tools[0]).toMatchObject({callId:'call-1',phase:'result',detailLines:['file contents'],argumentsText:JSON.stringify({path:'app.ts'},null,2)});
     expect(tools[1].status).toBe('error');
-    // ALL assistant text stays visible outside the collapsed execution trace.
-    expect(turn.answer.map(p=>(p as {text:string}).text)).toEqual(['我先读取文件。','最终回复保持直接可见。']);
+    // 过程叙述收进思考块，只有结论直接可见。
+    expect(turn.answer.map(p=>(p as {text:string}).text)).toEqual(['最终回复保持直接可见。']);
+    expect((turn.steps[0] as {text:string}).text).toContain('我先读取文件。');
   });
   it('never merges across user turns or merges calls by name alone',()=>{
     const more=[...branch,{id:'u2',type:'message',message:{role:'user',content:'再试一次'}},{id:'a4',type:'message',message:{role:'assistant',content:[{type:'toolCall',id:'call-1',name:'read',arguments:{path:'other'}}]}}];
@@ -31,7 +32,7 @@ describe('nested execution transcript',()=>{
   it('deduplicates persisted streaming messages and prefers results over late progress',()=>{
     const messages=conversationMessages(branch,{'10':branch[1].message!,'30':branch[5].message!},[{toolCallId:'call-2',name:'bash',text:'old partial',status:'running'}]);
     const turn=executionTurns(messages)[1];expect(turn.steps.filter(p=>p.kind==='thinking')).toHaveLength(2);
-    const tool=turn.steps.find(p=>p.kind==='tool'&&p.callId==='call-2') as ToolPart;expect(tool.status).toBe('error');expect(tool.detailLines).toEqual(['test failed']);expect(turn.answer.map(p=>p.kind)).toEqual(['text','text']);
+    const tool=turn.steps.find(p=>p.kind==='tool'&&p.callId==='call-2') as ToolPart;expect(tool.status).toBe('error');expect(tool.detailLines).toEqual(['test failed']);expect(turn.answer.map(p=>p.kind)).toEqual(['text']);
   });
   it('keeps turn and tool ids stable when a streaming call is saved',()=>{
     const streamed=executionTurns([...historyToMessages(branch.slice(0,1)),...liveToMessages({'10':branch[1].message!},[{toolCallId:'call-1',name:'read',text:'partial',status:'running'}])])[1];
@@ -41,11 +42,12 @@ describe('nested execution transcript',()=>{
     // tools → text (conclusion) → more tools → final text
     const turns=executionTurns(historyToMessages(branch));
     const turn=turns[1];
-    expect(turn.segments.map((s)=>s.kind)).toEqual(['steps','text','steps','text']);
-    expect(turn.segments[1].parts[0]).toMatchObject({kind:'text',text:'我先读取文件。'});
-    expect(turn.segments[3].parts[0]).toMatchObject({kind:'text',text:'最终回复保持直接可见。'});
-    // the second group still holds the failing bash call
-    expect(turn.segments[2].parts.some((p)=>p.kind==='tool'&&(p as ToolPart).status==='error')).toBe(true);
+    expect(turn.segments.map((s)=>s.kind)).toEqual(['steps','text']);
+    expect(turn.segments[0].parts[0]).toMatchObject({kind:'thinking'});
+    expect((turn.segments[0].parts[0] as {text:string}).text).toContain('我先读取文件。');
+    expect(turn.segments[1].parts[0]).toMatchObject({kind:'text',text:'最终回复保持直接可见。'});
+    // the merged group still holds the failing bash call
+    expect(turn.segments[0].parts.some((p)=>p.kind==='tool'&&(p as ToolPart).status==='error')).toBe(true);
   });
   it('renders two collapsed disclosure levels with visible failure summary and normal text-only responses',()=>{
     const labels={you:'你',assistant:'pi',simulatedRun:'演示',toolRunning:'运行中',toolDone:'完成',toolError:'失败',details:'详情',queued:'排队',working:'执行中'};

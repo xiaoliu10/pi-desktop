@@ -49,7 +49,6 @@ export function Sidebar(props: SidebarProps) {
   return (
     <aside className="pi-sidebar">
       <div className="pi-sidebar__top">
-        <span className="pi-sidebar__topspacer" />
         <button
           className="pi-iconbtn"
           onClick={props.onToggleCollapse}
@@ -58,6 +57,28 @@ export function Sidebar(props: SidebarProps) {
         >
           <Icon name="sidebar" />
         </button>
+        {props.onNavBack && (
+          <div className="pi-sidebar__nav">
+            <button
+              className="pi-iconbtn"
+              onClick={props.onNavBack}
+              disabled={!props.canNavBack}
+              aria-label={props.navLabels?.back ?? 'Back'}
+              title={props.navLabels?.back ?? 'Back'}
+            >
+              <Icon name="arrow-left" size={16} />
+            </button>
+            <button
+              className="pi-iconbtn"
+              onClick={props.onNavForward}
+              disabled={!props.canNavForward}
+              aria-label={props.navLabels?.forward ?? 'Forward'}
+              title={props.navLabels?.forward ?? 'Forward'}
+            >
+              <Icon name="arrow-right" size={16} />
+            </button>
+          </div>
+        )}
       </div>
 
       {actions}
@@ -267,7 +288,8 @@ function ProjectRow(props: {
         role="button"
         tabIndex={0}
         className="pi-sidebar__projrow"
-        onDoubleClick={toggle}
+        // 单击折叠/展开；点行内的菜单等交互控件时不触发
+        onClick={(e) => { if ((e.target as HTMLElement).closest('button, a, input, [role="menu"]')) return; toggle(); }}
         onKeyDown={(e) => {
           if (e.target !== e.currentTarget) return;
           if (e.key === 'Enter' || e.key === ' ') {

@@ -15,7 +15,7 @@ function waitPort(port, timeoutMs = 30000) {
   const started = Date.now();
   return new Promise((resolve, reject) => {
     const tryOnce = () => {
-      const socket = net.connect(port, '127.0.0.1');
+      const socket = net.connect(port, 'localhost');
       socket.once('connect', () => {
         socket.destroy();
         resolve();
@@ -56,7 +56,7 @@ await waitPort(VITE_PORT);
 console.log('[dev] launching Electron');
 
 const electron = run('electron', 'pnpm', ['exec', 'electron', '.'], {
-  env: { ...process.env, PI_VITE_URL: `http://127.0.0.1:${VITE_PORT}`, NODE_ENV: 'development' },
+  env: { ...process.env, PI_VITE_URL: `http://localhost:${VITE_PORT}`, NODE_ENV: 'development' },
 });
 electron.on('exit', (code) => {
   cleanup();

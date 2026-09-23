@@ -7,6 +7,7 @@ import type { PiEvent } from '../../shared/pi';
 import { isAccessMode } from '../../shared/access-mode';
 import { THINKING_LEVELS } from '../../shared/composer';
 import type { AutomationSnapshot, AutomationTask, AutomationRun, SavedWorkflow, Schedule, WorkflowLaunch } from '../../shared/automation';
+import { automationPromptText, workflowPrompts } from '../../shared/automation';
 const live = (r:AutomationRun) => r.status==='running'||r.status==='waiting';
 const str = (v:unknown,max:number,label:string,empty=false):string => {if(typeof v!=='string'||v.length>max||(!empty&&!v.trim()))throw Error(`${label}无效`);return v.trim();};
 function directory(v:unknown) {const p=str(v,4096,'项目目录');if(!path.isAbsolute(p)||!fs.statSync(p).isDirectory())throw Error('请选择有效的本地项目目录');return fs.realpathSync(p);}
@@ -26,12 +27,6 @@ export function validateWorkflow(input:SavedWorkflow):SavedWorkflow {
  const steps=input.steps.map(s=>({id:randomUUID(),name:str(s.name,100,'步骤名称'),prompt:str(s.prompt,50000,'步骤指令')}));
  for(const step of steps)for(const token of step.prompt.matchAll(/\{\{([a-zA-Z][a-zA-Z0-9_]*)\}\}/g))if(!names.has(token[1]))throw Error(`步骤引用了未声明参数：${token[1]}`);
  return {id:input.id,name,scope,cwd:scope==='project'?directory(input.cwd):'',description:str(input.description,3000,'说明',true),whenToUse:str(input.whenToUse,3000,'适用场景',true),parameters,steps,updatedAt:Date.now()};
-}
-export function workflowPrompts(workflow:SavedWorkflow,args:Record<string,string>):string[] {
- if(!args||typeof args!=='object'||Array.isArray(args))throw Error('工作流参数无效');
- const values=new Map<string,string>();
- for(const p of workflow.parameters){const v=args[p.name]??p.defaultValue??'';if(typeof v!=='string'||v.length>10000)throw Error(`参数 ${p.name} 无效`);if(p.required&&!v.trim())throw Error(`请填写参数 ${p.name}`);if(v){if(p.type==='number'&&!Number.isFinite(Number(v)))throw Error(`${p.name} 必须为数字`);if(p.type==='boolean'&&!['true','false'].includes(v))throw Error(`${p.name} 必须为 true 或 false`);if(p.type==='json'){try{JSON.parse(v);}catch{throw Error(`${p.name} 必须为有效 JSON`);}}}values.set(p.name,v);}
- return workflow.steps.map(s=>s.prompt.replace(/\{\{([a-zA-Z][a-zA-Z0-9_]*)\}\}/g,(_,key)=>values.get(key)??''));
 }
 export class AutomationService {
  private data:AutomationSnapshot={tasks:[],workflows:[],runs:[]};
@@ -90,7 +85,7 @@ export class AutomationService {
     let resolve!:()=>void,reject!:(e:Error)=>void;
     const settled=new Promise<void>((yes,no)=>{resolve=yes;reject=no;});settled.catch(()=>{});
     this.stepErrors.delete(key);this.waiters.set(key,{resolve,reject});
-    try {await backend.prompt(key,`自动化：${run.name}\n步骤 ${i+1}/${prompts.length}：${run.steps[i].name}\n\n${prompts[i]}`,'followUp');await settled;}finally{this.waiters.delete(key);this.stepErrors.delete(key);}
+    try {await backend.prompt(key,automationPromptText(run.name,run.steps[i].name,i+1,prompts.length,prompts[i]),'followUp');await settled;}finally{this.waiters.delete(key);this.stepErrors.delete(key);}
     if(!live(run))break;run.steps[i].status='succeeded';
    }
    if(live(run))run.status='succeeded';
