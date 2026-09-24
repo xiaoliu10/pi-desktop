@@ -553,7 +553,16 @@ export const ChatView = memo(function ChatView(props: ChatViewProps) {
             const now = props.retrying
               ? (zh ? `正在重试请求（第 ${props.retrying.attempt}${props.retrying.max ? `/${props.retrying.max}` : ''} 次）` : `Retrying (${props.retrying.attempt}${props.retrying.max ? `/${props.retrying.max}` : ''})`)
               : lastPart?.kind === 'tool' && lastPart.status === 'running'
-                ? `${lastPart.tool} ${(lastPart.summary || lastPart.argumentsText || '').split('\n')[0].trim()}`.slice(0, 72)
+                ? (() => {
+                    // 参数是多行 JSON 时首行只剩「{」，无信息量（显示成「bash {」）；
+                    // 解析出关键字段（如 bash 的 command、read 的 path）展示。
+                    const argsText = lastPart.argumentsText || lastPart.summary || '';
+                    let preview = (lastPart.summary || argsText).split('\n')[0].trim();
+                    if (preview === '{' || preview === '[') {
+                      try { const parsed = JSON.parse(argsText); const val = parsed?.command ?? parsed?.cmd ?? parsed?.file ?? parsed?.path; preview = typeof val === 'string' ? val.split('\n')[0].trim() : ''; } catch { preview = ''; }
+                    }
+                    return `${lastPart.tool}${preview ? ` ${preview}` : ''}`.slice(0, 72);
+                  })()
                 : zh ? '正在思考' : 'Thinking';
             return (
               <div className="pi-chat__working" role="status" aria-label={props.labels.working}>
