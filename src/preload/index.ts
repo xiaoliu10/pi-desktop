@@ -83,7 +83,7 @@ const localPi: LocalPiApi = {
   packageInstall: (source, action) => invoke('packageInstall', source, action), packageRegister: spec => invoke('packageRegister', spec),
   setAccessMode: (key, mode) => invoke('setAccessMode', key, mode),
   model: (key, provider, id) => invoke('model', key, provider, id),
-  respond: (key, gen, response) => invoke('respond', key, gen, response), review: cwd => invoke('review', cwd), gitStatus: cwd => invoke('gitStatus', cwd), filePreview: (cwd, file) => invoke('filePreview', cwd, file),
+  respond: (key, gen, response) => invoke('respond', key, gen, response), forkMessage: (key, entryId) => invoke('forkMessage', key, entryId), review: cwd => invoke('review', cwd), gitStatus: cwd => invoke('gitStatus', cwd), filePreview: (cwd, file) => invoke('filePreview', cwd, file),
   officialSubagentStatus: () => invoke('officialSubagentStatus'),
   enableOfficialSubagent: () => invoke('enableOfficialSubagent'),
   recoverSubagents: (key: string) => invoke('recoverSubagents', key),

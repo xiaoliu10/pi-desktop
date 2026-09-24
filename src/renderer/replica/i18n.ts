@@ -79,6 +79,11 @@ const en = {
     details: 'Details',
     queued: 'queued',
     working: 'Working…',
+    copyMessage: 'Copy',
+    copied: 'Copied',
+    editMessage: 'Edit and resend',
+    resend: 'Resend',
+    cancel: 'Cancel',
   } satisfies ChatLabels,
   workbench: {
     review: 'Review',
@@ -268,6 +273,11 @@ const zh: typeof en = {
     details: '详情',
     queued: '已排队',
     working: '处理中…',
+    copyMessage: '复制',
+    copied: '已复制',
+    editMessage: '编辑并重发',
+    resend: '重发',
+    cancel: '取消',
   },
   workbench: {
     review: '变更',

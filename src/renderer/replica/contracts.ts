@@ -317,6 +317,8 @@ export interface ChatViewProps {
   labels: ChatLabels;
   /** Anchor element ids per message for the nav rail + jump links. */
   onJumpToMessage: (id: string) => void;
+  /** 编辑并重发已发送的用户消息（fork 截断回该条目后重发）；缺省=仅复制不可编辑。 */
+  onEditUserMessage?: (entryId: string, text: string) => void;
 }
 
 export interface ChatLabels {
@@ -329,6 +331,12 @@ export interface ChatLabels {
   details: string;
   queued: string;
   working: string;
+  /** 已发送用户消息的 hover 动作（对齐 ZCode chat.message.copy/edit）。 */
+  copyMessage: string;
+  copied: string;
+  editMessage: string;
+  resend: string;
+  cancel: string;
 }
 
 export interface DemoDiffLine {

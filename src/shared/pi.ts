@@ -114,6 +114,8 @@ export interface LocalPiApi extends importSettingsApi {
   setAccessMode(key: string, mode: AccessMode): Promise<PiRun>;
   model(key: string, provider: string, modelId: string): Promise<void>;
   respond(key: string, generation: string, response: { id: string; value?: string; confirmed?: boolean; cancelled?: boolean }): Promise<void>;
+  /** 编辑已发送消息：pi fork RPC 把会话树截断回该条目，返回被编辑消息的原文。 */
+  forkMessage(key: string, entryId: string): Promise<string>;
   filePreview(cwd: string, file: string): Promise<{path: string; content?: string; diff: string; note: string}>;
   gitStatus(cwd: string): Promise<import('./conversation-status').GitStatus>;
   review(cwd: string): Promise<PiReview>;

@@ -291,6 +291,10 @@ export default function PiReplicaApp() {
     }
     usePiStore.setState({workbenchOpen:true,workbenchTab:preview.diff ? 'review' : 'files'});
   }, [cwd]);
+  // 编辑并重发已发送消息（fork 截断回该条目 → 普通发送）。稳定回调避免击穿 TurnArticle 的 memo。
+  const editUserMessage = useCallback((entryId: string, text: string) => {
+    void usePiStore.getState().resendEdited(entryId, text);
+  }, []);
   const reviewDiffs = useMemo(() => (s.review ? reviewDiffEntries(s.review) : []), [s.review]);
   const runModels = run?.models ?? [];
 
@@ -673,6 +677,7 @@ export default function PiReplicaApp() {
                     labels={t.chat}
                     onOpenToolFile={openToolFile}
                     onJumpToMessage={noop}
+                    onEditUserMessage={parentRunning ? undefined : editUserMessage}
                   />
                   <div style={{ padding: run ? '0 24px 20px' : '0 24px 20px' }}>{composer}</div>
                 </div>

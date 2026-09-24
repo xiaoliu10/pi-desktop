@@ -600,6 +600,8 @@ export interface PiReplicaActions {
   setSessionArchived: (key: string, archived: boolean) => Promise<boolean>;
   setDraftText: (text: string) => void;
   send: (text: string) => void;
+  /** 编辑已发送消息：先 fork 截断回该条目，再走普通发送。失败时报错且不发送。 */
+  resendEdited: (entryId: string, text: string) => Promise<void>;
   stop: () => void;
   queueEdit: (op: import('../../shared/pi').PiQueueOp) => void;
   /** Recall a queued prompt into the composer (text + image attachments) for editing. */
@@ -1138,6 +1140,21 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
       }
     },
     setDraftText: (draftText) => set({ draftText }),
+
+    resendEdited: async (entryId, text) => {
+      const s = get();
+      const key = s.selectedKey;
+      if (!key || !text.trim()) return;
+      try {
+        await window.localPi!.forkMessage(key, entryId);
+      } catch (e) {
+        set({ error: String((e as Error).message || e) });
+        return;
+      }
+      // 截断已生效：先刷新历史（旧轮从视图消失），再走普通发送（乐观气泡复用同一条链路）。
+      await refreshHistory();
+      get().send(text.trim());
+    },
 
     send: (text) => {
       const state = get();

@@ -180,6 +180,7 @@ function registerIpc() {
   handle('refresh', key => host.backend.refresh(key));
   handle('model', (key, provider, id) => host.backend.model(key, provider, id));
   handle('respond', (key, generation, response) => host.backend.respond(key, generation, response));
+  handle('forkMessage', (key, entryId) => host.backend.forkTo(key, entryId));
   handle('review', cwd => host.review(cwd));
   handle('gitStatus', cwd => gitStatus(cwd));
   handle('filePreview', (cwd, file) => filePreview(cwd, file));
