@@ -487,8 +487,8 @@ export default function PiReplicaApp() {
       data-pi-ready={s.env ? 'true' : undefined}
     >
       {loginProvider&&<AccountLoginDialog provider={loginProvider} onClose={()=>setLoginProvider(null)} onDone={s.loadCatalog}/>}
-      {s.view === 'settings' ? (
-        <div className="pi-settings-wrap">
+      {s.view === 'settings' && (
+        <div className="pi-settings-wrap" style={{ position: 'fixed', inset: 0, zIndex: 60, background: 'var(--pi-bg, #fff)' }}>
           {isMac && <div className="pi-dragstrip" aria-hidden="true" />}
         {s.error && <div role="alert" className="pi-banner pi-banner--error"><span>{s.error}</span><button aria-label="关闭错误" onClick={s.dismissError}>×</button></div>}
         <SettingsPage
@@ -572,8 +572,8 @@ export default function PiReplicaApp() {
           pageContent={!['general', 'models', 'info'].includes(s.settingsPage) ? <SettingsFeatures key={s.settingsPage} page={s.settingsPage} cwd={cwd} query={s.searchQuery} loadedExtensionPaths={run ? [...new Set((run.commands ?? []).filter(c => c.source === 'extension' && c.path).map(c => c.path as string))] : []} workspace={<RemotePane />} /> : undefined}
         />
         </div>
-      ) : (
-        <>
+      )}
+      {(<>
           <Sidebar
             projects={sidebar.projects}
             projectMenu={project=><ProjectActions project={project} />}
