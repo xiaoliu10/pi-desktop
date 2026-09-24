@@ -120,6 +120,8 @@ export interface LocalPiApi extends importSettingsApi {
   officialSubagentStatus(): Promise<{installed:boolean;thirdParty:boolean;thirdPartySource?:string;outdated:boolean;scoutExists:boolean;path:string}>;
   enableOfficialSubagent(): Promise<{path:string;upgraded:boolean}>;
   recoverSubagents(sessionKey: string): Promise<Array<{callId:string;status:string;details?:unknown;error?:string;startedAt?:number;updatedAt?:number}>>;
+  /** 记忆衔接层状态：探测 CLI 记忆插件并返回当前链路。 */
+  memoryAssistStatus(enabled: boolean): Promise<{ enabled: boolean; plugin: { kind: 'extension'; id: string } | { kind: 'builtin' }; builtinDir: string; hint: string }>;
   cleanupSubagents(sessionKey: string): Promise<void>;
   modelCatalog(): Promise<PiModelCatalog>;
   planQuota(provider: string): Promise<import('./context-details').PlanQuota>;

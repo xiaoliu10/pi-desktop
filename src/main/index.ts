@@ -1,4 +1,5 @@
 import { enableOfficialSubagent, officialSubagentStatus, recoverSubagents, cleanupSubagents } from './pi/official-subagent';
+import { memoryAssistStatus } from './pi/memory-bridge';
 import { TerminalService } from './pi/terminal-service';
 import { filePreview } from './pi/file-preview';
 import { gitStatus } from './pi/git-status';
@@ -181,6 +182,8 @@ function registerIpc() {
   handle('enableOfficialSubagent', () => enableOfficialSubagent(host.environment.agentDir));
   handle('recoverSubagents', (key: string) => recoverSubagents(host.environment.agentDir, key));
   handle('cleanupSubagents', (key: string) => cleanupSubagents(host.environment.agentDir, key));
+  // 记忆衔接层：探测 CLI 记忆插件（如 pi-memory），未启用时回退 Desktop 内置桥
+  handle('memoryAssistStatus', (enabled: unknown) => memoryAssistStatus(host.environment.agentDir, Boolean(enabled)));
   handle('modelCatalog', () => host.modelCatalog());
   handle('accountLogin', provider => host.accounts.start(provider));
   handle('accountStatus', id => host.accounts.status(id));
