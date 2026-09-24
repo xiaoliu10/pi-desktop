@@ -8,6 +8,7 @@ import { importAttachments, clipboardAttachments, readAttachment } from './pi/at
 import { createProjectWorktree } from './pi/project-worktree';
 import { authorizeProjectCwd, listExternalApps, openWithApp } from './pi/open-with';
 import { canonical } from './pi/session-index';
+import { bundleIcon } from './pi/app-icon';
 import { SessionArchive } from './pi/session-archive';
 import { autoArchiveKeys } from './pi/auto-archive';
 import { projectFiles, projectContext, readContext, projectBranch, skillChoices } from './pi/composer-service';
@@ -196,7 +197,10 @@ function registerIpc() {
     shell.showItemInFolder(p);
   });
   // 外部应用打开当前项目：真实系统图标（best effort），白名单探测 + argv 启动。
+  // app.getFileIcon 在 macOS 26 对 .app 一律返回通用占位图，优先走 bundle 内 icns 提取。
   const fileIcon = async (p: string) => {
+    const bundled = await bundleIcon(p);
+    if (bundled) return bundled;
     try { const icon = await app.getFileIcon(p, { size: 'normal' }); return icon.isEmpty() ? undefined : icon.toDataURL(); } catch { return undefined; }
   };
   handle('externalApps', () => listExternalApps({ fileIcon }));

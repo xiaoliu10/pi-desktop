@@ -322,7 +322,7 @@ export default function PiReplicaApp() {
       leftSlot={
         <>
           <AccessModeMenu value={run?.accessMode ?? s.draftAccessMode ?? s.desktopPreferences?.sessionAccessModes?.[s.selectedKey ?? ''] ?? s.desktopPreferences?.permission ?? 'ask'} disabled={s.connecting} changing={s.changingAccessMode} zh={s.lang === 'zh'} onChange={s.setAccessMode} />
-          {!run && s.history && s.history.leaves.length > 1 && <select className="pi-history-branch" aria-label={s.lang === 'zh' ? '历史分支' : 'History branch'} value={s.leaf ?? s.history.leafId ?? ''} onChange={e => usePiStore.setState({leaf:e.target.value})}>{s.history.leaves.map(id => <option key={id} value={id}>{(s.lang === 'zh' ? '分支 ' : 'Branch ') + id.slice(0,8)}</option>)}</select>}
+          {!run && s.history && s.history.leaves.length > 1 && <select className="pi-history-branch" aria-label={s.lang === 'zh' ? '对话历史分支' : 'History branch'} title={s.lang === 'zh' ? '会话消息树在此分叉过（重试/编辑/分叉会产生多个分支），非 git 分支' : 'The session message tree forked here (retry/edit/fork) — not a git branch'} value={s.leaf ?? s.history.leafId ?? ''} onChange={e => usePiStore.setState({leaf:e.target.value})}>{s.history.leaves.map((id, i) => <option key={id} value={id}>{`${s.lang === 'zh' ? '对话分支' : 'Branch'} ${i + 1}`}</option>)}</select>}
           {s.connecting && <span role="status">{s.lang === 'zh' ? '正在准备任务…' : 'Preparing task…'}</span>}
         </>
       }
@@ -566,7 +566,7 @@ export default function PiReplicaApp() {
           onMakeDefault={makeDefault}
           onRefreshCatalog={s.loadCatalog}
           infoExtra={<ConnectionPane />}
-          pageContent={!['general', 'models', 'info'].includes(s.settingsPage) ? <SettingsFeatures key={s.settingsPage} page={s.settingsPage} cwd={cwd} query={s.searchQuery} workspace={<><RemotePane /><ConnectionPane /></>} /> : undefined}
+          pageContent={!['general', 'models', 'info'].includes(s.settingsPage) ? <SettingsFeatures key={s.settingsPage} page={s.settingsPage} cwd={cwd} query={s.searchQuery} loadedExtensionPaths={run ? [...new Set((run.commands ?? []).filter(c => c.source === 'extension' && c.path).map(c => c.path as string))] : []} workspace={<><RemotePane /><ConnectionPane /></>} /> : undefined}
         />
         </div>
       ) : (

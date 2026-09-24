@@ -16,7 +16,6 @@ export class PiBackend {
   runs() { return [...this.active.values()].map(x => x.view); }
   private get(key: string) { const run = this.active.get(key); if (!run) throw new Error('会话未由 Desktop 连接'); return run; }
   async connect(input: { sourceKey?: string; cwd?: string; trustProject: boolean; permission: AccessMode; executionMode?: Exclude<AccessMode, 'plan'>; systemPrompt?: string; tools?: string[]; model?: string }): Promise<PiRun> {
-    fs.appendFileSync('/tmp/connect-timing.log', `backend.connect enter ${new Date().toISOString()}\n`);
     if (input.executionMode !== undefined && (!isAccessMode(input.executionMode) || (input.executionMode as string) === 'plan')) throw new Error('无效执行模式');
     if (!isAccessMode(input.permission)) throw new Error('无效访问模式');
     if (!this.env.supported || !this.env.executable) throw new Error(this.env.diagnostics.join('\n'));
@@ -164,7 +163,7 @@ export class PiBackend {
       const cleanModel = (m: any) => ({ id: String(m.id), name: String(m.name || m.id), provider: String(m.provider), reasoning: !!m.reasoning, input: Array.isArray(m.input) ? m.input : undefined });
       view.models = (models?.models || []).map(cleanModel);
       view.model = state?.model ? cleanModel(state.model) : undefined;
-      view.commands = (commands?.commands || []).map((c: any) => ({ name: String(c.name), description: c.description, source: c.source, path: c.path }));
+      view.commands = (commands?.commands || []).map((c: any) => ({ name: String(c.name), description: c.description, source: c.source, path: c.path ?? String(c.sourceInfo?.path ?? '') }));
       view.thinkingLevel = state?.thinkingLevel ?? 'off';
       view.thinkingLevels = (await client.request('get_available_thinking_levels').catch(() => ({levels: []})))?.levels ?? [];
       view.status = state?.isStreaming || state?.isCompacting ? 'running' : 'idle';

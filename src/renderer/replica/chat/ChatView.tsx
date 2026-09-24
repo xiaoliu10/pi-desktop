@@ -122,7 +122,7 @@ export function ToolCard({ part, labels, onOpenToolFile }: { part: ToolPart; lab
   );
 }
 
-function MessageParts({ parts, labels, onOpenToolFile }: { parts: MessagePart[]; labels: ChatViewProps['labels']; onOpenToolFile?: ChatViewProps['onOpenToolFile'] }) {
+function MessageParts({ parts, labels, onOpenToolFile, live }: { parts: MessagePart[]; labels: ChatViewProps['labels']; onOpenToolFile?: ChatViewProps['onOpenToolFile']; /** 组处于流式且这是最后一个 part：思考行滚动展示内容 */ live?: boolean }) {
   return (
     <>
       {parts.map((p) => {
@@ -132,7 +132,7 @@ function MessageParts({ parts, labels, onOpenToolFile }: { parts: MessagePart[];
           case 'text':
             return <ChatMarkdown key={p.id} text={p.text} />;
           case 'thinking':
-            return <ExecutionNote key={p.id} title={`${labels.you === '你' ? '思考' : 'Thought'}${p.durationMs !== undefined ? ` · ${labels.you === '你' ? `用时 ${Math.max(1, Math.ceil(p.durationMs / 1000))} 秒` : `took ${Math.max(1, Math.ceil(p.durationMs / 1000))}s`}` : ''}`} text={p.text} />;
+            return <ExecutionNote key={p.id} title={`${labels.you === '你' ? '思考' : 'Thought'}${p.durationMs !== undefined ? ` · ${labels.you === '你' ? `用时 ${Math.max(1, Math.ceil(p.durationMs / 1000))} 秒` : `took ${Math.max(1, Math.ceil(p.durationMs / 1000))}s`}` : ''}`} text={p.text} active={live} />;
           case 'tool':
             return <ToolCard key={p.id} part={p} labels={labels} onOpenToolFile={onOpenToolFile} />;
           case 'notice':
@@ -165,12 +165,20 @@ function UserMessageParts({ parts, labels, onOpenToolFile }: { parts: MessagePar
   );
 }
 
-function ExecutionNote({ title, text }: { title: string; text: string }) {
+function ExecutionNote({ title, text, active }: { title: string; text: string; /** 这条思考正在流式输出：行内滚动展示内容尾部，完成后恢复计时标题 */ active?: boolean }) {
   // 受控开合：流式渲染每 ~150ms 重渲染，非受控 details 的 open 会被 React 重置，
   // 用户点开后立即被关上 → 看不到正文。用 state 跟随 toggle。
   const [open, setOpen] = useState(false);
+  // 流式中的滚动带：剥掉 markdown 装饰后取尾部（新内容从右持续推入，旧行被推走）。
+  const tail = active
+    ? text.replace(/\*\*(.+?)\*\*/g, '$1').replace(/\*(.+?)\*/g, '$1').replace(/`([^`]+?)`/g, '$1').replace(/\s+/g, ' ').trim().slice(-160)
+    : '';
   return <details className="pi-execution__note" open={open} onToggle={(e) => setOpen(e.currentTarget.open)}>
-    <summary><Icon name="brain" size={17}/><span>{title}</span><Icon name="chevron-right" size={12} className="pi-execution__chevron" /></summary>
+    <summary><Icon name="brain" size={17}/>
+      {active
+        ? <><strong className="pi-execution__thinking">正在思考</strong><span className="pi-execution__ticker"><span className="pi-execution__ticker-inner">{tail}</span></span></>
+        : <span>{title}</span>}
+      <Icon name="chevron-right" size={12} className="pi-execution__chevron" /></summary>
     <div className="pi-execution__note-body"><ChatMarkdown text={text} /></div>
   </details>;
 }
@@ -196,20 +204,19 @@ export function ExecutionGroup({ turn, parts, running, active, expanded, showEla
   const open = running || expanded || userOpen;
   const hasTiming = showElapsed && turn.startedAt !== undefined && (live || turn.endedAt !== undefined);
   const failures = parts.filter(p => p.kind === 'error' || (p.kind === 'tool' && p.status === 'error')).length;
-  // 模型此刻正在流式输出思考（最新内容是 thinking）→ 加粗「正在思考」，与 ZCode 一致。
-  const thinkingNow = live && parts[parts.length - 1]?.kind === 'thinking';
+  // 模型此刻正在流式输出思考（最新内容是 thinking）→ 该思考行内滚动展示内容（见 ExecutionNote active）。
   // running 的组必须保持展开：工具组后面跟着文字段时，用户仍要能看到正在执行/刚执行的步骤
   return <details open={open} onToggle={(e) => !running && setUserOpen(e.currentTarget.open)} className={`pi-execution ${running ? 'pi-execution--running' : ''} ${failures ? 'pi-execution--error' : ''}`}>
     <summary className="pi-execution__summary">
-      {thinkingNow && <strong className="pi-execution__thinking">{zh ? '正在思考' : 'Thinking'}</strong>}
+      {/* 「正在思考」粗体由活动思考行自己展示（滚动内容同行）；组头只保留计时，避免重复 */}
       {hasTiming ? <ElapsedTime startedAt={turn.startedAt} endedAt={turn.endedAt} running={live} zh={zh} /> : <span className="pi-execution__title">{live ? (zh ? '正在工作' : 'Working') : (zh ? `执行过程 · ${parts.length} 步` : `Execution · ${parts.length} steps`)}</span>}
       {failures > 0 && <span className="pi-execution__failure">{failures} {zh ? '项失败' : 'failed'}</span>}
       {live && <Spinner label={zh ? '运行中' : 'Running'} />}
       <Icon name="chevron-right" size={14} className="pi-execution__chevron" />
     </summary>
-    <div className="pi-execution__steps">{parts.map(p => p.kind === 'text'
+    <div className="pi-execution__steps">{parts.map((p, i) => p.kind === 'text'
       ? <div key={p.id} className="pi-execution__commentary"><ChatMarkdown text={p.text} /></div>
-      : <MessageParts key={p.id} parts={[p]} labels={labels} onOpenToolFile={onOpenToolFile} />)}</div>
+      : <MessageParts key={p.id} parts={[p]} labels={labels} onOpenToolFile={onOpenToolFile} live={live && i === parts.length - 1} />)}</div>
   </details>;
 }
 

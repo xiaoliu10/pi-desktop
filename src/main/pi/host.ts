@@ -82,7 +82,14 @@ export class PiHost {
   /** Install/remove runs the official `pi install|remove <source>` CLI. */
   packageInstall(source: string, action: 'install' | 'remove' = 'install') { if (!this.environment.executable) return Promise.reject(new Error('pi 内核不可用')); return installPackage(this.environment.executable, source, this.dataDir, action).then(async (output) => { this.scanNotify(); return output; }); }
   /** Enable a package that exists on disk but is missing from settings.packages. */
-  packageRegister(spec: string) { return registerPackage(this.environment.agentDir, spec).then(() => this.scanNotify()); }
+  packageRegister(spec: string) {
+    return registerPackage(this.environment.agentDir, spec).then(() => {
+      // 记录期望注册列表：pi 会话进程退出/切模型时会整包写回旧设置副本覆盖 packages，
+      // settings-service 的快照据此自愈补回（记忆插件被「排除」的根因）。
+      try { const file = path.join(this.dataDir, 'pi-desktop.json'); const prefs = JSON.parse(fs.readFileSync(file, 'utf8')); const list = Array.isArray(prefs.piPackages) ? prefs.piPackages : []; if (!list.includes(spec)) { prefs.piPackages = [...list, spec]; fs.writeFileSync(file, JSON.stringify(prefs, null, 2) + '\n'); } } catch { if (!fs.existsSync(path.join(this.dataDir, 'pi-desktop.json'))) { try { fs.writeFileSync(path.join(this.dataDir, 'pi-desktop.json'), JSON.stringify({ piPackages: [spec] }, null, 2) + '\n'); } catch { /* 首次记录失败不影响注册 */ } } }
+      this.scanNotify();
+    });
+  }
   private scanNotify() { this.emit({ type: 'resources-changed' }); }
   async modelCatalog() {
     const catalog=readModelCatalog(this.environment.agentDir);
