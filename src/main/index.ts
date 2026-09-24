@@ -1,5 +1,5 @@
 import { enableOfficialSubagent, officialSubagentStatus, recoverSubagents, cleanupSubagents } from './pi/official-subagent';
-import { listMemoryFiles, memoryAssistStatus } from './pi/memory-bridge';
+import { listMemoryFiles, memoryAssistStatus, readMemoryFileContent, detectMemoryPlugin, builtinMemoryDir, DEFAULT_MEMORY_SOURCE } from './pi/memory-bridge';
 import { TerminalService } from './pi/terminal-service';
 import { filePreview } from './pi/file-preview';
 import { gitStatus } from './pi/git-status';
@@ -185,6 +185,17 @@ function registerIpc() {
   // 记忆衔接层：探测 CLI 记忆插件（如 pi-memory），未启用时回退 Desktop 内置桥
   handle('memoryAssistStatus', (enabled: unknown) => memoryAssistStatus(host.environment.agentDir, Boolean(enabled)));
   handle('memoryList', (cwd: unknown) => listMemoryFiles(host.environment.agentDir, typeof cwd === 'string' && cwd ? cwd : undefined));
+  handle('memoryRead', (rel: unknown) => readMemoryFileContent(host.environment.agentDir, String(rel)));
+  // 一键启用内置默认记忆插件：已装未登记 → 补注册；未装 → pi install 后注册。
+  handle('memoryEnableDefault', async () => {
+    const detected = detectMemoryPlugin(host.environment.agentDir);
+    if (detected.kind === 'extension') return { installed: true, registered: true };
+    const nodeFs = await import('node:fs');
+    const onDisk = nodeFs.existsSync(path.join(host.environment.agentDir, 'npm', 'node_modules', 'pi-memory'));
+    if (!onDisk) await host.packageInstall(DEFAULT_MEMORY_SOURCE, 'install');
+    await host.packageRegister(DEFAULT_MEMORY_SOURCE);
+    return { installed: true, registered: true };
+  });
   handle('modelCatalog', () => host.modelCatalog());
   handle('accountLogin', provider => host.accounts.start(provider));
   handle('accountStatus', id => host.accounts.status(id));
@@ -329,6 +340,11 @@ void app.whenReady().then(() => {
   const policy = app.isPackaged ? path.join(process.resourcesPath, 'desktop-policy/index.mjs') : path.join(app.getAppPath(), 'extensions/desktop-policy/index.mjs');
   host = new PiHost(app.getPath('userData'), policy, broadcast, process.env.PI_SMOKE_SETTINGS ? path.join(app.getPath('userData'), 'shared-skills') : undefined);
   settings = new SettingsService(host, app.getPath('userData'), path.dirname(policy));
+  // 记忆衔接：launch 时现取 memoryAssist 开关与生效记忆插件目录（desktop-memory 扩展由此注入）。
+  host.backend.memoryOptions = () => ({
+    enabled: settings.preferences().memoryAssist === true,
+    dir: builtinMemoryDir(host.environment.agentDir),
+  });
   automations = new AutomationService(path.join(app.getPath('userData'),'automations.json'),()=>host.backend,()=>{
     if(mainWindow&&!mainWindow.isDestroyed())mainWindow.webContents.send('local-pi:automations-changed');
   });

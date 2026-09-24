@@ -28,3 +28,9 @@
 .pi-memory__body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .pi-memory__body small { color: var(--pi-muted, #888); }
 .pi-memory__empty { padding: 16px 12px; color: var(--pi-muted, #888); }
+.pi-memory__hint { margin: 10px 0 0; font-size: 12px; color: var(--pi-muted, #888); }
+.pi-memory__open { display: flex; align-items: center; gap: 10px; width: 100%; padding: 0; border: 0; background: none; font: inherit; text-align: left; cursor: pointer; color: inherit; }
+.pi-memory__open:hover .pi-memory__body strong { text-decoration: underline; text-underline-offset: 2px; }
+.pi-memory__preview { margin-top: 12px; border: 1px solid var(--pi-border, #e3e3e3); border-radius: 10px; overflow: hidden; }
+.pi-memory__previewbar { display: flex; align-items: center; justify-content: space-between; padding: 8px 12px; border-bottom: 1px solid var(--pi-border, #eee); background: var(--pi-bg-inset, #f6f7f9); }
+.pi-memory__preview pre { margin: 0; padding: 12px; max-height: 320px; overflow: auto; font-size: 12px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
