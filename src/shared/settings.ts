@@ -33,6 +33,8 @@ export interface DesktopPreferences {
   openWithApp?: string;
   /** 自动项目记忆总结与召回（Desktop 记忆衔接层）。 */
   memoryAssist?: boolean;
+  /** 已从子代理目录清理掉的 callId（按会话持久化，避免重进又出现）。 */
+  subagentDismissed?: Record<string, string[]>;
 }
 export const ARCHIVE_RETENTION_DAYS = [7, 30, 90] as const;
 export const DEFAULT_ARCHIVE_RETENTION_DAYS = 30;
@@ -56,7 +58,7 @@ export interface SettingsSnapshot {
 }
 export interface SettingsApi {
   settingsSnapshot(cwd?: string): Promise<SettingsSnapshot>;
-  saveDesktopSettings(patch: Partial<Pick<DesktopPreferences, 'behavior' | 'permission' | 'shortcuts' | 'sessionRenames' | 'sessionAccessModes' | 'autoArchive' | 'archiveRetentionDays' | 'defaultThinkingLevel' | 'openWithApp' | 'memoryAssist'>>): Promise<void>;
+  saveDesktopSettings(patch: Partial<Pick<DesktopPreferences, 'behavior' | 'permission' | 'shortcuts' | 'sessionRenames' | 'sessionAccessModes' | 'autoArchive' | 'archiveRetentionDays' | 'defaultThinkingLevel' | 'openWithApp' | 'memoryAssist' | 'subagentDismissed'>>): Promise<void>;
   saveAiSettings(value: SettingsSnapshot['ai']): Promise<void>;
   resourceRead(id: string, cwd?: string): Promise<ResourceDocument>;
   resourceSave(input: { id: string; text: string; revision: string; cwd?: string }): Promise<void>;

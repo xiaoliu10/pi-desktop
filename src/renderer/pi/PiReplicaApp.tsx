@@ -227,7 +227,7 @@ export default function PiReplicaApp() {
   const [terminalOpen,setTerminalOpen]=useState(false);
   const [terminalStarted,setTerminalStarted]=useState(false);
   useEffect(()=>{if(terminalOpen)setTerminalStarted(true);},[terminalOpen]);
-  useEffect(()=>{setSubagentPanel(null);setPlanOpen(false);},[s.selectedKey]);
+  useEffect(()=>{setSubagentPanel(null);setSubagentSeen(0);setPlanOpen(false);},[s.selectedKey]);
   // 文件面板与子代理面板共用右侧栏：文件面板变为打开时覆盖收起子代理面板，避免四栏并排过挤
   useEffect(()=>{ if (s.workbenchOpen) setSubagentPanel(p=>(p?null:p)); },[s.workbenchOpen]);
   const [planSnapshots,setPlanSnapshots]=useState<Record<string,string>>(()=>{try{return JSON.parse(localStorage.getItem('pi-plan-snapshots')||'{}') as Record<string,string>;}catch{return {};}});

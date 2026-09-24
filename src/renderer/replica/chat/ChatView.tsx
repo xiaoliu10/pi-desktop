@@ -544,32 +544,10 @@ export const ChatView = memo(function ChatView(props: ChatViewProps) {
             const stepsLive = (lastTurn?.segments.at(-1)?.kind ?? 'text') === 'steps';
             if (!props.sending && !props.running) return null;
             const timerStart = props.runTiming?.startedAt ?? props.sendingAt;
-            // 当前活动摘要：正在跑的工具（含首行参数）或思考，让「在做什么」始终可见
-            const stepParts = lastTurn?.role === 'assistant' ? lastTurn.steps : [];
-            const lastPart = stepParts[stepParts.length - 1];
             const zh = props.labels.you === '你';
-            // 空窗兜底：运行中没有正在执行的工具/思考片段时（回合间隙、模型等待响应、排队消费中），
-            // 也要给出「正在思考」状态，不能只剩一个空转的菊花——否则就是「转圈但不知在做啥」。
-            const now = props.retrying
-              ? (zh ? `正在重试请求（第 ${props.retrying.attempt}${props.retrying.max ? `/${props.retrying.max}` : ''} 次）` : `Retrying (${props.retrying.attempt}${props.retrying.max ? `/${props.retrying.max}` : ''})`)
-              : lastPart?.kind === 'tool' && lastPart.status === 'running'
-                ? (() => {
-                    // 参数是多行 JSON 时首行只剩「{」，无信息量（显示成「bash {」）；
-                    // 解析出关键字段（如 bash 的 command、read 的 path）展示。
-                    const argsText = lastPart.argumentsText || lastPart.summary || '';
-                    let preview = (lastPart.summary || argsText).split('\n')[0].trim();
-                    if (preview === '{' || preview === '[') {
-                      try { const parsed = JSON.parse(argsText); const val = parsed?.command ?? parsed?.cmd ?? parsed?.file ?? parsed?.path; preview = typeof val === 'string' ? val.split('\n')[0].trim() : ''; } catch { preview = ''; }
-                    }
-                    // 兜底：预览只剩括号/引号等无意义字符时直接省略，绝不渲染「bash {」这类残缺首行
-                    if (!preview || /^[{[}\]"':,\s]+$/.test(preview)) preview = '';
-                    return `${lastPart.tool}${preview ? ` ${preview}` : ''}`.slice(0, 72);
-                  })()
-                : zh ? '正在思考' : 'Thinking';
             return (
               <div className="pi-chat__working" role="status" aria-label={props.labels.working}>
                 <Spinner />
-                {now && <span className="pi-chat__working-now">{now}</span>}
                 {props.queued > 0 && <span>{props.queued} {props.labels.queued}</span>}
                 {!stepsLive && timerStart !== undefined && <ElapsedTime startedAt={timerStart} running zh={zh} />}
                 <span className="pi-chat__caret" />
