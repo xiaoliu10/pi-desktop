@@ -82,6 +82,8 @@ export interface LocalPiApi extends importSettingsApi {
   projectContext(cwd: string, relative: string): Promise<ContextItem>;
   importAttachments(files: AttachmentInput[]): Promise<ContextItem[]>;
   clipboardAttachments(): Promise<ContextItem[]>;
+  /** 已发送图片下载：弹保存对话框写盘，取消返回空串。 */
+  downloadImage(name: string, dataUrl: string): Promise<string>;
   pickDocuments(): Promise<ContextItem[]>;
   projectBranch(cwd: string): Promise<string | null>;
   thinking(key: string, level: ThinkingLevel): Promise<void>;

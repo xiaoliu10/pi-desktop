@@ -6,6 +6,7 @@ import { officialSubagentDetails, SubagentNavigation } from '../../pi/subagents'
  */
 
 import { memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type {
@@ -153,13 +154,42 @@ function MessageParts({ parts, labels, onOpenToolFile, live }: { parts: MessageP
   );
 }
 
+/** 已发送的图片附件：点击放大（灯箱，Esc/点背景关闭），灯箱工具条可下载原图。 */
+function MessageImage({ part, labels, onDownload }: { part: Extract<MessagePart, { kind: 'image' }>; labels: ChatViewProps['labels']; onDownload?: ChatViewProps['onDownloadImage'] }) {
+  const [open, setOpen] = useState(false);
+  const dataUrl = `data:${part.mimeType};base64,${part.data}`;
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [open]);
+  const ext = part.mimeType === 'image/jpeg' ? 'jpg' : part.mimeType.slice('image/'.length);
+  const name = `pi-image-${new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '')}.${ext}`;
+  return <>
+    <button type="button" className="pi-msg__imagebtn" title={labels.viewImage} aria-label={labels.viewImage} onClick={() => setOpen(true)}>
+      <img className="pi-msg__image" src={dataUrl} alt="附件图片" />
+    </button>
+    {open && createPortal(
+      <div className="pi-lightbox" role="dialog" aria-modal="true" aria-label={labels.viewImage} onClick={() => setOpen(false)}>
+        <div className="pi-lightbox__bar">
+          {onDownload && <button type="button" className="pi-lightbox__btn" title={labels.downloadImage} aria-label={labels.downloadImage} onClick={e => { e.stopPropagation(); onDownload(dataUrl, name); }}><Icon name="download-cloud" size={15} /></button>}
+          <button type="button" className="pi-lightbox__btn" title={labels.close} aria-label={labels.close} onClick={() => setOpen(false)}><Icon name="x" size={15} /></button>
+        </div>
+        <img className="pi-lightbox__img" src={dataUrl} alt="附件图片" onClick={e => e.stopPropagation()} />
+      </div>,
+      document.body,
+    )}
+  </>;
+}
+
 /** 用户消息结构（参考 ZCode）：图片先独立展示在上，文字再进气泡放在下方。 */
-function UserMessageParts({ parts, labels, onOpenToolFile }: { parts: MessagePart[]; labels: ChatViewProps['labels']; onOpenToolFile?: ChatViewProps['onOpenToolFile'] }) {
+function UserMessageParts({ parts, labels, onOpenToolFile, onDownloadImage }: { parts: MessagePart[]; labels: ChatViewProps['labels']; onOpenToolFile?: ChatViewProps['onOpenToolFile']; onDownloadImage?: ChatViewProps['onDownloadImage'] }) {
   const images = parts.filter((p): p is Extract<MessagePart, { kind: 'image' }> => p.kind === 'image');
   const rest = parts.filter(p => p.kind !== 'image');
   return (
     <>
-      {images.map(p => <img key={p.id} className="pi-msg__image" src={`data:${p.mimeType};base64,${p.data}`} alt="附件图片" />)}
+      {images.map(p => <MessageImage key={p.id} part={p} labels={labels} onDownload={onDownloadImage} />)}
       {rest.length > 0 && <div className="pi-msg__bubble"><MessageParts parts={rest} labels={labels} onOpenToolFile={onOpenToolFile} /></div>}
     </>
   );
@@ -344,7 +374,7 @@ export function MessageNav({ turns, listRef, onJump }: { turns: ChatTurn[]; list
 // own props changed.
 /** 单轮消息：memo 化 + turn/消息身份稳定（adapter 缓存 + executionTurns 缓存），
  *  千条级会话流式时每次事件只重渲染活动轮，而不是全量 600+ 行。 */
-export const TurnArticle = memo(function TurnArticle({ m, liveTurn, labels, onOpenToolFile, onEditUser }: { m: ChatTurn; liveTurn: boolean; labels: ChatViewProps['labels']; onOpenToolFile?: ChatViewProps['onOpenToolFile']; /** 提供时用户消息可「编辑并重发」（先 fork 截断再发送，等价 ZCode 编辑语义）。 */ onEditUser?: (entryId: string, text: string) => void }) {
+export const TurnArticle = memo(function TurnArticle({ m, liveTurn, labels, onOpenToolFile, onEditUser, onDownloadImage }: { m: ChatTurn; liveTurn: boolean; labels: ChatViewProps['labels']; onOpenToolFile?: ChatViewProps['onOpenToolFile']; /** 提供时用户消息可「编辑并重发」（先 fork 截断再发送，等价 ZCode 编辑语义）。 */ onEditUser?: (entryId: string, text: string) => void; onDownloadImage?: ChatViewProps['onDownloadImage'] }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
   const [copied, setCopied] = useState(false);
@@ -392,7 +422,7 @@ export const TurnArticle = memo(function TurnArticle({ m, liveTurn, labels, onOp
                 <button className="pi-btn pi-btn--ghost" onClick={() => setEditing(false)}>{labels.cancel}</button>
               </div>
             </div>
-            : <UserMessageParts parts={m.answer} labels={labels} onOpenToolFile={onOpenToolFile} />}
+            : <UserMessageParts parts={m.answer} labels={labels} onOpenToolFile={onOpenToolFile} onDownloadImage={onDownloadImage} />}
           {!editing && (userText || onEditUser) && (
             <div className="pi-msg__actions">
               {userText && <button type="button" className="pi-msg__action" title={copied ? labels.copied : labels.copyMessage} aria-label={labels.copyMessage} onClick={() => void copy()}>{copied ? <><Icon name="check" size={13} /><span>{labels.copied}</span></> : <Icon name="copy" size={13} />}</button>}
@@ -576,7 +606,7 @@ export const ChatView = memo(function ChatView(props: ChatViewProps) {
             </button>
           )}
           {visibleTurns.map((m) => (
-            <TurnArticle key={m.id} m={m} liveTurn={props.running && m === turns[turns.length - 1]} labels={props.labels} onOpenToolFile={props.onOpenToolFile} onEditUser={props.onEditUserMessage} />
+            <TurnArticle key={m.id} m={m} liveTurn={props.running && m === turns[turns.length - 1]} labels={props.labels} onOpenToolFile={props.onOpenToolFile} onEditUser={props.onEditUserMessage} onDownloadImage={props.onDownloadImage} />
           ))}
           {props.sending && props.sendingText && (
             <article className="pi-msg pi-msg--user pi-msg--pending">
