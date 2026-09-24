@@ -1108,11 +1108,35 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
       return true;
     },
     selectSession: (key) => {
-      set((s) => ({ selectedKey: key, leaf: undefined, history: undefined, review: undefined, view: 'chat', draftText: '', contextItems: [], recoveredSubagents: [], subagentDismissed: [] }));
+      set((s) => ({ selectedKey: key, leaf: undefined, history: undefined, review: undefined, view: 'chat', draftText: '', contextItems: [], recoveredSubagents: [], subagentDismissed: s.desktopPreferences?.subagentDismissed?.[key] ?? [] }));
       void refreshHistory();
     },
-    dismissSubagent: (callId) => set((s) => ({ subagentDismissed: [...new Set([...(s.subagentDismissed ?? []), callId])] })),
-    dismissFinishedSubagents: (callIds) => set((s) => ({ subagentDismissed: [...new Set([...(s.subagentDismissed ?? []), ...callIds])] })),
+    dismissSubagent: (callId) => {
+      const s = get();
+      const key = s.selectedKey;
+      if (!key) return;
+      const dismissed = [...new Set([...(s.subagentDismissed ?? []), callId])];
+      set({ subagentDismissed: dismissed });
+      const prefs = s.desktopPreferences;
+      if (prefs) {
+        const map = { ...(prefs.subagentDismissed ?? {}), [key]: dismissed };
+        set({ desktopPreferences: { ...prefs, subagentDismissed: map } });
+        void window.localPi?.saveDesktopSettings({ subagentDismissed: map }).catch(() => undefined);
+      }
+    },
+    dismissFinishedSubagents: (callIds) => {
+      const s = get();
+      const key = s.selectedKey;
+      if (!key || !callIds.length) return;
+      const dismissed = [...new Set([...(s.subagentDismissed ?? []), ...callIds])];
+      set({ subagentDismissed: dismissed });
+      const prefs = s.desktopPreferences;
+      if (prefs) {
+        const map = { ...(prefs.subagentDismissed ?? {}), [key]: dismissed };
+        set({ desktopPreferences: { ...prefs, subagentDismissed: map } });
+        void window.localPi?.saveDesktopSettings({ subagentDismissed: map }).catch(() => undefined);
+      }
+    },
     setDraftText: (draftText) => set({ draftText }),
 
     send: (text) => {
