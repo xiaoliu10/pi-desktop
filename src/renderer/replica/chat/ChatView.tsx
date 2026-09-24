@@ -458,6 +458,13 @@ export const ChatView = memo(function ChatView(props: ChatViewProps) {
     }
     return result;
   }, [props.messages, props.runTiming]);
+  // 历史落地交换（agent_settled → refreshHistory → 消息数组整体重建）后，贴底滚动走
+  // ResizeObserver+rAF，在 paint 之后才执行，中间那一帧会闪现较早的消息。这里在提交
+  // 前同步贴底（仅在已处于跟随状态时），消除刷屏感。
+  const lastTurnKey = turns.length ? `${turns[turns.length - 1]!.id}:${turns[turns.length - 1]!.steps.length}` : '';
+  useLayoutEffect(() => {
+    if (followingRef.current && listRef.current) listRef.current.scrollTop = listRef.current.scrollHeight;
+  }, [lastTurnKey]);
   const jump = (id: string) => {
     const target = turns.find(t => t.messageIds.includes(id))?.id || id;
     const el = Array.from(listRef.current?.querySelectorAll<HTMLElement>('[data-msg]') || []).find(e => e.dataset.msg === target);
