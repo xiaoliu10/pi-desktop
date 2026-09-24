@@ -9,7 +9,7 @@ import { UsagePane } from './UsagePane';
 import './settings-features.css';
 import { OfficialSubagentSetup } from './OfficialSubagentSetup';
 const api = () => window.localPi;
-const names: Record<string,string>={ai:'AI 默认行为',shortcuts:'快捷键',instructions:'指令与提示词',skills:'技能',mcp:'MCP 服务',extensions:'扩展',subagents:'子代理',workspace:'工作区连接与存储',import:'导入会话',projects:'项目',archived:'已归档会话',usage:'数据统计'};
+const names: Record<string,string>={ai:'AI 默认行为',shortcuts:'快捷键',instructions:'指令与提示词',skills:'技能',mcp:'MCP 服务',extensions:'扩展',subagents:'子代理',workspace:'连接',import:'导入会话',projects:'项目',archived:'已归档会话',usage:'数据统计'};
 const actionNames:Record<ShortcutAction,string>={search:'全局搜索',newSession:'新建会话',settings:'打开设置',workbench:'显示 / 隐藏工作面板',sidebar:'折叠 / 展开侧栏',stop:'停止当前任务'};
 const template=(kind:ResourceKind,name:string)=>kind==='extensions'?`export default function(pi) {\n  pi.registerCommand('${name}', {\n    description: '我的扩展命令',\n    handler: async (_args, ctx) => { ctx.ui.notify('扩展已运行'); }\n  });\n}\n`:kind==='skills'?`---\nname: ${name}\ndescription: 描述何时应该使用这个技能\n---\n\n# ${name}\n\n在这里填写步骤。\n`:kind==='subagents'?`---\nname: ${name}\ndescription: 专注的只读研究助手\ntools: read, grep, find, ls\n---\n\n你是一个只读研究助手。根据任务检查项目并给出结论，不修改文件。\n`:`# ${name}\n\n在这里填写指令。\n`;
 export function SettingsFeatures({page,cwd,query,workspace,loadedExtensionPaths}:{page:SettingsNavId;cwd?:string;query:string;workspace:ReactNode;loadedExtensionPaths?: string[]}) {
@@ -81,7 +81,7 @@ export function SettingsFeatures({page,cwd,query,workspace,loadedExtensionPaths}
     {page==='workspace'&&workspace}
     {page==='archived'&&<ArchivedSessions embedded/>}
     {page==='usage'&&<UsagePane/>}
-    {data&&page==='import'&&<section className="pi-features__card"><h2>导入 pi 原生会话</h2><p>平时本机 CLI 会话会自动发现，无需导入。这里用于从其他目录、备份或设备导入 .jsonl 文件。</p><ul><li>验证完整 JSONL 与原生会话头，损坏文件不写入。</li><li>创建新的会话 ID，保留分支与扩展条目，原文件不变。</li><li>相同内容重复导入会返回已有副本，不生成重复记录。</li><li>不转换旧 Desktop events.jsonl 或其他产品格式。</li></ul><button className="pi-btn pi-btn--primary" disabled={busy} onClick={()=>void act(async()=>{const result=await api().importSession();if(!result)return;usePiStore.setState({sessions:await api().sessions()});usePiStore.getState().selectSession(result.key);},'导入处理完成')}>选择 JSONL 并导入副本</button><h2>直接观察额外目录</h2><p>如果想持续同步外部目录中的会话，使用“连接与存储”的额外会话目录，无需复制。</p><button className="pi-btn pi-btn--outline" onClick={()=>usePiStore.getState().openSettings('workspace')}>打开连接与存储</button></section>}
+    {data&&page==='import'&&<section className="pi-features__card"><h2>导入 pi 原生会话</h2><p>平时本机 CLI 会话会自动发现，无需导入。这里用于从其他目录、备份或设备导入 .jsonl 文件。</p><ul><li>验证完整 JSONL 与原生会话头，损坏文件不写入。</li><li>创建新的会话 ID，保留分支与扩展条目，原文件不变。</li><li>相同内容重复导入会返回已有副本，不生成重复记录。</li><li>不转换旧 Desktop events.jsonl 或其他产品格式。</li></ul><button className="pi-btn pi-btn--primary" disabled={busy} onClick={()=>void act(async()=>{const result=await api().importSession();if(!result)return;usePiStore.setState({sessions:await api().sessions()});usePiStore.getState().selectSession(result.key);},'导入处理完成')}>选择 JSONL 并导入副本</button><h2>直接观察额外目录</h2><p>如果想持续同步外部目录中的会话，使用「连接」页的额外会话目录，无需复制。</p><button className="pi-btn pi-btn--outline" onClick={()=>usePiStore.getState().openSettings('workspace')}>打开连接</button></section>}
   </div>;
 }
 

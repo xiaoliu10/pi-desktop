@@ -92,7 +92,7 @@ function demoNavFromLabels(props: SettingsProps) {
     {
       label: L.appearance === 'Appearance' ? 'Workspace' : '工作区',
       items: [
-        ...(!props.demo ? [{ id: 'workspace' as const, label: L.appearance === 'Appearance' ? 'Connection & storage' : '连接与存储', icon: 'sliders' as const }] : []),
+        ...(!props.demo ? [{ id: 'workspace' as const, label: L.appearance === 'Appearance' ? 'Connection' : '连接', icon: 'sliders' as const }] : []),
         { id: 'import' as const, label: L.import, icon: 'download' as const },
         { id: 'projects' as const, label: L.projects, icon: 'archive' as const },
         ...(!props.demo ? [
