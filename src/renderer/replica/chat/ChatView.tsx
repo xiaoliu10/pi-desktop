@@ -561,6 +561,8 @@ export const ChatView = memo(function ChatView(props: ChatViewProps) {
                     if (preview === '{' || preview === '[') {
                       try { const parsed = JSON.parse(argsText); const val = parsed?.command ?? parsed?.cmd ?? parsed?.file ?? parsed?.path; preview = typeof val === 'string' ? val.split('\n')[0].trim() : ''; } catch { preview = ''; }
                     }
+                    // 兜底：预览只剩括号/引号等无意义字符时直接省略，绝不渲染「bash {」这类残缺首行
+                    if (!preview || /^[{[}\]"':,\s]+$/.test(preview)) preview = '';
                     return `${lastPart.tool}${preview ? ` ${preview}` : ''}`.slice(0, 72);
                   })()
                 : zh ? '正在思考' : 'Thinking';
