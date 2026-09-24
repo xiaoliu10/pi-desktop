@@ -62,7 +62,7 @@ const localPi: LocalPiApi = {
   automationRunWorkflow:input=>invoke('automationRunWorkflow',input), automationStop:id=>invoke('automationStop',id),
   automationExport:id=>invoke('automationExport',id), automationImport:()=>invoke('automationImport'),
   onAutomationChanged:listener=>{ipcRenderer.on('local-pi:automations-changed',listener);return()=>ipcRenderer.removeListener('local-pi:automations-changed',listener);},
-  importAttachments: files => invoke('importAttachments', files), clipboardAttachments: () => invoke('clipboardAttachments'),
+  importAttachments: files => invoke('importAttachments', files), clipboardAttachments: () => invoke('clipboardAttachments'), downloadImage: (name, dataUrl) => invoke('downloadImage', name, dataUrl),
   pickDocuments: () => invoke('pickDocuments'), projectBranch: cwd => invoke('projectBranch', cwd),
   thinking: (key, level) => invoke('thinking', key, level),
   settingsSnapshot: cwd => invoke('settingsSnapshot', cwd),

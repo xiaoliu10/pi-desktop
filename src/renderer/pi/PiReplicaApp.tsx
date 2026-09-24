@@ -295,6 +295,10 @@ export default function PiReplicaApp() {
   const editUserMessage = useCallback((entryId: string, text: string) => {
     void usePiStore.getState().resendEdited(entryId, text);
   }, []);
+  // 图片灯箱下载：主进程弹保存对话框写盘。
+  const downloadImage = useCallback((dataUrl: string, name: string) => {
+    window.localPi!.downloadImage(name, dataUrl).catch(() => usePiStore.setState({ error: '图片保存失败' }));
+  }, []);
   const reviewDiffs = useMemo(() => (s.review ? reviewDiffEntries(s.review) : []), [s.review]);
   const runModels = run?.models ?? [];
 
@@ -678,6 +682,7 @@ export default function PiReplicaApp() {
                     onOpenToolFile={openToolFile}
                     onJumpToMessage={noop}
                     onEditUserMessage={parentRunning ? undefined : editUserMessage}
+                    onDownloadImage={downloadImage}
                   />
                   <div style={{ padding: run ? '0 24px 20px' : '0 24px 20px' }}>{composer}</div>
                 </div>

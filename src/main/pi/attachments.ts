@@ -1,9 +1,10 @@
-import { clipboard, nativeImage } from 'electron';
+import { app, BrowserWindow, clipboard, dialog, nativeImage } from 'electron';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { bufferContext } from './composer-service';
+import { imageDataUrl, imageFileName } from './image-file';
 import type { AttachmentInput, ContextItem } from '../../shared/composer';
 
 const MAX = 10 * 1024 * 1024;
@@ -45,4 +46,16 @@ export async function clipboardAttachments(): Promise<ContextItem[]> {
   const image = clipboard.readImage();
   if (!image.isEmpty()) return [await attachment('粘贴的图片.png', image.toPNG())];
   return [];
+}
+
+/** 已发送图片的下载：保存对话框（默认 Downloads）→ 原始字节落盘，取消返回空串。 */
+export async function downloadImage(name: string, dataUrl: string): Promise<string> {
+  const { bytes, mime } = imageDataUrl(dataUrl);
+  const target = await dialog.showSaveDialog(BrowserWindow.getAllWindows()[0]!, {
+    title: '保存图片',
+    defaultPath: path.join(app.getPath('downloads'), imageFileName(name, mime)),
+  });
+  if (target.canceled || !target.filePath) return '';
+  await fs.writeFile(target.filePath, bytes);
+  return target.filePath;
 }

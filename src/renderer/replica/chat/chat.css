@@ -39,6 +39,13 @@
 }
 
 /* 用户消息结构（参考 ZCode）：图片先独立展示在上（无气泡底），文字气泡在下。 */
+.pireplica .pi-msg--user .pi-msg__imagebtn {
+  display: block;
+  border: 0;
+  background: none;
+  padding: 0;
+  cursor: zoom-in;
+}
 .pireplica .pi-msg--user .pi-msg__image {
   display: block;
   max-width: min(100%, 320px);
@@ -47,6 +54,47 @@
   border-radius: 12px;
   border: 1px solid var(--pi-border);
   margin-bottom: 6px;
+}
+
+/* 图片灯箱：点击消息里的图片放大，Esc/背景点击关闭，右上角下载。 */
+.pireplica .pi-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.82);
+  cursor: zoom-out;
+}
+.pireplica .pi-lightbox__img {
+  max-width: 94vw;
+  max-height: 90vh;
+  object-fit: contain;
+  border-radius: 8px;
+  cursor: default;
+}
+.pireplica .pi-lightbox__bar {
+  position: fixed;
+  top: 14px;
+  right: 16px;
+  display: flex;
+  gap: 6px;
+}
+.pireplica .pi-lightbox__btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: 0;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.14);
+  color: #fff;
+  cursor: pointer;
+}
+.pireplica .pi-lightbox__btn:hover {
+  background: rgba(255, 255, 255, 0.26);
 }
 
 .pireplica .pi-msg--user .pi-msg__bubble {

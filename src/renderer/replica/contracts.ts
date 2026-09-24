@@ -319,6 +319,8 @@ export interface ChatViewProps {
   onJumpToMessage: (id: string) => void;
   /** 编辑并重发已发送的用户消息（fork 截断回该条目后重发）；缺省=仅复制不可编辑。 */
   onEditUserMessage?: (entryId: string, text: string) => void;
+  /** 下载已发送的图片附件：dataUrl + 建议文件名；缺省=灯箱里不显示下载按钮。 */
+  onDownloadImage?: (dataUrl: string, name: string) => void;
 }
 
 export interface ChatLabels {
@@ -337,6 +339,10 @@ export interface ChatLabels {
   editMessage: string;
   resend: string;
   cancel: string;
+  /** 图片放大预览与下载（灯箱）。 */
+  viewImage: string;
+  downloadImage: string;
+  close: string;
 }
 
 export interface DemoDiffLine {

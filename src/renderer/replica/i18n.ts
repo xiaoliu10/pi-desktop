@@ -84,6 +84,9 @@ const en = {
     editMessage: 'Edit and resend',
     resend: 'Resend',
     cancel: 'Cancel',
+    viewImage: 'View full size',
+    downloadImage: 'Save image',
+    close: 'Close',
   } satisfies ChatLabels,
   workbench: {
     review: 'Review',
@@ -278,6 +281,9 @@ const zh: typeof en = {
     editMessage: '编辑并重发',
     resend: '重发',
     cancel: '取消',
+    viewImage: '查看原图',
+    downloadImage: '下载图片',
+    close: '关闭',
   },
   workbench: {
     review: '变更',

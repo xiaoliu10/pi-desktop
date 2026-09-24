@@ -5,7 +5,7 @@ import { filePreview } from './pi/file-preview';
 import { gitStatus } from './pi/git-status';
 import fs from 'node:fs/promises';
 import { AutomationService } from './pi/automation-service';
-import { importAttachments, clipboardAttachments, readAttachment } from './pi/attachments';
+import { importAttachments, clipboardAttachments, readAttachment, downloadImage } from './pi/attachments';
 import { createProjectWorktree } from './pi/project-worktree';
 import { authorizeProjectCwd, listExternalApps, openWithApp } from './pi/open-with';
 import { canonical } from './pi/session-index';
@@ -245,6 +245,7 @@ function registerIpc() {
   handle('thinking', (key, level) => host.backend.thinking(key, level));
   handle('importAttachments', files => importAttachments(files));
   handle('clipboardAttachments', () => clipboardAttachments());
+  handle('downloadImage', (name, dataUrl) => downloadImage(name, dataUrl));
   handle('pickDocuments', async () => {
     const chosen = await dialog.showOpenDialog(mainWindow!, { properties: ['openFile', 'multiSelections'], filters: [{name:'文档与文本',extensions:['png','jpg','jpeg','webp','gif','pdf','docx','txt','md','csv','json','yaml','yml','log','ts','tsx','js','py']},{name:'所有文件',extensions:['*']}] });
     if(chosen.canceled) return [];
