@@ -839,6 +839,10 @@
 .pireplica .pi-execution__summary { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 4px 0 10px; border-bottom: 1px solid var(--pi-border); color: var(--pi-text-secondary); font-size: 14px; line-height: 22px; }
 .pireplica .pi-execution__title { color: var(--pi-text-secondary); font-weight: 400; }
 .pireplica .pi-execution__thinking { color: var(--pi-text); font-weight: 600; }
+/* 思考流式滚动带：flex-end 让内容尾部贴右缘，超出部分从左侧裁掉——新内容到达时
+   视觉上就是持续向左滚动；两缘加渐隐遮罩。 */
+.pireplica .pi-execution__ticker { flex: 1; min-width: 0; display: flex; justify-content: flex-end; overflow: hidden; -webkit-mask-image: linear-gradient(to right, transparent, black 10%, black 92%, transparent); mask-image: linear-gradient(to right, transparent, black 10%, black 92%, transparent); }
+.pireplica .pi-execution__ticker-inner { flex-shrink: 0; white-space: pre; color: var(--pi-text-tertiary); font-size: 12px; }
 .pireplica .pi-execution__counts { color: var(--pi-text-secondary); }
 .pireplica .pi-execution__failure { color: var(--pi-red); }
 .pireplica .pi-execution__chevron { flex-shrink: 0; transition: transform .12s ease, opacity .16s ease; }
@@ -912,7 +916,7 @@
 .pireplica .pi-execution__summary:hover { color: var(--pi-text); }
 .pireplica .pi-execution__commentary { margin: 18px 0; }
 .pireplica .pi-execution__steps .pi-tool__summary { padding: 10px 0; color: var(--pi-text-secondary); }
-.pireplica .pi-execution__note > summary { padding: 10px 0; font-size: 13px; }
+.pireplica .pi-execution__note > summary { padding: 10px 0; margin-left: -10px; font-size: 13px; }
 .pireplica .pi-chat__elapsed:not(:empty) { padding: 4px 0 10px; border-bottom: 1px solid var(--pi-border); margin-bottom: 18px; }
 .pireplica .pi-chat__elapsed .pi-execution__elapsed { font-size: 14px; }
 

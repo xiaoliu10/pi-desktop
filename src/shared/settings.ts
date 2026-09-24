@@ -49,6 +49,8 @@ export interface SettingsSnapshot {
   mcpRevisions: Record<string, string>;
   diagnostics: string[];
   projects: Array<{ path: string; name: string; registered: boolean; exists: boolean; sessions: number }>;
+  /** Desktop 每次连接经 -e 装载的内置扩展（存在的文件）。 */
+  loadedExtensions: string[];
 }
 export interface SettingsApi {
   settingsSnapshot(cwd?: string): Promise<SettingsSnapshot>;

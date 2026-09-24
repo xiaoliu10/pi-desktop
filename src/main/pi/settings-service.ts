@@ -41,12 +41,33 @@ export class SettingsService {
   private cwd(cwd?:string):string|undefined { if(!cwd)return undefined;if(!path.isAbsolute(cwd))throw new Error('项目路径必须是绝对路径');const p=canonical(cwd);const known=[...this.preferences().projects.map(p=>p.path),...this.host.index.scan().map(s=>s.cwd),...this.host.backend.runs().map(r=>r.cwd)];if(!known.some(x=>canonical(x)===p))throw new Error('请先添加项目或选择其会话');return p; }
   private roots(cwd?:string){const project=this.cwd(cwd);return[{root:this.host.environment.agentDir,scope:'user' as const},...(project?[{root:path.join(project,'.pi'),scope:'project' as const}]:[])];}
   private settingsPath(){return path.join(this.host.environment.agentDir,'settings.json');}
+  /** pi 会话进程（模型切换/退出时）会整包写回 settings.json 的内存旧副本，可能丢掉
+   * packages 注册（记忆插件重启后被「排除」的根因）。以 pi-desktop.json 记录的期望
+   * 注册列表为准：缺失即补回，并在诊断里说明；包已从 npm 依赖移除的（pi remove）不恢复。 */
+  private repairPackages(diagnostics: string[]): void {
+    try {
+      const desired = (readJson(path.join(this.dataDir, 'pi-desktop.json')).piPackages as unknown[] ?? []).filter((v): v is string => typeof v === 'string' && v.length <= 300);
+      if (!desired.length) return;
+      let npmDeps: Set<string> | null = null;
+      try { const deps = readJson(path.join(this.host.environment.agentDir, 'npm', 'package.json')).dependencies ?? {}; npmDeps = new Set(Object.keys(deps).map(n => `npm:${n}`)); } catch { npmDeps = null; }
+      const wanted = npmDeps ? desired.filter(spec => !spec.startsWith('npm:') || npmDeps!.has(spec)) : desired;
+      if (!wanted.length) return;
+      const current = readJson(this.settingsPath()).packages;
+      const existing: string[] = Array.isArray(current) ? current.map((raw: unknown) => typeof raw === 'string' ? raw : typeof raw === 'object' && raw ? String((raw as any).source ?? '') : '').filter(Boolean) : [];
+      const missing = wanted.filter(spec => !existing.includes(spec));
+      if (!missing.length) return;
+      mergeJson(this.settingsPath(), p => { p.packages = [...(Array.isArray(p.packages) ? p.packages : []), ...missing]; });
+      diagnostics.push(`已自动恢复被覆盖的包注册：${missing.join('、')}（pi 会话写回旧设置副本所致）。`);
+    } catch { /* 修复失败不影响快照 */ }
+  }
   snapshot(cwd?:string):SettingsSnapshot {
     const diagnostics:string[]=[];let ai:any={};try{ai=readJson(this.settingsPath());}catch(e){diagnostics.push(String((e as Error).message));}
+    this.repairPackages(diagnostics);
     const resources=this.resources(cwd),mcp:McpServerRow[]=[];
     for(const {root,scope}of this.roots(cwd)){const file=path.join(root,'mcp.json');try{const cfg=readJson(file);const seen=new Set<string>();const target=(c:any)=>c.command?path.basename(String(c.command)):(()=>{try{const url=new URL(c.url);return url.origin+url.pathname;}catch{return 'URL 无效';}})();for(const[name,c]of Object.entries(cfg.mcpServers||{}) as [string,any][]){seen.add(name);if(!object(c)){diagnostics.push(`MCP ${name} 配置无效`);continue;}mcp.push({id:hash(file+'\0'+name),name,scope,transport:c.command?'stdio':'Streamable HTTP',target:target(c),enabled:!c.disabled&&c.enabled!==false,path:file,revision:revision(file)});}for(const imp of this.mcpImports(cfg.imports)){if(seen.has(imp.name))continue;seen.add(imp.name);const c=imp.config as any;mcp.push({id:hash(imp.file+'\0'+imp.name),name:imp.name,scope,transport:c.command?'stdio':'Streamable HTTP',target:target(c),enabled:!c.disabled&&c.enabled!==false,path:imp.file,revision:revision(imp.file),source:imp.source});}}catch(e){diagnostics.push(`${file}：${(e as Error).message}`);}}
     const prefs=this.preferences(),sessions=this.host.index.scan(),paths=[...new Set([...prefs.projects.map(p=>p.path),...sessions.map(s=>s.cwd)].map(canonical))];
-    return {preferences:prefs,ai:{defaultProvider:String(ai.defaultProvider||''),defaultModel:String(ai.defaultModel||''),defaultThinkingLevel:String(ai.defaultThinkingLevel||'off'),autoCompact:ai.compaction?.enabled!==false,retry:ai.retry?.enabled!==false,revision:revision(this.settingsPath())},resources,mcp,mcpRevisions:Object.fromEntries(this.roots(cwd).map(r=>[r.scope,revision(path.join(r.root,'mcp.json'))])),diagnostics,projects:paths.map(p=>({path:p,name:prefs.projects.find(x=>canonical(x.path)===p)?.name||path.basename(p),registered:prefs.projects.some(x=>canonical(x.path)===p),exists:fs.existsSync(p),sessions:sessions.filter(s=>canonical(s.cwd)===p).length}))};
+    const loadedExtensions=[path.join(this.policyDir,'index.mjs'),path.join(this.policyDir,'mcp-bridge.mjs'),path.join(this.policyDir,'..','desktop-ask','index.mjs'),path.join(this.policyDir,'..','desktop-subagent','index.mjs')].map(p=>path.resolve(p)).filter(p=>fs.existsSync(p));
+    return {preferences:prefs,ai:{defaultProvider:String(ai.defaultProvider||''),defaultModel:String(ai.defaultModel||''),defaultThinkingLevel:String(ai.defaultThinkingLevel||'off'),autoCompact:ai.compaction?.enabled!==false,retry:ai.retry?.enabled!==false,revision:revision(this.settingsPath())},resources,mcp,mcpRevisions:Object.fromEntries(this.roots(cwd).map(r=>[r.scope,revision(path.join(r.root,'mcp.json'))])),diagnostics,projects:paths.map(p=>({path:p,name:prefs.projects.find(x=>canonical(x.path)===p)?.name||path.basename(p),registered:prefs.projects.some(x=>canonical(x.path)===p),exists:fs.existsSync(p),sessions:sessions.filter(s=>canonical(s.cwd)===p).length})),loadedExtensions};
   }
   saveAi(value:SettingsSnapshot['ai']) {if(!value||!['off','minimal','low','medium','high','xhigh','max'].includes(value.defaultThinkingLevel)||typeof value.autoCompact!=='boolean'||typeof value.retry!=='boolean'||typeof value.defaultProvider!=='string'||typeof value.defaultModel!=='string'||value.defaultProvider.length>200||value.defaultModel.length>200)throw new Error('AI 设置无效');mergeJson(this.settingsPath(),p=>{for(const k of ['defaultProvider','defaultModel']as const){if(value[k].trim())p[k]=value[k].trim();else delete p[k];}p.defaultThinkingLevel=value.defaultThinkingLevel;p.compaction={...p.compaction,enabled:value.autoCompact};p.retry={...p.retry,enabled:value.retry};},value.revision); }
   resources(cwd?:string):EditableResource[]{const out=new Map<string,EditableResource>();const roots=this.roots(cwd);const add=(file:string,kind:ResourceKind,scope:'user'|'project',status='discovered',detail='本地文件',editable=true)=>{const id=hash(file+'\0'+kind);out.set(id,{id,path:file,name:path.basename(file)==='SKILL.md'?path.basename(path.dirname(file)):path.basename(file),kind,scope,status,detail,editable:editable&&(!fs.existsSync(file)||fs.statSync(file).isFile())});};
