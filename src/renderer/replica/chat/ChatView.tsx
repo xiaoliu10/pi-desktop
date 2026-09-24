@@ -344,7 +344,27 @@ export function MessageNav({ turns, listRef, onJump }: { turns: ChatTurn[]; list
 // own props changed.
 /** 单轮消息：memo 化 + turn/消息身份稳定（adapter 缓存 + executionTurns 缓存），
  *  千条级会话流式时每次事件只重渲染活动轮，而不是全量 600+ 行。 */
-export const TurnArticle = memo(function TurnArticle({ m, liveTurn, labels, onOpenToolFile }: { m: ChatTurn; liveTurn: boolean; labels: ChatViewProps['labels']; onOpenToolFile?: ChatViewProps['onOpenToolFile'] }) {
+export const TurnArticle = memo(function TurnArticle({ m, liveTurn, labels, onOpenToolFile, onEditUser }: { m: ChatTurn; liveTurn: boolean; labels: ChatViewProps['labels']; onOpenToolFile?: ChatViewProps['onOpenToolFile']; /** 提供时用户消息可「编辑并重发」（先 fork 截断再发送，等价 ZCode 编辑语义）。 */ onEditUser?: (entryId: string, text: string) => void }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState('');
+  const [copied, setCopied] = useState(false);
+  const copiedTimer = useRef<number>(0);
+  useEffect(() => () => window.clearTimeout(copiedTimer.current), []);
+  const userText = m.role === 'user' ? m.answer.filter(p => p.kind === 'text').map(p => (p as Extract<MessagePart, { kind: 'text' }>).text).join('\n\n') : '';
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(userText);
+      setCopied(true);
+      window.clearTimeout(copiedTimer.current);
+      copiedTimer.current = window.setTimeout(() => setCopied(false), 1600);
+    } catch { /* 剪贴板权限被拒时静默——气泡已有完整文本可手动选择 */ }
+  };
+  const submit = () => {
+    const text = draft.trim();
+    if (!text) return;
+    setEditing(false);
+    onEditUser?.(m.id, text);
+  };
   return (
     <article data-msg={m.id} className={`pi-msg pi-msg--${m.role}`}>
       {m.simulated && (
@@ -354,7 +374,32 @@ export const TurnArticle = memo(function TurnArticle({ m, liveTurn, labels, onOp
         </div>
       )}
       {m.role === 'user'
-        ? <UserMessageParts parts={m.answer} labels={labels} onOpenToolFile={onOpenToolFile} />
+        ? <>
+          {editing
+            ? <div className="pi-msg__editbox">
+              <textarea
+                value={draft}
+                onChange={e => setDraft(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === 'Escape') setEditing(false);
+                  if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) submit();
+                }}
+                rows={Math.min(12, Math.max(2, draft.split('\n').length + 1))}
+                autoFocus
+              />
+              <div className="pi-msg__editbtns">
+                <button className="pi-btn pi-btn--primary" onClick={submit} disabled={!draft.trim()}>{labels.resend}</button>
+                <button className="pi-btn pi-btn--ghost" onClick={() => setEditing(false)}>{labels.cancel}</button>
+              </div>
+            </div>
+            : <UserMessageParts parts={m.answer} labels={labels} onOpenToolFile={onOpenToolFile} />}
+          {!editing && (userText || onEditUser) && (
+            <div className="pi-msg__actions">
+              {userText && <button type="button" className="pi-msg__action" title={copied ? labels.copied : labels.copyMessage} aria-label={labels.copyMessage} onClick={() => void copy()}>{copied ? <><Icon name="check" size={13} /><span>{labels.copied}</span></> : <Icon name="copy" size={13} />}</button>}
+              {onEditUser && userText && <button type="button" className="pi-msg__action" title={labels.editMessage} aria-label={labels.editMessage} onClick={() => { setDraft(userText); setEditing(true); }}><Icon name="pencil" size={13} /></button>}
+            </div>
+          )}
+        </>
         : (() => {
           if (liveTurn) {
             // 活动轮：保持时间顺序，逐步段渲染；所有过程段保持展开（用户要求：
@@ -531,7 +576,7 @@ export const ChatView = memo(function ChatView(props: ChatViewProps) {
             </button>
           )}
           {visibleTurns.map((m) => (
-            <TurnArticle key={m.id} m={m} liveTurn={props.running && m === turns[turns.length - 1]} labels={props.labels} onOpenToolFile={props.onOpenToolFile} />
+            <TurnArticle key={m.id} m={m} liveTurn={props.running && m === turns[turns.length - 1]} labels={props.labels} onOpenToolFile={props.onOpenToolFile} onEditUser={props.onEditUserMessage} />
           ))}
           {props.sending && props.sendingText && (
             <article className="pi-msg pi-msg--user pi-msg--pending">

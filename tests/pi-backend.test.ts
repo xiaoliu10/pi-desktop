@@ -82,6 +82,22 @@ it('snapshots pending dialogs with generation and full request, and emits ui-res
  expect(backend.pendingDialogs(run.key)).toEqual([]);
 });
 
+it('forks back to an entry only while idle and without pending dialogs (edit-and-resend)',async()=>{
+ const{root,backend,events}=setup();const run=await backend.connect({cwd:root,trustProject:false,permission:'ask'});
+ expect(backend.forkTo(run.key,'')).rejects.toThrow('消息条目无效');
+ await expect(backend.forkTo(run.key,'entry-1')).resolves.toBe('forked text');
+ // 运行中拒绝编辑
+ const long=backend.prompt(run.key,'/long','followUp');
+ await vi.waitFor(()=>expect(backend.runs()[0].status).toBe('running'));
+ await expect(backend.forkTo(run.key,'entry-1')).rejects.toThrow('请先停止当前任务');
+ await backend.stop(run.key);await long;
+ // 待审批对话阻塞编辑
+ const pending=backend.prompt(run.key,'/dialog','followUp');
+ await vi.waitFor(()=>expect(events.some(e=>e.type==='ui'&&e.request.id==='dialog')).toBe(true));
+ await expect(backend.forkTo(run.key,'entry-1')).rejects.toThrow('等待交互');
+ backend.respond(run.key,run.generation,{id:'dialog',cancelled:true});await pending;
+});
+
 it('fails closed when the mandatory policy extension is missing',async()=>{const {root,index,owned}=setup();const backend=new PiBackend({executable:path.resolve('tests/fixtures/fake-pi.mjs'),version:'0.85.1',supported:true,agentDir:root,sessionDirs:[root],diagnostics:[]},index,owned,path.join(root,'missing.mjs'),()=>{});backends.push(backend);await expect(backend.connect({cwd:root,trustProject:false,permission:'ask'})).rejects.toThrow('权限扩展缺失');expect(backend.runs()).toEqual([]);});
 
 it('releases ownership when pi unexpectedly exits',async()=>{const{root,backend}=setup();const run=await backend.connect({cwd:root,trustProject:false,permission:'ask'});await expect(backend.prompt(run.key,'/crash','followUp')).rejects.toThrow('退出');await vi.waitFor(()=>expect(backend.runs()).toEqual([]));});

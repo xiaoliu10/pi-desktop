@@ -41,6 +41,7 @@ function handle(r) {
   ok({}); send({type:'agent_start'}); send({type:'agent_end',willRetry:true});
   setTimeout(()=>send({type:'agent_settled'}), 80); return;
  case 'extension_ui_response': if(pendingUi) { send({type:'response',id:pendingUi.id,success:true}); pendingUi=null; } return;
+ case 'fork': return ok({text:'forked text',cancelled:false});
  case 'clear_queue': { const old=queue; queue={steering:[],followUp:[]}; ok(old); send({type:'queue_update', steering:[], followUp:[]}); return; }
  case 'abort': send({type:'agent_settled'}); return ok({});
  default: return send({type:'response',id:r.id,success:false,error:'unsupported'});

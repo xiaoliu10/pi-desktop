@@ -242,6 +242,22 @@ export class PiBackend {
     }
     await run.client.request('prompt', { message: text, streamingBehavior: behavior, ...(images?.length ? {images} : {}) }, 300_000);
   }
+  /**
+   * 编辑已发送消息的前半步：pi 的 fork RPC 把会话树截断回该条目（被改写轮之后的
+   * 分支仍留在文件里，TUI /tree 可回访）。截断成功后渲染层重发编辑文本，等价
+   * ZCode 的「重置对话并发送」。运行中/有待审批时拒绝，与 refresh 同一口径。
+   */
+  async forkTo(key: string, entryId: string): Promise<string> {
+    if (typeof entryId !== 'string' || !entryId) throw new Error('消息条目无效');
+    const run = this.get(key);
+    if (['starting', 'running', 'stopping'].includes(run.view.status) || run.view.pending > 0) throw new Error('请先停止当前任务再编辑历史消息');
+    if (this.hasPendingDialogs(key)) throw new Error('等待交互完成后再编辑');
+    const result = await run.client.request('fork', { entryId }, 30_000) as { text?: unknown; cancelled?: unknown } | undefined;
+    if (result?.cancelled) throw new Error('回退已取消');
+    void this.refreshContextUsage(run);
+    this.emit({ type: 'run', run: { ...run.view } });
+    return typeof result?.text === 'string' ? result.text : '';
+  }
   async stop(key: string) {
     const run = this.get(key);
     run.view.status = 'stopping'; this.emit({ type: 'run', run: { ...run.view } });
