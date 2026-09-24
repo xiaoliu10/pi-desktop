@@ -68,6 +68,20 @@ it('routes UI only to the matching generation and resolves it during stop',async
 });
 it('rejects refresh with an unanswered dialog',async()=>{const{root,backend,events}=setup();const run=await backend.connect({cwd:root,trustProject:false,permission:'ask'});const pending=backend.prompt(run.key,'/dialog','followUp');await vi.waitFor(()=>expect(events.some(e=>e.type==='ui' && e.request.id==='dialog')).toBe(true));await expect(backend.refresh(run.key)).rejects.toThrow('等待交互');backend.respond(run.key,run.generation,{id:'dialog',cancelled:true});await pending;});
 
+it('snapshots pending dialogs with generation and full request, and emits ui-resolved on respond',async()=>{
+ const{root,backend,events}=setup();const run=await backend.connect({cwd:root,trustProject:false,permission:'ask'});
+ expect(backend.pendingDialogs(run.key)).toEqual([]);
+ const pending=backend.prompt(run.key,'/dialog','followUp');
+ await vi.waitFor(()=>expect(events.some(e=>e.type==='ui' && e.request.id==='dialog')).toBe(true));
+ const snapshot=backend.pendingDialogs(run.key);
+ expect(snapshot).toEqual([{generation:run.generation,request:expect.objectContaining({id:'dialog',method:'confirm',title:'Confirm?'})}]);
+ expect(backend.pendingDialogs('nope')).toEqual([]);
+ backend.respond(run.key,run.generation,{id:'dialog',confirmed:true});
+ expect(events.some(e=>e.type==='rpc'&&e.key===run.key&&e.generation===run.generation&&e.event.type==='ui-resolved'&&e.event.id==='dialog')).toBe(true);
+ await pending;
+ expect(backend.pendingDialogs(run.key)).toEqual([]);
+});
+
 it('fails closed when the mandatory policy extension is missing',async()=>{const {root,index,owned}=setup();const backend=new PiBackend({executable:path.resolve('tests/fixtures/fake-pi.mjs'),version:'0.85.1',supported:true,agentDir:root,sessionDirs:[root],diagnostics:[]},index,owned,path.join(root,'missing.mjs'),()=>{});backends.push(backend);await expect(backend.connect({cwd:root,trustProject:false,permission:'ask'})).rejects.toThrow('权限扩展缺失');expect(backend.runs()).toEqual([]);});
 
 it('releases ownership when pi unexpectedly exits',async()=>{const{root,backend}=setup();const run=await backend.connect({cwd:root,trustProject:false,permission:'ask'});await expect(backend.prompt(run.key,'/crash','followUp')).rejects.toThrow('退出');await vi.waitFor(()=>expect(backend.runs()).toEqual([]));});

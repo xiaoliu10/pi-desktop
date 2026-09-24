@@ -31,6 +31,11 @@ const remote = new RemoteServer({
     try { return host.index.history(key); } catch { return null; }
   },
   version: () => host.environment.version,
+  // 写操作直转 backend：与桌面 IPC 同一套校验（会话连接、generation、可发送状态）。
+  prompt: (key, text) => host.backend.prompt(key, text, 'followUp'),
+  stop: key => host.backend.stop(key),
+  respond: (key, generation, response) => host.backend.respond(key, generation, response),
+  pendingDialogs: key => host.backend.pendingDialogs(key),
 });
 const imBot = new ImBot(path.join(app.getPath('userData'), 'im-bot.json'), undefined, () => {
   if (!host || !settings) throw new Error('pi 尚未就绪');

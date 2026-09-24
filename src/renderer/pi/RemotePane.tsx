@@ -149,7 +149,7 @@ export function RemotePane() {
             <Icon name="info" size={16} />
             <div className="pi-remote__subheadtext">
               <div className="pi-remote__subheadtitle">{zh ? '手机扫码连接' : 'Scan from phone'}</div>
-              <p className="pi-remote__subheaddesc">{zh ? '用手机相机扫码，在手机上打开这个工作区。' : 'Use your phone camera to open this workspace remotely.'}</p>
+              <p className="pi-remote__subheaddesc">{zh ? '用手机相机扫码打开：查看实时对话、发送消息、审批工具调用、停止任务（仅限局域网）。' : 'Scan with your phone camera: watch live conversation, send messages, approve tool calls, stop tasks (LAN only).'}</p>
             </div>
           </div>
 
