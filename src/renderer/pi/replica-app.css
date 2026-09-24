@@ -581,3 +581,10 @@
 .pi-openwith__caret:hover { background: var(--pi-bg-hover); color: var(--pi-text); }
 .pi-openwith__menu img { border-radius: 3px; }
 .pi-openwith__menu button[aria-checked="true"] { color: var(--pi-text); }
+
+/* 打开方式下拉：对齐 ZCode 的疏朗边距（容器内边距 + 行间距 + 图标文字间距） */
+.pi-openwith__menu { padding: 6px; min-width: 168px; }
+.pi-openwith__menu button { display: flex; align-items: center; gap: 10px; padding: 8px 10px; margin: 1px 0; border-radius: 8px; font-size: 13px; }
+.pi-openwith__menu button span { flex: 1; text-align: left; }
+.pi-openwith__menu img { border-radius: 4px; }
+.pi-openwith__menu button small { display: inline-flex; color: var(--pi-text); }
