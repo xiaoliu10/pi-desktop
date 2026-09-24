@@ -90,7 +90,7 @@
 .pi-subagents__clear { border: 0; background: none; color: var(--pi-muted, #888); font-size: 12px; cursor: pointer; padding: 2px 6px; border-radius: 6px; }
 .pi-subagents__clear:hover { color: var(--pi-danger, #d33); background: rgba(0, 0, 0, 0.05); }
 .pi-subagent-row { position: relative; }
-.pi-subagent-row--ended .pi-subagent-row__remove { position: absolute; right: 6px; top: 50%; transform: translateY(-50%); border: 0; background: none; color: var(--pi-muted, #888); cursor: pointer; padding: 4px; border-radius: 6px; opacity: 0; transition: opacity 120ms ease; }
+.pi-subagent-row--ended .pi-subagent-row__remove { position: absolute; right: 6px; top: 50%; transform: translateY(-50%); border: 0; background: none; color: var(--pi-muted, #888); cursor: pointer; padding: 4px; border-radius: 6px; opacity: 0.65; transition: opacity 120ms ease, color 120ms ease; }
 .pi-subagent-row--ended:hover .pi-subagent-row__remove, .pi-subagent-row--ended:focus-within .pi-subagent-row__remove { opacity: 1; }
 .pi-subagent-row__remove:hover { color: var(--pi-danger, #d33); background: rgba(0, 0, 0, 0.06); }
 .pi-subagent-row--ended .pi-subagent-row__body { padding-right: 26px; }
