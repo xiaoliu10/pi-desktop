@@ -87,6 +87,7 @@ const localPi: LocalPiApi = {
   officialSubagentStatus: () => invoke('officialSubagentStatus'),
   enableOfficialSubagent: () => invoke('enableOfficialSubagent'),
   recoverSubagents: (key: string) => invoke('recoverSubagents', key),
+  memoryAssistStatus: (enabled: boolean) => invoke('memoryAssistStatus', enabled),
   cleanupSubagents: (key: string) => invoke('cleanupSubagents', key),
   modelCatalog: () => invoke('modelCatalog'),
   planQuota: provider => invoke('planQuota', provider),

@@ -47,6 +47,10 @@ export function SettingsFeatures({page,cwd,query,workspace,loadedExtensionPaths}
         <button className="pi-btn pi-btn--primary" disabled={busy} onClick={()=>void act(()=>api().saveAiSettings(data.ai),'pi 设置已保存；新建或重载会话生效')}>保存 pi 默认值</button>
       </section>
       <section className="pi-features__card"><h2>Desktop 执行偏好</h2><label>运行中输入<select value={data.preferences.behavior} onChange={e=>setData({...data,preferences:{...data.preferences,behavior:e.target.value as 'steer'|'followUp'}})}><option value="followUp">排队追问</option><option value="steer">调整当前任务</option></select></label><label>新任务默认访问模式<select value={data.preferences.permission} onChange={e=>setData({...data,preferences:{...data.preferences,permission:e.target.value as AccessMode}})}><option value="plan">计划模式</option><option value="ask">变更前确认</option><option value="autoEdit">自动编辑</option><option value="fullAccess">完全访问</option></select></label><p>运行中再次发送时按“运行中输入”策略处理（排队追问 / 调整当前任务），对所有会话生效，在配置统一修改。访问模式默认值用于新任务，当前任务可在输入框切换。工具权限不等于操作系统沙箱。</p><button className="pi-btn pi-btn--primary" disabled={busy} onClick={()=>void act(applyDefaults,'Desktop 默认行为已保存')}>保存桌面偏好</button></section>
+      <section className="pi-features__card"><h2>记忆总结</h2>
+        <label className="pi-features__check"><input type="checkbox" checked={Boolean(data.preferences.memoryAssist)} onChange={e=>{ const on=e.target.checked; setData({...data, preferences:{...data.preferences, memoryAssist:on}}); void act(async()=>{ await window.localPi!.saveDesktopSettings({ memoryAssist:on }); }); }}/>{'自动项目记忆总结与召回'}</label>
+        <p>开启后按项目做记忆总结与召回：优先复用 pi 已启用的记忆插件（如 pi-memory）；未启用时回退 Desktop 内置桥（agentDir/memory/ 下按项目存 Markdown），后续可对接任意记忆组件。</p>
+      </section>
     </>}
     {data&&page==='shortcuts'&&<ShortcutsPane data={data} query={query} busy={busy} act={act}/>}
     {data&&resourcePages&&<>
