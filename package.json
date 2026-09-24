@@ -28,7 +28,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "smoke": "PI_SMOKE=1 electron .",
-    "dist": "pnpm runtime:prepare && pnpm build && electron-builder",
+    "dist": "pnpm runtime:prepare && pnpm build && electron-builder && node scripts/sync-release.mjs",
     "runtime:prepare": "node scripts/prepare-runtime.mjs"
   },
   "dependencies": {
