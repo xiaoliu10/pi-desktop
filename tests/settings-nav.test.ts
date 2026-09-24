@@ -4,7 +4,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { SettingsPage } from '../src/renderer/replica/settings/SettingsPage';
 import type { SettingsProps } from '../src/renderer/replica/contracts';
 
-const labels = { general: '通用', shortcuts: '快捷键', backToApp: '返回应用', searchSettings: '搜索设置', emptyGeneric: '', emptyGenericHint: '', appearance: '外观', ai: 'AI', instructions: '指令', models: '模型', skills: '技能', mcp: 'MCP', extensions: '扩展', subagents: '子代理', import: '导入', projects: '项目', archived: '归档', usage: '数据', info: '关于' } as unknown as SettingsProps['labels'];
+const labels = { general: '通用', shortcuts: '快捷键', backToApp: '返回应用', searchSettings: '搜索设置', emptyGeneric: '空页面', emptyGenericHint: '选择左侧设置项', appearance: '外观', ai: 'AI', instructions: '指令', models: '模型', skills: '技能', mcp: 'MCP', extensions: '扩展', subagents: '子代理', import: '导入', projects: '项目', archived: '归档', usage: '数据', info: '关于' } as unknown as SettingsProps['labels'];
 
 function render(page: SettingsProps['page'], pageContent?: React.ReactNode) {
   const props = {
@@ -31,6 +31,6 @@ describe('SettingsPage nav click → content switch', () => {
   });
   it('falls back to empty hint when pageContent missing', () => {
     const html = render('shortcuts');
-    expect(html).toContain('通用界面'); // emptyGeneric hint
+    expect(html).toContain('选择左侧设置项'); // emptyGenericHint
   });
 });

@@ -651,8 +651,10 @@ export default function PiReplicaApp() {
                   />
                 );
               })()}
-              {s.view === 'chat' && (
-                <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+              {/* 非 home 视图（设置/插件/自动化）期间保留 chat 挂载（display:none）：返回应用时
+                  ChatView 不重挂载，否则大会话（60 轮 + 导航刻度）整体重挂会造成秒级长帧 */}
+              {s.view !== 'home' && (
+                <div style={{ flex: 1, minWidth: 0, display: s.view === 'chat' ? 'flex' : 'none', flexDirection: 'column' }}>
                   {run?.accessMode === 'plan' && run.status === 'idle' && run.planReady && planDoc && <PlanCard doc={planDoc} lang={s.lang} onViewPlan={()=>setPlanOpen(true)} />}
                   {run?.accessMode === 'plan' && run.status === 'idle' && run.planReady && <PlanApprovalCard lang={s.lang} executing={Boolean(s.changingAccessMode)} onApprove={s.executePlan} onDecline={s.declinePlan} />}
                   <ChatView
