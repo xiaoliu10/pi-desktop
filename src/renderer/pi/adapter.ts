@@ -261,11 +261,20 @@ export function conversationMessages(branch: PiEntry[], live: Record<string, Rec
   const pending = Object.fromEntries(Object.entries(live || {}).filter(([id]) => !saved.has(id)));
   const history = historyToMessages(branch);
   const liveMessages = liveToMessages(pending, undefined);
-  // 实时消息带真实时间戳：上一轮答案还在 live（agent_settled 的防抖刷新未落地）而
-  // 新用户消息已落盘时，按数组拼接会把旧答案排到新消息之后。统一按时间戳归并。
-  const byTime = (m: ChatMessage) => m.timestamp ?? Number.MAX_SAFE_INTEGER;
-  const chronological = (list: ChatMessage[]) => [...list].sort((a, b) => byTime(a) - byTime(b));
-  if (!tools?.length) return chronological([...history, ...liveMessages]);
+  // 上一轮答案还在 live（agent_settled 的防抖刷新未落地）而新用户消息已落盘时，
+  // 按数组拼接会把旧答案排到新消息之后。把带时间戳的 live 消息插入到历史中比它
+  // 晚的第一条之前；无时间戳的 live 与历史本身保持原序（兼容旧行为）。
+  const merged = [...history];
+  for (const lm of liveMessages) {
+    if (lm.timestamp === undefined) { merged.push(lm); continue; }
+    let at = merged.length;
+    for (let i = merged.length - 1; i >= 0; i -= 1) {
+      const mt = merged[i]!.timestamp;
+      if (mt !== undefined && mt > lm.timestamp) at = i; else break;
+    }
+    merged.splice(at, 0, lm);
+  }
+  if (!tools?.length) return merged;
   // 工具进度按 toolCallId 归位，而不是无条件整份追加到末尾（那样旧轮次残留的
   // progress/result 会被挂到新的用户消息之后）：
   // 1. 历史已落盘同 callId 的 result → 已保存结果优先，残留 progress 直接丢弃；
@@ -273,35 +282,34 @@ export function conversationMessages(branch: PiEntry[], live: Record<string, Rec
   //    调用所在消息（保持旧轮次位置，由 executionTurns 按 callId 去重合并）；
   // 3. 完全不认识的 callId（新一轮实时工具，call 块尚未流出）→ 追加到末尾。
   const savedResults = new Set<string>();
-  const callAt = new Map<string, number>();
-  const index = (messages: ChatMessage[], offset: number, historical: boolean) => {
-    messages.forEach((msg, i) => {
+  const callAt = new Map<string, ChatMessage>();
+  const index = (messages: ChatMessage[], historical: boolean) => {
+    for (const msg of messages) {
       for (const part of msg.parts) {
         if (part.kind !== 'tool' || !part.callId) continue;
         if (part.phase === 'result') { if (historical) savedResults.add(part.callId); }
-        else if (!callAt.has(part.callId)) callAt.set(part.callId, offset + i);
+        else if (!callAt.has(part.callId)) callAt.set(part.callId, msg);
       }
-    });
+    }
   };
-  index(history, 0, true);
-  index(liveMessages, history.length, false);
-  const splices = new Map<number, MessagePart[]>();
+  index(history, true);
+  index(liveMessages, false);
+  // 按消息对象身份归位，不依赖数组下标（插入/排序都不影响）。
+  const splices = new Map<ChatMessage, MessagePart[]>();
   const trailing: ToolProgress[] = [];
   for (const t of tools) {
     if (savedResults.has(t.toolCallId)) continue;
-    const at = callAt.get(t.toolCallId);
-    if (at === undefined) { trailing.push(t); continue; }
-    const list = splices.get(at) ?? [];
+    const msg = callAt.get(t.toolCallId);
+    if (!msg) { trailing.push(t); continue; }
+    const list = splices.get(msg) ?? [];
     list.push(progressToPart(t));
-    splices.set(at, list);
+    splices.set(msg, list);
   }
-  const raw = [...history, ...liveMessages];
   // 只给被拼入的消息换新对象，其余消息保持缓存身份（turn 级 memo 依赖它）。
-  // 注意 splices 的键是排序前的索引，必须先拼接再按时间戳归并排序。
   const placed = splices.size
-    ? raw.map((m, i) => (splices.has(i) ? { ...m, parts: [...m.parts, ...splices.get(i)!] } : m))
-    : raw;
-  return chronological([...placed, ...liveToMessages(undefined, trailing)]);
+    ? merged.map((m) => (splices.has(m) ? { ...m, parts: [...m.parts, ...splices.get(m)!] } : m))
+    : merged;
+  return [...placed, ...liveToMessages(undefined, trailing)];
 }
 
 /** Parse a unified `git diff` text into per-file replica diffs. */
