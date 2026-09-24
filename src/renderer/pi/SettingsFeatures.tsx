@@ -20,11 +20,13 @@ export function SettingsFeatures({page,cwd,query,workspace,loadedExtensionPaths}
   const [mcpName,setMcpName]=useState(''),[mcpConfig,setMcpConfig]=useState('{\n  "command": "npx",\n  "args": ["-y", "your-mcp-server"]\n}');
   const [testResults,setTestResults]=useState<Record<string,string>>({});
   const [task,setTask]=useState(''),[agent,setAgent]=useState('');
+  const [memFiles,setMemFiles]=useState<Array<{name:string;path:string;bytes:number;updatedAt:number;scope:'global'|'project'}>>([]),[memQuery,setMemQuery]=useState('');
   const sequence=useRef(0);
   async function load(){const n=++sequence.current;const value=await api().settingsSnapshot(project||undefined);if(n!==sequence.current)return;setData(value);usePiStore.setState({desktopPreferences:value.preferences});}
   async function act(fn:()=>Promise<unknown>,message?:string){if(busy)return;setBusy(true);setError('');try{await fn();await load();if(message)setNotice(message);}catch(e){setError(String((e as Error).message||e));}finally{setBusy(false);}}
   useEffect(()=>{setError('');setEditor(undefined);setCreating(false);void load().catch(e=>setError(String(e)));return()=>{sequence.current++;};},[project,page]);
   useEffect(()=>{const off=api().onEvent(e=>{if(e.type==='resources-changed')setNotice('磁盘资源已变化。请刷新列表；保存编辑时会检查版本，防止覆盖外部修改。');});return off;},[]);
+  useEffect(()=>{ if(page!=='ai') return; api().memoryList(project||undefined).then(setMemFiles).catch(()=>setMemFiles([])); },[page,project,notice]);
   const resourceKind:ResourceKind=page==='instructions'?'instructions':page==='subagents'?'subagents':page==='extensions'?'extensions':'skills';
   const resources=(data?.resources||[]).filter(r=>(r.kind===resourceKind||(page==='instructions'&&r.kind==='prompts'))&&`${r.name} ${r.path} ${r.detail}`.toLowerCase().includes(query.toLowerCase()));
   const beginCreate=(next:ResourceKind)=>{setKind(next);setName('my-'+next);setContent(template(next,'my-'+next));setCreating(true);setEditor(undefined);};
@@ -48,8 +50,14 @@ export function SettingsFeatures({page,cwd,query,workspace,loadedExtensionPaths}
       </section>
       <section className="pi-features__card"><h2>Desktop 执行偏好</h2><label>运行中输入<select value={data.preferences.behavior} onChange={e=>setData({...data,preferences:{...data.preferences,behavior:e.target.value as 'steer'|'followUp'}})}><option value="followUp">排队追问</option><option value="steer">调整当前任务</option></select></label><label>新任务默认访问模式<select value={data.preferences.permission} onChange={e=>setData({...data,preferences:{...data.preferences,permission:e.target.value as AccessMode}})}><option value="plan">计划模式</option><option value="ask">变更前确认</option><option value="autoEdit">自动编辑</option><option value="fullAccess">完全访问</option></select></label><p>运行中再次发送时按“运行中输入”策略处理（排队追问 / 调整当前任务），对所有会话生效，在配置统一修改。访问模式默认值用于新任务，当前任务可在输入框切换。工具权限不等于操作系统沙箱。</p><button className="pi-btn pi-btn--primary" disabled={busy} onClick={()=>void act(applyDefaults,'Desktop 默认行为已保存')}>保存桌面偏好</button></section>
       <section className="pi-features__card"><h2>记忆总结</h2>
-        <label className="pi-features__check"><input type="checkbox" checked={Boolean(data.preferences.memoryAssist)} onChange={e=>{ const on=e.target.checked; setData({...data, preferences:{...data.preferences, memoryAssist:on}}); void act(async()=>{ await window.localPi!.saveDesktopSettings({ memoryAssist:on }); }); }}/>{'自动项目记忆总结与召回'}</label>
-        <p>开启后按项目做记忆总结与召回：优先复用 pi 已启用的记忆插件（如 pi-memory）；未启用时回退 Desktop 内置桥（agentDir/memory/ 下按项目存 Markdown），后续可对接任意记忆组件。</p>
+        <label className="pi-features__check pi-memory__toggle"><span><strong>自动项目记忆总结与召回</strong><br/><small>按项目保存并复用长期上下文，新会话生效。开启后可能增加模型调用和 Token 成本。优先复用 pi 已启用的记忆插件（如 pi-memory）；未启用时回退 Desktop 内置桥（agentDir/memory/）。</small></span><input type="checkbox" checked={Boolean(data.preferences.memoryAssist)} onChange={e=>{ const on=e.target.checked; setData({...data, preferences:{...data.preferences, memoryAssist:on}}); void act(async()=>{ await window.localPi!.saveDesktopSettings({ memoryAssist:on }); }); }}/></label>
+        <div className="pi-memory__bar"><strong>{memFiles.length} 条记忆</strong><input placeholder="搜索记忆文件…" value={memQuery} onChange={e=>setMemQuery(e.target.value)}/><button className="pi-btn pi-btn--outline" onClick={()=>{ void api().memoryList(project||undefined).then(setMemFiles).catch(()=>undefined); }}>刷新</button></div>
+        <ul className="pi-memory__list">{memFiles.filter(f=>`${f.name} ${f.path}`.toLowerCase().includes(memQuery.toLowerCase())).map(f=>(
+          <li key={f.path} className="pi-memory__row" title={f.path}>
+            <span className="pi-memory__icon">📝</span>
+            <span className="pi-memory__body"><strong>{f.name}</strong><small>{new Date(f.updatedAt).toLocaleString()} · {f.scope==='global'?'全局':'项目'} · {(f.bytes/1024).toFixed(1)} KB</small></span>
+          </li>
+        ))}{!memFiles.length&&<li className="pi-memory__empty">暂无记忆文件。开启开关并使用一段时间后，这里会出现项目记忆。</li>}</ul>
       </section>
     </>}
     {data&&page==='shortcuts'&&<ShortcutsPane data={data} query={query} busy={busy} act={act}/>}

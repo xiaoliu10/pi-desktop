@@ -69,3 +69,24 @@ export function memoryAssistStatus(agentDir: string, enabled: boolean): MemoryAs
       : '未检测到记忆插件，将使用 Desktop 内置桥（agentDir/memory/）；推荐安装 npm:pi-memory 获得检索增强',
   };
 }
+
+export interface MemoryFileInfo { name: string; path: string; bytes: number; updatedAt: number; scope: 'global' | 'project'; }
+
+/** 列出记忆文件（内置桥 + pi-memory 约定目录），供记忆管理页展示。 */
+export function listMemoryFiles(agentDir: string, projectCwd?: string): MemoryFileInfo[] {
+  const out: MemoryFileInfo[] = [];
+  const scan = (dir: string, scope: 'global' | 'project') => {
+    try {
+      if (!fs.existsSync(dir)) return;
+      for (const name of fs.readdirSync(dir)) {
+        if (!name.endsWith('.md')) continue;
+        const full = path.join(dir, name);
+        try { const st = fs.statSync(full); if (st.isFile()) out.push({ name, path: full, bytes: st.size, updatedAt: st.mtimeMs, scope }); } catch { /* ignore */ }
+      }
+    } catch { /* ignore */ }
+  };
+  scan(builtinMemoryDir(agentDir), 'global');                       // pi-memory 约定：agentDir/memory/*.md + MEMORY.md
+  scan(path.join(builtinMemoryDir(agentDir), 'projects'), 'project'); // 内置桥按项目隔离
+  if (projectCwd) scan(path.join(projectCwd, '.pi', 'memory'), 'project'); // 项目级 .pi/memory
+  return out.sort((a, b) => b.updatedAt - a.updatedAt);
+}

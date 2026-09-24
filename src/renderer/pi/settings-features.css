@@ -15,3 +15,16 @@
 .pireplica .pi-shortcuts__empty{padding:28px 0;color:var(--pi-text-secondary);font-size:13px}
 
 .pireplica .pi-features .pi-subagent-enabled:disabled{color:var(--pi-text);background:var(--pi-bg-card);border-color:var(--pi-border);opacity:1;cursor:default}
+
+/* 记忆管理（参考 ZCode 记忆页）：开关行 / 工具条 / 文件列表 */
+.pi-memory__toggle { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.pi-memory__toggle input { width: 40px; height: 22px; flex: none; }
+.pi-memory__toggle small { color: var(--pi-muted, #888); }
+.pi-memory__bar { display: flex; align-items: center; gap: 10px; margin: 14px 0 10px; }
+.pi-memory__bar input { flex: 1; }
+.pi-memory__list { list-style: none; margin: 0; padding: 0; border: 1px solid var(--pi-border, #e3e3e3); border-radius: 10px; }
+.pi-memory__row { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-bottom: 1px solid var(--pi-border, #eee); }
+.pi-memory__row:last-child { border-bottom: 0; }
+.pi-memory__body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.pi-memory__body small { color: var(--pi-muted, #888); }
+.pi-memory__empty { padding: 16px 12px; color: var(--pi-muted, #888); }
