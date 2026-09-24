@@ -74,7 +74,8 @@
     "files": [
       "dist/main/**/*",
       "dist/renderer/**/*",
-      "dist/shared/**/*"
+      "dist/shared/**/*",
+      "dist/preload/**/*"
     ],
     "asarUnpack": [
       "node_modules/node-pty/**"
