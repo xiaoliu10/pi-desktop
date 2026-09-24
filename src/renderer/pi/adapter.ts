@@ -261,7 +261,11 @@ export function conversationMessages(branch: PiEntry[], live: Record<string, Rec
   const pending = Object.fromEntries(Object.entries(live || {}).filter(([id]) => !saved.has(id)));
   const history = historyToMessages(branch);
   const liveMessages = liveToMessages(pending, undefined);
-  if (!tools?.length) return [...history, ...liveMessages];
+  // 实时消息带真实时间戳：上一轮答案还在 live（agent_settled 的防抖刷新未落地）而
+  // 新用户消息已落盘时，按数组拼接会把旧答案排到新消息之后。统一按时间戳归并。
+  const byTime = (m: ChatMessage) => m.timestamp ?? Number.MAX_SAFE_INTEGER;
+  const chronological = (list: ChatMessage[]) => [...list].sort((a, b) => byTime(a) - byTime(b));
+  if (!tools?.length) return chronological([...history, ...liveMessages]);
   // 工具进度按 toolCallId 归位，而不是无条件整份追加到末尾（那样旧轮次残留的
   // progress/result 会被挂到新的用户消息之后）：
   // 1. 历史已落盘同 callId 的 result → 已保存结果优先，残留 progress 直接丢弃；
@@ -291,12 +295,13 @@ export function conversationMessages(branch: PiEntry[], live: Record<string, Rec
     list.push(progressToPart(t));
     splices.set(at, list);
   }
-  const all = [...history, ...liveMessages];
+  const raw = [...history, ...liveMessages];
   // 只给被拼入的消息换新对象，其余消息保持缓存身份（turn 级 memo 依赖它）。
+  // 注意 splices 的键是排序前的索引，必须先拼接再按时间戳归并排序。
   const placed = splices.size
-    ? all.map((m, i) => (splices.has(i) ? { ...m, parts: [...m.parts, ...splices.get(i)!] } : m))
-    : all;
-  return [...placed, ...liveToMessages(undefined, trailing)];
+    ? raw.map((m, i) => (splices.has(i) ? { ...m, parts: [...m.parts, ...splices.get(i)!] } : m))
+    : raw;
+  return chronological([...placed, ...liveToMessages(undefined, trailing)]);
 }
 
 /** Parse a unified `git diff` text into per-file replica diffs. */
