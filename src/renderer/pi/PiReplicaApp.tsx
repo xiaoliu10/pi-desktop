@@ -217,7 +217,8 @@ export default function PiReplicaApp() {
   const [subagentPanel,setSubagentPanel]=useState<{callId?:string}|null>(null);
   const [subagentSeen,setSubagentSeen]=useState(0);
   const parentRunning=Boolean(run&&['starting','running','stopping'].includes(run.status));
-  const subagents=useMemo(()=>projectSubagents(messages,parentRunning,s.recoveredSubagents),[messages,parentRunning,s.recoveredSubagents]);
+  const dismissed = s.subagentDismissed ?? [];
+  const subagents=useMemo(()=>projectSubagents(messages,parentRunning,(s.recoveredSubagents??[]).filter(r=>!dismissed.includes(r.callId))).filter(c=>!dismissed.includes(c.callId)),[messages,parentRunning,s.recoveredSubagents,dismissed]);
   // 红色计数徽章：未查看的已结束子代理数量（completed/failed/interrupted/recovered）。
   const subagentUnseen=Math.max(0, subagents.filter(c=>['completed','failed','interrupted','recovered'].includes(c.status)).length - subagentSeen);
   // 计划查看器（复刻 ZCode plan-detail 侧板）：与会话绑定，切换会话时关闭。

@@ -95,9 +95,12 @@ export function SubagentPanel({ children, initialCall, onClose, onStop, parentRu
         </section>
 
         <section className="pi-subagents__ended">
-          <h3 className="pi-subagents__section">{zh ? '已结束' : 'Ended'} · {ended.length}</h3>
+          <div className="pi-subagents__sectionhead">
+            <h3 className="pi-subagents__section">{zh ? '已结束' : 'Ended'} · {ended.length}</h3>
+            {ended.length > 0 && <button className="pi-subagents__clear" onClick={() => s.dismissFinishedSubagents(ended.map(c => c.callId))}>{zh ? '清空' : 'Clear all'}</button>}
+          </div>
           {ended.slice(0, limit).map(c => (
-            <button className="pi-subagent-row" key={c.id} onClick={() => setSelected(c.id)}>
+            <div className="pi-subagent-row pi-subagent-row--ended" key={c.id} role="button" tabIndex={0} onClick={() => setSelected(c.id)} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setSelected(c.id); } }}>
               <span className="pi-subagent-row__icon"><StatusIcon status={c.status} /></span>
               <span className="pi-subagent-row__body">
                 <span className="pi-subagent-row__title">
@@ -106,7 +109,10 @@ export function SubagentPanel({ children, initialCall, onClose, onStop, parentRu
                 </span>
                 {c.task && <span className="pi-subagent-row__summary">{c.task}</span>}
               </span>
-            </button>
+              <button className="pi-subagent-row__remove" title={zh ? '从列表移除' : 'Remove from list'} aria-label={zh ? '从列表移除' : 'Remove from list'} onClick={(e) => { e.stopPropagation(); s.dismissSubagent(c.callId); }}>
+                <Icon name="x" size={13} />
+              </button>
+            </div>
           ))}
           {ended.length > limit && <button className="pi-btn pi-btn--ghost pi-subagents__more" onClick={() => setLimit(n => n + 30)}>{zh ? '显示更多' : 'Show more'}</button>}
           {!ended.length && !running.length && <p className="pi-subagents__sectionempty">{zh ? '暂无子代理记录。' : 'No subagent records.'}</p>}
