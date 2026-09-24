@@ -248,3 +248,16 @@ describe('P08 models & sidebar', () => {
     expect(sessionTitleOf({ ...base, selectedKey: 'k1', runs: [run] })).toBe('新桌面会话');
   });
 });
+
+describe('live 消息插入排序', () => {
+  it('无时间戳的用户消息不阻断：旧轮 live 答案插到它前面', () => {
+    const branch = [
+      { id: 'a1', type: 'message', message: { role: 'assistant', timestamp: 1000, content: [{ type: 'text', text: '更早' }] } },
+      // 真实会话中用户消息条目可能没有 timestamp（这是本次 bug 的触发点）
+      { id: 'u2', type: 'message', message: { role: 'user', content: '新问题' } },
+    ] as any;
+    const live = { '1500': { role: 'assistant', timestamp: 1500, content: [{ type: 'text', text: '旧答案' }] } } as any;
+    const out = conversationMessages(branch, live, undefined);
+    expect(out.map(m => m.role + '@' + m.id)).toEqual(['assistant@a1', 'assistant@live-1500', 'user@u2']);
+  });
+});

@@ -38,9 +38,9 @@ describe('turn identity stability for memoized rows', () => {
 
   it('keeps history turn identities while a live turn streams', () => {
     const history = conversationMessages(raw as any, undefined, []);
-    const live1 = { '9999': { role: 'assistant', timestamp: 9999, content: [{ type: 'thinking', thinking: '第一段思考' }] } };
+    const live1 = { '1700000100000': { role: 'assistant', timestamp: 1700000100000, content: [{ type: 'thinking', thinking: '第一段思考' }] } };
     const withLive1 = executionTurns(conversationMessages(raw as any, live1 as any, []));
-    const live2 = { '9999': { role: 'assistant', timestamp: 9999, content: [{ type: 'thinking', thinking: '第一段思考…第二段思考' }] } };
+    const live2 = { '1700000100000': { role: 'assistant', timestamp: 1700000100000, content: [{ type: 'thinking', thinking: '第一段思考…第二段思考' }] } };
     const withLive2 = executionTurns(conversationMessages(raw as any, live2 as any, []));
     expect(withLive1.length).toBe(withLive2.length);
     // 流式只动最后一轮：历史轮身份必须全部保持，仅最后一轮变化
