@@ -243,7 +243,7 @@ export function liveToMessages(
         }
       }
     }
-    if (parts.length) out.push({ id: `live-${id}`, role: 'assistant', parts });
+    if (parts.length) out.push({ id: `live-${id}`, role: 'assistant', timestamp: messageTime(m.timestamp), parts });
   }
   if (tools?.length) {
     out.push({
@@ -268,9 +268,13 @@ export function conversationMessages(branch: PiEntry[], live: Record<string, Rec
   for (const lm of liveMessages) {
     if (lm.timestamp === undefined) { merged.push(lm); continue; }
     let at = merged.length;
+    let seenLaterDated = false;
     for (let i = merged.length - 1; i >= 0; i -= 1) {
       const mt = merged[i]!.timestamp;
-      if (mt !== undefined && mt > lm.timestamp) at = i; else break;
+      // 无时间戳条目（用户消息常见）：只有后面还没遇到更晚的带时间戳条目时才越过它，
+      // 否则该无时间戳条目属于更早位置，live 应插在它与后续带时间戳条目之间。
+      if (mt === undefined) { if (!seenLaterDated) at = i; continue; }
+      if (mt > lm.timestamp) { at = i; seenLaterDated = true; } else break;
     }
     merged.splice(at, 0, lm);
   }
