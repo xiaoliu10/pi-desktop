@@ -569,7 +569,7 @@ export default function PiReplicaApp() {
           onMakeDefault={makeDefault}
           onRefreshCatalog={s.loadCatalog}
           infoExtra={<ConnectionPane />}
-          pageContent={!['general', 'models', 'info'].includes(s.settingsPage) ? <SettingsFeatures key={s.settingsPage} page={s.settingsPage} cwd={cwd} query={s.searchQuery} loadedExtensionPaths={run ? [...new Set((run.commands ?? []).filter(c => c.source === 'extension' && c.path).map(c => c.path as string))] : []} workspace={<><RemotePane /><ConnectionPane /></>} /> : undefined}
+          pageContent={!['general', 'models', 'info'].includes(s.settingsPage) ? <SettingsFeatures key={s.settingsPage} page={s.settingsPage} cwd={cwd} query={s.searchQuery} loadedExtensionPaths={run ? [...new Set((run.commands ?? []).filter(c => c.source === 'extension' && c.path).map(c => c.path as string))] : []} workspace={<RemotePane />} /> : undefined}
         />
         </div>
       ) : (

@@ -122,6 +122,13 @@ export function RemotePane() {
   ];
 
   const channelIcon = (id: ChannelId) => id === 'telegram' ? 'globe' : 'terminal';
+  // 渠道品牌图标（对齐 ZCode：钉钉蓝、飞书双色、微信绿、Telegram 蓝）
+  function ChannelGlyph({ id }: { id: ChannelId }) {
+    if (id === 'dingtalk') return <svg width="20" height="20" viewBox="0 0 24 24" aria-hidden><rect width="24" height="24" rx="5.5" fill="#0089FF"/><path d="M17.9 10.1c-.1-.3-.4-.5-.7-.4l-7.4 1.7c-.5.1-.9.5-.9 1.1 0 .4.2.7.6.9l1.7.9-3 3.1c-.3.3-.3.8 0 1.1.3.3.8.3 1.1 0l3-3.1 1 1.7c.2.4.6.6 1 .6h.2c.5-.1.9-.4 1-.9l1.8-6c0-.3-.1-.5-.4-.6z" fill="#fff"/><path d="M8.3 8.2l6.9-1.6c.4-.1.6-.5.5-.9-.1-.4-.5-.6-.9-.5L7.9 6.8c-.4.1-.6.5-.5.9.1.4.5.6.9.5z" fill="#fff" opacity=".92"/></svg>;
+    if (id === 'feishu') return <svg width="20" height="20" viewBox="0 0 24 24" aria-hidden><path d="M4.1 14C6.5 8.5 12.1 4.7 18.7 4c.9-.1 1.6.8 1.3 1.6l-3.7 11c-.2.7-1.1 1-1.6.5l-3.2-2-4 3.5c-.6.5-1.5.2-1.6-.6l-.9-3.4c0-.2.1-.5.3-.6z" fill="#3370FF"/><path d="M11.5 15.4 19 5.2c.3.2.4.5.3.8l-3.5 10.6c-.2.5-.8.7-1.2.4l-3.1-1.6z" fill="#00D6B9"/></svg>;
+    if (id === 'wechat') return <svg width="20" height="20" viewBox="0 0 24 24" aria-hidden><rect width="24" height="24" rx="5.5" fill="#07C160"/><path d="M9.6 5.4c-3.1 0-5.6 2-5.6 4.6 0 1.5.8 2.8 2.1 3.7l-.5 1.8 2-1.1c.6.2 1.3.3 2 .3h.4c-.1-.4-.2-.8-.2-1.3 0-2.5 2.4-4.5 5.4-4.5h.3c-.6-2-3-3.5-5.9-3.5zM7.6 8.1c.4 0 .8.4.8.8 0 .5-.4.8-.8.8-.5 0-.8-.3-.8-.8 0-.4.3-.8.8-.8zm4 0c.4 0 .8.4.8.8 0 .5-.4.8-.8.8-.5 0-.8-.3-.8-.8 0-.4.3-.8.8-.8z" fill="#fff"/><path d="M20.2 14.9c0-2.1-2.1-3.9-4.6-3.9S11 12.8 11 14.9s2.1 3.9 4.6 3.9c.5 0 1-.1 1.5-.2l1.7.9-.4-1.6c1.1-.7 1.8-1.8 1.8-3zm-6.1-.6c.4 0 .7.3.7.6 0 .4-.3.7-.7.7-.3 0-.6-.3-.6-.7 0-.3.3-.6.6-.6zm3.1 0c.3 0 .6.3.6.6 0 .4-.3.7-.6.7-.4 0-.7-.3-.7-.7 0-.3.3-.6.7-.6z" fill="#fff"/></svg>;
+    return <svg width="20" height="20" viewBox="0 0 24 24" aria-hidden><circle cx="12" cy="12" r="10" fill="#2AABEE"/><path d="m5.6 11.6 11.8-4.5c.6-.2 1.2.3 1 .9l-2 9.5c-.1.6-.8.9-1.3.5l-2.8-2.1-1.5 1.5c-.3.3-.9.2-1-.2l-.9-2.9-3.2-1.1c-.6-.2-.6-1.1-.1-1.6z" fill="#fff"/></svg>;
+  }
 
   return (
     <section className="pi-remote">
@@ -227,7 +234,7 @@ export function RemotePane() {
                   }}
                   disabled={!c.available}
                 >
-                  <span className="pi-remote__channelicon"><Icon name={channelIcon(c.id)} size={20} /></span>
+                  <span className="pi-remote__channelicon"><ChannelGlyph id={c.id} /></span>
                   <span className="pi-remote__channelbody">
                     <span className="pi-remote__channelname">
                       <span className="pi-remote__channelnametext">{c.name}</span>
