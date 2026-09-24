@@ -166,8 +166,31 @@
 .pireplica .pi-file-code__lines{position:sticky;left:0;flex-shrink:0;user-select:none;text-align:right;padding:12px 10px;min-width:38px;color:var(--pi-text-tertiary);background:var(--pi-bg-sidebar);border-right:1px solid var(--pi-border)}
 .pireplica .pi-file-code__lines .is-focused{color:var(--pi-text);font-weight:700;background:var(--pi-bg-active)}
 .pireplica .pi-file-code pre{margin:0;padding:12px;overflow:visible;background:transparent;font:inherit}.pireplica .pi-file-code code{font:inherit;white-space:pre;color:inherit;background:transparent}
-.pireplica .pi-file-code .hljs-keyword{color:#a626a4}.pireplica .pi-file-code .hljs-string{color:#397b33}.pireplica .pi-file-code .hljs-number,.pireplica .pi-file-code .hljs-literal{color:#986801}.pireplica .pi-file-code .hljs-comment{color:#82858b}.pireplica .pi-file-code .hljs-title,.pireplica .pi-file-code .hljs-attr{color:#236aa5}
-.pireplica--dark .pi-file-code .hljs-keyword{color:#c792ea}.pireplica--dark .pi-file-code .hljs-string{color:#a7ce8a}.pireplica--dark .pi-file-code .hljs-title,.pireplica--dark .pi-file-code .hljs-attr{color:#82aaff}.pireplica--dark .pi-file-code .hljs-number,.pireplica--dark .pi-file-code .hljs-literal{color:#f0ba78}
+/* 语法高亮：GitHub 主题（对齐 ZCode 的 Shiki github-light / github-dark） */
+.pireplica .pi-file-code .hljs-keyword,.pireplica .pi-file-code .hljs-doctag,.pireplica .pi-file-code .hljs-template-tag,.pireplica .pi-file-code .hljs-template-variable,.pireplica .pi-file-code .hljs-type,.pireplica .pi-file-code .hljs-variable.language_{color:#d73a49}
+.pireplica .pi-file-code .hljs-title,.pireplica .pi-file-code .hljs-title.class_,.pireplica .pi-file-code .hljs-title.function_{color:#6f42c1}
+.pireplica .pi-file-code .hljs-attr,.pireplica .pi-file-code .hljs-attribute,.pireplica .pi-file-code .hljs-literal,.pireplica .pi-file-code .hljs-meta,.pireplica .pi-file-code .hljs-number,.pireplica .pi-file-code .hljs-operator,.pireplica .pi-file-code .hljs-variable,.pireplica .pi-file-code .hljs-selector-attr,.pireplica .pi-file-code .hljs-selector-class,.pireplica .pi-file-code .hljs-selector-id{color:#005cc5}
+.pireplica .pi-file-code .hljs-regexp,.pireplica .pi-file-code .hljs-string{color:#032f62}
+.pireplica .pi-file-code .hljs-built_in,.pireplica .pi-file-code .hljs-symbol{color:#e36209}
+.pireplica .pi-file-code .hljs-comment,.pireplica .pi-file-code .hljs-code,.pireplica .pi-file-code .hljs-formula{color:#6a737d}
+.pireplica .pi-file-code .hljs-name,.pireplica .pi-file-code .hljs-quote,.pireplica .pi-file-code .hljs-selector-tag,.pireplica .pi-file-code .hljs-selector-pseudo{color:#22863a}
+.pireplica .pi-file-code .hljs-subst{color:#24292e}
+.pireplica .pi-file-code .hljs-section{color:#005cc5;font-weight:700}
+.pireplica .pi-file-code .hljs-bullet{color:#735c0f}
+.pireplica .pi-file-code .hljs-emphasis{color:#24292e;font-style:italic}
+.pireplica .pi-file-code .hljs-strong{color:#24292e;font-weight:700}
+.pireplica--dark .pi-file-code .hljs-keyword,.pireplica--dark .pi-file-code .hljs-doctag,.pireplica--dark .pi-file-code .hljs-template-tag,.pireplica--dark .pi-file-code .hljs-template-variable,.pireplica--dark .pi-file-code .hljs-type,.pireplica--dark .pi-file-code .hljs-variable.language_{color:#ff7b72}
+.pireplica--dark .pi-file-code .hljs-title,.pireplica--dark .pi-file-code .hljs-title.class_,.pireplica--dark .pi-file-code .hljs-title.function_{color:#d2a8ff}
+.pireplica--dark .pi-file-code .hljs-attr,.pireplica--dark .pi-file-code .hljs-attribute,.pireplica--dark .pi-file-code .hljs-literal,.pireplica--dark .pi-file-code .hljs-meta,.pireplica--dark .pi-file-code .hljs-number,.pireplica--dark .pi-file-code .hljs-operator,.pireplica--dark .pi-file-code .hljs-variable,.pireplica--dark .pi-file-code .hljs-selector-attr,.pireplica--dark .pi-file-code .hljs-selector-class,.pireplica--dark .pi-file-code .hljs-selector-id{color:#79c0ff}
+.pireplica--dark .pi-file-code .hljs-regexp,.pireplica--dark .pi-file-code .hljs-string{color:#a5d6ff}
+.pireplica--dark .pi-file-code .hljs-built_in,.pireplica--dark .pi-file-code .hljs-symbol{color:#ffa657}
+.pireplica--dark .pi-file-code .hljs-comment,.pireplica--dark .pi-file-code .hljs-code,.pireplica--dark .pi-file-code .hljs-formula{color:#8b949e}
+.pireplica--dark .pi-file-code .hljs-name,.pireplica--dark .pi-file-code .hljs-quote,.pireplica--dark .pi-file-code .hljs-selector-tag,.pireplica--dark .pi-file-code .hljs-selector-pseudo{color:#7ee787}
+.pireplica--dark .pi-file-code .hljs-subst{color:#c9d1d9}
+.pireplica--dark .pi-file-code .hljs-section{color:#1f6feb;font-weight:700}
+.pireplica--dark .pi-file-code .hljs-bullet{color:#f2cc60}
+.pireplica--dark .pi-file-code .hljs-emphasis{color:#c9d1d9;font-style:italic}
+.pireplica--dark .pi-file-code .hljs-strong{color:#c9d1d9;font-weight:700}
 .pireplica .pi-workbench__filetoolbar{display:flex;align-items:center;gap:6px;min-width:0;padding-right:6px}
 .pireplica .pi-workbench__filetoolbar>.pi-workbench__filehead{flex:1;min-width:0}
 .pireplica .pi-workbench__filename{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:10px;font-size:12px;color:var(--pi-text-secondary)}

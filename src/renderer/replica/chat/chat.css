@@ -404,12 +404,21 @@
   padding-right: 12px;
 }
 
+/* diff 行背景色：对齐 ZCode @pierre/diffs 的混合比（light: bg 88% + 色, dark: bg 80% + 色） */
 .pireplica .pi-diff__line--add {
-  background: color-mix(in srgb, var(--pi-green) 9%, transparent);
+  background: color-mix(in srgb, var(--pi-bg) 88%, #0dbe4e);
 }
 
 .pireplica .pi-diff__line--del {
-  background: color-mix(in srgb, var(--pi-red) 9%, transparent);
+  background: color-mix(in srgb, var(--pi-bg) 88%, #ff2e3f);
+}
+
+.pireplica--dark .pi-diff__line--add {
+  background: color-mix(in srgb, var(--pi-bg) 80%, #5ecc71);
+}
+
+.pireplica--dark .pi-diff__line--del {
+  background: color-mix(in srgb, var(--pi-bg) 80%, #ff6762);
 }
 
 /* nav rail */
