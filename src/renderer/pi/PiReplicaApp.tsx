@@ -217,7 +217,9 @@ export default function PiReplicaApp() {
   const [subagentPanel,setSubagentPanel]=useState<{callId?:string}|null>(null);
   const [subagentSeen,setSubagentSeen]=useState(0);
   const parentRunning=Boolean(run&&['starting','running','stopping'].includes(run.status));
-  const dismissed = s.subagentDismissed ?? [];
+  // 兜底：任何入口（导航回放/启动恢复）没把 subagentDismissed 初始化时，直接读持久化偏好，
+  // 防止已清空的子代理重进又出现。
+  const dismissed = s.subagentDismissed ?? s.desktopPreferences?.subagentDismissed?.[s.selectedKey ?? ''] ?? [];
   const subagents=useMemo(()=>projectSubagents(messages,parentRunning,(s.recoveredSubagents??[]).filter(r=>!dismissed.includes(r.callId))).filter(c=>!dismissed.includes(c.callId)),[messages,parentRunning,s.recoveredSubagents,dismissed]);
   // 红色计数徽章：未查看的已结束子代理数量（completed/failed/interrupted/recovered）。
   const subagentUnseen=Math.max(0, subagents.filter(c=>['completed','failed','interrupted','recovered'].includes(c.status)).length - subagentSeen);
