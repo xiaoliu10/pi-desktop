@@ -22,11 +22,17 @@ jobs:
         include:
           - os: macos-latest
             targets: --mac
-          - os: windows-latest
+          - os: windows-2022
             targets: --win nsis
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+
+      # node-gyp 9 需要 distutils（Python 3.12 已移除）；3.11 自带，供 electron-builder 重编 node-pty
+      - uses: actions/setup-python@v5
+        if: runner.os == 'macOS'
+        with:
+          python-version: '3.11'
 
       - uses: actions/setup-node@v4
         with:
@@ -45,11 +51,7 @@ jobs:
       - name: Build
         run: pnpm build
 
-      # node-gyp 9（electron-builder 重编 node-pty 用）需要 distutils，Python 3.12 已移除
-      - name: Restore distutils for node-gyp (macOS Python 3.12+)
-        if: runner.os == 'macOS'
-        run: python3 -m pip install --user setuptools
-
+      # windows-2022 自带 VS2022（node-gyp 9 可识别）；setup-msbuild 保证 msbuild 在 PATH
       - uses: microsoft/setup-msbuild@v2
         if: runner.os == 'Windows'
 
