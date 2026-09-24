@@ -72,14 +72,32 @@
     "appId": "works.pi.desktop",
     "productName": "PI Desktop",
     "files": [
-      "dist/**/*"
+      "dist/main/**/*",
+      "dist/renderer/**/*",
+      "dist/shared/**/*"
     ],
     "asarUnpack": [
       "node_modules/node-pty/**"
     ],
     "extraResources": [
       "resources/icon.png",
-      "resources/icon.icns"
+      "resources/icon.icns",
+      {
+        "from": "extensions/desktop-policy",
+        "to": "desktop-policy"
+      },
+      {
+        "from": "extensions/desktop-ask",
+        "to": "desktop-ask"
+      },
+      {
+        "from": "extensions/desktop-subagent",
+        "to": "desktop-subagent"
+      },
+      {
+        "from": "extensions/desktop-memory",
+        "to": "desktop-memory"
+      }
     ],
     "mac": {
       "icon": "resources/icon.icns",

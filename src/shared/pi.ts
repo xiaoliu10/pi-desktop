@@ -121,9 +121,13 @@ export interface LocalPiApi extends importSettingsApi {
   enableOfficialSubagent(): Promise<{path:string;upgraded:boolean}>;
   recoverSubagents(sessionKey: string): Promise<Array<{callId:string;status:string;details?:unknown;error?:string;startedAt?:number;updatedAt?:number}>>;
   /** 记忆衔接层状态：探测 CLI 记忆插件并返回当前链路。 */
-  memoryAssistStatus(enabled: boolean): Promise<{ enabled: boolean; plugin: { kind: 'extension'; id: string } | { kind: 'builtin' }; builtinDir: string; hint: string }>;
+  memoryAssistStatus(enabled: boolean): Promise<{ enabled: boolean; plugin: { kind: 'extension'; id: string; label?: string } | { kind: 'builtin' }; builtinDir: string; hint: string }>;
   /** 记忆衔接层：列举记忆文件（内置桥 + pi-memory 约定目录）。 */
-  memoryList(cwd?: string): Promise<Array<{ name: string; path: string; bytes: number; updatedAt: number; scope: 'global' | 'project' }>>;
+  memoryList(cwd?: string): Promise<Array<{ name: string; path: string; bytes: number; updatedAt: number; scope: 'global' | 'project'; entries: number; rel: string }>>;
+  /** 记忆衔接层：读取记忆文件内容（设置页预览）。 */
+  memoryRead(rel: string): Promise<string>;
+  /** 一键启用内置默认记忆插件（未装 → pi install；已装未登记 → 补注册）。 */
+  memoryEnableDefault(): Promise<{ installed: boolean; registered: boolean }>;
 
   cleanupSubagents(sessionKey: string): Promise<void>;
   modelCatalog(): Promise<PiModelCatalog>;

@@ -11,6 +11,8 @@ import { detectThirdPartySubagent, migrateOldSubagentExtension, persistSubagentE
 interface Running { policyReady: boolean; client: PiRpcClient; view: PiRun; input: { cwd: string; trustProject: boolean; permission: AccessMode; executionMode?: Exclude<AccessMode, 'plan'>; file: string; origin: string; systemPrompt?: string; tools?: string[]; model?: string }; dialogs: Map<string, { timer?: ReturnType<typeof setTimeout>; method: string }> }
 export class PiBackend {
   private active = new Map<string, Running>();
+  /** 记忆衔接：main 在 SettingsService 就绪后注入；每次 launch 现取最新开关与目录。 */
+  memoryOptions: (() => { enabled: boolean; dir: string }) | undefined;
   constructor(private env: PiEnvironment, private index: SessionIndex, private ownedRoot: string, private policyPath: string, private emit: (e: PiEvent) => void) {}
   hasPendingDialogs(key: string) { return (this.active.get(key)?.dialogs.size ?? 0) > 0; }
   runs() { return [...this.active.values()].map(x => x.view); }
@@ -117,6 +119,14 @@ export class PiBackend {
     // Desktop 自带的 ask_user_question 扩展（随 Desktop 默认加载；缺失不阻塞会话）。
     const askPath = path.join(path.dirname(this.policyPath), '..', 'desktop-ask', 'index.mjs');
     const askArgs = fs.existsSync(askPath) ? ['-e', askPath] : [];
+    // 记忆衔接扩展：memoryAssist 开启时随会话装载，agent_end 后自动整理记忆。
+    const memory = this.memoryOptions?.() ?? { enabled: false, dir: '' };
+    const memoryPath = path.join(path.dirname(this.policyPath), '..', 'desktop-memory', 'index.mjs');
+    const memoryArgs = memory.enabled && fs.existsSync(memoryPath) ? ['-e', memoryPath] : [];
+    if (memory.enabled) {
+      env.PI_DESKTOP_MEMORY = '1';
+      if (memory.dir) env.PI_DESKTOP_MEMORY_DIR = memory.dir;
+    }
     // Subagent fallback：仅在用户没有安装第三方 subagent 插件时加载。
     // 检测 agentDir/extensions/ + settings.json packages 里的 subagent 扩展。
     // 旧版 desktop-official-subagent 在 agentDir/extensions/ 里会和 npm 包冲突，
@@ -133,6 +143,7 @@ export class PiBackend {
       '-e', this.policyPath,
       '-e', path.join(path.dirname(this.policyPath), 'mcp-bridge.mjs'),
       ...askArgs,
+      ...memoryArgs,
       ...subagentArgs,
       ...(input.systemPrompt ? ['--append-system-prompt', input.systemPrompt] : []),
       ...(input.permission === 'plan'

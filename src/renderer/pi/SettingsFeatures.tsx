@@ -9,6 +9,16 @@ import { UsagePane } from './UsagePane';
 import './settings-features.css';
 import { OfficialSubagentSetup } from './OfficialSubagentSetup';
 const api = () => window.localPi;
+/** ZCode 风格相对时间：「刚刚 / 今天 13:35 / 周二 19:46 / 9月1日」。 */
+function formatMemoryTime(mtimeMs: number, now = Date.now()): string {
+  const diff = now - mtimeMs;
+  if (diff < 60_000) return '刚刚';
+  const d = new Date(mtimeMs);
+  const hm = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  if (diff < 24 * 3600_000 && d.getDate() === new Date(now).getDate()) return `今天 ${hm}`;
+  if (diff < 7 * 24 * 3600_000) return `${['周日', '周一', '周二', '周三', '周四', '周五', '周六'][d.getDay()]} ${hm}`;
+  return `${d.getMonth() + 1}月${d.getDate()}日`;
+}
 const names: Record<string,string>={ai:'AI 默认行为',shortcuts:'快捷键',instructions:'指令与提示词',skills:'技能',mcp:'MCP 服务',extensions:'扩展',subagents:'子代理',workspace:'连接',import:'导入会话',projects:'项目',archived:'已归档会话',usage:'数据统计'};
 const actionNames:Record<ShortcutAction,string>={search:'全局搜索',newSession:'新建会话',settings:'打开设置',workbench:'显示 / 隐藏工作面板',sidebar:'折叠 / 展开侧栏',stop:'停止当前任务'};
 const template=(kind:ResourceKind,name:string)=>kind==='extensions'?`export default function(pi) {\n  pi.registerCommand('${name}', {\n    description: '我的扩展命令',\n    handler: async (_args, ctx) => { ctx.ui.notify('扩展已运行'); }\n  });\n}\n`:kind==='skills'?`---\nname: ${name}\ndescription: 描述何时应该使用这个技能\n---\n\n# ${name}\n\n在这里填写步骤。\n`:kind==='subagents'?`---\nname: ${name}\ndescription: 专注的只读研究助手\ntools: read, grep, find, ls\n---\n\n你是一个只读研究助手。根据任务检查项目并给出结论，不修改文件。\n`:`# ${name}\n\n在这里填写指令。\n`;
@@ -20,13 +30,16 @@ export function SettingsFeatures({page,cwd,query,workspace,loadedExtensionPaths}
   const [mcpName,setMcpName]=useState(''),[mcpConfig,setMcpConfig]=useState('{\n  "command": "npx",\n  "args": ["-y", "your-mcp-server"]\n}');
   const [testResults,setTestResults]=useState<Record<string,string>>({});
   const [task,setTask]=useState(''),[agent,setAgent]=useState('');
-  const [memFiles,setMemFiles]=useState<Array<{name:string;path:string;bytes:number;updatedAt:number;scope:'global'|'project'}>>([]),[memQuery,setMemQuery]=useState('');
+  const [memFiles,setMemFiles]=useState<Array<{name:string;path:string;bytes:number;updatedAt:number;scope:'global'|'project';entries:number;rel:string}>>([]),[memQuery,setMemQuery]=useState('');
+  const [memStatus,setMemStatus]=useState<{enabled:boolean;plugin:{kind:'extension';id:string;label?:string}|{kind:'builtin'};builtinDir:string;hint:string}>();
+  const [memPreview,setMemPreview]=useState<{rel:string;text:string}>();
   const sequence=useRef(0);
   async function load(){const n=++sequence.current;const value=await api().settingsSnapshot(project||undefined);if(n!==sequence.current)return;setData(value);usePiStore.setState({desktopPreferences:value.preferences});}
   async function act(fn:()=>Promise<unknown>,message?:string){if(busy)return;setBusy(true);setError('');try{await fn();await load();if(message)setNotice(message);}catch(e){setError(String((e as Error).message||e));}finally{setBusy(false);}}
   useEffect(()=>{setError('');setEditor(undefined);setCreating(false);void load().catch(e=>setError(String(e)));return()=>{sequence.current++;};},[project,page]);
   useEffect(()=>{const off=api().onEvent(e=>{if(e.type==='resources-changed')setNotice('磁盘资源已变化。请刷新列表；保存编辑时会检查版本，防止覆盖外部修改。');});return off;},[]);
-  useEffect(()=>{ if(page!=='ai') return; api().memoryList(project||undefined).then(setMemFiles).catch(()=>setMemFiles([])); },[page,project,notice]);
+  useEffect(()=>{ if(page!=='ai') return; api().memoryList(project||undefined).then(setMemFiles).catch(()=>setMemFiles([])); },[page,project,notice,data?.preferences.memoryAssist]);
+  useEffect(()=>{ if(page!=='ai') return; api().memoryAssistStatus(Boolean(data?.preferences.memoryAssist)).then(setMemStatus).catch(()=>setMemStatus(undefined)); },[page,data?.preferences.memoryAssist]);
   const resourceKind:ResourceKind=page==='instructions'?'instructions':page==='subagents'?'subagents':page==='extensions'?'extensions':'skills';
   const resources=(data?.resources||[]).filter(r=>(r.kind===resourceKind||(page==='instructions'&&r.kind==='prompts'))&&`${r.name} ${r.path} ${r.detail}`.toLowerCase().includes(query.toLowerCase()));
   const beginCreate=(next:ResourceKind)=>{setKind(next);setName('my-'+next);setContent(template(next,'my-'+next));setCreating(true);setEditor(undefined);};
@@ -49,15 +62,21 @@ export function SettingsFeatures({page,cwd,query,workspace,loadedExtensionPaths}
         <button className="pi-btn pi-btn--primary" disabled={busy} onClick={()=>void act(()=>api().saveAiSettings(data.ai),'pi 设置已保存；新建或重载会话生效')}>保存 pi 默认值</button>
       </section>
       <section className="pi-features__card"><h2>Desktop 执行偏好</h2><label>运行中输入<select value={data.preferences.behavior} onChange={e=>setData({...data,preferences:{...data.preferences,behavior:e.target.value as 'steer'|'followUp'}})}><option value="followUp">排队追问</option><option value="steer">调整当前任务</option></select></label><label>新任务默认访问模式<select value={data.preferences.permission} onChange={e=>setData({...data,preferences:{...data.preferences,permission:e.target.value as AccessMode}})}><option value="plan">计划模式</option><option value="ask">变更前确认</option><option value="autoEdit">自动编辑</option><option value="fullAccess">完全访问</option></select></label><p>运行中再次发送时按“运行中输入”策略处理（排队追问 / 调整当前任务），对所有会话生效，在配置统一修改。访问模式默认值用于新任务，当前任务可在输入框切换。工具权限不等于操作系统沙箱。</p><button className="pi-btn pi-btn--primary" disabled={busy} onClick={()=>void act(applyDefaults,'Desktop 默认行为已保存')}>保存桌面偏好</button></section>
-      <section className="pi-features__card"><h2>记忆总结</h2>
-        <label className="pi-features__check pi-memory__toggle"><span><strong>自动项目记忆总结与召回</strong><br/><small>按项目保存并复用长期上下文，新会话生效。开启后可能增加模型调用和 Token 成本。优先复用 pi 已启用的记忆插件（如 pi-memory）；未启用时回退 Desktop 内置桥（agentDir/memory/）。</small></span><input type="checkbox" checked={Boolean(data.preferences.memoryAssist)} onChange={e=>{ const on=e.target.checked; setData({...data, preferences:{...data.preferences, memoryAssist:on}}); void act(async()=>{ await window.localPi!.saveDesktopSettings({ memoryAssist:on }); }); }}/></label>
-        <div className="pi-memory__bar"><strong>{memFiles.length} 条记忆</strong><input placeholder="搜索记忆文件…" value={memQuery} onChange={e=>setMemQuery(e.target.value)}/><button className="pi-btn pi-btn--outline" onClick={()=>{ void api().memoryList(project||undefined).then(setMemFiles).catch(()=>undefined); }}>刷新</button></div>
+      <section className="pi-features__card"><h2>记忆</h2>
+        {/* ZCode 记忆页口径：开关 +「N 条记忆」+ 搜索 + 文件列表（相对时间）；点击行内预览 */}
+        <label className="pi-features__check pi-memory__toggle"><span><strong>工作区记忆</strong><br/><small>在工作区中保存并复用长期上下文，新会话生效。开启后可能增加推理调用和 Token 成本。优先沿用已启用的记忆插件（如 pi-memory）；未安装时可一键安装内置默认 pi-memory（npm 生态使用量最高）。</small></span><input type="checkbox" checked={Boolean(data.preferences.memoryAssist)} onChange={e=>{ const on=e.target.checked; setData({...data, preferences:{...data.preferences, memoryAssist:on}}); void act(async()=>{ await window.localPi!.saveDesktopSettings({ memoryAssist:on }); }); }}/></label>
+        <p className="pi-memory__hint">{memStatus ? `当前链路：${memStatus.plugin.kind==='extension'?(memStatus.plugin.label??memStatus.plugin.id)+'（用户已装，沿用）':'Desktop 内置桥（agentDir/memory/）'}。开启后每轮对话完成会自动整理记忆。` : '正在检测记忆链路…'}</p>
+        {memStatus?.plugin.kind==='builtin'&&<div className="pi-features__actions"><button className="pi-btn pi-btn--primary" disabled={busy} onClick={()=>void act(async()=>{ await window.localPi!.memoryEnableDefault(); await api().memoryAssistStatus(true).then(setMemStatus); },'pi-memory 已安装并注册；新会话生效')}>安装内置记忆插件 pi-memory</button></div>}
+        <div className="pi-memory__bar"><strong>{memFiles.reduce((n,f)=>n+f.entries,0)} 条记忆</strong><input placeholder="搜索记忆文件…" value={memQuery} onChange={e=>setMemQuery(e.target.value)}/><button className="pi-btn pi-btn--outline" onClick={()=>{ void api().memoryList(project||undefined).then(setMemFiles).catch(()=>undefined); }}>刷新</button></div>
         <ul className="pi-memory__list">{memFiles.filter(f=>`${f.name} ${f.path}`.toLowerCase().includes(memQuery.toLowerCase())).map(f=>(
           <li key={f.path} className="pi-memory__row" title={f.path}>
-            <span className="pi-memory__icon">📝</span>
-            <span className="pi-memory__body"><strong>{f.name}</strong><small>{new Date(f.updatedAt).toLocaleString()} · {f.scope==='global'?'全局':'项目'} · {(f.bytes/1024).toFixed(1)} KB</small></span>
+            <button type="button" className="pi-memory__open" onClick={()=>{ void api().memoryRead(f.rel).then(text=>setMemPreview({rel:f.rel,text})).catch(e=>setError(String((e as Error).message||e))); }}>
+              <span className="pi-memory__icon">📝</span>
+              <span className="pi-memory__body"><strong>{f.name}</strong><small>{formatMemoryTime(f.updatedAt)} · {f.entries} 条 · {f.scope==='global'?'全局':'项目'}</small></span>
+            </button>
           </li>
         ))}{!memFiles.length&&<li className="pi-memory__empty">暂无记忆文件。开启开关并使用一段时间后，这里会出现项目记忆。</li>}</ul>
+        {memPreview&&<div className="pi-memory__preview"><div className="pi-memory__previewbar"><strong>{memPreview.rel}</strong><button className="pi-btn pi-btn--ghost" onClick={()=>setMemPreview(undefined)}>关闭</button></div><pre>{memPreview.text}</pre></div>}
       </section>
     </>}
     {data&&page==='shortcuts'&&<ShortcutsPane data={data} query={query} busy={busy} act={act}/>}
