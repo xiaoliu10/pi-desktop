@@ -529,6 +529,8 @@ export interface PiReplicaState {
   sentAt?: { key: string; at: number };
   /** 父会话重启后从磁盘恢复的子代理进度（扩展在 onUpdate 时持久化的快照）。 */
   recoveredSubagents?: Array<{ callId: string; status: string; details?: unknown; error?: string; startedAt?: number; updatedAt?: number }>;
+  /** 已被用户从子代理目录移除的 callId（仅当前会话内存态，切会话清空）。 */
+  subagentDismissed?: string[];
   /** pi 全局 settings.json 的 AI 默认值（通用设置页内联展示与保存）。 */
   aiSettings?: import('../../shared/settings').SettingsSnapshot['ai'];
   draftCwd?: string;
@@ -576,6 +578,8 @@ export interface PiReplicaActions {
   toggleSidebar: () => void;
   toggleProject: (cwd: string) => void;
   selectSession: (key: string) => void;
+  dismissSubagent: (callId: string) => void;
+  dismissFinishedSubagents: (callIds: string[]) => void;
   setSessionArchived: (key: string, archived: boolean) => Promise<boolean>;
   setDraftText: (text: string) => void;
   send: (text: string) => void;
@@ -1087,9 +1091,11 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
       return true;
     },
     selectSession: (key) => {
-      set((s) => ({ selectedKey: key, leaf: undefined, history: undefined, review: undefined, view: 'chat', draftText: '', contextItems: [], recoveredSubagents: [] }));
+      set((s) => ({ selectedKey: key, leaf: undefined, history: undefined, review: undefined, view: 'chat', draftText: '', contextItems: [], recoveredSubagents: [], subagentDismissed: [] }));
       void refreshHistory();
     },
+    dismissSubagent: (callId) => set((s) => ({ subagentDismissed: [...new Set([...(s.subagentDismissed ?? []), callId])] })),
+    dismissFinishedSubagents: (callIds) => set((s) => ({ subagentDismissed: [...new Set([...(s.subagentDismissed ?? []), ...callIds])] })),
     setDraftText: (draftText) => set({ draftText }),
 
     send: (text) => {
@@ -1233,7 +1239,7 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
     startNewSession: () => {
       const state = get();
       const cwd = currentRun(state)?.cwd ?? state.sessions.find(s => s.key === state.selectedKey)?.cwd ?? state.draftCwd ?? state.desktopPreferences?.projects[0]?.path;
-      set({ selectedKey: null, history: undefined, leaf: undefined, review: undefined, view: 'home', draftText: '', contextItems: [], draftCwd: cwd });
+      set({ selectedKey: null, history: undefined, leaf: undefined, review: undefined, view: 'home', draftText: '', contextItems: [], draftCwd: cwd, subagentDismissed: [] });
     },
     addProject: () => {
       if (get().addingProject) return;
