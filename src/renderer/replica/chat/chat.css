@@ -87,15 +87,6 @@
   gap: 8px;
 }
 
-/* 当前正在做什么：工具名 + 首行参数，单行省略，始终可见 */
-.pireplica .pi-chat__working-now {
-  color: var(--pi-text-secondary);
-  font-size: var(--pi-font-size-xs, 12px);
-  max-width: 360px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 
 /* 乐观展示的待回显用户气泡：比已确认消息稍淡 */
 .pireplica .pi-msg--pending { opacity: 0.72; animation: pi-send-in 0.24s cubic-bezier(0.2, 0.8, 0.3, 1); }

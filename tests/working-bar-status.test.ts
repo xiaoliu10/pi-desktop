@@ -28,22 +28,23 @@ const runningTool = (tool: string, summary: string): ChatMessage => ({
 });
 
 describe('working bar status text', () => {
-  it('shows 正在思考 by default when running between steps (no active tool/thinking)', () => {
-    // 回合间隙 / 模型等待响应：上一步已完成、新内容尚未流出，菊花不能空转
+  it('shows spinner without status text when running between steps', () => {
     const html = renderToStaticMarkup(createElement(ChatView, { ...base, running: true, messages: [doneTool('bash', 'ls')] }));
     expect(html).toContain('pi-chat__working');
-    expect(html).toContain('正在思考');
+    expect(html).toContain('pi-spinner');
+    expect(html).not.toContain('pi-chat__working-now');
   });
 
-  it('shows 正在重试请求 with attempt counts during a model auto-retry', () => {
+  it('shows no status text during a model auto-retry', () => {
     const html = renderToStaticMarkup(createElement(ChatView, { ...base, running: true, messages: [doneTool('bash', 'ls')], retrying: { attempt: 2, max: 3 } }));
-    expect(html).toContain('正在重试请求（第 2/3 次）');
+    expect(html).toContain('pi-chat__working');
+    expect(html).not.toContain('pi-chat__working-now');
   });
 
-  it('still shows the active tool name when a tool is running', () => {
+  it('shows no tool name text when a tool is running', () => {
     const html = renderToStaticMarkup(createElement(ChatView, { ...base, running: true, messages: [runningTool('bash', 'git status')] }));
-    expect(html).toContain('bash');
-    expect(html).not.toContain('正在思考');
+    expect(html).toContain('pi-chat__working');
+    expect(html).not.toContain('pi-chat__working-now');
   });
 
   it('renders no working bar when idle and not sending', () => {
