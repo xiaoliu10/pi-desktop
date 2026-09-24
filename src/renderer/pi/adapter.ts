@@ -863,7 +863,7 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
     try {
       const entry = result.entry;
       if (entry.view === 'chat' && entry.key) {
-        setNow({ selectedKey: entry.key, leaf: undefined, history: undefined, review: undefined, view: 'chat', draftText: '', contextItems: [], recoveredSubagents: [], navHistory: result.history });
+        setNow({ selectedKey: entry.key, leaf: undefined, history: undefined, review: undefined, view: 'chat', draftText: '', contextItems: [], recoveredSubagents: [], subagentDismissed: getNow().desktopPreferences?.subagentDismissed?.[entry.key] ?? [], navHistory: result.history });
         refresh();
       } else if (entry.view === 'chat') {
         setNow({ view: 'home', selectedKey: null, history: undefined, leaf: undefined, review: undefined, navHistory: result.history });

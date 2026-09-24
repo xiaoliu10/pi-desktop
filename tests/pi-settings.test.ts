@@ -32,3 +32,17 @@ it('persists session renames as desktop-only display names',()=>{const{service,r
 it('persists auto-archive preferences and validates retention values',()=>{const{service}=setup();expect(service.preferences()).toMatchObject({autoArchive:false,archiveRetentionDays:30});service.savePreferences({autoArchive:true,archiveRetentionDays:90});expect(service.preferences()).toMatchObject({autoArchive:true,archiveRetentionDays:90});expect(()=>service.savePreferences({archiveRetentionDays:45 as never})).toThrow('保留时长');expect(()=>service.savePreferences({autoArchive:'yes' as never})).toThrow('自动归档');expect(()=>service.savePreferences({autoArchive:false,archiveRetentionDays:7})).not.toThrow();expect(service.preferences()).toMatchObject({autoArchive:false,archiveRetentionDays:7});});
 it('persists per-session access mode and restores it on re-entry',()=>{const{service}=setup();expect(service.preferences().sessionAccessModes).toEqual({});service.savePreferences({sessionAccessModes:{'session-a':'fullAccess','session-b':'plan'}});expect(service.preferences().sessionAccessModes).toEqual({'session-a':'fullAccess','session-b':'plan'});expect(()=>service.savePreferences({sessionAccessModes:{'session-a':'garbage' as never}})).toThrow('访问模式');service.savePreferences({sessionAccessModes:{'session-a':'autoEdit'}});expect(service.preferences().sessionAccessModes).toEqual({'session-a':'autoEdit'});});
 it('persists the chosen thinking level across restarts',()=>{const{root,service}=setup();expect(service.preferences().defaultThinkingLevel).toBe('off');service.savePreferences({defaultThinkingLevel:'high'});expect(service.preferences().defaultThinkingLevel).toBe('high');expect(()=>service.savePreferences({defaultThinkingLevel:'ultra' as never})).toThrow('思考等级');expect(new SettingsService({} as never,path.join(root,'data'),'').preferences().defaultThinkingLevel).toBe('high');});
+it('persists dismissed subagent callIds, memory assist and openWithApp across restarts',()=>{const{root,service}=setup();
+ service.savePreferences({subagentDismissed:{'session-a':['call-1','call-2']},memoryAssist:true,openWithApp:'vscode'});
+ expect(service.preferences().subagentDismissed).toEqual({'session-a':['call-1','call-2']});
+ expect(service.preferences().memoryAssist).toBe(true);
+ expect(service.preferences().openWithApp).toBe('vscode');
+ // 重启模拟：新实例必须从磁盘读回这三项（此前 preferences() 读回时丢字段，
+ // 导致「子代理已清空、重进又出现」「记忆开关重启回退」）。
+ const restarted=new SettingsService({} as never,path.join(root,'data'),'');
+ expect(restarted.preferences().subagentDismissed).toEqual({'session-a':['call-1','call-2']});
+ expect(restarted.preferences().memoryAssist).toBe(true);
+ expect(restarted.preferences().openWithApp).toBe('vscode');
+ expect(()=>service.savePreferences({subagentDismissed:{'k':'not-an-array'} as never})).toThrow('子代理清理记录');
+ expect(()=>service.savePreferences({subagentDismissed:{k:[42]} as never})).toThrow('子代理清理记录');
+});
