@@ -8,13 +8,19 @@ import { PiRpcClient } from './rpc-client';
 import { SessionIndex, fileKey } from './session-index';
 import { summarizeContext } from './context-details';
 import { detectThirdPartySubagent, migrateOldSubagentExtension, persistSubagentEvent } from './official-subagent';
-interface Running { policyReady: boolean; client: PiRpcClient; view: PiRun; input: { cwd: string; trustProject: boolean; permission: AccessMode; executionMode?: Exclude<AccessMode, 'plan'>; file: string; origin: string; systemPrompt?: string; tools?: string[]; model?: string }; dialogs: Map<string, { timer?: ReturnType<typeof setTimeout>; method: string }> }
+interface Running { policyReady: boolean; client: PiRpcClient; view: PiRun; input: { cwd: string; trustProject: boolean; permission: AccessMode; executionMode?: Exclude<AccessMode, 'plan'>; file: string; origin: string; systemPrompt?: string; tools?: string[]; model?: string }; dialogs: Map<string, { timer?: ReturnType<typeof setTimeout>; method: string; request: PiUiRequest }> }
 export class PiBackend {
   private active = new Map<string, Running>();
   /** 记忆衔接：main 在 SettingsService 就绪后注入；每次 launch 现取最新开关与目录。 */
   memoryOptions: (() => { enabled: boolean; dir: string }) | undefined;
   constructor(private env: PiEnvironment, private index: SessionIndex, private ownedRoot: string, private policyPath: string, private emit: (e: PiEvent) => void) {}
   hasPendingDialogs(key: string) { return (this.active.get(key)?.dialogs.size ?? 0) > 0; }
+  /** 待处理的 UI 审批快照（远控页刷新后据此恢复审批卡片）。 */
+  pendingDialogs(key: string): Array<{ generation: string; request: PiUiRequest }> {
+    const run = this.active.get(key);
+    if (!run) return [];
+    return [...run.dialogs.values()].map(d => ({ generation: run.view.generation, request: d.request }));
+  }
   runs() { return [...this.active.values()].map(x => x.view); }
   private get(key: string) { const run = this.active.get(key); if (!run) throw new Error('会话未由 Desktop 连接'); return run; }
   async connect(input: { sourceKey?: string; cwd?: string; trustProject: boolean; permission: AccessMode; executionMode?: Exclude<AccessMode, 'plan'>; systemPrompt?: string; tools?: string[]; model?: string }): Promise<PiRun> {
@@ -192,7 +198,7 @@ export class PiBackend {
       if (run.view.status === 'stopping' && ['select', 'confirm', 'input', 'editor'].includes(req.method)) { run.client.send({ type: 'extension_ui_response', id: req.id, cancelled: true }); return; }
       if (['select', 'confirm', 'input', 'editor'].includes(req.method)) {
         const timer = typeof req.timeout === 'number' && Number.isFinite(req.timeout) && req.timeout > 0 ? setTimeout(() => { run.dialogs.delete(req.id); this.emit({ type: 'rpc', key, generation, event: { type: 'ui-expired', id: req.id } }); }, Math.max(0, req.timeout)) : undefined;
-        run.dialogs.set(req.id, { timer, method: req.method });
+        run.dialogs.set(req.id, { timer, method: req.method, request: req });
       }
       this.emit({ type: 'ui', key, generation, request: req }); return;
     }
@@ -363,6 +369,8 @@ export class PiBackend {
     if (run.view.generation !== generation || !run.dialogs.has(response.id)) throw new Error('交互请求已过期');
     clearTimeout(run.dialogs.get(response.id)?.timer); run.dialogs.delete(response.id);
     run.client.send({ type: 'extension_ui_response', id: response.id, ...(typeof response.value === 'string' ? { value: response.value } : {}), ...(typeof response.confirmed === 'boolean' ? { confirmed: response.confirmed } : {}), ...(typeof response.cancelled === 'boolean' ? { cancelled: response.cancelled } : {}) });
+    // 多端同步：桌面端已本地移除卡片，远控页（可能多台）靠此事件同步消失。
+    this.emit({ type: 'rpc', key, generation, event: { type: 'ui-resolved', id: response.id } });
   }
   private clearDialogs(run: Running) {
     for (const [id, d] of run.dialogs) {
