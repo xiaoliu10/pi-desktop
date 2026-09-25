@@ -26,7 +26,11 @@ jobs:
             targets: --win nsis
     runs-on: ${{ matrix.os }}
     steps:
+      # 标签推送构建标签代码；手动触发按 inputs.tag 检出对应标签（为旧 Release 补发产物），
+      # workflow 本身始终用 main 上这份最新配置。
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
 
       # node-gyp 9 需要 distutils（Python 3.12 已移除）；3.11 自带，供 electron-builder 重编 node-pty
       - uses: actions/setup-python@v5
