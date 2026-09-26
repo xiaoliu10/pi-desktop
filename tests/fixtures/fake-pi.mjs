@@ -4,6 +4,7 @@ const file = process.argv[process.argv.indexOf('--session') + 1];
 if (process.argv.includes('--session') && !fs.existsSync(file)) fs.writeFileSync(file, JSON.stringify({ type:'session',version:3,id:'fake',cwd:process.cwd(),timestamp:new Date().toISOString() })+'\n');
 const send = obj => process.stdout.write(JSON.stringify(obj)+'\n');
 let pendingUi, queue = {steering:[],followUp:[]};
+let promptLog = [];
 let streaming = false;
 let thinking = 'medium';
 let input = '';
@@ -25,7 +26,10 @@ function handle(r) {
  case 'exit': return process.exit(7);
  case 'noise': process.stdout.write('plugin log\n'); return ok('fine');
  case 'unicode': { const data = Buffer.from(JSON.stringify({type:'response',id:r.id,success:true,data:'中文\u2028\u2029'})+'\n'); const pos=data.indexOf(Buffer.from('中'))+1; process.stdout.write(data.subarray(0,pos)); setTimeout(()=>process.stdout.write(data.subarray(pos)),5); return; }
+ case 'prompt_log': return ok(promptLog);
  case 'prompt':
+  promptLog.push({message:r.message, behavior:r.streamingBehavior, images:r.images ?? null});
+  if(r.message === '/failprompt') return send({type:'response',id:r.id,success:false,error:'injected prompt failure'});
   if(r.message === '/crash') return process.exit(7);
   if(r.message === '/dialog') { pendingUi=r; send({type:'extension_ui_request',id:'dialog',method:'confirm',title:'Confirm?'}); return; }
   if(r.message === '/long') { ok({}); streaming=true; send({type:'agent_start'}); return; }

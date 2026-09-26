@@ -33,6 +33,9 @@ export interface SessionNavItem {
   canContinue?: boolean;
   /** Demo state flag shown in the row (e.g. "running" dot in reference). */
   busy?: boolean;
+  /** 会话有阻塞交互等待用户处理（ZCode TaskInteractionBadge 语义）：userInput=待回答问题，permission=待确认权限。 */
+  needsConfirm?: 'userInput' | 'permission';
+  needsConfirmCount?: number;
   pinned?: boolean;
   /** Working directory of the session (context menu: copy path). */
   cwd?: string;
@@ -168,7 +171,7 @@ export interface ComposerProps {
   files: string[];
   running: boolean;
   queued: number;
-  queue?: {text: string; behavior: 'steer' | 'followUp'}[];
+  queue?: {text: string; behavior: 'steer' | 'followUp'; images?: PiImage[]}[];
   /** Model chosen while running: shown with a "待生效" marker until applied. */
   pendingModelId?: string;
   /** Queue row actions (production only): steer-now / recall-into-composer / remove. */
@@ -200,11 +203,15 @@ export interface ComposerProps {
    */
   hideReasoning?: boolean;
   onSend: (text: string) => void;
+  /** 已发送消息历史（↑/↓ recall，ZCode 同款）；空数组时方向键不接管。 */
+  promptHistory?: readonly string[];
   onStop: () => void;
   onPickModel: (id: string) => void;
   onPickReasoning: (level: ReasoningLevel) => void;
   onPickAgentMode: (mode: AgentMode) => void;
   onPickPermission: (mode: PermissionChoice) => void;
+  /** 右侧动作区额外插槽（语音输入按钮）。 */
+  voiceSlot?: React.ReactNode | ((appendTranscript: (text: string) => void) => React.ReactNode);
 }
 
 export interface ComposerLabels {
@@ -231,6 +238,11 @@ export interface ComposerLabels {
   reasoningMedium: string;
   reasoningHigh: string;
   attachDisabled: string;
+  /** 语音输入按钮（云端转写）三态文案。 */
+  voiceStart?: string;
+  voiceStop?: string;
+  voiceTranscribing?: string;
+  voiceNotConfigured?: string;
   slashCommands: string;
   atFiles: string;
   demoBadge: string;
@@ -291,6 +303,8 @@ export interface ChatMessage {
 }
 
 export interface ChatViewProps {
+  /** A new local send forces bottom once; subsequent manual scroll pauses following. */
+  scrollRequest?: string;
   onOpenToolFile?: (part: ToolPart) => void;
   runTiming?: { startedAt: number; endedAt?: number };
   messages: ChatMessage[];
@@ -302,6 +316,11 @@ export interface ChatViewProps {
   sending?: boolean;
   /** The prompt text sent but not yet echoed by pi (rendered optimistically). */
   sendingText?: string;
+  /** 「立即」插入当前任务的乐观气泡文本：点击即显示，不等 pi 边界分发。 */
+  /** 「立即」插入的乐观 steer 气泡文本。 */
+  steeringText?: string;
+  /** 乐观 steer 气泡附带的图片（pi 的 queue_update 不回传图片，从队列项快照带过来）。 */
+  steeringImages?: PiImage[];
   /** Client-side send timestamp: the working-row timer counts from here, before pi's own timing starts. */
   sendingAt?: number;
   /** Ongoing model auto-retry (pi auto_retry_start…auto_retry_end): the working bar shows
@@ -383,9 +402,38 @@ export interface WorkbenchProps {
   selectedFile: string | null;
   demo: boolean;
   labels: WorkbenchLabels;
+  /**
+   * Production slot: the built-in browser panel (Electron <webview> based).
+   * Rendered in a stable, keep-alive slot inside the panel — once mounted it
+   * stays mounted (display:none) across tab switches and panel close so
+   * opened pages are never reloaded. Preview passes nothing → demo empty state.
+   */
+  browserPanel?: ReactNode;
   onToggle: () => void;
   onSelectTab: (tab: WorkbenchTab) => void;
   onSelectFile: (path: string | null) => void;
+}
+
+/** Labels for the built-in browser panel (pi/BrowserPanel). */
+export interface BrowserLabels {
+  newTab: string;
+  closeTab: string;
+  addressPlaceholder: string;
+  go: string;
+  back: string;
+  forward: string;
+  reload: string;
+  stop: string;
+  viewportSize: string;
+  fitWindow: string;
+  loadFailed: string;
+  retry: string;
+  emptyTitle: string;
+  emptyHint: string;
+  startHint: string;
+  untitled: string;
+  blockedProtocol: string;
+  invalidUrl: string;
 }
 
 export interface WorkbenchLabels {
@@ -512,7 +560,7 @@ export interface PluginsLabels {
 // ---------------------------------------------------------------------------
 
 export type SettingsNavId =
-  | 'general' | 'ai' | 'shortcuts'
+  | 'general' | 'ai' | 'memory' | 'shortcuts' | 'voice'
   | 'instructions' | 'models' | 'skills' | 'mcp' | 'extensions' | 'subagents'
   | 'workspace' | 'import' | 'projects' | 'archived' | 'usage' | 'info';
 

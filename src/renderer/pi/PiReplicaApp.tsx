@@ -31,14 +31,17 @@ import { DEFAULT_SHORTCUTS, DEFAULT_AGENT_PRESETS, shortcutMatches, type Shortcu
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Icon } from '../replica/Icons';
+import { appendPromptHistoryEntry, persistPromptHistory, readPromptHistory } from '../replica/prompt-history';
 import { replicaLabels } from '../replica/i18n';
 import { Sidebar } from '../replica/shell/Sidebar';
 import { ResizeHandle, usePanelWidth } from '../replica/shell/ResizeHandle';
 import { TopBar } from '../replica/shell/TopBar';
 import { ChatView, Composer, HomeView } from '../replica/chat/ChatView';
+import { VoiceInputButton } from './VoiceInputButton';
 import { PluginsPage } from '../replica/plugins/PluginsPage';
 import { SettingsPage } from '../replica/settings/SettingsPage';
 import { WorkbenchPanel } from '../replica/workbench/WorkbenchPanel';
+import { BrowserPanel } from './BrowserPanel';
 import { GlobalSearch, Notifications } from '../replica/overlays/Overlays';
 import type {
   SearchItem,
@@ -58,7 +61,7 @@ import {
   currentSessionOf,
   cwdOf,
   groupModels,
-  conversationMessages,
+  sentConversationMessages,
   parseUnifiedDiff,
   reviewDiffEntries,
   resourcesToPluginRows,
@@ -176,7 +179,9 @@ export default function PiReplicaApp() {
   }, [init]);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.isComposing || e.repeat || s.dialogs.length || document.querySelector('dialog[open]')) return;
+      // 仅当阻塞交互属于当前会话时才禁用快捷键；后台会话的提问不应锁住当前会话（会话级分摊）。
+      const hasSessionDialog = Boolean(s.selectedKey) && s.dialogs.some((d) => d.key === s.selectedKey);
+      if (e.isComposing || e.repeat || hasSessionDialog || document.querySelector('dialog[open]')) return;
       if (document.body.dataset.shortcutRecording) return; // shortcuts page is capturing a new binding
       const bindings = s.desktopPreferences?.shortcuts || DEFAULT_SHORTCUTS;
       const action = (Object.keys(bindings) as ShortcutAction[]).find(a => shortcutMatches(e, bindings[a]));
@@ -195,6 +200,11 @@ export default function PiReplicaApp() {
 
   const sidebar = useMemo(() => {
     const result = buildPiSidebar(s.sessions.filter(session=>!s.archivedKeys.includes(session.key)), s.runs.filter(run=>!s.archivedKeys.includes(run.key)), s.expandedProjects, s.renames);
+    // 阻塞交互胶囊（ZCode getTaskListAttention）：哪个会话在等用户确认，就在哪一行提示。
+    const attention = pendingAttentionBySession(s.dialogs);
+    const markAttention = (items: SessionNavItem[]) => items.map((item) => attention[item.id] ? { ...item, ...attention[item.id] } : item);
+    result.temporary = markAttention(result.temporary);
+    for (const project of result.projects) project.sessions = markAttention(project.sessions);
     const projectMeta=new Map<string,import('../../shared/projects').DesktopProject>();
     for(const session of s.sessions)projectMeta.set(session.cwd,{path:session.cwd,name:pathLabel(session.cwd)});
     for(const project of s.desktopPreferences?.projects??[])projectMeta.set(project.path,project);
@@ -207,10 +217,17 @@ export default function PiReplicaApp() {
     result.projects=result.projects.filter(p=>!hidden.includes(p.path)).sort((a,b)=>Number(!!b.pinned)-Number(!!a.pinned)||(a.pinned?0:(a.section||'\uffff').localeCompare(b.section||'\uffff')));
     result.temporary=result.temporary.filter(item=>!hidden.includes(s.runs.find(r=>r.key===item.id)?.cwd??''));
     return result;
-  }, [s.sessions, s.runs, s.expandedProjects, s.renames, s.desktopPreferences, s.archivedKeys]);
+  }, [s.sessions, s.runs, s.expandedProjects, s.renames, s.desktopPreferences, s.archivedKeys, s.dialogs]);
+  // 阻塞交互按会话分摊（ZCode：只渲染当前会话的 pendingInteractions）：
+  // ask_user_question 内联在对话流；其余（工具审批等）保持弹窗；后台会话只亮侧栏胶囊。
+  const sessionDialogs = s.dialogs.filter((d) => d.key === s.selectedKey);
+  const askDialog = sessionDialogs.find((d) => isAskDialog(d)) ?? null;
+  // 命令/工具权限审批 → 对话框上方内联选项卡（confirm 旧协议 + select 新协议）；其余扩展交互（select/input）保持居中弹窗。
+  const approvalDialog = sessionDialogs.find((d) => d !== askDialog && isApprovalDialog(d) && (d.request.method === 'confirm' || d.request.method === 'select')) ?? null;
+  const modalDialog = sessionDialogs.find((d) => d !== askDialog && d !== approvalDialog) ?? null;
   const messages = useMemo(
-    () => conversationMessages(s.history?.branch ?? [], s.live[s.selectedKey ?? ''], s.toolProgress[s.selectedKey ?? '']),
-    [s.history, s.live, s.toolProgress, s.selectedKey],
+    () => sentConversationMessages(s.history?.branch ?? [], s.live[s.selectedKey ?? ''], s.toolProgress[s.selectedKey ?? ''], (s.sends ?? []).filter(send => send.key === s.selectedKey)),
+    [s.history, s.live, s.toolProgress, s.selectedKey, s.sends],
   );
   // 自动化“立即运行”的乐观气泡：点击瞬间进对话，真实消息回显后自动让位。
   const launchPrompt = automationLaunchPrompt(s, messages.some(m => m.role === 'user'));
@@ -248,21 +265,37 @@ export default function PiReplicaApp() {
     });
   },[livePlan,s.selectedKey]);
   const planDoc=livePlan??(s.selectedKey&&planSnapshots[s.selectedKey]?planFromMarkdown(planSnapshots[s.selectedKey]):null);
+  // 计划审批时自动在右侧展开计划全文（计划内容长，对话框位置的卡片展示不全；对齐 ZCode PlanDetailSidePane）。
+  // 审批通过后右侧面板保留展示计划快照+任务清单进度，用户可手动关闭；依赖布尔翻转，关闭后不会立即重弹。
+  const planApprovalActive=run?.accessMode==='plan'&&run.status==='idle'&&run.planReady&&Boolean(planDoc);
+  useEffect(()=>{ if (planApprovalActive) setPlanOpen(true); },[planApprovalActive]);
   const planChecklist=useMemo(()=>conversationPlan(messages),[messages]);
   const modelGroups = useMemo(() => run ? groupModels(run) : (s.catalog?.providers ?? []).map(p=>({provider:p.id,models:p.models.map(m=>({id:`${p.id}/${m.id}`,name:m.name || m.id}))})), [run,s.catalog]);
   const composerCwd = run?.cwd ?? s.sessions.find(session=>session.key===s.selectedKey)?.cwd ?? s.draftCwd;
+  // ↑/↓ 发送历史：按 workspace 隔离、localStorage 持久化（ZCode 同款，最多 30 条）。
+  const [promptHistory, setPromptHistory] = useState<string[]>(() => readPromptHistory(composerCwd ?? ''));
+  useEffect(() => { setPromptHistory(readPromptHistory(composerCwd ?? '')); }, [composerCwd]);
+  const onComposerSend = useCallback((text: string) => {
+    // 只记录用户在输入框真正提交的 prompt（程序化 send 如计划批准语不进历史）。
+    setPromptHistory(prev => {
+      const next = appendPromptHistoryEntry(prev, text);
+      if (next !== prev) persistPromptHistory(composerCwd ?? '', next);
+      return next;
+    });
+    s.send(text);
+  }, [composerCwd, s.send]);
   const draftModelId = s.draftModelId ?? (s.catalog?.defaultProvider && s.catalog?.defaultModel ? `${s.catalog.defaultProvider}/${s.catalog.defaultModel}` : '');
   const draftModel = s.catalog?.providers.flatMap(p=>p.models.map(m=>({...m,combinedId:`${p.id}/${m.id}`}))).find(m=>m.combinedId===draftModelId);
   const [filePreview, setFilePreview] = useState<ReturnType<typeof toolFilePreview>>(null);
   const [pluginTab, setPluginTab] = useState<'installed' | 'marketplace'>('installed');
   const [pluginTag, setPluginTag] = useState('all');
-  const [filePreviewVersion, setFilePreviewVersion] = useState(0);
+  const [, setFilePreviewVersion] = useState(0);
   const [sidebarWidth, setSidebarWidth, resetSidebarWidth] = usePanelWidth('pi.sidebarWidth', 366, 220, 520);
   const [workbenchWidth, setWorkbenchWidth, resetWorkbenchWidth] = usePanelWidth('pi.workbenchWidth', 415, 300, 700);
   // 右侧三个互叠的侧板（子代理/计划/终端）同样可拖宽，ZCode 侧板均带 col-resize。
   const [subagentWidth, setSubagentWidth, resetSubagentWidth] = usePanelWidth('pi.subagentWidth', 440, 300, 720);
   const [planWidth, setPlanWidth, resetPlanWidth] = usePanelWidth('pi.planWidth', 480, 320, 720);
-  const [terminalWidth, setTerminalWidth, resetTerminalWidth] = usePanelWidth('pi.terminalWidth', 640, 360, 900);
+  const [terminalHeight, setTerminalHeight, resetTerminalHeight] = usePanelWidth('pi.terminalHeight', 300, 160, 640);
   const previewRequest = useRef(0);
   useEffect(() => { previewRequest.current++; setFilePreview(null); }, [s.selectedKey]);
   // 切到插件市场 tab 时若列表为空则自动搜索一次（覆盖任何进入路径，不单靠 tab 点击回调）。
@@ -315,7 +348,11 @@ export default function PiReplicaApp() {
       reasoning="off"
       agentMode="agent"
       permissionMode="ask"
-      slashCommands={(run?.commands ?? []).map((c) => ({ name: `/${c.name}`, description: c.description ?? '' }))}
+      slashCommands={[
+        // 内置命令：get_commands 只回扩展命令/模板/skills，手动补上 Desktop 已拦截路由的内置项。
+        ...(run ? [{ name: '/compact', description: s.lang === 'zh' ? '手动压缩会话上下文' : 'Manually compact the session context' }] : []),
+        ...(run?.commands ?? []).map((c) => ({ name: `/${c.name}`, description: c.description ?? '' })),
+      ]}
       files={[]}
       running={Boolean(run && ['running', 'starting', 'stopping'].includes(run.status))}
       queued={run?.pending ?? 0}
@@ -332,6 +369,20 @@ export default function PiReplicaApp() {
       addSlot={<ComposerAdd cwd={composerCwd} disabled={s.connecting} onAdd={s.addContext} />}
       contextSlot={<><ContextChips items={s.contextItems} remove={s.removeContext} />{attachmentLoading && <div className="pi-attachment-loading" role="status">正在读取附件…</div>}</>}
       reasoningSlot={<ThinkingMenu value={run?.thinkingLevel ?? s.desktopPreferences?.defaultThinkingLevel ?? 'off'} levels={run ? (run.thinkingLevels ?? []) : draftModel?.reasoning ? ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const : []} disabled={s.connecting} pending={run?.pendingThinking} onChange={s.pickThinking} />}
+      voiceSlot={appendTranscript =>
+        <VoiceInputButton
+          key={`${s.selectedKey ?? 'draft'}:${composerCwd ?? ''}`}
+          labels={t.composer}
+          zh={s.lang === 'zh'}
+          disabled={s.connecting}
+          onTranscript={appendTranscript}
+          onError={message => s.notify({ kind: 'error', title: message, time: '刚刚' })}
+          onNotConfigured={() => {
+            s.notify({ kind: 'info', title: t.composer.voiceNotConfigured ?? 'Voice input is not configured', time: '刚刚' });
+            s.openSettings('voice');
+          }}
+        />
+      }
       leftSlot={
         <>
           <AccessModeMenu value={run?.accessMode ?? s.draftAccessMode ?? s.desktopPreferences?.sessionAccessModes?.[s.selectedKey ?? ''] ?? s.desktopPreferences?.permission ?? 'ask'} disabled={s.connecting} changing={s.changingAccessMode} zh={s.lang === 'zh'} onChange={s.setAccessMode} />
@@ -340,7 +391,8 @@ export default function PiReplicaApp() {
         </>
       }
       statusSlot={run ? <ContextUsageChip key={`${run.key}:${run.generation}`} usage={run.contextUsage} model={run.model ? `${run.model.provider} / ${run.model.name || run.model.id}` : undefined} zh={s.lang === 'zh'} compact /> : undefined}
-      onSend={s.send}
+      onSend={onComposerSend}
+      promptHistory={promptHistory}
       onStop={s.stop}
       onPickModel={s.pickModel}
       onPickReasoning={() => undefined}
@@ -493,7 +545,7 @@ export default function PiReplicaApp() {
     <SubagentNavigation.Provider value={callId=>{setSubagentPanel({callId});usePiStore.setState({workbenchOpen:false});}}>
     <div
       className={rootClass}
-      style={{ height: '100vh', fontSize: `${s.fontScale}%`, ...(fontFamily ? { fontFamily } : {}), '--pi-sidebar-width': `${sidebarWidth}px`, '--pi-workbench-width': `${workbenchWidth}px`, '--pi-subagent-width': `${subagentWidth}px`, '--pi-plan-width': `${planWidth}px`, '--pi-terminal-width': `${terminalWidth}px` } as React.CSSProperties}
+      style={{ height: '100vh', fontSize: `${s.fontScale}%`, ...(fontFamily ? { fontFamily } : {}), '--pi-sidebar-width': `${sidebarWidth}px`, '--pi-workbench-width': `${workbenchWidth}px`, '--pi-subagent-width': `${subagentWidth}px`, '--pi-plan-width': `${planWidth}px`, '--pi-terminal-height': `${terminalHeight}px` } as React.CSSProperties}
       data-pi-ready={s.env ? 'true' : undefined}
     >
       {loginProvider&&<AccountLoginDialog provider={loginProvider} onClose={()=>setLoginProvider(null)} onDone={s.loadCatalog}/>}
@@ -672,11 +724,14 @@ export default function PiReplicaApp() {
                     runTiming={run?.timing}
                     running={Boolean(run && ['running', 'stopping'].includes(run.status))}
                     queued={run?.pending ?? 0}
-                    sending={Boolean(s.pendingPrompt) || run?.status === 'starting' || Boolean(s.sentAt && s.sentAt.key === s.selectedKey && run?.status === 'idle') || Boolean(launchPrompt)}
-                    sendingText={s.connecting ? s.pendingPrompt : launchPrompt}
+                    scrollRequest={(s.sends ?? []).filter(send => send.key === s.selectedKey).at(-1)?.id}
+                    sending={(s.sends ?? []).some(send => send.key === s.selectedKey && !send.confirmedId) || run?.status === 'starting' || Boolean(launchPrompt)}
+                    sendingText={launchPrompt}
+                    steeringText={s.pendingSteer?.[s.selectedKey ?? '']?.text}
+                    steeringImages={s.pendingSteer?.[s.selectedKey ?? '']?.images}
                     sendingAt={launchPrompt ? s.automationLaunch!.startedAt : s.sentAt?.key === s.selectedKey ? s.sentAt.at : undefined}
                     retrying={s.selectedKey ? s.retrying?.[s.selectedKey] ?? undefined : undefined}
-                    queue={run?.queue}
+                    queue={run?.queue?.filter(q => !(q.behavior === 'steer' && q.text === s.pendingSteer?.[s.selectedKey ?? '']?.text))}
                     demo={false}
                     labels={t.chat}
                     onOpenToolFile={openToolFile}
@@ -684,6 +739,9 @@ export default function PiReplicaApp() {
                     onEditUserMessage={parentRunning ? undefined : editUserMessage}
                     onDownloadImage={downloadImage}
                   />
+                  {/* ask_user_question 与命令/工具权限审批内联在会话对话流（ZCode bottom dock），非全局弹窗 */}
+                  {askDialog && <InlineAskCard key={`${askDialog.generation}:${askDialog.request.id}`} dialog={askDialog} />}
+                  {approvalDialog && <InlineApprovalCard key={`${approvalDialog.generation}:${approvalDialog.request.id}`} dialog={approvalDialog} />}
                   <div style={{ padding: run ? '0 24px 20px' : '0 24px 20px' }}>{composer}</div>
                 </div>
               )}
@@ -753,15 +811,14 @@ export default function PiReplicaApp() {
               {subagentPanel && s.view==='chat' && <SubagentPanel key={`${s.selectedKey}:${subagentPanel.callId||''}`} children={subagents} initialCall={subagentPanel.callId} parentRunning={parentRunning} onClose={()=>setSubagentPanel(null)} onStop={s.stop}/>}
               {s.view==='chat' && planOpen && <ResizeHandle side="right" width={planWidth} min={320} max={720} onChange={setPlanWidth} onReset={resetPlanWidth} label="计划面板宽度" />}
               {s.view==='chat' && planOpen && <PlanViewer key={s.selectedKey||'draft'} doc={planDoc} checklist={planChecklist} lang={s.lang} running={Boolean(run&&['running','stopping'].includes(run.status))} planMode={run?.accessMode==='plan'} onClose={()=>setPlanOpen(false)} onExecute={s.executePlan}/>}
-              {s.view==='chat' && terminalStarted && terminalOpen && <ResizeHandle side="right" width={terminalWidth} min={360} max={900} onChange={setTerminalWidth} onReset={resetTerminalWidth} label="终端面板宽度" />}
-              {s.view==='chat' && terminalStarted && <TerminalPanel open={terminalOpen} cwd={composerCwd} lang={s.lang} dark={s.theme==='dark'} onClose={()=>setTerminalOpen(false)}/>}
               {s.view === 'chat' && !s.workbenchOpen && !subagentPanel && !planOpen && <ConversationStatusPanel key={s.selectedKey || 'draft'} cwd={cwd} messages={messages} running={Boolean(run && ['running','stopping'].includes(run.status))} stats={run?.stats} onReview={()=>{setFilePreview(null);s.selectWorkbenchTab('review');}} onRequest={text=>{s.setDraftText(s.draftText ? `${s.draftText}\n\n${text}` : text);}} onOpenPlan={()=>setPlanOpen(true)} planAvailable={Boolean(planDoc||planChecklist.length)} />}
               {s.workbenchOpen && (s.view === 'chat' || s.view === 'home') && <ResizeHandle side="right" width={workbenchWidth} min={300} max={700} onChange={setWorkbenchWidth} onReset={resetWorkbenchWidth} label="工作面板宽度" />}
               <WorkbenchPanel
                 cwd={cwd}
                 open={s.workbenchOpen && (s.view === 'chat' || s.view === 'home')}
                 tab={s.workbenchTab}
-                key={`tool-preview-${filePreviewVersion}`}
+                // 不设 key：重挂载会销毁浏览器 webview；预览文件的展开重置由 WorkbenchPanel 内部比对 selectedFile 完成。
+                browserPanel={<BrowserPanel labels={t.browser} />}
                 diffs={filePreview ? (filePreview.diff ? [filePreview.diff] : []) : reviewDiffs}
                 files={[
                   // review 里的编辑文件都可点选查看完整内容
@@ -793,6 +850,10 @@ export default function PiReplicaApp() {
                 }}
               />
             </div>
+            {/* 终端底部停靠（IDEA 风格）：横跨中间区域下方，不与右侧面板抢水平空间。
+                常挂载（terminalStarted 后不卸载）保持 pty 会话与滚动缓冲。 */}
+            {s.view === 'chat' && terminalStarted && terminalOpen && <ResizeHandle side="bottom" width={terminalHeight} min={160} max={640} onChange={setTerminalHeight} onReset={resetTerminalHeight} label="终端面板高度" />}
+            {s.view === 'chat' && terminalStarted && <TerminalPanel open={terminalOpen} cwd={composerCwd} lang={s.lang} dark={s.theme==='dark'} onClose={()=>setTerminalOpen(false)}/>}
           </div>
         </>
       )}
@@ -817,7 +878,7 @@ export default function PiReplicaApp() {
         onSelect={() => s.toggleNotifications()}
       />
 
-      {s.dialogs[0] && <ExtensionDialog key={`${s.dialogs[0].generation}:${s.dialogs[0].request.id}`} dialog={s.dialogs[0]} />}
+      {modalDialog && <ExtensionDialog key={`${modalDialog.generation}:${modalDialog.request.id}`} dialog={modalDialog} />}
     </div>
     </SubagentNavigation.Provider>
   );
@@ -1193,6 +1254,33 @@ interface AskQuestion { header: string; question: string; multiSelect?: boolean;
 interface AskPayload { v?: number; questions: AskQuestion[] }
 interface AskAnswer { header: string; answers: string[] }
 
+/**
+ * 每会话的阻塞交互汇总（ZCode pendingInteractionSummary / getTaskListAttention 语义）：
+ * userInput=待回答的 ask_user_question，permission=待确认的工具权限；userInput 优先展示。
+ * 侧栏只拿 kind/count，不携带问题与答案等 payload。
+ */
+export function pendingAttentionBySession(dialogs: Dialog[]): Record<string, { needsConfirm: 'userInput' | 'permission'; needsConfirmCount: number }> {
+  const result: Record<string, { needsConfirm: 'userInput' | 'permission'; needsConfirmCount: number }> = {};
+  for (const dialog of dialogs) {
+    const isAsk = dialog.request.method === 'input' && dialog.request.title === 'desktop-ask' && parseAskPayload(dialog.request.placeholder) !== null;
+    const entry = result[dialog.key] ?? { needsConfirm: 'permission' as const, needsConfirmCount: 0 };
+    entry.needsConfirmCount += 1;
+    if (isAsk || entry.needsConfirm === 'userInput') entry.needsConfirm = 'userInput';
+    result[dialog.key] = entry;
+  }
+  return result;
+}
+
+/** 某条交互是否是 ask_user_question（desktop-ask）。 */
+export function isAskDialog(dialog: Dialog): boolean {
+  return dialog.request.method === 'input' && dialog.request.title === 'desktop-ask' && parseAskPayload(dialog.request.placeholder) !== null;
+}
+
+/** 某条交互是否是命令/工具权限审批（desktop-policy 的 confirm）。 */
+export function isApprovalDialog(dialog: Dialog): boolean {
+  return Boolean(dialog.request.title?.startsWith('Desktop 审批'));
+}
+
 export function parseAskPayload(raw?: string): AskPayload | null {
   if (!raw) return null;
   try {
@@ -1219,89 +1307,406 @@ export function AskQuestionCard({ payload, zh, onAnswer, onCancel, stopTask, sto
   stopTask: () => void;
   stopping: boolean;
 }) {
-  const OTHER = '__other__';
-  const [picked, setPicked] = useState<string[][]>(() => payload.questions.map(() => []));
-  const [otherText, setOtherText] = useState<string[]>(() => payload.questions.map(() => ''));
-  const complete = picked.every((labels, qi) => labels.length > 0 && !(labels.includes(OTHER) && !otherText[qi].trim()));
-  const toggle = (qi: number, label: string, multiSelect: boolean) => {
-    setPicked((current) => current.map((labels, i) => {
-      if (i !== qi) return labels;
-      if (!multiSelect) return labels[0] === label ? [] : [label];
-      return labels.includes(label) ? labels.filter((l) => l !== label) : [...labels, label];
+  // ZCode ElicitationDialog 完整交互复刻：一次一题 + 翻页器 ‹ n/N ›；选项行无边框、
+  // 悬停/选中灰底、单选数字前缀、多选方框勾选；自定义回答为常驻末行（接续编号、自增高）；
+  // 键盘 Tab/↑↓ 移动焦点、Enter 推进/提交（焦点在单选项上时视作选中它）、Space 勾选多选、
+  // Esc 返回上一题/忽略；底部 ⓘ 键盘提示 + 忽略 + 继续/提交。
+  const questions = payload.questions;
+  const [questionIndex, setQuestionIndex] = useState(0);
+  const [drafts, setDrafts] = useState<Record<number, { selected: string[]; custom: string }>>(
+    () => Object.fromEntries(questions.map((_, i) => [i, { selected: [], custom: '' }])) as Record<number, { selected: string[]; custom: string }>,
+  );
+  const [activeOption, setActiveOption] = useState(-1); // 0..options.length-1 为选项行，options.length 为自定义输入行，-1 无
+  const question = questions[Math.min(questionIndex, Math.max(questions.length - 1, 0))];
+  const draft = drafts[questionIndex] ?? { selected: [], custom: '' };
+  const customIndex = question ? question.options.length : 0;
+  const customFilled = draft.custom.trim().length > 0;
+  const isLast = questionIndex >= questions.length - 1;
+  const isAnswered = (i: number) => {
+    const d = drafts[i];
+    return Boolean(d && (d.selected.length > 0 || d.custom.trim().length > 0));
+  };
+
+  const applyToggle = (base: { selected: string[]; custom: string }, label: string, multi: boolean) => {
+    if (multi) return base.selected.includes(label) ? { ...base, selected: base.selected.filter(l => l !== label) } : { ...base, selected: [...base.selected, label] };
+    return base.selected[0] === label ? { ...base, selected: [] } : { ...base, selected: [label] };
+  };
+
+  const toggleOption = (label: string) => {
+    setDrafts(cur => ({ ...cur, [questionIndex]: applyToggle(cur[questionIndex] ?? { selected: [], custom: '' }, label, question.multiSelect ?? false) }));
+  };
+
+  const gotoQuestion = (next: number) => {
+    setQuestionIndex(Math.max(0, Math.min(next, questions.length - 1)));
+    setActiveOption(-1);
+  };
+
+  const continueOrSubmit = () => {
+    if (!question) return;
+    // 焦点落在未选中的单选项上时点继续/提交 = 意图选中它（ZCode 自动补选语义）。
+    let current = drafts[questionIndex] ?? { selected: [], custom: '' };
+    if (activeOption >= 0 && activeOption < question.options.length && !question.multiSelect && !current.selected.includes(question.options[activeOption].label)) {
+      current = applyToggle(current, question.options[activeOption].label, false);
+      setDrafts(cur => ({ ...cur, [questionIndex]: current }));
+    }
+    if (!(current.selected.length > 0 || current.custom.trim().length > 0)) return; // 当前题未作答不推进
+    if (!isLast) {
+      gotoQuestion(questionIndex + 1);
+      return;
+    }
+    const firstUnanswered = questions.findIndex((_, i) => {
+      if (i === questionIndex) return false; // 当前题刚校验过
+      const d = drafts[i];
+      return !(d && (d.selected.length > 0 || d.custom.trim().length > 0));
+    });
+    if (firstUnanswered >= 0) {
+      gotoQuestion(firstUnanswered); // 有漏答题：跳到第一道未答题
+      return;
+    }
+    onAnswer(questions.map((q, i) => {
+      const d = i === questionIndex ? current : (drafts[i] ?? { selected: [], custom: '' });
+      return { header: q.header || q.question.slice(0, 12), answers: [...d.selected, d.custom.trim()].filter(Boolean) };
     }));
   };
-  const answerFor = (qi: number) => picked[qi].map((label) => (label === OTHER ? otherText[qi].trim() : label));
+
+  const onKeyDown = (e: React.KeyboardEvent) => {
+    if (e.nativeEvent.isComposing) return; // IME 组合中不接管
+    if (!question) return;
+    const total = question.options.length + 1; // 含自定义输入行
+    const move = (delta: number) => {
+      e.preventDefault();
+      setActiveOption(cur => Math.max(0, Math.min((cur < 0 ? (delta > 0 ? 0 : -1) : cur + delta), total - 1)));
+    };
+    switch (e.key) {
+      case 'ArrowDown': move(1); break;
+      case 'ArrowUp': move(-1); break;
+      case 'Tab': move(e.shiftKey ? -1 : 1); break;
+      case 'Enter':
+        e.preventDefault();
+        continueOrSubmit();
+        break;
+      case ' ':
+        if (question.multiSelect && activeOption >= 0 && activeOption < question.options.length) {
+          e.preventDefault();
+          toggleOption(question.options[activeOption].label);
+        }
+        break;
+      case 'Escape':
+        e.preventDefault();
+        if (questionIndex > 0) gotoQuestion(questionIndex - 1);
+        else onCancel();
+        break;
+    }
+  };
+
+  if (!question) {
+    return <p className="pi-eli__empty">{zh ? '没有可回答的问题。' : 'No questions to answer.'}</p>;
+  }
+
+  const renderOption = (option: AskOption, index: number) => {
+    const selected = draft.selected.includes(option.label);
+    const active = activeOption === index;
+    return (
+      <button
+        key={option.label}
+        type="button"
+        role={question.multiSelect ? 'checkbox' : 'option'}
+        aria-checked={question.multiSelect ? selected : undefined}
+        aria-selected={question.multiSelect ? undefined : selected}
+        tabIndex={active || (activeOption < 0 && index === 0) ? 0 : -1}
+        className={`pi-eli__opt${selected ? ' pi-eli__opt--on' : ''}${active ? ' pi-eli__opt--active' : ''}`}
+        onClick={() => { setActiveOption(index); toggleOption(option.label); }}
+        onFocus={() => setActiveOption(index)}
+      >
+        {question.multiSelect ? (
+          <span className={`pi-eli__check${selected ? ' pi-eli__check--on' : ''}`}>{selected ? '✓' : ''}</span>
+        ) : (
+          <span className="pi-eli__num">{index + 1}.</span>
+        )}
+        <span className="pi-eli__optbody">
+          <span className="pi-eli__optlabel">{option.label}</span>
+          {option.description && <span className="pi-eli__optdesc">{option.description}</span>}
+        </span>
+      </button>
+    );
+  };
+
   return (
-    <>
-      <h2>{zh ? '需要你的选择' : 'Your input is needed'}</h2>
-      <div className="pi-ask">
-        {payload.questions.map((q, qi) => (
-          <section key={qi} className="pi-ask__question">
-            <div className="pi-ask__head">
-              {q.header && <span className="pi-ask__chip">{q.header}</span>}
-              <span className="pi-ask__text">{q.question}</span>
-              {q.multiSelect && <span className="pi-ask__multi">{zh ? '可多选' : 'multi-select'}</span>}
-            </div>
-            <div className="pi-ask__options" role={q.multiSelect ? 'group' : 'radiogroup'} aria-label={q.question}>
-              {q.options.map((o) => {
-                const on = picked[qi]?.includes(o.label);
-                return (
-                  <button
-                    key={o.label}
-                    className={`pi-ask__option ${on ? 'pi-ask__option--on' : ''}`}
-                    role={q.multiSelect ? 'checkbox' : 'radio'}
-                    aria-checked={on}
-                    onClick={() => toggle(qi, o.label, q.multiSelect ?? false)}
-                  >
-                    <span className="pi-ask__optionmark">{on ? '✓' : ''}</span>
-                    <span className="pi-ask__optionbody">
-                      <b>{o.label}</b>
-                      {o.description && <small>{o.description}</small>}
-                    </span>
-                  </button>
-                );
-              })}
-              {(() => {
-                const on = picked[qi]?.includes(OTHER);
-                return (
-                  <div>
-                    <button
-                      className={`pi-ask__option ${on ? 'pi-ask__option--on' : ''}`}
-                      role={q.multiSelect ? 'checkbox' : 'radio'}
-                      aria-checked={on}
-                      onClick={() => toggle(qi, OTHER, q.multiSelect ?? false)}
-                    >
-                      <span className="pi-ask__optionmark">{on ? '✓' : ''}</span>
-                      <span className="pi-ask__optionbody"><b>{zh ? '其他' : 'Other'}</b></span>
-                    </button>
-                    {on && (
-                      <input
-                        className="pi-ask__other"
-                        autoFocus
-                        value={otherText[qi]}
-                        placeholder={zh ? '输入你的想法…' : 'Type your answer…'}
-                        onChange={(e) => setOtherText((current) => current.map((t, i) => (i === qi ? e.target.value.slice(0, 300) : t)))}
-                      />
-                    )}
-                  </div>
-                );
-              })()}
-            </div>
-          </section>
-        ))}
+    <div
+      className="pi-eli"
+      role={question.multiSelect ? 'group' : 'listbox'}
+      aria-label={question.question}
+      tabIndex={activeOption < 0 ? 0 : -1}
+      onKeyDown={onKeyDown}
+    >
+      <div className="pi-eli__head">
+        <div className="pi-eli__title">
+          {question.header && <span className="pi-eli__chip">{question.header}</span>}
+          <span className="pi-eli__question" title={question.question}>{question.question}</span>
+        </div>
+        {questions.length > 1 && (
+          <span className="pi-eli__pager">
+            <button type="button" className="pi-eli__pagebtn" disabled={questionIndex === 0} aria-label={zh ? '上一题' : 'Previous question'} onClick={() => gotoQuestion(questionIndex - 1)}>‹</button>
+            <span className="pi-eli__pager-count">{`${Math.min(questionIndex + 1, questions.length)} / ${questions.length}`}</span>
+            <button type="button" className="pi-eli__pagebtn" disabled={isLast} aria-label={zh ? '下一题' : 'Next question'} onClick={() => gotoQuestion(questionIndex + 1)}>›</button>
+          </span>
+        )}
       </div>
-      <footer className="pi-connectmodal__actions">
-        <button className="pi-btn pi-btn--outline" disabled={stopping} onClick={stopTask}>{zh ? (stopping ? '正在停止…' : '停止任务') : 'Stop task'}</button>
-        <button className="pi-btn pi-btn--outline" onClick={onCancel}>{zh ? '取消' : 'Cancel'}</button>
-        <button className="pi-btn pi-btn--primary" disabled={!complete} onClick={() => onAnswer(payload.questions.map((q, qi) => ({ header: q.header || q.question.slice(0, 12), answers: answerFor(qi) })))}>
-          {zh ? '提交' : 'Submit'}
-        </button>
-      </footer>
-    </>
+
+      <div className="pi-eli__options">
+        {question.options.map((o, i) => renderOption(o, i))}
+        <div
+          className={`pi-eli__opt pi-eli__opt--custom${customFilled ? ' pi-eli__opt--on' : ''}${activeOption === customIndex ? ' pi-eli__opt--active' : ''}`}
+          role={question.multiSelect ? 'checkbox' : undefined}
+          aria-checked={question.multiSelect ? customFilled : undefined}
+          onClick={(e) => { if (e.target !== e.currentTarget.querySelector('textarea')) (e.currentTarget.querySelector('textarea') as HTMLTextAreaElement | null)?.focus(); }}
+        >
+          {question.multiSelect ? (
+            <span className={`pi-eli__check${customFilled ? ' pi-eli__check--on' : ''}`}>{customFilled ? '✓' : ''}</span>
+          ) : (
+            <span className="pi-eli__num">{customIndex + 1}.</span>
+          )}
+          <textarea
+            className="pi-eli__input"
+            rows={1}
+            value={draft.custom}
+            placeholder={zh ? '输入你的回答...' : 'Type your answer...'}
+            aria-label={zh ? '自定义回答' : 'Custom answer'}
+            onFocus={() => setActiveOption(customIndex)}
+            onChange={(e) => {
+              const value = e.target.value.slice(0, 2000);
+              setDrafts(cur => ({ ...cur, [questionIndex]: { ...(cur[questionIndex] ?? { selected: [], custom: '' }), custom: value } }));
+              const el = e.target as HTMLTextAreaElement;
+              el.style.height = 'auto';
+              el.style.height = `${Math.min(110, el.scrollHeight)}px`;
+            }}
+            onKeyDown={(e) => {
+              // 输入框也是末行选项：↑↓ 移动焦点由容器处理；Enter 推进/提交，IME 组合中放行。
+              if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
+                e.preventDefault();
+                continueOrSubmit();
+              }
+            }}
+          />
+        </div>
+      </div>
+
+      <div className="pi-eli__foot">
+        <p className="pi-eli__note">
+          <span aria-hidden="true">ⓘ</span>
+          <span>{zh ? '使用 Tab / 上下键选择，回车或空格选中' : 'Tab / ↑↓ to choose, Enter or Space to select'}</span>
+        </p>
+        <div className="pi-eli__actions">
+          <button type="button" className="pi-eli__stop" disabled={stopping} onClick={stopTask}>
+            {zh ? (stopping ? '正在停止…' : '停止任务') : stopping ? 'Stopping…' : 'Stop task'}
+          </button>
+          <button type="button" className="pi-btn pi-btn--outline" onClick={onCancel}>{zh ? '忽略' : 'Dismiss'}</button>
+          <button type="button" className="pi-btn pi-btn--primary" onClick={continueOrSubmit}>
+            {!isLast ? (zh ? '继续' : 'Continue') : (zh ? '提交' : 'Submit')}
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 
-function ExtensionDialog({ dialog }: { dialog: Dialog }) {
+/**
+ * ask_user_question 内联卡（复刻 ZCode：阻塞交互与 composer 共享 timeline bottom dock）：
+ * 不再弹全局窗——问题只在本会话的对话流内展示；后台会话的提问靠侧栏「待用户确认」胶囊提示。
+ */
+export function InlineAskCard({ dialog }: { dialog: Dialog }) {
+  const s = usePiStore();
+  const zh = s.lang === 'zh';
+  const r = dialog.request;
+  const [stopping, setStopping] = useState(false);
+  const payload = parseAskPayload(r.placeholder);
+  const stopTask = async () => {
+    setStopping(true);
+    try { await window.localPi!.stop(dialog.key); }
+    catch (error) { usePiStore.setState({error:String((error as Error).message || error)}); setStopping(false); }
+  };
+  if (!payload) return null;
+  return (
+    <section className="pi-ask-inline" role="dialog" aria-label={zh ? '需要你的选择' : 'Your input is needed'}>
+      <AskQuestionCard
+        payload={payload}
+        zh={zh}
+        onAnswer={(answers) => s.answerDialog({ id: r.id, value: JSON.stringify(answers) })}
+        onCancel={() => s.answerDialog({ id: r.id, cancelled: true })}
+        stopTask={stopTask}
+        stopping={stopping}
+      />
+    </section>
+  );
+}
+
+/**
+ * 命令/工具权限审批内联卡（ZCode 权限交互复刻，上浮在对话框上方）：
+ * 头部「需要权限」+ 工具行（图标+等待确认+文件名+目录+增删行数+展开箭头）；
+ * 五选项单选：允许(仅本次)/始终允许本项目/完全访问/拒绝/告诉模型接下来应该怎么做(文字)；
+ * 底部 ⓘ「使用 Tab / 上下键选择，回车确认」+ 确认按钮。默认选中「允许」；
+ * ↑↓/Tab 移动选择，Enter 确认，Esc 无动作（拒绝请选第 4 项）。
+ * 扩展经 RPC select 发起（响应任意值直传）：响应值 = 选项文字或自定义指引文字。
+ */
+export function parseApprovalRequest(rawTitle: string): { title: string; meta: { name: string; dir: string; add?: number; del?: number; cmd: string } | null; message: string } {
+  const lines = rawTitle.split('\n');
+  const title = lines[0] ?? rawTitle;
+  let meta: { name: string; dir: string; add?: number; del?: number; cmd: string } | null = null;
+  let message = '';
+  for (let i = 1; i < lines.length; i += 1) {
+    if (lines[i].startsWith('[pi-desktop-meta]')) {
+      try { meta = JSON.parse(lines[i].slice('[pi-desktop-meta]'.length)) as typeof meta; } catch { meta = null; }
+    } else if (lines[i].startsWith('[pi-desktop-message]')) {
+      message = lines.slice(i).join('\n').slice('[pi-desktop-message]'.length);
+      break;
+    }
+  }
+  return { title, meta, message };
+}
+
+const APPROVAL_TOOL_META: Record<string, { label: string; icon: 'edit-files' | 'read-files' | 'terminal' | 'file' }> = {
+  write: { label: '写入', icon: 'edit-files' },
+  edit: { label: '编辑', icon: 'edit-files' },
+  read: { label: '读取', icon: 'read-files' },
+  bash: { label: '执行', icon: 'terminal' },
+  exec: { label: '执行', icon: 'terminal' },
+};
+
+const PERMISSION_CHOICES = ['允许', '始终允许本项目', '完全访问', '拒绝'] as const;
+
+export function InlineApprovalCard({ dialog }: { dialog: Dialog }) {
+  const s = usePiStore();
+  const zh = s.lang === 'zh';
+  const r = dialog.request;
+  const [stopping, setStopping] = useState(false);
+  const [choice, setChoice] = useState(0); // 0..3 选项行；4 = 自定义指引行
+  const [customText, setCustomText] = useState('');
+  const [docOpen, setDocOpen] = useState(false);
+  const parsed = parseApprovalRequest(r.title ?? '');
+  const toolKey = parsed.title.replace(/^Desktop 审批 · /, '').trim();
+  const toolMeta = APPROVAL_TOOL_META[toolKey] ?? { label: toolKey, icon: 'file' as const };
+  const stopTask = async () => {
+    setStopping(true);
+    try { await window.localPi!.stop(dialog.key); }
+    catch (error) { usePiStore.setState({error:String((error as Error).message || error)}); setStopping(false); }
+  };
+  const confirm = () => {
+    const value = choice === 4 ? customText.trim() : PERMISSION_CHOICES[choice];
+    if (choice === 4 && !value) return; // 自定义行未输入文字不提交
+    s.answerDialog({ id: r.id, value });
+  };
+  // ZCode 权限卡键盘语义：↑↓/Tab 移动选择（即改选），Enter 确认；自定义行内 Ctrl/Cmd+Enter 提交。
+  const onKeyDown = (e: React.KeyboardEvent) => {
+    if (e.nativeEvent.isComposing) return;
+    const inTextarea = e.target instanceof HTMLTextAreaElement;
+    if (inTextarea) {
+      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); confirm(); }
+      return; // 自定义行内裸 Enter 留给换行/容器推进由 textarea onKeyDown 决定
+    }
+    switch (e.key) {
+      case 'ArrowDown': case 'Tab':
+        e.preventDefault();
+        setChoice(c => Math.min(c + 1, 4));
+        break;
+      case 'ArrowUp':
+        e.preventDefault();
+        setChoice(c => Math.max(c - 1, 0));
+        break;
+      case 'Enter':
+        e.preventDefault();
+        confirm();
+        break;
+      case 'Escape':
+        break; // 权限卡无忽略语义（ZCode 底部只有确认；拒绝是显式选项）
+    }
+  };
+
+  return (
+    <section className="pi-approval-inline" role="dialog" aria-label={zh ? '需要权限' : 'Permission required'} tabIndex={0} onKeyDown={onKeyDown}>
+      <div className="pi-approval-inline__title">{zh ? '需要权限' : 'Permission required'}</div>
+      <button type="button" className="pi-approval-inline__tool" onClick={() => setDocOpen(open => !open)} aria-expanded={docOpen}>
+        <Icon name={toolMeta.icon} size={14} />
+        <span className="pi-approval-inline__toolstate">{zh ? '等待确认' : 'Awaiting approval'}</span>
+        {parsed.meta?.cmd ? (
+          <span className="pi-approval-inline__cmd" title={parsed.meta.cmd}>{parsed.meta.cmd}</span>
+        ) : (
+          <>
+            <span className="pi-approval-inline__name">{parsed.meta?.name ?? toolKey}</span>
+            {parsed.meta?.dir && <span className="pi-approval-inline__dir">{parsed.meta.dir}/</span>}
+            {parsed.meta?.add !== undefined && parsed.meta.add > 0 && <span className="pi-approval-inline__add">+{parsed.meta.add}</span>}
+            {parsed.meta?.del ? <span className="pi-approval-inline__del">−{parsed.meta.del}</span> : null}
+          </>
+        )}
+        <Icon name={docOpen ? 'chevron-down' : 'chevron-right'} size={13} />
+      </button>
+      {docOpen && parsed.message && <pre className="pi-approval-inline__doc" tabIndex={0}>{parsed.message}</pre>}
+      <div className="pi-eli__options" role="radiogroup" aria-label={zh ? '审批选项' : 'Approval options'}>
+        {PERMISSION_CHOICES.map((label, index) => {
+          const desc = [
+            zh ? '仅允许这一次' : 'This call only',
+            zh ? '后续相同文件操作不再询问' : 'Same file operations won\'t ask again',
+            zh ? '授予 Agent 完全访问权限，不再确认。' : 'Grant full access; no more confirmations.',
+            zh ? '这次先拒绝' : 'Deny this call',
+          ][index];
+          return (
+            <button
+              key={label}
+              type="button"
+              role="radio"
+              aria-checked={choice === index}
+              tabIndex={-1}
+              className={`pi-eli__opt${choice === index ? ' pi-eli__opt--on' : ''}`}
+              onClick={() => setChoice(index)}
+            >
+              <span className="pi-eli__num">{index + 1}.</span>
+              <span className="pi-eli__optbody">
+                <span className="pi-eli__optlabel">{label}</span>
+                <span className="pi-eli__optdesc">{desc}</span>
+              </span>
+            </button>
+          );
+        })}
+        <div className={`pi-eli__opt pi-eli__opt--custom${choice === 4 ? ' pi-eli__opt--on' : ''}`}>
+          <span className="pi-eli__num">5.</span>
+          <textarea
+            className="pi-eli__input"
+            rows={1}
+            value={customText}
+            placeholder={zh ? '告诉模型接下来应该怎么做...' : 'Tell the model what to do next...'}
+            aria-label={zh ? '告诉模型接下来应该怎么做' : 'Tell the model what to do next'}
+            onFocus={() => setChoice(4)}
+            onChange={(e) => {
+              setCustomText(e.target.value.slice(0, 2000));
+              const el = e.target as HTMLTextAreaElement;
+              el.style.height = 'auto';
+              el.style.height = `${Math.min(110, el.scrollHeight)}px`;
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+                e.preventDefault();
+                confirm();
+              }
+            }}
+          />
+        </div>
+      </div>
+      <div className="pi-eli__foot">
+        <p className="pi-eli__note">
+          <span aria-hidden="true">ⓘ</span>
+          <span>{zh ? '使用 Tab / 上下键选择，回车确认' : 'Tab / ↑↓ to choose, Enter to confirm'}</span>
+        </p>
+        <div className="pi-eli__actions">
+          <button type="button" className="pi-eli__stop" disabled={stopping} onClick={stopTask}>
+            {zh ? (stopping ? '正在停止…' : '停止任务') : stopping ? 'Stopping…' : 'Stop task'}
+          </button>
+          <button type="button" className="pi-btn pi-btn--primary" onClick={confirm}>{zh ? '确认' : 'Confirm'}</button>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+export function ExtensionDialog({ dialog }: { dialog: Dialog }) {
   const s = usePiStore();
   const zh = s.lang === 'zh';
   const r = dialog.request;
@@ -1323,44 +1728,52 @@ function ExtensionDialog({ dialog }: { dialog: Dialog }) {
   const answer = (response: { id: string; value?: string; confirmed?: boolean; cancelled?: boolean }) => s.answerDialog(response);
   // desktop-ask 扩展的 ask_user_question：载荷在 placeholder，回答以 JSON 提交。
   const askPayload = r.method === 'input' && r.title === 'desktop-ask' ? parseAskPayload(r.placeholder) : null;
+  // 命令/工具权限审批已改走对话框上方内联卡（InlineApprovalCard），此处只处理其余扩展交互。
+  const actions = (
+    <footer className="pi-connectmodal__actions">
+      <button className="pi-btn pi-btn--outline" disabled={stopping} onClick={stopTask}>{zh ? (stopping ? '正在停止…' : '停止任务') : 'Stop task'}</button>
+      <button className="pi-btn pi-btn--outline" onClick={() => answer({ id: r.id, cancelled: true })}>
+        {zh ? '取消 / 拒绝' : 'Cancel / deny'}
+      </button>
+      {r.method !== 'select' && (
+        <button
+          className="pi-btn pi-btn--primary"
+          onClick={() => answer(r.method === 'confirm' ? { id: r.id, confirmed: true } : { id: r.id, value })}
+        >
+          {r.method === 'confirm' ? (zh ? '允许本次' : 'Allow once') : zh ? '确定' : 'OK'}
+        </button>
+      )}
+    </footer>
+  );
   return (
-    <div className="pi-overlay" role="dialog" aria-modal="true" aria-label={r.title ?? 'pi'}>
+    <div className="pi-overlay" role="dialog" aria-modal="true" aria-label={r.title ?? 'pi'} onMouseDown={(e) => { if (e.target === e.currentTarget) answer({ id: r.id, cancelled: true }); }}>
       <div className="pi-connectmodal" onMouseDown={(e) => e.stopPropagation()}>
-        <small className="pi-connectmodal__tag">{r.title === 'desktop-ask' ? (zh ? '需要你的选择' : 'Your input is needed') : r.title?.startsWith('Desktop 审批') ? (zh ? '工具访问审批 · 仅本次调用' : 'Tool approval · This call only') : 'pi extension'}</small>
+        <small className="pi-connectmodal__tag">{r.title === 'desktop-ask' ? (zh ? '需要你的选择' : 'Your input is needed') : isApprovalDialog(dialog) ? (zh ? '工具访问审批 · 仅本次调用' : 'Tool approval · This call only') : 'pi extension'}</small>
         {askPayload ? (
-          <AskQuestionCard payload={askPayload} zh={zh} onAnswer={(answers) => answer({ id: r.id, value: JSON.stringify(answers) })} onCancel={() => answer({ id: r.id, cancelled: true })} stopTask={stopTask} stopping={stopping} />
+          <div className="pi-connectmodal__body">
+            <AskQuestionCard payload={askPayload} zh={zh} onAnswer={(answers) => answer({ id: r.id, value: JSON.stringify(answers) })} onCancel={() => answer({ id: r.id, cancelled: true })} stopTask={stopTask} stopping={stopping} />
+          </div>
         ) : (
           <>
-            <h2>{r.title ?? (zh ? '需要你的回答' : 'Your answer is needed')}</h2>
-            {r.message && <pre className="pi-connectmodal__message">{r.message}</pre>}
-            {r.method === 'select' ? (
-              <div className="pi-connectmodal__options">
-                {r.options?.map((option, i) => (
-                  <button key={option} autoFocus={i === 0} className="pi-btn pi-btn--outline" onClick={() => answer({ id: r.id, value: option })}>
-                    {option}
-                  </button>
-                ))}
-              </div>
-            ) : r.method === 'editor' ? (
-              <textarea className="pi-connectmodal__editor" rows={8} value={value} onChange={(e) => setValue(e.target.value)} autoFocus />
-            ) : r.method === 'input' ? (
-              <input className="pi-connectmodal__input" placeholder={r.placeholder} value={value} onChange={(e) => setValue(e.target.value)} autoFocus />
-            ) : null}
-            {r.title?.startsWith('Desktop 审批') && !r.timeout && <p>{zh ? '等待你处理，不会自动超时。' : 'Waiting for your decision. No automatic timeout.'}</p>}
-            <footer className="pi-connectmodal__actions">
-              <button className="pi-btn pi-btn--outline" disabled={stopping} onClick={stopTask}>{zh ? (stopping ? '正在停止…' : '停止任务') : 'Stop task'}</button>
-              <button className="pi-btn pi-btn--outline" onClick={() => answer({ id: r.id, cancelled: true })}>
-                {zh ? '取消 / 拒绝' : 'Cancel / deny'}
-              </button>
-              {r.method !== 'select' && (
-                <button
-                  className="pi-btn pi-btn--primary"
-                  onClick={() => answer(r.method === 'confirm' ? { id: r.id, confirmed: true } : { id: r.id, value })}
-                >
-                  {r.method === 'confirm' ? (zh ? '允许本次' : 'Allow once') : zh ? '确定' : 'OK'}
-                </button>
-              )}
-            </footer>
+            <div className="pi-connectmodal__body">
+              <h2>{r.title ?? (zh ? '需要你的回答' : 'Your answer is needed')}</h2>
+              {r.message && <pre className="pi-connectmodal__message">{r.message}</pre>}
+              {r.method === 'select' ? (
+                <div className="pi-connectmodal__options">
+                  {r.options?.map((option, i) => (
+                    <button key={option} autoFocus={i === 0} className="pi-btn pi-btn--outline" onClick={() => answer({ id: r.id, value: option })}>
+                      {option}
+                    </button>
+                  ))}
+                </div>
+              ) : r.method === 'editor' ? (
+                <textarea className="pi-connectmodal__editor" rows={8} value={value} onChange={(e) => setValue(e.target.value)} autoFocus />
+              ) : r.method === 'input' ? (
+                <input className="pi-connectmodal__input" placeholder={r.placeholder} value={value} onChange={(e) => setValue(e.target.value)} autoFocus />
+              ) : null}
+              {isApprovalDialog(dialog) && !r.timeout && <p>{zh ? '等待你处理，不会自动超时。' : 'Waiting for your decision. No automatic timeout.'}</p>}
+            </div>
+            {actions}
           </>
         )}
       </div>

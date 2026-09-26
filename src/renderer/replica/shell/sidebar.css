@@ -160,6 +160,34 @@
   visibility: visible;
 }
 
+/* 阻塞交互胶囊（ZCode TaskInteractionBadge）：会话在等用户回答/确认时替换右侧时间位。 */
+.pireplica .pi-sidebar__confirm {
+  flex-shrink: 0;
+  max-width: 96px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 16px;
+  padding: 0 6px;
+  border-radius: 999px;
+  color: #b45309;
+  background: rgba(245, 158, 11, 0.14);
+}
+.pireplica .pi-sidebar__confirm--permission {
+  color: #1d4ed8;
+  background: rgba(59, 130, 246, 0.14);
+}
+.pireplica--dark .pi-sidebar__confirm {
+  color: #fbbf24;
+  background: rgba(245, 158, 11, 0.2);
+}
+.pireplica--dark .pi-sidebar__confirm--permission {
+  color: #93c5fd;
+  background: rgba(59, 130, 246, 0.22);
+}
+
 .pireplica .pi-sidebar__more {
   display: none;
   color: var(--pi-text-tertiary);

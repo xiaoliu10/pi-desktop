@@ -25,6 +25,10 @@ export interface DesktopPreferences {
   autoArchive?: boolean;
   /** 归档保留时长（天）：任务最后更新时间早于该时长才进入自动归档候选。 */
   archiveRetentionDays?: number;
+  /** 自动删除超期归档任务（永久删除，不进废纸篓）；默认关闭。 */
+  autoDeleteArchived?: boolean;
+  /** 归档任务自动删除保留时长（天）：归档时间早于该时长才进入自动删除候选。 */
+  autoDeleteArchivedDays?: number;
   /** 用户在输入框选择的思考等级，跨会话固化。 */
   defaultThinkingLevel?: ThinkingLevel;
   /** 固定 agent 快捷入口；缺省用 DEFAULT_AGENT_PRESETS。 */
@@ -38,6 +42,8 @@ export interface DesktopPreferences {
 }
 export const ARCHIVE_RETENTION_DAYS = [7, 30, 90] as const;
 export const DEFAULT_ARCHIVE_RETENTION_DAYS = 30;
+export const AUTO_DELETE_ARCHIVED_DAYS = [7, 30, 90, 180, 365] as const;
+export const DEFAULT_AUTO_DELETE_ARCHIVED_DAYS = 30;
 export const DEFAULT_SHORTCUTS: Record<ShortcutAction, string> = { search: 'Mod+K', newSession: 'Mod+Shift+N', settings: 'Mod+,', workbench: 'Mod+Shift+R', sidebar: 'Mod+B', stop: 'Mod+Shift+X' };
 export interface EditableResource {
   id: string; name: string; path: string; scope: 'user' | 'project'; kind: ResourceKind;
@@ -58,7 +64,7 @@ export interface SettingsSnapshot {
 }
 export interface SettingsApi {
   settingsSnapshot(cwd?: string): Promise<SettingsSnapshot>;
-  saveDesktopSettings(patch: Partial<Pick<DesktopPreferences, 'behavior' | 'permission' | 'shortcuts' | 'sessionRenames' | 'sessionAccessModes' | 'autoArchive' | 'archiveRetentionDays' | 'defaultThinkingLevel' | 'openWithApp' | 'memoryAssist' | 'subagentDismissed'>>): Promise<void>;
+  saveDesktopSettings(patch: Partial<Pick<DesktopPreferences, 'behavior' | 'permission' | 'shortcuts' | 'sessionRenames' | 'sessionAccessModes' | 'autoArchive' | 'archiveRetentionDays' | 'autoDeleteArchived' | 'autoDeleteArchivedDays' | 'defaultThinkingLevel' | 'openWithApp' | 'memoryAssist' | 'subagentDismissed'>>): Promise<void>;
   saveAiSettings(value: SettingsSnapshot['ai']): Promise<void>;
   resourceRead(id: string, cwd?: string): Promise<ResourceDocument>;
   resourceSave(input: { id: string; text: string; revision: string; cwd?: string }): Promise<void>;

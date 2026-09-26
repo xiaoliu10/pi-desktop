@@ -1,43 +1,141 @@
-/** 按扩展名渲染的文件类型小图标，对照 ZCode/编辑器惯例：TS 系蓝色、JS 系黄色、
- *  .tsx/.jsx 用 React 原子图、其余用彩色字母徽标。纯展示，无外部依赖。 */
+// ZCode 同款文件类型小图标（Material Icon Theme 素材，MIT）。
+// 解析逻辑移植自 ZCode fileDisplayHelpers.resolveIconName：
+// 1) 逐段回退的文件名别名（vitest.config.ts / tsconfig.base.json / .env.local 这类多段名
+//    不能提前退回扩展名图标，否则配置文件语义丢失）；
+// 2) 扩展名别名（tsx 实际素材叫 react_ts）；
+// 3) 未知扩展名回退 document，全部走内联 data URL（避开 Electron 相对路径 404）。
+import { FILE_ICON_URLS } from './file-icons.generated';
+
+export const DEFAULT_FILE_ICON_NAME = 'document';
+
+const FILE_NAME_ICON_ALIASES: Record<string, string> = {
+  '.editorconfig': 'editorconfig',
+  '.env': 'settings',
+  '.gitattributes': 'git',
+  '.gitignore': 'git',
+  '.npmrc': 'npm',
+  '.nvmrc': 'nodejs_alt',
+  '.prettierrc': 'prettier',
+  '.yarnrc': 'yarn',
+  'babel.config': 'babel',
+  bun: 'lock',
+  'bun.lock': 'lock',
+  cargo: 'rust',
+  'cargo.lock': 'lock',
+  dockerfile: 'docker',
+  eslint: 'eslint',
+  'eslint.config': 'eslint',
+  gemfile: 'gemfile',
+  jest: 'jest',
+  'jest.config': 'jest',
+  makefile: 'makefile',
+  'package-lock': 'lock',
+  'pnpm-lock': 'lock',
+  readme: 'readme',
+  tsconfig: 'tsconfig',
+  vitest: 'vitest',
+  'vitest.config': 'vitest',
+  yarn: 'yarn',
+};
+
+const EXTENSION_ICON_ALIASES: Record<string, string> = {
+  backup: 'document',
+  bash: 'console',
+  cjs: 'javascript',
+  css: 'css',
+  cts: 'typescript',
+  doc: 'word',
+  docx: 'word',
+  go: 'go',
+  html: 'html',
+  htm: 'html',
+  java: 'java',
+  jpeg: 'image',
+  jpg: 'image',
+  js: 'javascript',
+  jsx: 'react',
+  json: 'json',
+  jsonl: 'json',
+  less: 'less',
+  mjs: 'javascript',
+  md: 'markdown',
+  markdown: 'markdown',
+  m4a: 'audio',
+  m4v: 'video',
+  flac: 'audio',
+  mov: 'video',
+  mp3: 'audio',
+  mp4: 'video',
+  ogg: 'audio',
+  opus: 'audio',
+  mts: 'typescript',
+  pdf: 'pdf',
+  php: 'php',
+  png: 'image',
+  pptx: 'powerpoint',
+  py: 'python',
+  responses: 'json',
+  rs: 'rust',
+  sb: 'storybook',
+  scss: 'sass',
+  sass: 'sass',
+  sql: 'database',
+  sh: 'console',
+  snap: 'snapcraft',
+  svg: 'svg',
+  toml: 'toml',
+  ts: 'typescript',
+  tsx: 'react_ts',
+  txt: 'document',
+  wav: 'audio',
+  weba: 'audio',
+  webm: 'video',
+  xlsx: 'table',
+  yaml: 'yaml',
+  yml: 'yaml',
+  zsh: 'console',
+};
+
+/** ZCode resolveIconName：先逐段回退命中文件名别名，再按扩展名别名解析。 */
+export function resolveFileIconName(path: string): string {
+  const normalizedPath = typeof path === 'string' ? path.replace(/\\/g, '/') : '';
+  const lastSlash = normalizedPath.lastIndexOf('/');
+  const leaf = lastSlash === -1 ? normalizedPath : normalizedPath.slice(lastSlash + 1);
+  const normalizedLeaf = leaf.toLowerCase();
+  const lastDot = leaf.lastIndexOf('.');
+  const stem = lastDot === -1 ? normalizedLeaf : normalizedLeaf.slice(0, lastDot);
+
+  const fileNameCandidates = new Set<string>([normalizedLeaf, stem]);
+  let stemCandidate = stem;
+  while (stemCandidate.includes('.')) {
+    stemCandidate = stemCandidate.slice(0, stemCandidate.lastIndexOf('.'));
+    if (stemCandidate) fileNameCandidates.add(stemCandidate);
+  }
+  for (const candidate of fileNameCandidates) {
+    const aliased = FILE_NAME_ICON_ALIASES[candidate];
+    if (aliased) return aliased;
+  }
+  if (lastDot === -1) return DEFAULT_FILE_ICON_NAME;
+  const extension = leaf.slice(lastDot + 1).toLowerCase();
+  return EXTENSION_ICON_ALIASES[extension] ?? extension;
+}
+
+/** 解析到素材名；未打包的素材名（未知扩展名直落）回退 document，保证永不 404。 */
+export function resolveFileIconUrl(path: string): string {
+  const name = resolveFileIconName(path);
+  return FILE_ICON_URLS[name] ?? FILE_ICON_URLS[DEFAULT_FILE_ICON_NAME];
+}
+
 export function FileIcon({ path, size = 16, className }: { path: string; size?: number; className?: string }) {
-  const name = typeof path === 'string' ? path.split('/').pop() || path : '';
-  const ext = name.includes('.') ? name.slice(name.lastIndexOf('.') + 1).toLowerCase() : '';
-  const badge = (label: string, bg: string, color = '#fff') => (
-    <span
-      className={`pi-fileicon pi-fileicon--badge${className ? ' ' + className : ''}`}
-      style={{ width: size, height: size, background: bg, color, fontSize: Math.max(7, Math.floor(size * 0.42)) }}
+  return (
+    <img
+      src={resolveFileIconUrl(path)}
+      width={size}
+      height={size}
+      alt=""
       aria-hidden="true"
-    >
-      {label}
-    </span>
+      className={`pi-fileicon pi-fileicon--svg${className ? ' ' + className : ''}`}
+      draggable={false}
+    />
   );
-  // React 原子图（.tsx/.jsx），蓝色（TS）/青绿（JS）。
-  if (ext === 'tsx' || ext === 'jsx') {
-    const stroke = ext === 'tsx' ? '#3178c6' : '#61dafb';
-    return (
-      <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={stroke} strokeWidth="1.3" className={`pi-fileicon${className ? ' ' + className : ''}`} aria-hidden="true">
-        <ellipse cx="12" cy="12" rx="11" ry="4" />
-        <ellipse cx="12" cy="12" rx="11" ry="4" transform="rotate(60 12 12)" />
-        <ellipse cx="12" cy="12" rx="11" ry="4" transform="rotate(120 12 12)" />
-        <circle cx="12" cy="12" r="1.6" fill={stroke} stroke="none" />
-      </svg>
-    );
-  }
-  switch (ext) {
-    case 'ts': return badge('TS', '#3178c6');
-    case 'js': case 'mjs': case 'cjs': return badge('JS', '#f7df1e', '#3a3a3a');
-    case 'json': return badge('{}', '#cbcb41', '#1a1a1a');
-    case 'md': case 'markdown': return badge('MD', '#519aba');
-    case 'css': case 'scss': case 'sass': return badge('#', '#264de4');
-    case 'html': case 'htm': return badge('<>', '#e34c26');
-    case 'py': return badge('PY', '#3776ab');
-    case 'sh': case 'bash': case 'zsh': return badge('$', '#89e051', '#1a1a1a');
-    case 'yml': case 'yaml': return badge('Y', '#cb171e');
-    case 'toml': return badge('T', '#9c4221');
-    case 'png': case 'jpg': case 'jpeg': case 'gif': case 'webp': case 'svg': return badge('IMG', '#a074c4');
-    case 'lock': return badge('🔒', '#8a8a8a', '#1a1a1a');
-    case '': return badge('·', '#8a8a8a'); // 无扩展名
-    default: return badge(ext.slice(0, 3).toUpperCase(), '#6b7280');
-  }
 }

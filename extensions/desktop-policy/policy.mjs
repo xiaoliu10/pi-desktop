@@ -58,3 +58,23 @@ export function approvalMessage(event, decision, cwd) {
   return `工作目录：${cwd}\n工具：${event.toolName}\n原因：${decision.reason}${diff}\n完整参数：\n${JSON.stringify(event.input, null, 2)}`;
 }
 export const inputDigest = input => createHash('sha256').update(JSON.stringify(input)).digest('hex');
+
+/** 审批卡工具行元数据：文件名/相对目录/增删行数（bash 为命令摘要）。随 title 编码传给渲染端。 */
+export function approvalMeta(event, decision, cwd) {
+  const tool = event.toolName;
+  const lineCount = text => (text ? String(text).split('\n').length : 0);
+  if (decision.target && (tool === 'edit' || tool === 'write')) {
+    const relative = path.relative(cwd, decision.target) || decision.target;
+    const name = path.basename(relative);
+    const dir = path.dirname(relative);
+    const add = tool === 'edit' ? lineCount(event.input.newText) : lineCount(event.input.content);
+    const del = tool === 'edit' ? lineCount(event.input.oldText) : 0;
+    return { name, dir: dir === '.' ? '' : dir, add, del: del || undefined, cmd: '' };
+  }
+  if (tool === 'bash' || tool === 'exec') {
+    const cmd = String(event.input?.command ?? event.input?.script ?? '').replace(/\s+/g, ' ').trim();
+    return { name: cmd.slice(0, 80) || tool, dir: '', add: undefined, del: undefined, cmd: cmd.slice(0, 80) };
+  }
+  const label = String(event.input?.path ?? event.input?.file_path ?? '').split('/').pop();
+  return { name: label || tool, dir: '', add: undefined, del: undefined, cmd: '' };
+}

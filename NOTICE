@@ -13,3 +13,7 @@ Bundled third-party components (installed at build time, not committed):
 The UI design references ZCode (Apache License 2.0) and PI-Desktop
 (https://github.com/vastsa/PI-Desktop). This project is an independent
 implementation and does not include their source code.
+
+File type icons in `src/renderer/assets/file-icons/` are from the
+Material Icon Theme (MIT), copied via ZCode's bundled copy;
+© Material Extensions, https://github.com/material-extensions/vscode-material-icon-theme.

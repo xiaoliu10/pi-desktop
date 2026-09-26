@@ -230,8 +230,21 @@ function SessionRow(props: {
           <span className="pi-sidebar__rowtitle">{s.title}</span>
         )}
         <span className="pi-sidebar__rowmeta">
-          {s.source === 'pi-cli' && <span className="pi-sidebar__sync" title={props.labels.readOnlyBadge}>π</span>}
-          <span className="pi-sidebar__time">{formatSessionTime(s.updatedAt)}</span>
+          {s.needsConfirm ? (
+            // ZCode TaskInteractionBadge：阻塞交互胶囊占用右侧状态位，替换相对时间避免挤压标题。
+            <span
+              className={`pi-sidebar__confirm pi-sidebar__confirm--${s.needsConfirm}`}
+              title={zh ? (s.needsConfirm === 'userInput' ? '会话在等待你回答问题' : '会话在等待你确认权限') : (s.needsConfirm === 'userInput' ? 'This chat is waiting for your answer' : 'This chat is waiting for your approval')}
+            >
+              {s.needsConfirm === 'userInput' ? (zh ? '待用户确认' : 'Needs input') : (zh ? '待确认' : 'Approval')}
+              {(s.needsConfirmCount ?? 0) > 1 && ` ×${s.needsConfirmCount}`}
+            </span>
+          ) : (
+            <>
+              {s.source === 'pi-cli' && <span className="pi-sidebar__sync" title={props.labels.readOnlyBadge}>π</span>}
+              <span className="pi-sidebar__time">{formatSessionTime(s.updatedAt)}</span>
+            </>
+          )}
         </span>
         <button
           className="pi-sidebar__more"

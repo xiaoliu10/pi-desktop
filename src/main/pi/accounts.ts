@@ -14,7 +14,7 @@ export class PiAccounts {
   constructor(private agentDir:()=>string) {}
   private spawn(operation:string,provider='') {
     const env=discoverPi({runtime:'bundled',agentDir:this.agentDir()});
-    if(!env.executable||!env.launchArgs?.[0])throw new Error('登录功能需要 Desktop 内置 pi 运行时。请先准备或修复内置运行时。');
+    if(!env.executable||!env.launchArgs?.[0])throw new Error('模型目录、账号登录和套餐额度查询需要 Desktop 内置 pi 运行时，但运行时缺失或不可用。共享 pi 配置不等于已安装内置运行时。开发环境请运行 pnpm runtime:prepare；安装版请重新安装包含内置运行时且匹配架构的安装包。');
     const sdk=path.resolve(path.dirname(env.launchArgs[0]),'../core/model-runtime.js');
     return spawn(env.executable,['-e',ACCOUNT_WORKER,sdk,env.agentDir,operation,provider],{stdio:'pipe',env:{...process.env,PI_CODING_AGENT_DIR:env.agentDir}});
   }

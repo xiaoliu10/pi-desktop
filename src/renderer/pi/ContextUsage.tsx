@@ -1,4 +1,5 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
+import { onCloseTransientPopovers } from '../replica/popovers';
 import { createPortal } from 'react-dom';
 
 export interface ContextUsage { tokens: number | null; contextWindow: number; percent: number | null }
@@ -34,6 +35,8 @@ export function ContextUsageChip({ usage, zh, compact, model }: { usage?: Contex
   const hide = () => { cancelClose(); setOpen(false); };
   const scheduleClose = () => { cancelClose(); closeTimer.current = setTimeout(() => setOpen(false), 160); };
   useEffect(() => () => clearTimeout(closeTimer.current), []);
+  // 视图切换（如进入设置页）时收起浮层：fixed+z1200 会穿透设置页覆盖层吞掉点击。
+  useEffect(() => onCloseTransientPopovers(() => { cancelClose(); setOpen(false); }), []);
   useLayoutEffect(() => {
     if (!open) return;
     const positionCard = () => {

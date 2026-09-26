@@ -4,19 +4,23 @@ import { TerminalService } from './pi/terminal-service';
 import { filePreview } from './pi/file-preview';
 import { gitStatus } from './pi/git-status';
 import fs from 'node:fs/promises';
+import fsSync from 'node:fs';
 import { AutomationService } from './pi/automation-service';
 import { importAttachments, clipboardAttachments, readAttachment, downloadImage } from './pi/attachments';
 import { createProjectWorktree } from './pi/project-worktree';
+import { openMemoryFile } from './pi/memory-open';
 import { authorizeProjectCwd, listExternalApps, openWithApp } from './pi/open-with';
-import { canonical } from './pi/session-index';
+import { canonical, fileKey } from './pi/session-index';
 import { bundleIcon } from './pi/app-icon';
 import { SessionArchive } from './pi/session-archive';
 import { autoArchiveKeys } from './pi/auto-archive';
+import { autoDeleteArchivedKeys, deleteArchivedSession } from './pi/auto-delete';
 import { projectFiles, projectContext, readContext, projectBranch, skillChoices } from './pi/composer-service';
 import { isAccessMode } from '../shared/access-mode';
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, shell } from 'electron';
 import path from 'node:path';
 import { SettingsService } from './pi/settings-service';
+import { VoiceService } from './pi/voice-service';
 import { PiHost } from './pi/host';
 import { RemoteServer } from './pi/remote-server';
 import { ImBot } from './pi/im-bot';
@@ -48,6 +52,7 @@ let settings: SettingsService;
 let archive: SessionArchive;
 let automations: AutomationService | undefined;
 let terminals: TerminalService;
+let voice: VoiceService;
 function broadcast(event: PiEvent) {
   automations?.onPiEvent(event);
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('local-pi:event', event);
@@ -63,7 +68,12 @@ function broadcast(event: PiEvent) {
   });
 }
 function registerIpc() {
-  archive = new SessionArchive(path.join(app.getPath('userData'), 'archived-sessions.json'));
+  // 旧 string[] 索引迁移时仅扫描一次；缺失文件由 SessionArchive 回退到迁移当下时间。
+  let migrationUpdatedAt: Map<string, number> | undefined;
+  archive = new SessionArchive(path.join(app.getPath('userData'), 'archived-sessions.json'), key => {
+    migrationUpdatedAt ??= new Map(host.index.scan().map(s => [s.key, s.updatedAt]));
+    return migrationUpdatedAt.get(key);
+  });
   // 内置终端：pty 事件广播到渲染进程（批量后的数据 + 退出通知）。终端 IPC 处理器在下方 handle 定义后注册。
   terminals = new TerminalService(event => {
     if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(event.type === 'terminalData' ? 'local-pi:terminalData' : 'local-pi:terminalExit', event);
@@ -100,8 +110,8 @@ function registerIpc() {
   handle('settingsSnapshot', cwd => settings.snapshot(cwd));
   handle('saveDesktopSettings', patch => {
     settings.savePreferences(patch);
-    // 归档相关设置保存后立刻扫描一次，否则最长要等 30 分钟定时器才生效。
-    if (patch && typeof patch === 'object' && ('autoArchive' in patch || 'archiveRetentionDays' in patch)) setTimeout(autoArchivePass, 200);
+    // 归档/自动删除相关设置保存后立刻扫描一次，否则最长要等 30 分钟定时器才生效。
+    if (patch && typeof patch === 'object' && ('autoArchive' in patch || 'archiveRetentionDays' in patch || 'autoDeleteArchived' in patch || 'autoDeleteArchivedDays' in patch)) setTimeout(archiveCleanupPass, 200);
   });
   handle('saveAiSettings', value => settings.saveAi(value));
   handle('resourceRead', (id, cwd) => settings.readResource(id, cwd));
@@ -150,6 +160,16 @@ function registerIpc() {
     broadcast({type:'sessions-changed'});
     return result;
   });
+  // 手动删除归档会话：文件移到系统废纸篓（可恢复）；文件已不存在时只清理索引条目。
+  handle('deleteArchivedSession', async key => {
+    const result = await deleteArchivedSession({
+      key, archive, sessions: host.index.scan(), runs: host.backend.runs(),
+      hasPendingDialogs: k => host.backend.hasPendingDialogs(k),
+      trash: file => shell.trashItem(file), exists: file => fsSync.existsSync(file), keyOf: fileKey,
+    });
+    broadcast({ type: 'sessions-changed' });
+    return result;
+  });
   handle('sessions', () => host.index.scan());
   handle('history', (key, leaf) => host.index.history(key, leaf));
   handle('resources', cwd => host.resources(cwd));
@@ -160,6 +180,7 @@ function registerIpc() {
   handle('setAccessMode', (key, mode) => host.backend.setAccessMode(key, mode));
   handle('runs', () => host.backend.runs());
   handle('prompt', (key, text, behavior, images) => { if (typeof text !== 'string' || !['steer', 'followUp'].includes(behavior)) throw new Error('输入无效'); return host.backend.prompt(key, text, behavior, images); });
+  handle('compact', (key, customInstructions) => { if (customInstructions !== undefined && typeof customInstructions !== 'string') throw new Error('输入无效'); return host.backend.compact(key, customInstructions || undefined); });
   handle('stop', key => host.backend.stop(key));
   handle('queueEdit', (key, op) => {
     if (!op || typeof op !== 'object' || !['remove', 'edit', 'now'].includes((op as { type?: string }).type ?? '')) throw new Error('队列操作无效');
@@ -191,7 +212,7 @@ function registerIpc() {
   // 记忆衔接层：探测 CLI 记忆插件（如 pi-memory），未启用时回退 Desktop 内置桥
   handle('memoryAssistStatus', (enabled: unknown) => memoryAssistStatus(host.environment.agentDir, Boolean(enabled)));
   handle('memoryList', (cwd: unknown) => listMemoryFiles(host.environment.agentDir, typeof cwd === 'string' && cwd ? cwd : undefined));
-  handle('memoryRead', (rel: unknown) => readMemoryFileContent(host.environment.agentDir, String(rel)));
+  handle('memoryRead', (rel: unknown, cwd: unknown) => readMemoryFileContent(host.environment.agentDir, String(rel), typeof cwd === 'string' && cwd ? cwd : undefined));
   // 一键启用内置默认记忆插件：已装未登记 → 补注册；未装 → pi install 后注册。
   handle('memoryEnableDefault', async () => {
     const detected = detectMemoryPlugin(host.environment.agentDir);
@@ -225,6 +246,9 @@ function registerIpc() {
     try { const icon = await app.getFileIcon(p, { size: 'normal' }); return icon.isEmpty() ? undefined : icon.toDataURL(); } catch { return undefined; }
   };
   handle('externalApps', () => listExternalApps({ fileIcon }));
+  handle('memoryOpen', (rel, cwd, appId) => openMemoryFile(host.environment.agentDir, rel, cwd, appId,
+    [...settings.preferences().projects.map(p => p.path), ...host.index.scan().map(s => s.cwd), ...host.backend.runs().map(r => r.cwd)],
+    { reveal: file => shell.showItemInFolder(file) }));
   handle('openWith', (cwd, appId) => {
     const known = [...settings.preferences().projects.map(p => p.path), ...host.index.scan().map(s => s.cwd), ...host.backend.runs().map(r => r.cwd)];
     const real = authorizeProjectCwd(cwd, known);
@@ -239,6 +263,17 @@ function registerIpc() {
   handle('imSave', patch => imBot.save(patch));
   handle('imTest', () => imBot.send('PI Desktop 通知测试：配置成功 ✅'));
   handle('composerSkills', cwd => skillChoices(settings.resources(cwd)));
+  // 语音输入：ASR 模型列表（密钥只留主进程）+ 云端转写。
+  voice = new VoiceService(() => app.getPath('userData'));
+  handle('voiceConfig', () => voice.config());
+  handle('voiceSaveModel', input => voice.saveModel(input ?? {}));
+  handle('voiceRemoveModel', id => voice.removeModel(String(id)));
+  handle('voiceSetActive', id => voice.setActive(String(id)));
+  handle('voiceTranscribe', (bytes, mime) => {
+    if (!(bytes instanceof Uint8Array)) throw new Error('录音数据格式无效');
+    if (typeof mime !== 'string' || mime.length > 100) throw new Error('音频类型无效');
+    return voice.transcribe(bytes, mime);
+  });
   handle('projectFiles', cwd => projectFiles(cwd));
   handle('projectContext', (cwd, relative) => projectContext(cwd, relative));
   handle('projectBranch', cwd => projectBranch(cwd));
@@ -261,15 +296,60 @@ function registerIpc() {
 function autoArchivePass() {
   if (!archive || !settings || !host) return;
   try {
-    const keys = autoArchiveKeys({ preferences: settings.preferences(), sessions: host.index.scan(), runs: host.backend.runs(), hasPendingDialogs: key => host.backend.hasPendingDialogs(key) });
+    const alreadyArchived = new Set(archive.list());
+    const keys = autoArchiveKeys({ preferences: settings.preferences(), sessions: host.index.scan(), runs: host.backend.runs(), hasPendingDialogs: key => host.backend.hasPendingDialogs(key) })
+      .filter(key => !alreadyArchived.has(key));
     if (keys.length) { archive.setMany(keys, true); broadcast({ type: 'sessions-changed' }); }
   } catch { /* 单次扫描失败不影响下次定时重试 */ }
+}
+
+/** 自动删除超期归档会话：永久删除（fs.unlink，不进废纸篓）。单条失败不影响其它。 */
+function autoDeletePass() {
+  if (!archive || !settings || !host) return;
+  try {
+    const preferences = settings.preferences();
+    if (!preferences.autoDeleteArchived) return;
+    const sessions = host.index.scan();
+    const keys = autoDeleteArchivedKeys({ preferences, entries: archive.entries(), sessions, runs: host.backend.runs(), hasPendingDialogs: key => host.backend.hasPendingDialogs(key) });
+    if (!keys.length) return;
+    const removed: string[] = [];
+    for (const key of keys) {
+      try {
+        // 每条删除前重新检查索引、活跃连接与最后操作时间，避免扫描期间变动导致误删。
+        const currentEntries = archive.entries();
+        const currentSessions = host.index.scan();
+        const currentPreferences = settings.preferences();
+        if (!autoDeleteArchivedKeys({ preferences: currentPreferences, entries: currentEntries, sessions: currentSessions,
+          runs: host.backend.runs(), hasPendingDialogs: k => host.backend.hasPendingDialogs(k) }).includes(key)) continue;
+        const session = currentSessions.find(s => s.key === key)!;
+        if (!session.path.endsWith('.jsonl') || fileKey(session.path) !== key) throw new Error('会话文件路径校验失败');
+        try { fsSync.unlinkSync(session.path); }
+        catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+        archive.remove([key]);
+        removed.push(key);
+      } catch (error) {
+        console.warn('[auto-delete] 删除归档会话失败，已跳过：', key, error);
+      }
+    }
+    if (removed.length) {
+      console.log(`[auto-delete] 已永久删除 ${removed.length} 个超期归档会话`);
+      broadcast({ type: 'sessions-changed' });
+    }
+  } catch (error) { console.warn('[auto-delete] 本轮扫描失败，下次重试：', error); }
+}
+
+function archiveCleanupPass() {
+  autoArchivePass(); // 先归档：新归档条目的 archivedAt 记为当前时间，不会立刻被删除
+  autoDeletePass();
 }
 
 // -- window ---------------------------------------------------------------------
 
 function createWindow(): void {
   if(!process.env.PI_SMOKE)automations?.start();
+  // 语音输入（getUserMedia）无需安装权限 handler：Electron 未设置 handler 时默认放行，
+  // 麦克风授权由 macOS TCC（NSMicrophoneUsageDescription）在首次使用时提示。
+  // 自定义 handler 反而会把剪贴板等现有能力一并接管，得不偿失。
   mainWindow = new BrowserWindow({
     width: 1440,
     height: 900,
@@ -285,6 +365,9 @@ function createWindow(): void {
       nodeIntegration: false,
       sandbox: true,
       spellcheck: false,
+      // 工作台内置浏览器（BrowserPanel）使用 <webview>。guest 的导航/弹窗限制见下方
+      // web-contents-created 守卫；webview 本身不挂 preload，任意网页拿不到 window.localPi。
+      webviewTag: true,
     },
   });
 
@@ -337,6 +420,21 @@ function createWindow(): void {
 
 // -- lifecycle ---------------------------------------------------------------
 app.setName('PI Desktop');
+// 内置浏览器（工作台 browser tab 的 <webview> guest）安全边界：
+// - 仅允许 http/https 导航；file:、javascript:、data: 等协议一律拦截
+//   （渲染层 normalizeUrl 先行拦截，这里兜底防页面内跳转绕过）；
+// - 外链（target=_blank / window.open）一律 deny 并转交系统默认浏览器，
+//   绝不新建可能带 node 权限的 Electron 窗口。
+app.on('web-contents-created', (_event, contents) => {
+  if (contents.getType() !== 'webview') return;
+  contents.setWindowOpenHandler(({ url }) => {
+    if (/^https?:\/\//i.test(url)) void shell.openExternal(url);
+    return { action: 'deny' };
+  });
+  contents.on('will-navigate', (event, url) => {
+    if (!/^https?:\/\//i.test(url)) event.preventDefault();
+  });
+});
 if (process.env.PI_DESKTOP_DATA_DIR) app.setPath('userData', path.resolve(process.env.PI_DESKTOP_DATA_DIR));
 // One scheduler per data directory; opening the app again focuses the existing window.
 const primaryInstance = app.requestSingleInstanceLock();
@@ -357,8 +455,8 @@ void app.whenReady().then(() => {
   });
   registerIpc();
   if(!process.env.PI_SMOKE)automations.start();
-  setTimeout(autoArchivePass, 15_000).unref(); // 启动后先扫一次
-  setInterval(autoArchivePass, 30 * 60 * 1000).unref(); // 每 30 分钟定时扫描
+  setTimeout(archiveCleanupPass, 15_000).unref(); // 启动后先扫一次
+  setInterval(archiveCleanupPass, 30 * 60 * 1000).unref(); // 每 30 分钟定时扫描
   void imBot.syncTransport().catch(() => undefined); // resume a configured two-way bot
   // Dev mode runs from the default Electron bundle, so the Dock/⌘Tab icon must
   // be set explicitly; a packaged build takes the icon from icon.icns instead.

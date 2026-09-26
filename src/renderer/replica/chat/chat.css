@@ -608,6 +608,9 @@
   position: relative;
   width: min(var(--pi-composer-max-width), calc(100% - 48px));
   margin: 0 auto;
+  /* 容器查询基准：工具行按卡片实际宽度分层降级（workbench 打开时窗口媒体查询感知不到）。 */
+  container-type: inline-size;
+  container-name: composer;
 }
 
 .pireplica .pi-composer {
@@ -663,6 +666,13 @@
   min-width: 0;
 }
 
+/* 右组保底：pill 省略号 + icon-only 之后仍超宽时，水平方向裁在组内——
+   不得溢出卡片、不得把发送按钮顶出去。竖向不裁（录音脉冲环 inset:-3px 需要溢出）。
+   菜单弹层挂在 pi-composer-wrap 上、不在工具行内，不受 clip 影响。 */
+.pireplica .pi-composer__right {
+  overflow-x: clip;
+}
+
 .pireplica .pi-composer__pill {
   display: inline-flex;
   align-items: center;
@@ -672,6 +682,24 @@
   border-radius: var(--pi-radius-pill);
   color: var(--pi-text-secondary);  font-size: var(--pi-font-size-sm);
   white-space: nowrap;
+  /* 参照 ZCode：允许收缩 + min-width:0，文字先省略号。 */
+  min-width: 0;
+  overflow: hidden;
+}
+
+.pireplica .pi-composer__pill > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pireplica .pi-composer__pill > svg {
+  flex: none;
+}
+
+/* 待生效徽标不收缩（窄容器下由容器查询整体隐藏，pill title 仍说明状态）。 */
+.pireplica .pi-composer__pending {
+  flex: none;
 }
 
 .pireplica .pi-composer__pill:hover {
@@ -728,6 +756,87 @@
   opacity: 1;
 }
 
+/* 语音输入按钮：录音中红点呼吸，转写中禁用并转圈 */
+.pireplica .pi-composer__voice {
+  position: relative;
+}
+
+.pireplica .pi-composer__voice--rec {
+  color: #e5484d;
+}
+
+.pireplica .pi-composer__voice--rec::after {
+  content: '';
+  position: absolute;
+  inset: -3px;
+  border-radius: 10px;
+  border: 2px solid #e5484d;
+  animation: pi-voice-pulse 1.2s ease-in-out infinite;
+  pointer-events: none;
+}
+
+.pireplica .pi-composer__voice--busy svg {
+  animation: pi-voice-spin 0.9s linear infinite;
+}
+
+@keyframes pi-voice-pulse {
+  0%, 100% { opacity: 0.25; }
+  50% { opacity: 1; }
+}
+
+@keyframes pi-voice-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* -- composer 工具行响应式收纳（参照 ZCode：允许缩放 + 最小宽度） ----------------
+   降级顺序：1) pill/槽位文字省略号收缩 → 2) 容器查询按卡片宽度隐藏文字只留
+   icon 下拉 → 3) __right overflow-x: clip 保底。窗口媒体查询感知不到
+   workbench 挤压聊天列，必须用 composer 容器查询。 */
+
+/* 发送/语音按钮与上下文环不收缩。 */
+.pireplica .pi-composer__voice,
+.pireplica .pi-composer .pi-context-chip--compact {
+  flex: none;
+}
+
+/* 生产槽位（访问模式/添加按钮/历史分支/思考等级）与 pill 一样可收缩。 */
+.pireplica .pi-composer .pi-add { flex: none; min-width: 0; }
+.pireplica .pi-composer .pi-access { min-width: 0; }
+.pireplica .pi-composer .pi-access__trigger { min-width: 0; max-width: 100%; overflow: hidden; }
+.pireplica .pi-composer .pi-access__trigger > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.pireplica .pi-composer .pi-access__trigger > svg { flex: none; }
+.pireplica .pi-composer .pi-history-branch { min-width: 0; flex-shrink: 1; }
+.pireplica .pi-composer .pi-thinking-wrap { min-width: 0; }
+.pireplica .pi-composer .pi-thinking select { min-width: 0; }
+
+/* ≤600px：推理 pill 收成 icon 下拉，待生效徽标让位（title 保留），思考下拉变窄。 */
+@container composer (max-width: 600px) {
+  .pireplica .pi-composer__pill--reasoning > span,
+  .pireplica .pi-composer__pending { display: none; }
+  .pireplica .pi-composer .pi-thinking select { max-width: 64px; }
+}
+
+/* ≤480px：模型名/访问模式文字也隐藏，只留 icon 下拉。 */
+@container composer (max-width: 480px) {
+  .pireplica .pi-composer__pill--model > span,
+  .pireplica .pi-composer .pi-access__trigger > span { display: none; }
+}
+
+/* 「立即」乐观气泡的注记：说明消息已插入当前任务、等待边界分发 */
+.pireplica .pi-chat__steernote {
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--pi-text-tertiary);
+}
+.pireplica .pi-chat__steernote svg { vertical-align: -2px; color: var(--pi-ok, #1a7f37); }
+/* 「立即」乐观气泡：已发送观感（不透明）+ 滑入动画；与 pending 的半透明区隔开。 */
+.pireplica .pi-msg--sent { animation: pi-sent-in 0.24s cubic-bezier(0.2, 0.8, 0.3, 1); }
+@keyframes pi-sent-in {
+  from { opacity: 0; transform: translateY(12px) scale(0.97); }
+  to { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) { .pireplica .pi-msg--sent { animation: none; } }
+
 /* popovers */
 .pireplica .pi-composer__menu {
   position: absolute;
@@ -765,9 +874,19 @@
   color: var(--pi-text);
 }
 
+.pireplica .pi-composer__menu:focus {
+  outline: none;
+}
+
 .pireplica .pi-composer__menurow:hover,
 .pireplica .pi-composer__menurow--on {
   background: var(--pi-bg-hover);
+}
+
+/* keyboard arrow navigation highlight in the model/reasoning menu */
+.pireplica .pi-composer__menurow--active {
+  background: var(--pi-bg-hover);
+  box-shadow: inset 0 0 0 1px var(--pi-border);
 }
 
 .pireplica .pi-composer__menurow--sub {

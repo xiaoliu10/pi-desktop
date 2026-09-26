@@ -107,18 +107,24 @@ function countEntries(file: string): number {
   } catch { return 0; }
 }
 
-/** 列出记忆目录的 markdown 文件（顶层 + daily/ + projects/），最近修改在前。 */
+/** 全局浏览排除 projects/；项目浏览额外包含旧版路径映射文件与 .pi/memory。
+ * 旧版 projectMemoryFile 使用截断路径，并非严格隔离边界；不迁移/改写已有文件。
+ */
 export function listMemoryFiles(agentDir: string, projectCwd?: string): MemoryFileInfo[] {
   const out: MemoryFileInfo[] = [];
   const root = builtinMemoryDir(agentDir);
   const visit = (rel: string, scope: 'global' | 'project') => {
     const full = path.join(root, rel);
     let stats: fs.Stats;
-    try { stats = fs.statSync(full); } catch { return; }
+    try { stats = fs.lstatSync(full); } catch { return; }
+    if (stats.isSymbolicLink()) return;
     if (stats.isDirectory()) {
       let names: string[] = [];
       try { names = fs.readdirSync(full).sort(); } catch { return; }
-      for (const name of names) visit(rel ? `${rel}/${name}` : name, scope);
+      for (const name of names) {
+        if (!rel && name === 'projects') continue;
+        visit(rel ? `${rel}/${name}` : name, scope);
+      }
       return;
     }
     if (!stats.isFile() || !rel.endsWith('.md')) return;
@@ -126,12 +132,13 @@ export function listMemoryFiles(agentDir: string, projectCwd?: string): MemoryFi
   };
   visit('', 'global');
   if (projectCwd) {
+    visit(`projects/${path.basename(projectMemoryFile(agentDir, projectCwd))}`, 'project');
     try {
       const dir = path.join(projectCwd, '.pi', 'memory');
       for (const name of fs.existsSync(dir) ? fs.readdirSync(dir) : []) {
         if (!name.endsWith('.md')) continue;
         const full = path.join(dir, name);
-        try { const st = fs.statSync(full); if (st.isFile()) out.push({ name, path: full, bytes: st.size, updatedAt: st.mtimeMs, scope: 'project', entries: countEntries(full), rel: path.join('projects-external', name) }); } catch { /* ignore */ }
+        try { const st = fs.lstatSync(full); if (st.isFile()) out.push({ name, path: full, bytes: st.size, updatedAt: st.mtimeMs, scope: 'project', entries: countEntries(full), rel: `projects-external/${name}` }); } catch { /* ignore */ }
       }
     } catch { /* ignore */ }
   }
@@ -139,11 +146,16 @@ export function listMemoryFiles(agentDir: string, projectCwd?: string): MemoryFi
 }
 
 /** 读取记忆文件内容（设置页预览）。rel 必须落在记忆目录内且是 markdown。 */
-export function readMemoryFileContent(agentDir: string, rel: string): string {
-  const root = path.resolve(builtinMemoryDir(agentDir));
+export function readMemoryFileContent(agentDir: string, rel: string, projectCwd?: string): string {
+  const external = typeof rel === 'string' && rel.startsWith('projects-external/');
+  if (external && !projectCwd) throw new Error('请先选择项目');
+  const root = path.resolve(external ? path.join(projectCwd!, '.pi', 'memory') : builtinMemoryDir(agentDir));
   if (typeof rel !== 'string' || rel.length > 400 || !rel.endsWith('.md')) throw new Error('只支持查看记忆 markdown 文件');
-  const target = path.resolve(root, rel);
+  const target = path.resolve(root, external ? rel.slice('projects-external/'.length) : rel);
   if (target !== root && !target.startsWith(root + path.sep)) throw new Error('路径无效');
+  const realRoot = fs.realpathSync(root);
+  const realTarget = fs.realpathSync(target);
+  if (!realTarget.startsWith(realRoot + path.sep)) throw new Error('路径无效');
   const stat = fs.statSync(target);
   if (!stat.isFile()) throw new Error('不是文件');
   if (stat.size > 512 * 1024) throw new Error('文件超过 512 KiB，请在外部编辑器查看');

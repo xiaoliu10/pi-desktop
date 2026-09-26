@@ -6,7 +6,7 @@ import { FileCodeViewer } from './FileCodeViewer';
  * explicit empty state (no external pages are loaded in this phase).
  */
 
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import type { WorkbenchProps } from '../contracts';
 import { Icon } from '../Icons';
 import { FileIcon } from '../FileIcon';
@@ -15,11 +15,21 @@ import './workbench.css';
 
 export function WorkbenchPanel(props: WorkbenchProps) {
   const [expanded, setExpanded] = useState<string | null>(props.selectedFile);
-  if (!props.open) return null;
+  // 原 `key={tool-preview-N}` 重挂载的语义（切换预览文件时展开该文件）改为 render 期比对，
+  // 整棵子树不再因预览刷新而重建 —— 浏览器 tab 的 webview 由此得以保活。
+  const lastFile = useRef(props.selectedFile);
+  if (props.selectedFile !== lastFile.current) {
+    lastFile.current = props.selectedFile;
+    setExpanded(props.selectedFile);
+  }
+  // 浏览器 tab 打开过一次后常挂载（display:none 隐藏），切换 tab / 收起面板都不销毁 webview。
+  const browserStarted = useRef(false);
+  if (props.open && props.tab === 'browser' && props.browserPanel) browserStarted.current = true;
+  if (!props.open && !browserStarted.current) return null;
   const selected = props.files.find((f) => f.path === props.selectedFile) ?? null;
 
   return (
-    <aside className="pi-workbench">
+    <aside className="pi-workbench" style={!props.open ? { display: 'none' } : undefined} aria-hidden={!props.open || undefined}>
       <header className="pi-workbench__tabs" role="tablist">
         {(
           [
@@ -44,7 +54,7 @@ export function WorkbenchPanel(props: WorkbenchProps) {
         </button>
       </header>
 
-      <div className="pi-workbench__body">
+      <div className="pi-workbench__body" style={props.tab === 'browser' && props.browserPanel ? { display: 'none' } : undefined}>
         {props.note && <p className="pi-workbench__preview-note">{props.note}</p>}
         {props.tab === 'review' && (
           <>
@@ -109,10 +119,17 @@ export function WorkbenchPanel(props: WorkbenchProps) {
           </>
         )}
 
-        {props.tab === 'browser' && (
+        {props.tab === 'browser' && !props.browserPanel && (
           <Empty icon="globe" title={props.labels.emptyBrowser} hint={props.labels.emptyBrowserHint} />
         )}
       </div>
+
+      {/* 稳定位置的浏览器插槽：切换 tab 只改 display，webview 不重挂载。 */}
+      {browserStarted.current && props.browserPanel && (
+        <div className="pi-workbench__browserslot" style={{ display: props.tab === 'browser' ? 'flex' : 'none' }}>
+          {props.browserPanel}
+        </div>
+      )}
     </aside>
   );
 }
