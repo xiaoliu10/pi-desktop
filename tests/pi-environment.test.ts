@@ -45,6 +45,14 @@ it('accepts pi 0.85.1 and 0.87.0 as supported, rejects 0.84.0',()=>{
   expect(piVersionSupported('0.84.0')).toBe(false);
   expect(piVersionSupported(null)).toBe(false);
 });
+it('treats 0.90.0 as an exclusive external CLI compatibility bound',()=>{
+  expect(piVersionSupported('0.89.9')).toBe(process.platform !== 'win32');
+  expect(piVersionSupported('0.90.0')).toBe(false);
+  expect(piVersionSupported('0.91.0')).toBe(false);
+  const local=localFixture('0.90.0');const bundled=bundledFixture();
+  expect(discoverPi({agentDir:local},{PATH:path.join(local,'bin')},bundled))
+    .toMatchObject({runtime:'bundled',requestedRuntime:'auto',supported:true,fallback:true,systemSupported:false});
+});
 it('compares versions numerically per segment',()=>{
   expect(compareVersion('0.86.0','0.86.0')).toBe(0);
   expect(compareVersion('0.87.0','0.86.0')).toBe(1);

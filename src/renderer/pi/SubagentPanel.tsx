@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { SubagentChild, ChildState } from './subagents';
 import { subagentTranscriptTurns } from './subagents';
-import { TurnArticle } from '../replica/chat/ChatView';
+import { Spinner, TurnArticle } from '../replica/chat/ChatView';
 import { replicaLabels } from '../replica/i18n';
 import { usePiStore } from './adapter';
 import { Icon } from '../replica/Icons';
@@ -40,7 +40,7 @@ export function SubagentPanel({ children, initialCall, onClose, onStop, parentRu
   const active = children.find(c => c.id === selected);
   const transcript = useRef<HTMLDivElement>(null), follow = useRef(true);
   useEffect(() => { follow.current = true; }, [selected]);
-  useEffect(() => { if (follow.current && transcript.current) transcript.current.scrollTop = transcript.current.scrollHeight; }, [selected, active?.messages]);
+  useEffect(() => { if (follow.current && transcript.current) transcript.current.scrollTop = transcript.current.scrollHeight; }, [selected, active?.messages, active?.status]);
 
   const running = children.filter(c => ['running', 'queued'].includes(c.status));
   const ended = children.filter(c => !['running', 'queued'].includes(c.status));
@@ -75,6 +75,10 @@ export function SubagentPanel({ children, initialCall, onClose, onStop, parentRu
         {active.error && <p className="pi-subagents__error" role="alert">{active.error}</p>}
         <Transcript messages={active.messages} turnKey={active.id} live={['running', 'queued'].includes(active.status)} />
         {!active.messages.length && <p className="pi-subagents__empty">{zh ? '插件尚未报告消息。' : 'No messages reported yet.'}</p>}
+        {/* Activity is owned by child state, never by transcript presence or parent activity. */}
+        {['running', 'queued'].includes(active.status) && <div className="pi-subagents__working" role="status">
+          <Spinner /><span>{zh ? '正在工作' : 'Working'}{active.status === 'queued' ? (zh ? ' · 等待执行' : ' · Waiting to start') : ''}</span>
+        </div>}
       </div>
     </> : <>
       <div className="pi-subagents__list">

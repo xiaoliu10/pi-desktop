@@ -81,12 +81,12 @@ export async function openWithApp(cwd: string, appId: string, deps: OpenWithDeps
     if (!deps.openPath) throw new Error('当前环境不支持打开文件管理器。');
     return deps.openPath(cwd);
   }
-  const run = deps.run ?? defaultRun;
+  const run = deps.run ?? runExternalApp;
   // Finder 直接 open 目录；其余用 -a 指定 bundle 路径（避免同名应用歧义）。Terminal 会在该目录开新窗口。
   return app.kind === 'finder' ? run('/usr/bin/open', [cwd]) : run('/usr/bin/open', ['-a', app.path, cwd]);
 }
 
-function defaultRun(file: string, args: string[]): Promise<void> {
+export function runExternalApp(file: string, args: string[]): Promise<void> {
   return new Promise((resolve, reject) => {
     const child = spawn(file, args, { shell: false, stdio: 'ignore' });
     child.once('error', reject);

@@ -76,6 +76,7 @@ function demoNavFromLabels(props: SettingsProps) {
       items: [
         { id: 'general' as const, label: L.general, icon: 'sliders' as const },
         { id: 'shortcuts' as const, label: L.shortcuts, icon: 'keyboard' as const },
+        ...(!props.demo ? [{ id: 'voice' as const, label: L.appearance === 'Appearance' ? 'Voice input' : '语音输入', icon: 'mic' as const }] : []),
       ],
     },
     {
@@ -87,6 +88,7 @@ function demoNavFromLabels(props: SettingsProps) {
         { id: 'mcp' as const, label: L.mcp, icon: 'stack' as const },
         { id: 'extensions' as const, label: L.extensions, icon: 'plug' as const },
         { id: 'subagents' as const, label: L.subagents, icon: 'box' as const },
+        ...(!props.demo ? [{ id: 'memory' as const, label: L.appearance === 'Appearance' ? 'Memory' : '记忆', icon: 'brain' as const }] : []),
       ],
     },
     {

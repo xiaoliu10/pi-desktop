@@ -55,6 +55,11 @@
 .pi-subagents__transcript>.pi-msg{margin-bottom:18px}
 .pi-subagents__error{color:var(--pi-red);font-size:13px;margin-bottom:12px}
 .pi-subagents__empty{color:var(--pi-text-tertiary);font-size:13px}
+/* One activity indicator at the transcript bottom, including startup / old-history-only runs. */
+.pi-subagents__working{display:flex;align-items:center;gap:8px;position:sticky;bottom:0;padding:10px 0;background:var(--pi-bg);color:var(--pi-text-secondary);font-size:13px}
+.pi-subagents__working .pi-spinner{flex:none}
+/* TurnArticle keeps its live/expanded behavior; the bottom indicator replaces its header spinner. */
+.pi-subagents__transcript .pi-execution__summary>.pi-spinner{display:none}
 
 /* 子代理消息（转录内） */
 .pi-subagent-message{margin-bottom:18px}

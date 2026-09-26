@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
@@ -152,7 +152,7 @@ export function TerminalPanel({ open, cwd, lang, dark, onClose }: {
   const visible = everOpened.current;
 
   return (
-    <aside className="pi-terminal-panel" style={{ display: open ? 'flex' : 'none' }} aria-label={zh ? '内置终端' : 'Terminal'}>
+    <aside className="pi-terminal-panel" style={{ display: open ? 'flex' : 'none', '--pi-terminal-bg': (dark ? darkTheme() : lightTheme()).background } as CSSProperties} aria-label={zh ? '内置终端' : 'Terminal'}>
       <header className="pi-terminal-panel__tabs" role="tablist">
         <span className="pi-terminal-panel__brand"><Icon name="terminal" size={13} />{zh ? '终端' : 'Terminal'}</span>
         {tabs.map(tab => (

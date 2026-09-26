@@ -1,4 +1,4 @@
-import { THINKING_LEVELS, type ThinkingLevel } from '../../shared/composer';
+import { THINKING_LEVELS, type PiImage, type ThinkingLevel } from '../../shared/composer';
 import { isAccessMode, type AccessMode } from '../../shared/access-mode';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -8,7 +8,13 @@ import { PiRpcClient } from './rpc-client';
 import { SessionIndex, fileKey } from './session-index';
 import { summarizeContext } from './context-details';
 import { detectThirdPartySubagent, migrateOldSubagentExtension, persistSubagentEvent } from './official-subagent';
-interface Running { policyReady: boolean; client: PiRpcClient; view: PiRun; input: { cwd: string; trustProject: boolean; permission: AccessMode; executionMode?: Exclude<AccessMode, 'plan'>; file: string; origin: string; systemPrompt?: string; tools?: string[]; model?: string }; dialogs: Map<string, { timer?: ReturnType<typeof setTimeout>; method: string; request: PiUiRequest }> }
+/** prompt 出栈前登记的图片 sidecar：pi 的 queue_update 只回文本，权威队列到达后
+ *  按 文本+behavior+出现次序 把图接回。at 用于过期清理（暂存一直未被任何 queue_update
+ *  确认 = pi 已直接分发或丢弃该项，不能再把图配给后来同文本的纯文本排队项）。 */
+interface StagedQueueImage { text: string; behavior: 'steer' | 'followUp'; images: PiImage[]; at: number }
+/** 未被 queue_update 确认的暂存图最多保留 2 分钟。 */
+const QUEUE_IMAGE_STAGE_TTL = 120_000;
+interface Running { policyReady: boolean; client: PiRpcClient; view: PiRun; input: { cwd: string; trustProject: boolean; permission: AccessMode; executionMode?: Exclude<AccessMode, 'plan'>; file: string; origin: string; systemPrompt?: string; tools?: string[]; model?: string }; dialogs: Map<string, { timer?: ReturnType<typeof setTimeout>; method: string; request: PiUiRequest }>; queueImages: StagedQueueImage[] }
 export class PiBackend {
   private active = new Map<string, Running>();
   /** 记忆衔接：main 在 SettingsService 就绪后注入；每次 launch 现取最新开关与目录。 */
@@ -160,7 +166,7 @@ export class PiBackend {
     ];
     const client = new PiRpcClient(this.env.executable!, args, input.cwd, env);
     const view: PiRun = { accessMode: input.permission, executionMode: input.permission === 'plan' ? input.executionMode ?? 'ask' : input.permission, key, generation, cwd: input.cwd, file: input.file, status: 'starting', models: [], commands: [], pending: 0 };
-    const run: Running = { policyReady: false, client, view, input, dialogs: new Map() };
+    const run: Running = { policyReady: false, client, view, input, dialogs: new Map(), queueImages: [] };
     this.active.set(key, run); this.emit({ type: 'run', run: { ...view } });
     client.on('event', event => this.onEvent(run, event));
     client.on('closed', () => {
@@ -209,7 +215,7 @@ export class PiBackend {
     }
     if (event.type === 'agent_settled') {
       this.clearDialogs(run);
-      if (run.view.timing) run.view.timing = { ...run.view.timing, endedAt: Date.now() }; run.view.status = 'idle'; run.view.pending = 0; run.view.queue = [];
+      if (run.view.timing) run.view.timing = { ...run.view.timing, endedAt: Date.now() }; run.view.status = 'idle'; run.view.pending = 0; run.view.queue = []; run.queueImages = [];
       this.refreshContextUsage(run);
       void this.flushPendingSwitches(key);
     }
@@ -217,7 +223,33 @@ export class PiBackend {
     if (event.type === 'message_end' && event.message?.role === 'assistant' && event.message?.stopReason !== 'error' && event.message?.stopReason !== 'aborted') { void this.flushPendingSwitches(key); this.refreshContextUsage(run); }
     if (event.type === 'message_end' && event.message?.role === 'assistant' && event.message?.stopReason !== 'error' && event.message?.stopReason !== 'aborted' && event.message?.content?.some((c: any) => c.type === 'text' && c.text?.trim()) && run.view.accessMode === 'plan') run.view.planReady = true;
     if (event.type === 'queue_update') {
-      run.view.queue = (['steering','followUp'] as const).flatMap(kind => (Array.isArray(event[kind]) ? event[kind] : []).map((item: any) => ({text: typeof item === 'string' ? item : String(item.text ?? item.message ?? ''), behavior: kind === 'steering' ? 'steer' as const : 'followUp' as const})));
+      const prev = run.view.queue ?? [];
+      const usedPrev = new Set<number>(), usedStaged = new Set<number>();
+      // 先清掉过期暂存（从未被任何 queue_update 确认的陈旧登记），防止漏配给后来的同文项。
+      const now = Date.now();
+      run.queueImages = run.queueImages.filter(s => now - s.at < QUEUE_IMAGE_STAGE_TTL);
+      run.view.queue = (['steering','followUp'] as const).flatMap(kind => (Array.isArray(event[kind]) ? event[kind] : []).map((item: any) => {
+        const text = typeof item === 'string' ? item : String(item.text ?? item.message ?? '');
+        const behavior = kind === 'steering' ? 'steer' as const : 'followUp' as const;
+        // pi 的 queue_update 只回文本。图片按 文本+behavior+出现次序 接回：先在旧视图项里
+        // 续接已关联的图（重复文本按第几次出现一一对应），没有再消费 prompt 时的暂存登记；
+        // 都不命中保持纯文本——pi 改写过的文本安全落空，绝不把图错配给文本不同的排队项。
+        let images: PiImage[] | undefined;
+        const pi = prev.findIndex((q, i) => !usedPrev.has(i) && !!q.images?.length && q.text === text && q.behavior === behavior);
+        if (pi >= 0) {
+          usedPrev.add(pi); images = prev[pi].images;
+          if (prev[pi].pendingSync) {
+            // 乐观入队项的图在暂存池里还有一份成双登记，一并消费，避免重复配给后到的同文项。
+            const si = run.queueImages.findIndex((s, i) => !usedStaged.has(i) && s.text === text && s.behavior === behavior);
+            if (si >= 0) usedStaged.add(si);
+          }
+        } else {
+          const si = run.queueImages.findIndex((s, i) => !usedStaged.has(i) && s.text === text && s.behavior === behavior);
+          if (si >= 0) { usedStaged.add(si); images = run.queueImages[si].images; }
+        }
+        return images?.length ? { text, behavior, images } : { text, behavior };
+      }));
+      if (usedStaged.size) run.queueImages = run.queueImages.filter((_, i) => !usedStaged.has(i));
       run.view.pending = run.view.queue.length;
     }
     // Event-level subagent persistence: works for ANY subagent implementation
@@ -240,7 +272,30 @@ export class PiBackend {
       if (!Array.isArray(images) || images.length > 10 || images.some(i => !i || i.type !== 'image' || !['image/png','image/jpeg','image/webp','image/gif'].includes(i.mimeType) || typeof i.data !== 'string' || !/^[A-Za-z0-9+/]+={0,2}$/.test(i.data)) || images.reduce((n,i)=>n+i.data.length,0) > 10*1024*1024) throw new Error('图片格式无效或总大小超过 10 MiB，请减少图片。');
       if (run.view.model?.input && !run.view.model.input.includes('image')) throw new Error('当前模型不支持图片，请选择支持图片的模型。');
     }
-    await run.client.request('prompt', { message: text, streamingBehavior: behavior, ...(images?.length ? {images} : {}) }, 300_000);
+    // 运行中发送 = 排队：先把图片登记进 sidecar（pi 的 queue_update 只回文本，权威队列到达后
+    // 按 文本+behavior+出现次序 接回），并乐观进入 view.queue，让队列管理（撤回/删除/立即）
+    // 在 queue_update 到达前就能按索引命中。RPC 失败则暂存与乐观项一并撤回，不留残渣。
+    const queued = run.view.status === 'running';
+    let staged: StagedQueueImage | undefined;
+    let optimisticEntry: NonNullable<PiRun['queue']>[number] | undefined;
+    if (queued) {
+      if (images?.length) { staged = { text, behavior, images, at: Date.now() }; run.queueImages.push(staged); }
+      optimisticEntry = { text, behavior, ...(images?.length ? { images } : {}), pendingSync: true };
+      run.view.queue = [...(run.view.queue ?? []), optimisticEntry];
+      run.view.pending = run.view.queue.length;
+      this.emit({ type: 'run', run: { ...run.view } });
+    }
+    try {
+      await run.client.request('prompt', { message: text, streamingBehavior: behavior, ...(images?.length ? {images} : {}) }, 300_000);
+    } catch (error) {
+      if (staged) run.queueImages = run.queueImages.filter(s => s !== staged);
+      if (optimisticEntry && run.view.queue?.includes(optimisticEntry)) {
+        run.view.queue = run.view.queue.filter(q => q !== optimisticEntry);
+        run.view.pending = run.view.queue.length;
+        this.emit({ type: 'run', run: { ...run.view } });
+      }
+      throw error;
+    }
   }
   /**
    * 编辑已发送消息的前半步：pi 的 fork RPC 把会话树截断回该条目（被改写轮之后的
@@ -265,10 +320,32 @@ export class PiBackend {
     for (const id of run.dialogs.keys()) run.client.send({ type: 'extension_ui_response', id, cancelled: true });
     this.clearDialogs(run);
     const queue = await run.client.request('clear_queue');
+    run.queueImages = [];
     await run.client.request('abort', {}, 30_000);
     if (run.view.timing && run.view.timing.endedAt === undefined) run.view.timing = { ...run.view.timing, endedAt: Date.now() };
     run.view.status = 'idle'; run.view.pending = 0; run.view.queue = []; this.emit({ type: 'run', run: { ...run.view } });
     return queue || { steering: [], followUp: [] };
+  }
+  /**
+   * 手动压缩上下文：pi RPC 有专用 compact 命令，但 get_commands 不含内置斜杠命令，
+   * 所以 Desktop 拦截 /compact 路由到这里（TUI interactive-mode 的同款能力）。
+   * 压缩只发 compaction_start/end、不发 agent_settled，完成后需在此复位状态。
+   */
+  async compact(key: string, customInstructions?: string) {
+    const run = this.get(key);
+    if (run.view.status !== 'idle') throw new Error('请在任务空闲时压缩上下文');
+    if (run.dialogs.size) throw new Error('请先处理待确认操作，再压缩上下文。');
+    // 压缩是对整段上下文的模型调用，耗时不可预测，超时放宽到 3 分钟。
+    const result = await run.client.request('compact', customInstructions ? { customInstructions } : {}, 180_000);
+    this.refreshContextUsage(run);
+    // compaction 期间 compaction_start 已把状态置为 running（TS 看不到事件改写，故宽化比较）；排队中的消息不动。
+    const statusAfter = run.view.status as string;
+    if (statusAfter === 'running' && !run.view.pending && !run.view.queue?.length) {
+      run.view.status = 'idle';
+      if (run.view.timing && run.view.timing.endedAt === undefined) run.view.timing = { ...run.view.timing, endedAt: Date.now() };
+      this.emit({ type: 'run', run: { ...run.view } });
+    }
+    return result;
   }
   /**
    * Mutate the follow-up queue of a running session. pi only exposes
@@ -287,12 +364,22 @@ export class PiBackend {
     }
     // 'edit' keeps the item in place; 'remove' drops it; 'now' steers it into the run.
     const target = op.type === 'edit' ? undefined : items.splice(op.index, 1)[0];
+    // clear + 重排会推翻现有队列：旧暂存登记一并作废，剩余项的图在重发时重新暂存，
+    // 避免旧登记漏给后来同文本的纯文本排队项。
+    run.queueImages = [];
     await run.client.request('clear_queue');
     // pi 的 prompt 响应依赖 preflight 回调，回合边界期可能长时间不回（消息其实
     // 已进入 agent 队列）——不能同步等待，否则「立即」在 UI 上像没反应。
-    const fire = (body: Record<string, unknown>) => { void run.client.request('prompt', body, 30_000).catch(() => undefined); };
-    if (op.type === 'now' && target) fire({ message: target.text, ...(target.images ?? op.images ? { images: target.images ?? op.images } : {}), streamingBehavior: 'steer' });
-    for (const item of items) fire({ message: item.text, streamingBehavior: item.behavior });
+    // 重发的 prompt body 必须携带图片附件（pi 自己不会记住 queue_update 之外的图），
+    // 并重新暂存，让随后的 queue_update 能把图接回视图。
+    const fire = (text: string, behavior: 'steer' | 'followUp', images?: PiImage[]) => {
+      let staged: StagedQueueImage | undefined;
+      if (images?.length) { staged = { text, behavior, images, at: Date.now() }; run.queueImages.push(staged); }
+      void run.client.request('prompt', { message: text, streamingBehavior: behavior, ...(images?.length ? { images } : {}) }, 30_000)
+        .catch(() => { if (staged) run.queueImages = run.queueImages.filter(s => s !== staged); });
+    };
+    if (op.type === 'now' && target) fire(target.text, 'steer', target.images ?? op.images);
+    for (const item of items) fire(item.text, item.behavior, item.images);
   }
   async setAccessMode(key: string, mode: AccessMode): Promise<PiRun> {
     if (!isAccessMode(mode)) throw new Error('无效访问模式');

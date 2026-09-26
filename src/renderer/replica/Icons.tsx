@@ -15,7 +15,7 @@ export type IconName =
   | 'file' | 'code' | 'globe' | 'diff' | 'check' | 'check-circle' | 'x' | 'warning'
   | 'refresh' | 'download-cloud' | 'link' | 'trash' | 'pencil' | 'circle' | 'more' | 'copy'
   | 'globe-scope' | 'edit-files' | 'read-files' | 'network' | 'terminal' | 'switch' | 'grip' | 'arrow-up' | 'panel-right'
-  | 'smartphone' | 'loader' | 'notepad' | 'arrow-right' | 'arrow-left';
+  | 'smartphone' | 'loader' | 'notepad' | 'arrow-right' | 'arrow-left' | 'mic';
 
 const paths: Record<IconName, ReactNode> = {
   'expand-diagonal': <><path d="M14 3h7v7M21 3l-7 7M10 21H3v-7M3 21l7-7"/></>,
@@ -69,6 +69,7 @@ const paths: Record<IconName, ReactNode> = {
     </>
   ),
   loader: <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83" />,
+  mic: <><path d="M12 3a3 3 0 0 1 3 3v6a3 3 0 0 1-6 0V6a3 3 0 0 1 3-3Z"/><path d="M19 11a7 7 0 0 1-14 0"/><path d="M12 18v3"/></>,
   settings: (
     <>
       <circle cx="12" cy="12" r="3" />

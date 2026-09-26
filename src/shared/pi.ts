@@ -78,6 +78,12 @@ export interface LocalPiApi extends importSettingsApi {
   automationImport(): Promise<import('./automation').SavedWorkflow | null>;
   onAutomationChanged(listener:()=>void): ()=>void;
   composerSkills(cwd?: string): Promise<import('./settings').EditableResource[]>;
+  /** 语音输入：ASR 模型列表读写（apiKey 明文不出主进程）+ 云端转写。 */
+  voiceConfig(): Promise<import('./voice').VoiceConfig>;
+  voiceSaveModel(input: import('./voice').VoiceAsrModelInput): Promise<import('./voice').VoiceConfig>;
+  voiceRemoveModel(id: string): Promise<import('./voice').VoiceConfig>;
+  voiceSetActive(id: string): Promise<import('./voice').VoiceConfig>;
+  voiceTranscribe(bytes: Uint8Array, mime: string): Promise<string>;
   projectFiles(cwd: string): Promise<string[]>;
   projectContext(cwd: string, relative: string): Promise<ContextItem>;
   importAttachments(files: AttachmentInput[]): Promise<ContextItem[]>;
@@ -96,11 +102,15 @@ export interface LocalPiApi extends importSettingsApi {
   sessions(): Promise<PiSession[]>;
   archivedSessions(): Promise<string[]>;
   setSessionArchived(key: string, archived: boolean): Promise<string[]>;
+  /** 手动删除归档会话：会话文件移到系统废纸篓（可恢复），索引条目随之清除。 */
+  deleteArchivedSession(key: string): Promise<string[]>;
   history(key: string, leafId?: string): Promise<PiHistory>;
   resources(cwd?: string): Promise<PiResource[]>;
   connect(input: { sourceKey?: string; cwd?: string; trustProject: boolean; permission: AccessMode; executionMode?: Exclude<AccessMode, 'plan'> }): Promise<PiRun>;
   runs(): Promise<PiRun[]>;
   prompt(key: string, text: string, behavior: 'steer' | 'followUp', images?: PiImage[]): Promise<void>;
+  /** 手动压缩会话上下文（内置 /compact：pi RPC 专用 compact 命令，get_commands 不含内置命令）。 */
+  compact(key: string, customInstructions?: string): Promise<{ summary: string; tokensBefore?: number }>;
   stop(key: string): Promise<{ steering: string[]; followUp: string[] }>;
   /** Mutate the queued follow-ups of a running session: remove / edit / steer-now. */
   queueEdit(key: string, op: PiQueueOp): Promise<void>;
@@ -126,10 +136,11 @@ export interface LocalPiApi extends importSettingsApi {
   recoverSubagents(sessionKey: string): Promise<Array<{callId:string;status:string;details?:unknown;error?:string;startedAt?:number;updatedAt?:number}>>;
   /** 记忆衔接层状态：探测 CLI 记忆插件并返回当前链路。 */
   memoryAssistStatus(enabled: boolean): Promise<{ enabled: boolean; plugin: { kind: 'extension'; id: string; label?: string } | { kind: 'builtin' }; builtinDir: string; hint: string }>;
-  /** 记忆衔接层：列举记忆文件（内置桥 + pi-memory 约定目录）。 */
+  /** 无 cwd 仅全局；指定 cwd 时附加项目 .pi/memory 与旧版路径映射文件（可能共用），仍包含全局。 */
   memoryList(cwd?: string): Promise<Array<{ name: string; path: string; bytes: number; updatedAt: number; scope: 'global' | 'project'; entries: number; rel: string }>>;
-  /** 记忆衔接层：读取记忆文件内容（设置页预览）。 */
-  memoryRead(rel: string): Promise<string>;
+  /** 只读预览；projects-external/ 相对路径必须携带列举时的 cwd。 */
+  memoryRead(rel: string, cwd?: string): Promise<string>;
+  memoryOpen(rel: string, cwd: string | undefined, appId: string): Promise<void>;
   /** 一键启用内置默认记忆插件（未装 → pi install；已装未登记 → 补注册）。 */
   memoryEnableDefault(): Promise<{ installed: boolean; registered: boolean }>;
 

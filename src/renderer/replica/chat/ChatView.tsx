@@ -7,6 +7,8 @@ import { officialSubagentDetails, SubagentNavigation } from '../../pi/subagents'
 
 import { memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { navigatePromptHistory } from '../prompt-history';
+import { onCloseTransientPopovers } from '../popovers';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type {
@@ -164,6 +166,8 @@ function MessageImage({ part, labels, onDownload }: { part: Extract<MessagePart,
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [open]);
+  // 视图切换（如进入设置页）时收起灯箱：fixed+全屏遮罩 z1000 会穿透设置页覆盖层。
+  useEffect(() => onCloseTransientPopovers(() => setOpen(false)), []);
   const ext = part.mimeType === 'image/jpeg' ? 'jpg' : part.mimeType.slice('image/'.length);
   const name = `pi-image-${new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '')}.${ext}`;
   return <>
@@ -236,7 +240,12 @@ export function ExecutionGroup({ turn, parts, running, active, expanded, showEla
   const failures = parts.filter(p => p.kind === 'error' || (p.kind === 'tool' && p.status === 'error')).length;
   // 模型此刻正在流式输出思考（最新内容是 thinking）→ 该思考行内滚动展示内容（见 ExecutionNote active）。
   // running 的组必须保持展开：工具组后面跟着文字段时，用户仍要能看到正在执行/刚执行的步骤
-  return <details open={open} onToggle={(e) => !running && setUserOpen(e.currentTarget.open)} className={`pi-execution ${running ? 'pi-execution--running' : ''} ${failures ? 'pi-execution--error' : ''}`}>
+  return <details open={open} onToggle={(e) => {
+    // 回合进行中强制展开：浏览器原生 toggle 会先把 DOM 翻到折叠态（onToggle 异步），
+    // 若不立即写回，用户点击会闪折/需点两下才能再开。直接在 DOM 上拉直。
+    if (running) { e.currentTarget.open = true; return; }
+    setUserOpen(e.currentTarget.open);
+  }} className={`pi-execution ${running ? 'pi-execution--running' : ''} ${failures ? 'pi-execution--error' : ''}`}>
     <summary className="pi-execution__summary">
       {/* 「正在思考」粗体由活动思考行自己展示（滚动内容同行）；组头只保留计时，避免重复 */}
       {hasTiming ? <ElapsedTime startedAt={turn.startedAt} endedAt={turn.endedAt} running={live} zh={zh} /> : <span className="pi-execution__title">{live ? (zh ? '正在工作' : 'Working') : (zh ? `执行过程 · ${parts.length} 步` : `Execution · ${parts.length} steps`)}</span>}
@@ -472,13 +481,12 @@ export const ChatView = memo(function ChatView(props: ChatViewProps) {
     const list = listRef.current;
     const content = list?.firstElementChild;
     if (!list || !content) return;
-    let following = true;
     let userScrollUntil = 0;
     let frame = 0;
     const markUserScroll = () => { userScrollUntil = performance.now() + 1000; };
     const onWheel = (event: WheelEvent) => {
       markUserScroll();
-      if (event.deltaY < 0) { following = false; followingRef.current = false; }
+      if (event.deltaY < 0) followingRef.current = false;
     };
     const onKey = (event: KeyboardEvent) => {
       if (['ArrowUp','ArrowDown','PageUp','PageDown','Home','End',' '].includes(event.key)) markUserScroll();
@@ -491,8 +499,7 @@ export const ChatView = memo(function ChatView(props: ChatViewProps) {
       // Expansion and stream growth can trigger scroll anchoring. They must not
       // be mistaken for a reader deliberately leaving the bottom.
       if (performance.now() < userScrollUntil) {
-        following = list.scrollHeight - list.scrollTop - list.clientHeight < 80;
-        followingRef.current = following;
+        followingRef.current = list.scrollHeight - list.scrollTop - list.clientHeight < 80;
       }
       // 离开底部 → 显示跳转按钮；回到底部 → 隐藏
       const nearBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 80;
@@ -500,7 +507,7 @@ export const ChatView = memo(function ChatView(props: ChatViewProps) {
     };
     const follow = () => {
       cancelAnimationFrame(frame);
-      frame = requestAnimationFrame(() => { if (following) list.scrollTop = list.scrollHeight; });
+      frame = requestAnimationFrame(() => { if (followingRef.current) list.scrollTop = list.scrollHeight; });
     };
     const onToggle = () => { userScrollUntil = 0; follow(); };
     const observer = new ResizeObserver(follow);
@@ -523,13 +530,21 @@ export const ChatView = memo(function ChatView(props: ChatViewProps) {
     };
   }, []);
 
+  const seenScrollRequests = useRef(new Set<string>());
+  useLayoutEffect(() => {
+    if (!props.scrollRequest || !listRef.current || seenScrollRequests.current.has(props.scrollRequest)) return;
+    seenScrollRequests.current.add(props.scrollRequest);
+    followingRef.current = true;
+    listRef.current.scrollTop = listRef.current.scrollHeight;
+    setShowJump(false);
+  }, [props.scrollRequest]);
+
   const turns = useMemo(() => {
     const result = executionTurns(props.messages);
     const last = result[result.length - 1];
     const timing = props.runTiming;
     if (last?.role === 'assistant' && timing && ((last.endedAt ?? 0) >= timing.startedAt || (last.startedAt ?? 0) >= timing.startedAt - 1000)) {
-      last.startedAt = timing.startedAt;
-      last.endedAt = timing.endedAt;
+      result[result.length - 1] = { ...last, startedAt: timing.startedAt, endedAt: timing.endedAt };
     }
     return result;
   }, [props.messages, props.runTiming]);
@@ -606,11 +621,22 @@ export const ChatView = memo(function ChatView(props: ChatViewProps) {
             </button>
           )}
           {visibleTurns.map((m) => (
-            <TurnArticle key={m.id} m={m} liveTurn={props.running && m === turns[turns.length - 1]} labels={props.labels} onOpenToolFile={props.onOpenToolFile} onEditUser={props.onEditUserMessage} onDownloadImage={props.onDownloadImage} />
+            <TurnArticle key={m.id} m={m} liveTurn={props.running && !props.sendingText && m === turns[turns.length - 1]} labels={props.labels} onOpenToolFile={props.onOpenToolFile} onEditUser={props.onEditUserMessage} onDownloadImage={props.onDownloadImage} />
           ))}
           {props.sending && props.sendingText && (
             <article className="pi-msg pi-msg--user pi-msg--pending">
               <UserMessageParts parts={[{ kind: 'text', id: 'pi-pending-prompt', text: props.sendingText }]} labels={props.labels} onOpenToolFile={props.onOpenToolFile} />
+            </article>
+          )}
+          {props.steeringText && (
+            /* 点「立即」即时反馈：以已发送的正常样式立刻入流（含图片），不等 pi 确认；
+               真实条目落盘后由 settle 交换。备注只留「已插入」确认感，生效细节收进 title。 */
+            <article className="pi-msg pi-msg--user pi-msg--sent" title={props.labels.you === '你' ? '将在当前步骤结束后生效' : 'Takes effect after the current step'}>
+              <UserMessageParts parts={[
+                { kind: 'text', id: 'pi-pending-steer', text: props.steeringText },
+                ...(props.steeringImages ?? []).map((image, n) => ({ kind: 'image' as const, id: `pi-pending-steer-img-${n}`, data: image.data, mimeType: image.mimeType })),
+              ]} labels={props.labels} onOpenToolFile={props.onOpenToolFile} />
+              <div className="pi-chat__steernote"><Icon name="check" size={12} /> {props.labels.you === '你' ? '已插入当前任务' : 'Inserted into the current task'}</div>
             </article>
           )}
           {(() => {
@@ -702,7 +728,16 @@ export function Composer(props: ComposerProps) {
     if (props.onDraftChange && draftRef.current !== props.draftText) props.onDraftChange(draftRef.current);
   };
   useEffect(() => () => flushDraft(), []);
-  useEffect(() => { if (props.draftText !== undefined) setLocalText(props.draftText); }, [props.draftText]);
+  useEffect(() => {
+    if (props.draftText === undefined) return;
+    // 历史回填经 200ms debounce 回流的 store 值与本地一致，跳过以免误清历史浏览态；
+    // 真正的外部注入（队列召回/草稿恢复）值不同，照常同步并退出浏览态。
+    if (props.draftText === draftRef.current) return;
+    if (draftTimer.current) { clearTimeout(draftTimer.current); draftTimer.current = null; }
+    draftRef.current = props.draftText;
+    historyIndexRef.current = null; // 外部注入（队列召回/草稿恢复）退出历史浏览态
+    setLocalText(props.draftText);
+  }, [props.draftText]);
   const setText = (value: React.SetStateAction<string>) => {
     const next = typeof value === 'function' ? value(text) : value;
     setLocalText(next);
@@ -713,8 +748,31 @@ export function Composer(props: ComposerProps) {
     }
   };
   const [menu, setMenu] = useState<OpenMenu>(null);
+  const [menuIndex, setMenuIndex] = useState(0);
+  const menuRef = useRef<HTMLDivElement>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
+  // ↑/↓ 发送历史：null = 未进入历史浏览态；仅在空输入或已进入浏览态时接管方向键，
+  // 避免抢走多行输入的光标移动（对齐 ZCode PromptHistoryPlugin）。
+  const promptHistory = props.promptHistory;
+  const historyIndexRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (historyIndexRef.current !== null && promptHistory?.[historyIndexRef.current] === undefined) {
+      historyIndexRef.current = null;
+    }
+  }, [promptHistory]);
+  const applyHistoryEntry = (nextIndex: number | null, nextValue: string) => {
+    historyIndexRef.current = nextIndex;
+    setText(nextValue);
+    // 程序化赋值不触发 onChange/input，手动把光标移到末尾并适配高度（对齐 ZCode selectEnd）。
+    requestAnimationFrame(() => {
+      const ta = taRef.current;
+      if (!ta) return;
+      autoResize(ta);
+      ta.focus();
+      ta.setSelectionRange(ta.value.length, ta.value.length);
+    });
+  };
   const popup = parseMenuState(text);
   // The files prop seeds the mention list; window.pi enrichment (when present)
   // can extend it, but the prop alone must work (production passes []).
@@ -739,10 +797,54 @@ export function Composer(props: ComposerProps) {
     flushDraft();
     const value = text.trim();
     if ((!value && !props.hasAttachments) || props.preparing) return;
+    historyIndexRef.current = null;
     setText('');
     props.onSend(value);
     setMenu(null);
     if (taRef.current) taRef.current.style.height = 'auto';
+  };
+
+  // Keyboard navigation for the model / reasoning popover.
+  const modelItems = props.modelGroups.flatMap((g) => g.models);
+  const reasonItems = ['off', 'low', 'medium', 'high'] as const;
+  const openMenu = (kind: OpenMenu) => {
+    setMenu(kind);
+    if (kind === 'model') {
+      const idx = modelItems.findIndex((m) => m.id === props.modelId);
+      setMenuIndex(idx >= 0 ? idx : 0);
+    } else if (kind === 'reasoning') {
+      const idx = reasonItems.indexOf(props.reasoning);
+      setMenuIndex(idx >= 0 ? idx : 0);
+    }
+  };
+  useEffect(() => {
+    if (menu) menuRef.current?.focus();
+  }, [menu]);
+  const onMenuKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    const count = menu === 'model' ? modelItems.length : menu === 'reasoning' ? reasonItems.length : 0;
+    if (!count) return;
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      setMenuIndex((i) => (i + 1) % count);
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setMenuIndex((i) => (i - 1 + count) % count);
+    } else if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      if (menu === 'model') {
+        const m = modelItems[menuIndex];
+        if (m) { props.onPickModel(m.id); setMenu(null); }
+      } else if (menu === 'reasoning') {
+        const lv = reasonItems[menuIndex];
+        props.onPickReasoning(lv);
+        setMenu(null);
+      }
+      taRef.current?.focus();
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      setMenu(null);
+      taRef.current?.focus();
+    }
   };
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -772,6 +874,18 @@ export function Composer(props: ComposerProps) {
     } else if (e.key === 'Escape' && menu) {
       setMenu(null);
       return;
+    }
+    if ((e.key === 'ArrowUp' || e.key === 'ArrowDown') && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey && !e.nativeEvent.isComposing && promptHistory?.length) {
+      const currentIndex = historyIndexRef.current;
+      // 历史导航只在“空输入”或“已进入历史浏览态”时接管上下键，避免抢走多行光标移动。
+      if (currentIndex !== null || text.length === 0) {
+        const result = navigatePromptHistory(promptHistory, currentIndex, e.key === 'ArrowUp' ? 'up' : 'down');
+        if (result.shouldHandle) {
+          e.preventDefault();
+          applyHistoryEntry(result.nextIndex, result.nextValue);
+          return;
+        }
+      }
     }
     if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
       e.preventDefault();
@@ -840,11 +954,11 @@ export function Composer(props: ComposerProps) {
 
       {/* model / reasoning popover */}
       {(menu === 'model' || menu === 'reasoning') && (
-        <div className="pi-composer__menu" role="menu">
+        <div className="pi-composer__menu" role="menu" tabIndex={-1} ref={menuRef} onKeyDown={onMenuKeyDown}>
           <button
             className="pi-composer__menurow"
             role="menuitem"
-            onClick={() => setMenu('model')}
+            onClick={() => openMenu('model')}
             aria-expanded={menu === 'model'}
           >
             <Icon name="bot" size={15} />
@@ -862,7 +976,7 @@ export function Composer(props: ComposerProps) {
                   {g.models.map((m) => (
                     <button
                       key={m.id}
-                      className={`pi-composer__menurow pi-composer__menurow--sub ${m.id === props.modelId ? 'pi-composer__menurow--on' : ''}`}
+                      className={`pi-composer__menurow pi-composer__menurow--sub ${m.id === props.modelId ? 'pi-composer__menurow--on' : ''} ${modelItems.findIndex((x) => x.id === m.id) === menuIndex ? 'pi-composer__menurow--active' : ''}`}
                       role="menuitemradio"
                       aria-checked={m.id === props.modelId}
                       onClick={() => {
@@ -881,7 +995,7 @@ export function Composer(props: ComposerProps) {
                 <button
                   className="pi-composer__menurow"
                   role="menuitem"
-                  onClick={() => setMenu('reasoning')}
+                  onClick={() => openMenu('reasoning')}
                   aria-expanded={false}
                 >
                   <Icon name="sparkle" size={15} />
@@ -899,7 +1013,7 @@ export function Composer(props: ComposerProps) {
               {(['off', 'low', 'medium', 'high'] as const).map((lv) => (
                 <button
                   key={lv}
-                  className={`pi-composer__menurow pi-composer__menurow--sub ${lv === props.reasoning ? 'pi-composer__menurow--on' : ''}`}
+                  className={`pi-composer__menurow pi-composer__menurow--sub ${lv === props.reasoning ? 'pi-composer__menurow--on' : ''} ${reasonItems.indexOf(lv) === menuIndex ? 'pi-composer__menurow--active' : ''}`}
                   role="menuitemradio"
                   aria-checked={lv === props.reasoning}
                   onClick={() => {
@@ -979,6 +1093,7 @@ export function Composer(props: ComposerProps) {
           placeholder={props.sessionActive ? props.labels.placeholderSession : props.labels.placeholderHome}
           aria-label={props.labels.send}
           onChange={(e) => {
+            historyIndexRef.current = null; // 用户手动编辑即退出历史浏览态（历史回填不触发 onChange）
             setText(e.target.value);
             autoResize(e.target);
           }}
@@ -1019,10 +1134,10 @@ export function Composer(props: ComposerProps) {
             {props.statusSlot}
             <button
               disabled={props.modelDisabled}
-              className={`pi-composer__pill ${menu === 'model' ? 'pi-composer__pill--on' : ''}`}
-              onClick={() => setMenu(menu === 'model' ? null : 'model')}
+              className={`pi-composer__pill pi-composer__pill--model ${menu === 'model' ? 'pi-composer__pill--on' : ''}`}
+              onClick={() => (menu === 'model' ? setMenu(null) : openMenu('model'))}
               aria-expanded={menu === 'model'}
-              title={pendingModel ? (props.labels.pendingSwitch ? `${props.labels.pendingSwitch}：${pendingModel.name}` : pendingModel.name) : undefined}
+              title={pendingModel ? (props.labels.pendingSwitch ? `${props.labels.pendingSwitch}：${pendingModel.name}` : pendingModel.name) : (activeModel?.name ?? props.labels.model)}
             >
               <Icon name="bot" size={14} />
               <span>{pendingModel ? pendingModel.name : activeModel?.name ?? props.labels.model}</span>
@@ -1031,9 +1146,10 @@ export function Composer(props: ComposerProps) {
             </button>
             {!props.hideReasoning && (
               <button
-                className={`pi-composer__pill ${menu === 'reasoning' ? 'pi-composer__pill--on' : ''}`}
-                onClick={() => setMenu(menu === 'reasoning' ? null : 'reasoning')}
+                className={`pi-composer__pill pi-composer__pill--reasoning ${menu === 'reasoning' ? 'pi-composer__pill--on' : ''}`}
+                onClick={() => (menu === 'reasoning' ? setMenu(null) : openMenu('reasoning'))}
                 aria-expanded={menu === 'reasoning'}
+                title={props.labels.reasoning}
               >
                 <Icon name="brain" size={14} />
                 <span>
@@ -1045,6 +1161,15 @@ export function Composer(props: ComposerProps) {
               </button>
             )}
             {props.reasoningSlot}
+            {typeof props.voiceSlot === 'function' ? props.voiceSlot(transcript => {
+              const current = draftRef.current;
+              const next = `${current}${current && !/\s$/.test(current) ? ' ' : ''}${transcript}`;
+              if (draftTimer.current) { clearTimeout(draftTimer.current); draftTimer.current = null; }
+              draftRef.current = next;
+              setLocalText(next);
+              props.onDraftChange?.(next);
+              taRef.current?.focus();
+            }) : props.voiceSlot}
             {/* One morphing action button, like the reference: while a task
                 runs it is Stop; typing a follow-up turns it into Send
                 (queued), clearing text returns it to Stop. */}

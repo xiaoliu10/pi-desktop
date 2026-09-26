@@ -6,7 +6,7 @@ let api: { connect: ReturnType<typeof vi.fn>; prompt: ReturnType<typeof vi.fn>; 
 beforeEach(() => {
  api = { model: vi.fn().mockResolvedValue(undefined), thinking: vi.fn().mockResolvedValue(undefined), connect: vi.fn().mockResolvedValue(run), prompt: vi.fn().mockResolvedValue(undefined), history: vi.fn().mockRejectedValue(new Error('not written yet')), pickDirectory: vi.fn().mockResolvedValue('/chosen'), saveDesktopSettings: vi.fn().mockResolvedValue(undefined) };
  vi.stubGlobal('window', { localPi: api });
- usePiStore.setState({ selectedKey: null, sessions: [], runs: [], connecting: false, contextItems: [], draftModelId: undefined, draftThinking: undefined, draftCwd: '/project', draftText: '', pendingPrompt: undefined, error: undefined, history: undefined, desktopPreferences: undefined, env: { supported: true, executable: '/pi', agentDir: '/agent', sessionDirs: [], version: '0.85.1', diagnostics: [] } });
+ usePiStore.setState({ selectedKey: null, sessions: [], runs: [], connecting: false, contextItems: [], draftModelId: undefined, draftThinking: undefined, draftCwd: '/project', draftText: '', pendingPrompt: undefined, pendingPromptAt: undefined, sends: [], sentAt: undefined, error: undefined, history: undefined, desktopPreferences: undefined, env: { supported: true, executable: '/pi', agentDir: '/agent', sessionDirs: [], version: '0.85.1', diagnostics: [] } });
 });
 afterEach(() => vi.unstubAllGlobals());
 it('starts a Desktop-owned runtime and sends the first prompt without a connect dialog', async () => {

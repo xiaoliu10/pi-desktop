@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { onCloseTransientPopovers } from '../replica/popovers';
 import { Icon } from '../replica/Icons';
 import type { ProjectNavItem } from '../replica/contracts';
 import { usePiStore } from './adapter';
@@ -8,6 +9,7 @@ export function ProjectActions({project}:{project:ProjectNavItem}) {
  const [open,setOpen]=useState(false),[position,setPosition]=useState({left:0,top:0});
  const [action,setAction]=useState<Action|null>(null),[name,setName]=useState(''),[section,setSection]=useState(''),[parent,setParent]=useState(''),[branch,setBranch]=useState('');
  const [busy,setBusy]=useState(false),[error,setError]=useState('');
+ useEffect(() => onCloseTransientPopovers(() => setOpen(false)), []);
  const root=useRef<HTMLDivElement>(null),dialog=useRef<HTMLDivElement>(null),trigger=useRef<HTMLButtonElement>(null);
  const zh=s.lang==='zh';
  useEffect(()=>{if(!open&&!action)return;const click=(e:MouseEvent)=>{if(!root.current?.contains(e.target as Node))setOpen(false);};const key=(e:KeyboardEvent)=>{if(e.key==='Escape'&&!busy){setOpen(false);setAction(null);trigger.current?.focus();}if(e.key==='Tab'&&action){const nodes=Array.from(dialog.current?.querySelectorAll<HTMLElement>('input,button:not(:disabled)')??[]),first=nodes[0],last=nodes.at(-1);if(e.shiftKey&&document.activeElement===first){e.preventDefault();last?.focus();}else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first?.focus();}}};document.addEventListener('mousedown',click);document.addEventListener('keydown',key);return()=>{document.removeEventListener('mousedown',click);document.removeEventListener('keydown',key);};},[open,action,busy]);

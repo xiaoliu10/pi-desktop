@@ -34,34 +34,34 @@ describe('access policy matrix', () => {
   expect(preview).toContain('- old'); expect(preview).toContain('+ new'); expect(preview).toContain(target);
  });
 });
-function harness(mode = 'ask', confirm = vi.fn().mockResolvedValue(false)) {
+function harness(mode = 'ask', select = vi.fn().mockResolvedValue('拒绝')) {
  vi.stubEnv('PI_DESKTOP_PERMISSION', mode);
  // 隔离外部 Desktop 连接的模式控制文件（如从 Desktop 内发起测试时继承的 PI_DESKTOP_MODE_FILE）。
  vi.stubEnv('PI_DESKTOP_MODE_FILE', '');
  const handlers: Record<string, Function> = {};
  const pi = { registerTool: vi.fn(), on: (name: string, fn: Function) => { handlers[name] = fn; }, getAllTools: () => ['read', 'write', 'bash'].map(name => ({ name, sourceInfo: { source: 'builtin' } })), getActiveTools: () => ['read', 'write', 'bash'], setActiveTools: vi.fn(), appendEntry: vi.fn() };
  desktopPolicy(pi);
- const ctx = { cwd, signal: new AbortController().signal, ui: { confirm, setStatus: vi.fn() } };
- return { handlers, pi, ctx, confirm };
+ const ctx = { cwd, signal: new AbortController().signal, ui: { select, setStatus: vi.fn() } };
+ return { handlers, pi, ctx, select };
 }
 it('denied writes never reach execution; approvals are not reused', async () => {
- const { handlers, ctx, confirm } = harness();
+ const { handlers, ctx, select } = harness();
  const event = { toolName: 'write', toolCallId: 'one', input: { path: 'blocked.txt', content: 'bad' } };
  for (let i = 0; i < 2; i++) { const result = await handlers.tool_call(event, ctx); if (!result?.block) fs.writeFileSync(path.join(cwd, 'blocked.txt'), 'bad'); }
- expect(fs.existsSync(path.join(cwd, 'blocked.txt'))).toBe(false); expect(confirm).toHaveBeenCalledTimes(2);
+ expect(fs.existsSync(path.join(cwd, 'blocked.txt'))).toBe(false); expect(select).toHaveBeenCalledTimes(2);
 });
 it('approved writes execute, but file changes during confirmation invalidate approval', async () => {
  const target = path.join(cwd, 'a.txt'); fs.writeFileSync(target, 'old');
- const h = harness('ask', vi.fn().mockResolvedValue(true));
+ const h = harness('ask', vi.fn().mockResolvedValue('允许'));
  const event = { toolName: 'write', toolCallId: 'one', input: { path: 'a.txt', content: 'new' } };
  expect(await h.handlers.tool_call(event, h.ctx)).toBeUndefined();
- h.confirm.mockImplementation(async () => { fs.writeFileSync(target, 'concurrent change'); return true; });
+ h.select.mockImplementation(async () => { fs.writeFileSync(target, 'concurrent change'); return '允许'; });
  expect((await h.handlers.tool_call(event, h.ctx)).block).toBe(true);
  expect(fs.readFileSync(target, 'utf8')).toBe('concurrent change');
 });
 it('parameter changes and cancellation invalidate the approval', async () => {
  const event = { toolName: 'bash', toolCallId: 'one', input: { command: 'pwd' } };
- const h = harness('ask', vi.fn(async () => { event.input.command = 'rm something'; return true; }));
+ const h = harness('ask', vi.fn(async () => { event.input.command = 'rm something'; return '允许'; }));
  expect((await h.handlers.tool_call(event, h.ctx)).block).toBe(true);
  const controller = new AbortController(); controller.abort();
  expect((await h.handlers.tool_call(event, { ...h.ctx, signal: controller.signal })).block).toBe(true);
@@ -76,24 +76,24 @@ it('plan mode restricts active tools and adds planning instructions', () => {
 it('keeps approval pending beyond two minutes and approves only after the user responds', async () => {
  vi.useFakeTimers();
  try {
-  let resolve!: (allowed:boolean)=>void;
-  const confirm=vi.fn((_title,_message,opts)=>new Promise<boolean>(r=>{
+  let resolve!: (choice:string)=>void;
+  const select=vi.fn((_title,_options,opts)=>new Promise<string>(r=>{
    resolve=r;
    if(opts?.timeout) setTimeout(()=>r(false),opts.timeout);
    opts?.signal?.addEventListener('abort',()=>r(false),{once:true});
   }));
-  const h=harness('ask',confirm);
+  const h=harness('ask',select);
   let settled=false;
   const waiting=h.handlers.tool_call({toolName:'write',toolCallId:'long',input:{path:'later.txt',content:'approved'}},h.ctx).then((result:any)=>{settled=true;return result;});
   await vi.advanceTimersByTimeAsync(24*60*60*1000);
   expect(settled).toBe(false);
-  expect(confirm.mock.calls[0][2]).toEqual({signal:h.ctx.signal});
-  resolve(true);expect(await waiting).toBeUndefined();
+  expect(select.mock.calls[0][2]).toEqual({signal:h.ctx.signal});
+  resolve('允许');expect(await waiting).toBeUndefined();
  } finally { vi.useRealTimers(); }
 });
 it('cancels a pending approval through the task abort signal',async()=>{
  const controller=new AbortController();
- const h=harness('ask',vi.fn((_title,_message,opts)=>new Promise(resolve=>opts.signal.addEventListener('abort',()=>resolve(false),{once:true}))));
+ const h=harness('ask',vi.fn((_title,_options,opts)=>new Promise(resolve=>opts.signal.addEventListener('abort',()=>resolve(undefined),{once:true}))));
  const waiting=h.handlers.tool_call({toolName:'write',toolCallId:'stop',input:{path:'stop.txt',content:'never'}},{...h.ctx,signal:controller.signal});
  controller.abort();expect((await waiting).block).toBe(true);
 });

@@ -7,8 +7,8 @@ export function expand(value: string): string { return path.resolve(value.starts
 
 /** Lowest pi version whose RPC protocol desktop understands. */
 const PI_MIN_VERSION = '0.85.1';
-/** Highest pi version this desktop release has been exercised against. Bump per release;
- *  a local CLI above this still launches but is flagged for the sync banner to review. */
+/** Exclusive upper bound for external CLI compatibility. Versions at or above this
+ *  are rejected and fall back to bundled when available. Review per release. */
 const PI_MAX_TESTED = '0.90.0';
 
 /** 0 if equal, -1 if a<b, 1 if a>b. Blank/invalid sorts below everything. */
