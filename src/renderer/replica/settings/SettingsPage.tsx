@@ -13,7 +13,7 @@ import type {
   SettingsSectionData,
 } from '../contracts';
 import { Icon } from '../Icons';
-import { filterNavSections, filterRows } from './helpers';
+import { filterNavSections, filterRows, isDefaultModel } from './helpers';
 import './settings.css';
 
 export function SettingsPage(props: SettingsProps) {
@@ -52,7 +52,7 @@ export function SettingsPage(props: SettingsProps) {
         </nav>
       </aside>
 
-      <main className="pi-settings__content">
+      <main className={`pi-settings__content${props.pageContent === undefined && props.page === 'models' ? ' pi-settings__content--fill' : ''}`}>
         {props.pageContent === undefined && props.page === 'general' && <GeneralPane {...props} />}
         {props.pageContent === undefined && props.page === 'models' && <ModelsPane {...props} />}
         {props.pageContent === undefined && props.page === 'info' && <InfoPane {...props} />}
@@ -244,10 +244,64 @@ function ModelsPane(props: SettingsProps) {
   const [selectedId, setSelectedId] = useState<string | null>(props.providers[0]?.id ?? null);
   const selected = props.providers.find((p) => p.id === selectedId) ?? props.providers[0] ?? null;
   const editable = selected?.source === 'models.json';
+  // 官方供应商（pi 内核目录）的 API Key：写入共享的 auth.json，与 pi CLI 共用。
+  const [authEditor,setAuthEditor] = useState<{id:string; name:string; configured:boolean} | null>(null);
+  const [authKey,setAuthKey] = useState('');
+  const [authSaving,setAuthSaving] = useState(false);
+  const [authError,setAuthError] = useState<string | undefined>();
+  const authDialogRef = useRef<HTMLDialogElement>(null);
+  useEffect(() => {
+    if (!authEditor) return;
+    authDialogRef.current?.showModal();
+    return () => authDialogRef.current?.close();
+  }, [authEditor !== null]);
+  const openAuthEditor = (p: NonNullable<typeof selected>) => {
+    setAuthKey(''); setAuthError(undefined);
+    setAuthEditor({ id: p.id, name: p.name || p.id, configured: p.auth === 'api_key' });
+  };
+  const saveAuthKey = async (clear: boolean) => {
+    if (!authEditor || authSaving) return;
+    if (!clear && !authKey.trim()) { setAuthError('请填写 API Key。'); return; }
+    setAuthSaving(true); setAuthError(undefined);
+    try {
+      await props.onSaveProviderAuth?.(authEditor.id, clear ? { clear: true } : { apiKey: authKey.trim() });
+      setAuthEditor(null);
+    } catch (e) { setAuthError(String((e as Error).message || e)); }
+    finally { setAuthSaving(false); }
+  };
+  const detailRef = useRef<HTMLDivElement>(null);
+  // 切换供应商时右侧模型列表回到顶部：自适应布局下列表常驻可视区，残留滚动位置会误导。
+  useEffect(() => { detailRef.current?.scrollTo({ top: 0 }); }, [selected?.id]);
+  // 模型列表关键字过滤（OpenRouter 等供应商有数百个模型）：匹配 id 或显示名，切换供应商时重置。
+  const [modelQuery, setModelQuery] = useState('');
+  useEffect(() => { setModelQuery(''); }, [selected?.id]);
+  const modelFilter = modelQuery.trim().toLowerCase();
+  const visibleModels = selected ? selected.models.filter((m) => !modelFilter || m.id.toLowerCase().includes(modelFilter) || (m.name ?? '').toLowerCase().includes(modelFilter)) : [];
   const openCreate = () => setForm({ open: true, editingId: null, name: '', baseUrl: '', apiKey: '', modelLine: '', models: [], error: undefined });
+  const authDialog = authEditor && (
+    <dialog ref={authDialogRef} className="pi-provider-dialog" aria-labelledby="pi-authkey-dialog-title" aria-modal="true" onCancel={e=>{e.preventDefault(); if(!authSaving) setAuthEditor(null);}} onClick={e=>{if(e.target===e.currentTarget){const r=e.currentTarget.getBoundingClientRect();if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY<r.bottom){ if(!authSaving) setAuthEditor(null);}}}}>
+      <header className="pi-provider-dialog__header"><h2 id="pi-authkey-dialog-title">{authEditor.configured ? '修改 API Key' : '设置 API Key'} · {authEditor.name}</h2><button type="button" className="pi-iconbtn" aria-label="关闭" disabled={authSaving} onClick={()=>setAuthEditor(null)}><Icon name="x" size={18}/></button></header>
+      <form className="pi-providerform" onSubmit={e=>{e.preventDefault(); void saveAuthKey(false);}}>
+        <fieldset disabled={authSaving}>
+          <label>
+            <span>API Key</span>
+            <input autoFocus type="password" value={authKey} onChange={(e) => setAuthKey(e.target.value)} autoComplete="new-password" placeholder="粘贴新的 API Key" />
+          </label>
+          <p className="pi-providerform__hint">{authEditor.configured ? '已配置 API Key（出于安全不再回显）。输入新值保存即替换。' : '保存后写入 pi 的 auth.json（权限 0600），pi CLI 与 Desktop 共用。'}</p>
+        </fieldset>
+        {authError && <em className="pi-providerform__err" role="alert">{authError}</em>}
+        <div className="pi-providerform__actions">
+          {authEditor.configured && <button type="button" className="pi-btn pi-btn--danger" style={{ marginRight: 'auto' }} disabled={authSaving} onClick={()=>void saveAuthKey(true)}>清除已配置</button>}
+          <button type="button" className="pi-btn pi-btn--outline" disabled={authSaving} onClick={()=>setAuthEditor(null)}>取消</button>
+          <button type="submit" className="pi-btn pi-btn--primary" disabled={authSaving}>{authSaving ? '保存中…' : '保存'}</button>
+        </div>
+      </form>
+    </dialog>
+  );
   return (
     <>
       <h1 className="pi-settings__title">{L.modelConfiguration}</h1>
+      {authDialog}
       {props.catalogWarning&&<p role="alert" className="pi-providerform__err">{props.catalogWarning}</p>}
 
       {form.open && (
@@ -293,10 +347,10 @@ function ModelsPane(props: SettingsProps) {
 
       {modelEditor && <ModelMetadataDialog model={modelEditor.model} adding={modelEditor.originalId===undefined}
         others={(modelEditor.providerId ? props.providers.find(p=>p.id===modelEditor.providerId)?.models??[] : form.models??[]).filter((m,i)=>modelEditor.providerId?m.id!==modelEditor.originalId:i!==modelEditor.index)}
-        onClose={()=>setModelEditor(null)} onSave={async model=>{
+        onClose={()=>setModelEditor(null)} onSave={async (model,fields)=>{
           if(modelEditor.providerId) {
             if(!props.onSaveProviderModel)throw new Error('模型保存不可用');
-            await props.onSaveProviderModel(modelEditor.providerId,model,modelEditor.originalId);
+            await props.onSaveProviderModel(modelEditor.providerId,model,modelEditor.originalId,fields);
           } else {
             const models=[...(form.models??[])];
             if(modelEditor.index===undefined)models.push(model);else models[modelEditor.index]=model;
@@ -315,7 +369,7 @@ function ModelsPane(props: SettingsProps) {
         </div>
       </section>
 
-      <section className="pi-settings__block">
+      <section className="pi-settings__block pi-settings__block--fill">
         <div className="pi-settings__blockhead">
           <h2 className="pi-settings__blocktitle">
             {L.aiProviders}{' '}
@@ -356,7 +410,7 @@ function ModelsPane(props: SettingsProps) {
               ))}
             </div>
             {/* 右：选中供应商的模型列表与操作 */}
-            <div className="pi-models-split__detail">
+            <div className="pi-models-split__detail" ref={detailRef}>
               {selected && (
                 <>
                   <div className="pi-models-split__head">
@@ -367,11 +421,16 @@ function ModelsPane(props: SettingsProps) {
                     <div className="pi-models-split__id" title={selected.id}>{selected.id}</div>
                     <div className="pi-models-split__ops">
                       {!editable && <span className="pi-models-split__hint">pi 内核管理的模型目录</span>}
+                      {!editable && selected.source === 'auth' && selected.auth !== 'oauth' && props.onSaveProviderAuth && (
+                        <button className="pi-btn pi-btn--outline" onClick={() => openAuthEditor(selected)}>
+                          {selected.auth === 'api_key' ? '修改 API Key' : '设置 API Key'}
+                        </button>
+                      )}
                       {selected.loginAvailable&&props.onLoginProvider&&<button className="pi-btn pi-btn--outline" onClick={()=>props.onLoginProvider!(selected.id)}>{selected.auth==='oauth'?'重新登录':'登录编程套餐'}</button>}
                       {editable && (
                         <>
                           {!selected.isDefault && (
-                            <button className="pi-btn pi-btn--ghost" onClick={() => props.onMakeDefault(selected.id)}>{L.makeDefault}</button>
+                            <button className="pi-btn pi-btn--ghost" disabled={props.defaultModelSaving} onClick={() => props.onMakeDefault(selected.id)}>{L.makeDefault}</button>
                           )}
                           <button className="pi-iconbtn" aria-label={L.edit} title={L.edit} onClick={() => props.onEditProvider(selected.id)}>
                             <Icon name="pencil" size={14} />
@@ -386,15 +445,28 @@ function ModelsPane(props: SettingsProps) {
                   <div className="pi-models-split__baseurl pi-mono">{selected.baseUrl}</div>
                   {selected.loginAvailable&&<p className="pi-providerform__hint">{selected.auth==='oauth'?'已检测到 pi 登录凭证。':'登录后可使用套餐模型。'}下方为 pi 内核模型目录，实际可用范围取决于账号权益。</p>}
                   {!selected.models.length&&<p className="pi-providerform__hint">暂无模型目录。部分提供商需登录后刷新才能获取模型。</p>}
-                  <div className="pi-model-editor__head"><div className="pi-models-split__listtitle">{L.modelsListTitle} · {selected.modelCount}</div>{editable&&props.onSaveProviderModel&&<button type="button" className="pi-btn pi-btn--outline" onClick={()=>setModelEditor({model:{id:''},providerId:selected.id})}><Icon name="plus" size={14}/>添加模型</button>}</div>
+                  <div className="pi-model-editor__head"><div className="pi-models-split__listtitle">{L.modelsListTitle} · {selected.modelCount}{modelFilter ? ` · 匹配 ${visibleModels.length}` : ''}</div><input className="pi-models-split__filter" type="search" placeholder="搜索模型（名称或 ID）…" aria-label="搜索模型" value={modelQuery} onChange={(e)=>setModelQuery(e.target.value)} />{editable&&props.onSaveProviderModel&&<button type="button" className="pi-btn pi-btn--outline" onClick={()=>setModelEditor({model:{id:''},providerId:selected.id})}><Icon name="plus" size={14}/>添加模型</button>}</div>
                   <div className="pi-models-split__models">
-                    {selected.models.map((m) => (
-                      <div key={m.id} className="pi-models-split__model">
-                        {props.onSelectDefaultModel&&selected.auth!=='none'&&<button className="pi-btn pi-btn--ghost" aria-label={`设为默认模型 ${m.id}`} onClick={()=>props.onSelectDefaultModel!(selected.id,m.id)}>设为默认</button>}
-                        <span className="pi-models-split__modelname">{m.name || m.id}{m.reasoning ? ' · 推理' : ''}</span>
-                        <span className="pi-models-split__modelid pi-mono">{m.id}</span><span className="pi-models-split__hint">{m.contextWindow ? `${m.contextWindow.toLocaleString()} 上下文` : '默认上下文'} · {m.maxTokens ? `${m.maxTokens.toLocaleString()} 最大输出` : '默认输出'} · {m.input?.includes('image') ? '文本 / 图片' : '仅文本'}</span>{editable&&props.onSaveProviderModel&&<button type="button" className="pi-iconbtn" aria-label={`编辑模型 ${m.id}`} onClick={()=>setModelEditor({model:m,providerId:selected.id,originalId:m.id})}><Icon name="pencil" size={14}/></button>}
-                      </div>
-                    ))}
+                    {!visibleModels.length && selected.models.length > 0 && <p className="pi-providerform__hint">没有匹配「{modelQuery.trim()}」的模型，请更换关键字。</p>}
+                    {visibleModels.map((m) => {
+                      const isDefault = isDefaultModel(props, selected.id, m.id);
+                      return (
+                        <div key={m.id} className="pi-models-split__model" data-provider-id={selected.id} data-model-id={m.id}>
+                          {props.onSelectDefaultModel && selected.auth !== 'none' && (
+                            <button className="pi-btn pi-btn--ghost" disabled={isDefault || props.defaultModelSaving}
+                              aria-label={`${isDefault ? L.alreadyDefault : L.makeDefault} · ${selected.id} / ${m.id}`}
+                              onClick={() => props.onSelectDefaultModel!(selected.id, m.id)}>
+                              {isDefault ? L.alreadyDefault : L.makeDefault}
+                            </button>
+                          )}
+                          <span className="pi-models-split__modeltitle">
+                            <span className="pi-models-split__modelname" title={m.name || m.id}>{m.name || m.id}{m.reasoning ? ' · 推理' : ''}</span>
+                            {isDefault && <span className="pi-model-default-badge">{L.defaultBadge}</span>}
+                          </span>
+                          <span className="pi-models-split__modelid pi-mono">{m.id}</span><span className="pi-models-split__hint">{m.contextWindow ? `${m.contextWindow.toLocaleString()} 上下文` : '默认上下文'} · {m.maxTokens ? `${m.maxTokens.toLocaleString()} 最大输出` : '默认输出'} · {m.input?.includes('image') ? '文本 / 图片' : '仅文本'}</span>{props.onSaveProviderModel&&<button type="button" className="pi-iconbtn" aria-label={`编辑模型 ${m.id}`} onClick={()=>setModelEditor({model:m,providerId:selected.id,originalId:m.id})}><Icon name="pencil" size={14}/></button>}
+                        </div>
+                      );
+                    })}
                   </div>
                 </>
               )}

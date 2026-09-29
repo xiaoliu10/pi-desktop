@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState } from 'react';
-import type { PiCatalogModel } from '../../../shared/pi';
+import type { PiCatalogModel, PiModelEditableField } from '../../../shared/pi';
 import { Icon } from '../Icons';
 import { commitModelDraft, createModelDraft, type ModelDraft } from './model-draft';
 
@@ -7,7 +7,7 @@ import { commitModelDraft, createModelDraft, type ModelDraft } from './model-dra
  * pi owns runtime defaults and capability semantics; this dialog edits a disposable draft. */
 export function ModelMetadataDialog({model, others, adding, onClose, onSave}: {
   model: PiCatalogModel; others: PiCatalogModel[]; adding: boolean;
-  onClose: () => void; onSave: (model: PiCatalogModel) => Promise<void> | void;
+  onClose: () => void; onSave: (model: PiCatalogModel, fields: PiModelEditableField[]) => Promise<void> | void;
 }) {
   const [draft,setDraft] = useState(()=>createModelDraft(model));
   const [advanced,setAdvanced] = useState(false);
@@ -31,7 +31,12 @@ export function ModelMetadataDialog({model, others, adding, onClose, onSave}: {
     const result=commitModelDraft(draft,others);
     if('field' in result){setError(result);if(result.field==='thinkingLevelMap')setAdvanced(true);return;}
     savingRef.current=true;setSaving(true);setError(null);
-    try{await onSave(result.model);onClose();}
+    // Only changed fields are sent for an existing model. In particular, a name edit
+    // cannot replay stale discovery metadata over a concurrently edited context limit.
+    const initial = commitModelDraft(createModelDraft(model), []);
+    const keys: PiModelEditableField[] = ['name','contextWindow','maxTokens','reasoning','input','thinkingLevelMap'];
+    const fields = adding || 'field' in initial ? keys : keys.filter(key => JSON.stringify(result.model[key]) !== JSON.stringify(initial.model[key]));
+    try{await onSave(result.model,fields);onClose();}
     catch(e){setError({message:e instanceof Error?e.message:String(e)});}
     finally{savingRef.current=false;setSaving(false);}
   };
