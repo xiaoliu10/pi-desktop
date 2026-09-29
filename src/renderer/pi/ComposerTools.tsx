@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Icon } from '../replica/Icons';
 import { FileIcon } from '../replica/FileIcon';
 import type { ContextItem, ThinkingLevel } from '../../shared/composer';
@@ -48,10 +49,13 @@ function ImageLightbox({ src, name, onClose }: { src: string; name: string; onCl
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
   }, [onClose]);
-  return (
+  return createPortal(
     <div className="pi-lightbox" role="dialog" aria-modal="true" aria-label={`预览 ${name}`} onClick={onClose}>
+      <div className="pi-lightbox__bar" onClick={e => e.stopPropagation()}>
+        <button type="button" className="pi-lightbox__btn" title="关闭" aria-label="关闭" onClick={onClose}><Icon name="x" size={22}/></button>
+      </div>
       <img src={src} alt={name} onClick={e => e.stopPropagation()} />
-    </div>
+    </div>, document.body,
   );
 }
 

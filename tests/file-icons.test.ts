@@ -42,8 +42,19 @@ describe('文件类型图标（ZCode material-icons 移植）', () => {
     expect(html).not.toContain('pi-fileicon--badge');
   });
 
+  it('.log 解析到 log 素材（ZCode 同款黄色日志图标），渲染可解码', () => {
+    expect(resolveFileIconName('pi-debug.log')).toBe('log');
+    expect(resolveFileIconName('session.LOG')).toBe('log');
+    const url = resolveFileIconUrl('logs/run.log');
+    expect(url.startsWith('data:image/svg+xml')).toBe(true);
+    expect(decodeURIComponent(url)).toContain('#afb42b');
+    // path 命令大小写敏感：编码不得改变原始几何（曾因整体大写坏过 h-5v5 这类相对指令）
+    expect(decodeURIComponent(url)).toContain('h-5v5');
+    expect(renderToStaticMarkup(createElement(FileIcon, { path: 'a.log', size: 14 }))).toContain('<img');
+  });
+
   it('素材集完整：映射表引用的每个名字都有 data URL', () => {
-    const names = ['audio','babel','console','css','database','docker','document','editorconfig','eslint','folder','gemfile','git','go','html','image','java','javascript','jest','json','less','lock','makefile','markdown','nodejs_alt','npm','pdf','php','powerpoint','prettier','python','react','react_ts','readme','rust','sass','settings','snapcraft','storybook','svg','table','toml','tsconfig','typescript','video','vitest','word','yaml','yarn'];
+    const names = ['audio','babel','console','css','database','docker','document','editorconfig','eslint','folder','gemfile','git','go','html','image','java','javascript','jest','json','less','lock','log','makefile','markdown','nodejs_alt','npm','pdf','php','powerpoint','prettier','python','react','react_ts','readme','rust','sass','settings','snapcraft','storybook','svg','table','toml','tsconfig','typescript','video','vitest','word','yaml','yarn'];
     for (const n of names) expect(FILE_ICON_URLS[n], n).toBeTruthy();
   });
 });

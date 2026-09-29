@@ -6,7 +6,8 @@ import { FileCodeViewer } from './FileCodeViewer';
  * explicit empty state (no external pages are loaded in this phase).
  */
 
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import type { WorkbenchProps } from '../contracts';
 import { Icon } from '../Icons';
 import { FileIcon } from '../FileIcon';
@@ -15,6 +16,14 @@ import './workbench.css';
 
 export function WorkbenchPanel(props: WorkbenchProps) {
   const [expanded, setExpanded] = useState<string | null>(props.selectedFile);
+  // 图片灯箱：面板窄，点击放大到全屏（复用聊天的 pi-lightbox 样式，portal 到 body）。
+  const [lightbox, setLightbox] = useState(false);
+  useEffect(() => {
+    if (!lightbox) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setLightbox(false); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [lightbox]);
   // 原 `key={tool-preview-N}` 重挂载的语义（切换预览文件时展开该文件）改为 render 期比对，
   // 整棵子树不再因预览刷新而重建 —— 浏览器 tab 的 webview 由此得以保活。
   const lastFile = useRef(props.selectedFile);
@@ -114,7 +123,13 @@ export function WorkbenchPanel(props: WorkbenchProps) {
               <Empty icon="folder" title={props.labels.emptyFiles} hint={props.labels.emptyFilesHint} />
             )}
             {selected && (
-              <><div className="pi-workbench__filetoolbar"><span className="pi-workbench__filename" title={selected.path}>{selected.path}</span><FilePathMenu path={selected.path} cwd={props.cwd}/></div><FileCodeViewer path={selected.path} content={selected.excerpt.join('\n')} line={props.fileLine}/></>
+              <><div className="pi-workbench__filetoolbar"><span className="pi-workbench__filename" title={selected.path}>{selected.path}</span><FilePathMenu path={selected.path} cwd={props.cwd}/></div>
+                {props.image
+                  ? <button type="button" className="pi-workbench__imgbtn" title="点击放大" onClick={() => setLightbox(true)}>
+                      <img className="pi-workbench__img" src={`data:${props.image.mime};base64,${props.image.base64}`} alt={selected.path} />
+                    </button>
+                  : <FileCodeViewer path={selected.path} content={selected.excerpt.join('\n')} line={props.fileLine}/>}
+              </>
             )}
           </>
         )}
@@ -129,6 +144,15 @@ export function WorkbenchPanel(props: WorkbenchProps) {
         <div className="pi-workbench__browserslot" style={{ display: props.tab === 'browser' ? 'flex' : 'none' }}>
           {props.browserPanel}
         </div>
+      )}
+      {lightbox && props.image && createPortal(
+        <div className="pi-lightbox" role="dialog" aria-modal="true" aria-label={selected?.path} onClick={() => setLightbox(false)}>
+          <div className="pi-lightbox__bar" onClick={e => e.stopPropagation()}>
+            <button type="button" className="pi-lightbox__btn" title="关闭" aria-label="关闭" onClick={() => setLightbox(false)}><Icon name="x" size={22} /></button>
+          </div>
+          <img className="pi-lightbox__img" src={`data:${props.image.mime};base64,${props.image.base64}`} alt={selected?.path} onClick={(e) => e.stopPropagation()} />
+        </div>,
+        document.body,
       )}
     </aside>
   );

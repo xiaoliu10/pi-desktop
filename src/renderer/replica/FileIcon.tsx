@@ -57,6 +57,7 @@ const EXTENSION_ICON_ALIASES: Record<string, string> = {
   json: 'json',
   jsonl: 'json',
   less: 'less',
+  log: 'log',
   mjs: 'javascript',
   md: 'markdown',
   markdown: 'markdown',

@@ -106,9 +106,32 @@
 
 .pireplica .pi-connectmodal__actions {
   display: flex;
-  justify-content: flex-end;
+  align-items: center;
+  justify-content: space-between;
   gap: 8px;
   margin-top: 16px;
+}
+
+/* 弹窗操作条（qoderwaker 审批条样式）：左侧红字危险操作，右侧等高主次按钮 */
+.pireplica .pi-connectmodal__actions-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.pireplica .pi-connectmodal__actions .pi-btn {
+  height: 34px;
+  padding: 0 16px;
+  border-width: 1px;
+  border-style: solid;
+  border-color: transparent;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.pireplica .pi-connectmodal__actions .pi-btn--outline {
+  border-color: var(--pi-border-strong);
 }
 
 .pireplica .pi-connectmodal__options {
@@ -142,6 +165,22 @@
   max-height: 200px;
   overflow: auto;
 }
+
+/* 其余扩展交互（select/input/editor）：ZCode 式停靠卡——替换输入框位置（同 ask 卡槽位），
+   占满对话栏宽度、不遮左右边栏、非居中弹窗。复用 pi-connectmodal 子样式，仅覆盖外形。 */
+.pireplica .pi-extdock {
+  width: 100%;
+  max-width: none;
+  max-height: 46vh;
+  border: 1px solid var(--pi-border);
+  border-radius: var(--pi-radius-lg);
+  box-shadow: none;
+  padding: 18px 20px 16px;
+  margin-bottom: 12px;
+}
+
+.pireplica .pi-extdock .pi-connectmodal__options { max-height: 22vh; }
+.pireplica .pi-extdock__option--active { background: var(--pi-bg-hover); border-color: var(--pi-border-strong); }
 
 /* unavailable screen */
 .pireplica .pi-unavailable {
@@ -186,6 +225,13 @@
 .pireplica .pi-unavailable__card .btn {
   align-self: center;
 }
+
+/* Keep mounted chat state, but remove background native drag regions and hit targets.
+   CSS z-index alone does not isolate Electron's native draggable-region hit testing. */
+.pireplica--settings > .pi-sidebar,
+.pireplica--settings > .pireplica__main,
+.pireplica--settings > .pi-resize-handle { display: none !important; }
+.pireplica .pi-settings-wrap { -webkit-app-region: no-drag; }
 
 /* macOS hiddenInset window: keep the settings "返回应用" nav button clear of
    the floating traffic-light cluster. Only mounted in the production app. */
@@ -307,7 +353,7 @@
 .pi-plan-approval { margin: 0 24px 12px; border: 1px solid var(--pi-border); border-radius: 16px; background: var(--pi-bg-card, var(--pi-bg)); display: flex; flex-direction: column; padding: 12px; outline: none; }
 
 /* 命令/工具权限审批内联卡：与 ask 卡同位（对话框上方上浮），文档为限高滚动区。 */
-.pi-approval-inline { margin: 0 24px 12px; border: 1px solid var(--pi-border); border-radius: 16px; background: var(--pi-bg-card, var(--pi-bg)); display: flex; flex-direction: column; gap: 10px; padding: 12px; outline: none; }
+.pi-approval-inline { margin: 0 24px 12px; min-width: 0; border: 1px solid var(--pi-border); border-radius: 16px; background: var(--pi-bg-card, var(--pi-bg)); display: flex; flex-direction: column; gap: 10px; padding: 12px; outline: none; }
 .pi-approval-inline__title { font-size: 15px; font-weight: 600; color: var(--pi-text); padding: 0 4px; }
 .pi-approval-inline__tool { display: flex; align-items: center; gap: 8px; width: 100%; border: 0; border-radius: 10px; padding: 7px 10px; background: var(--pi-bg); border: 1px solid var(--pi-border); cursor: pointer; text-align: left; color: var(--pi-text-secondary); font-size: 13px; }
 .pi-approval-inline__tool:hover { border-color: var(--pi-border-strong, var(--pi-border)); }
@@ -467,9 +513,7 @@
 .pi-context-popover__stats dd { margin:0; font-variant-numeric:tabular-nums; }
 .pi-context-popover__note, .pi-context-popover__quota p { margin:8px 0 0; color:var(--pi-text-secondary); }
 .pi-context-popover__quota { margin-top:12px; padding-top:10px; border-top:1px solid var(--pi-border); }
-.pi-lightbox { position:fixed; inset:0; z-index:1000; display:flex; align-items:center; justify-content:center; padding:32px; background:rgba(8,10,14,.72); backdrop-filter:blur(4px); animation:pi-lightbox-in .16s ease; cursor:zoom-out; }
-.pi-lightbox img { max-width:min(100%,1080px); max-height:calc(100vh - 96px); object-fit:contain; border-radius:12px; box-shadow:0 18px 60px rgba(0,0,0,.45); }
-@keyframes pi-lightbox-in { from { opacity:0; } to { opacity:1; } }
+/* Shared, portal-safe image lightbox styles live in replica/chat/chat.css. */
 .pi-context-chip--image button { position:absolute; top:-6px; right:-6px; width:20px; height:20px; align-items:center; justify-content:center; border:1px solid var(--pi-border-strong); border-radius:50%; background:var(--pi-bg); opacity:0; transition:opacity 120ms; }
 .pi-context-chip--image:hover button, .pi-context-chip--image:focus-within button { opacity:1; }
 @media (hover:none) { .pi-context-chip--image button { opacity:1; } }
@@ -593,16 +637,18 @@
 .pi-eli__optdesc { margin-left: 8px; color: var(--pi-text-secondary); overflow-wrap: anywhere; }
 .pi-eli__input { flex: 1; min-width: 0; max-height: 110px; overflow-y: auto; border: 0; background: transparent; color: var(--pi-text); font: inherit; font-size: 13px; font-weight: 500; line-height: 1.55; resize: none; outline: none; padding: 0; }
 .pi-eli__input::placeholder { color: var(--pi-muted); font-weight: 400; }
-.pi-eli__foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 2px 4px 0; }
-.pi-eli__note { display: flex; align-items: center; gap: 8px; min-width: 0; margin: 0; font-size: 12px; color: var(--pi-muted); }
+/* 底部操作条（qoderwaker 审批条样式）：左危险红字、中间提示占满、右侧等高主次按钮，文字不换行 */
+.pi-eli__foot { display: flex; align-items: center; gap: 10px; margin-top: 10px; padding: 10px 2px 2px; border-top: 1px solid var(--pi-border); }
+.pi-eli__note { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; margin: 0; font-size: 12px; color: var(--pi-muted); white-space: nowrap; }
+.pi-eli__note > span:last-child { overflow: hidden; text-overflow: ellipsis; }
 .pi-eli__actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
-.pi-eli__stop { border: 0; background: transparent; color: var(--pi-text-secondary); font-size: 12px; cursor: pointer; padding: 4px 2px; }
-.pi-eli__stop:hover:not(:disabled) { color: var(--pi-text); }
-.pi-eli__stop:disabled { opacity: 0.55; cursor: default; }
+.pi-eli__foot .pi-btn { height: 32px; padding: 0 14px; border-width: 1px; border-style: solid; border-color: transparent; justify-content: center; flex-shrink: 0; }
+.pi-eli__foot .pi-btn--outline { border-color: var(--pi-border-strong); }
 
 /* ask_user_question 内联卡（ZCode bottom dock）：会话对话流内展示，替代全局弹窗。 */
 .pireplica .pi-ask-inline {
   margin: 0 24px 10px;
+  min-width: 0; /* flex item：窄窗口下不被底部操作条的 nowrap 文本撑宽，提示语省略号收缩 */
   border: 1px solid var(--pi-accent, #3b82f6);
   border-radius: var(--pi-radius-lg, 14px);
   background: var(--pi-bg-card, var(--pi-bg));
@@ -661,13 +707,16 @@
 
 /* 顶栏「打开方式」分割按钮：主按钮打开当前项目，下拉选择并记住外部应用。 */
 .pi-openwith { position: relative; display: flex; }
-.pi-openwith__split { display: flex; align-items: stretch; border: 1px solid var(--pi-border); border-radius: 8px; overflow: hidden; background: var(--pi-bg-card); }
-.pi-openwith__main { display: flex; align-items: center; gap: 6px; border: 0; background: none; color: var(--pi-text); font: inherit; font-size: 12px; padding: 4px 9px; cursor: pointer; }
-.pi-openwith__main:not(:disabled):hover { background: var(--pi-bg-hover); }
-.pi-openwith__main:disabled { opacity: 0.5; cursor: default; }
-.pi-openwith__main img { border-radius: 3px; }
-.pi-openwith__caret { display: inline-flex; align-items: center; border: 0; border-left: 1px solid var(--pi-border); background: none; color: var(--pi-text-secondary); padding: 0 6px; cursor: pointer; }
-.pi-openwith__caret:hover { background: var(--pi-bg-hover); color: var(--pi-text); }
+/* 图标按钮形态（ZCode 同款）：应用图标 + 下拉小箭头，可见边框 + 充足内边距。
+   注意必须带 .pireplica 前缀：tokens 的 `.pireplica button` 重置（border:none;padding:0）
+   特异性 (0,1,1) 会压过无前缀的单类规则——上一版因此无边框无边距。
+   --pi-border(0.08) 在顶栏浅背景上几乎不可见，这里用 border-strong 并在 hover 加深。 */
+.pireplica .pi-openwith__iconbtn { display: inline-flex; align-items: center; align-self: center; gap: 5px; border: 1px solid var(--pi-border-strong); background: var(--pi-bg-card); color: var(--pi-text); border-radius: 8px; padding: 5px 8px; cursor: pointer; }
+.pireplica .pi-openwith__iconbtn:not(:disabled):hover { background: var(--pi-bg-hover); border-color: color-mix(in oklab, var(--pi-text) 32%, transparent); }
+.pireplica .pi-openwith__iconbtn:disabled { opacity: 0.5; cursor: default; }
+.pireplica .pi-openwith__iconbtn .pi-openwith__appicon { display: inline-flex; }
+.pireplica .pi-openwith__iconbtn .pi-openwith__appicon img { border-radius: 3px; display: block; }
+.pireplica .pi-openwith__iconbtn .pi-openwith__chevron { color: var(--pi-text-secondary); }
 .pi-openwith__menu img { border-radius: 3px; }
 .pi-openwith__menu button[aria-checked="true"] { color: var(--pi-text); }
 
