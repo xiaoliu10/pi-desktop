@@ -24,6 +24,9 @@ describe('memory file opening boundary', () => {
     expect(preload).toContain("memoryOpen: (rel, cwd, appId) => invoke('memoryOpen', rel, cwd, appId)");
     expect(main).toContain('const real = authorizeProjectCwd(cwd, known)');
     expect(main).toContain('return openWithApp(real, appId,');
+    expect(main).toContain('listMemoryFiles(host.environment.agentDir, memoryProject(cwd), knownMemoryProjects())');
+    expect(main).toContain("readMemoryFileContent(host.environment.agentDir, rel, memoryProject(cwd))");
+    expect(main).toContain("cwd === undefined || cwd === '' ? undefined : authorizeProjectCwd(cwd,");
   });
   it('reveals a file, opens an editor with argv, and rejects terminals/unknown/uninstalled apps', async () => {
     const { agent, project, known } = fixture();
@@ -38,7 +41,7 @@ describe('memory file opening boundary', () => {
   });
   it('rejects forged cwd, traversal, absolute paths, other project mappings and non-files', () => {
     const { agent, project, known } = fixture();
-    for (const rel of ['../global.md', '/tmp/secret.md', 'a/../global.md', 'a\\b.md', 'global.md\0', 'global.txt', 'projects/other.md']) expect(() => resolveMemoryOpen(agent, rel, project, known)).toThrow();
+    for (const rel of ['global.md', '../global.md', '/tmp/secret.md', 'a/../global.md', 'a\\b.md', 'global.md\0', 'global.txt', 'projects/other.md']) expect(() => resolveMemoryOpen(agent, rel, project, known)).toThrow();
     expect(() => resolveMemoryOpen(agent, 'global.md', '/unknown', known)).toThrow();
     expect(() => resolveMemoryOpen(agent, 'projects-external/local.md', undefined, known)).toThrow();
     fs.mkdirSync(path.join(agent, 'memory/dir.md'));
@@ -60,6 +63,19 @@ describe('memory file opening boundary', () => {
     fs.renameSync(path.join(agent, 'memory'), path.join(root, 'outside'));
     fs.symlinkSync(path.join(root, 'outside'), path.join(agent, 'memory'));
     expect(() => resolveMemoryOpen(agent, 'global.md', undefined, known)).toThrow();
+  });
+  it('opens nested project daily via editor and Finder, not just root-level markdown', async () => {
+    const { agent, project, known } = fixture();
+    const file = path.join(project, '.pi/memory/daily/2026-09-27.md');
+    fs.mkdirSync(path.dirname(file)); fs.writeFileSync(file, 'project daily');
+    const reveal = vi.fn(), run = vi.fn(async () => {});
+    const deps = { platform: 'darwin', existsSync: (p: string) => p === '/Applications/Visual Studio Code.app', reveal, run };
+    const rel = 'projects-external/daily/2026-09-27.md';
+    await openMemoryFile(agent, rel, project, 'finder', known, deps);
+    await openMemoryFile(agent, rel, project, 'vscode', known, deps);
+    expect(reveal).toHaveBeenCalledWith(fs.realpathSync(file));
+    expect(run).toHaveBeenCalledWith('/usr/bin/open', ['-a', '/Applications/Visual Studio Code.app', fs.realpathSync(file)]);
+    await expect(openMemoryFile(agent, rel, undefined, 'finder', known, deps)).rejects.toThrow();
   });
   it('supports files larger than preview limit and non-macOS reveal', async () => {
     const { agent, known } = fixture();
