@@ -1,5 +1,5 @@
 import { enableOfficialSubagent, officialSubagentStatus, recoverSubagents, cleanupSubagents } from './pi/official-subagent';
-import { listMemoryFiles, memoryAssistStatus, readMemoryFileContent, detectMemoryPlugin, builtinMemoryDir, DEFAULT_MEMORY_SOURCE } from './pi/memory-bridge';
+import { listMemoryFiles, migrateLegacyMemoryFile, moveMemoryFileToProject, memoryAssistStatus, readMemoryFileContent, detectMemoryPlugin, builtinMemoryDir, DEFAULT_MEMORY_SOURCE } from './pi/memory-bridge';
 import { TerminalService } from './pi/terminal-service';
 import { filePreview } from './pi/file-preview';
 import { gitStatus } from './pi/git-status';
@@ -12,6 +12,7 @@ import { openMemoryFile } from './pi/memory-open';
 import { authorizeProjectCwd, listExternalApps, openWithApp } from './pi/open-with';
 import { canonical, fileKey } from './pi/session-index';
 import { bundleIcon } from './pi/app-icon';
+import { createDockBadge } from './pi/dock-badge';
 import { SessionArchive } from './pi/session-archive';
 import { autoArchiveKeys } from './pi/auto-archive';
 import { autoDeleteArchivedKeys, deleteArchivedSession } from './pi/auto-delete';
@@ -53,7 +54,17 @@ let archive: SessionArchive;
 let automations: AutomationService | undefined;
 let terminals: TerminalService;
 let voice: VoiceService;
+// Dock 角标：后台任务完成时显示累计数字（ZCode 式提示），用户回到窗口自动清零。
+const dockBadge = createDockBadge(text => {
+  try { app.setBadgeCount(text ? Number(text) : 0); } catch { /* 未 ready 或平台不支持时忽略 */ }
+});
 function broadcast(event: PiEvent) {
+  // 一轮 agent 运行结束（权威信号 agent_settled；排除 desktop-wait-for-idle 合成事件）→ Dock 角标 +1。
+  if (event.type === 'rpc'
+    && (event.event as { type?: string }).type === 'agent_settled'
+    && (event.event as { source?: string }).source !== 'desktop-wait-for-idle') {
+    dockBadge.taskDone(event.key, Boolean(mainWindow && !mainWindow.isDestroyed() && mainWindow.isFocused()));
+  }
   automations?.onPiEvent(event);
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('local-pi:event', event);
   remote.publish(event);
@@ -180,6 +191,7 @@ function registerIpc() {
   handle('setAccessMode', (key, mode) => host.backend.setAccessMode(key, mode));
   handle('runs', () => host.backend.runs());
   handle('prompt', (key, text, behavior, images) => { if (typeof text !== 'string' || !['steer', 'followUp'].includes(behavior)) throw new Error('输入无效'); return host.backend.prompt(key, text, behavior, images); });
+  handle('refreshCommands', key => { if (typeof key !== 'string' || !key) throw new Error('输入无效'); return host.backend.refreshCommands(key); });
   handle('compact', (key, customInstructions) => { if (customInstructions !== undefined && typeof customInstructions !== 'string') throw new Error('输入无效'); return host.backend.compact(key, customInstructions || undefined); });
   handle('stop', key => host.backend.stop(key));
   handle('queueEdit', (key, op) => {
@@ -211,8 +223,19 @@ function registerIpc() {
   handle('cleanupSubagents', (key: string) => cleanupSubagents(host.environment.agentDir, key));
   // 记忆衔接层：探测 CLI 记忆插件（如 pi-memory），未启用时回退 Desktop 内置桥
   handle('memoryAssistStatus', (enabled: unknown) => memoryAssistStatus(host.environment.agentDir, Boolean(enabled)));
-  handle('memoryList', (cwd: unknown) => listMemoryFiles(host.environment.agentDir, typeof cwd === 'string' && cwd ? cwd : undefined));
-  handle('memoryRead', (rel: unknown, cwd: unknown) => readMemoryFileContent(host.environment.agentDir, String(rel), typeof cwd === 'string' && cwd ? cwd : undefined));
+  const memoryProject = (cwd: unknown) => cwd === undefined || cwd === '' ? undefined : authorizeProjectCwd(cwd,
+    [...settings.preferences().projects.map(p => p.path), ...host.index.scan().map(s => s.cwd), ...host.backend.runs().map(r => r.cwd)]);
+  const knownMemoryProjects = () => {
+    // 旧版 projects/ 映射文件的归属识别：登记项目 + 会话扫描路径都算已知项目。
+    const known = new Map<string, string>();
+    for (const p of settings.preferences().projects) known.set(path.resolve(p.path), p.name || path.basename(p.path));
+    for (const s of host.index.scan()) if (!known.has(path.resolve(s.cwd))) known.set(path.resolve(s.cwd), path.basename(s.cwd));
+    return [...known].map(([p, name]) => ({ path: p, name }));
+  };
+  handle('memoryList', (cwd: unknown) => listMemoryFiles(host.environment.agentDir, memoryProject(cwd), knownMemoryProjects()));
+  handle('memoryMigrateLegacy', (rel: unknown) => migrateLegacyMemoryFile(host.environment.agentDir, rel, knownMemoryProjects()));
+  handle('memoryMoveToProject', (rel: unknown, projectPath: unknown) => moveMemoryFileToProject(host.environment.agentDir, rel, projectPath));
+  handle('memoryRead', (rel: unknown, cwd: unknown) => readMemoryFileContent(host.environment.agentDir, rel, memoryProject(cwd)));
   // 一键启用内置默认记忆插件：已装未登记 → 补注册；未装 → pi install 后注册。
   handle('memoryEnableDefault', async () => {
     const detected = detectMemoryPlugin(host.environment.agentDir);
@@ -232,6 +255,7 @@ function registerIpc() {
   handle('planQuota', provider => host.accounts.quota(String(provider)));
   handle('modelDefaultSave', input => host.modelDefaultSave(input));
   handle('modelProviderSave', draft => host.modelProviderSave(draft));
+  handle('modelProviderAuthSave', input => host.modelProviderAuthSave(input));
   handle('modelProviderRemove', id => host.modelProviderRemove(id));
   handle('usageStats', () => host.usageStats());
   handle('revealPath', p => {
@@ -373,6 +397,10 @@ function createWindow(): void {
 
   Menu.setApplicationMenu(
     Menu.buildFromTemplate([
+      // macOS 应用菜单必须显式提供（含 Quit ⌘Q）：自定义模板若缺 appMenu，
+      // 第一个子菜单会被当作应用菜单，⌘Q 没有加速器、按了无反应。
+      ...(process.platform === 'darwin' ? [{ role: 'appMenu' as const }] : []),
+      { label: 'File', submenu: process.platform === 'darwin' ? [{ role: 'close' }] : [{ role: 'quit' }] },
       {
         label: 'Edit',
         submenu: [
@@ -416,6 +444,7 @@ function createWindow(): void {
   mainWindow.on('closed', () => {
     mainWindow = null;
   });
+  mainWindow.on('focus', () => dockBadge.clear());
 }
 
 // -- lifecycle ---------------------------------------------------------------
@@ -533,7 +562,7 @@ void app.whenReady().then(() => {
     });
     setTimeout(() => { host.dispose(); app.exit(1); }, process.env.PI_SMOKE_SETTINGS || process.env.PI_SMOKE_REMOTE ? 60000 : 20000).unref();
   }
-  app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
+  app.on('activate', () => { dockBadge.clear(); if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
 });
 app.on('before-quit', () => {
   automations?.dispose();

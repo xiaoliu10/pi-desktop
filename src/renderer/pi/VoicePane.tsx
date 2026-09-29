@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { VoiceAsrModel, VoiceAsrModelInput, VoiceConfig } from '../../shared/voice';
 
-const EMPTY_FORM: VoiceAsrModelInput = { name: '', endpoint: '', model: '', language: '', apiKey: '' };
+const EMPTY_FORM: VoiceAsrModelInput = { name: '', endpoint: '', model: '', language: '', style: 'transcriptions', apiKey: '' };
 
 /**
  * 设置 → 语音输入：ASR 模型列表（可配置多个，指定一个生效）。
@@ -16,7 +16,12 @@ export function VoicePane(props: { busy: boolean; act: (fn: () => Promise<unknow
   const reload = () => window.localPi.voiceConfig();
 
   useEffect(() => {
-    reload().then(setConfig).catch(e => setError(String((e as Error).message || e)));
+    let alive = true;
+    const refresh = () => reload().then(value => { if (alive) setConfig(value); })
+      .catch(e => { if (alive) setError(String((e as Error).message || e)); });
+    void refresh();
+    window.addEventListener('pi:voice-config-changed', refresh);
+    return () => { alive = false; window.removeEventListener('pi:voice-config-changed', refresh); };
   }, []);
 
   const run = (fn: () => Promise<VoiceConfig>, message?: string, after?: () => void) =>
@@ -37,6 +42,7 @@ export function VoicePane(props: { busy: boolean; act: (fn: () => Promise<unknow
       endpoint: editing.endpoint?.trim(),
       model: editing.model?.trim(),
       language: editing.language?.trim(),
+      style: editing.style === 'chat' ? 'chat' : 'transcriptions',
     };
     if (editing.id) patch.id = editing.id;
     if (editing.apiKey?.trim()) patch.apiKey = editing.apiKey.trim();
@@ -47,7 +53,8 @@ export function VoicePane(props: { busy: boolean; act: (fn: () => Promise<unknow
     <>
       <section className="pi-features__card">
         <h2>ASR 模型</h2>
-        <p>输入框右下角的麦克风按钮会录音并转写为文字，追加到输入框（不会自动发送）。<strong>至少需要配置一个就绪的 ASR 模型（接口地址 + 模型 ID + API key 齐备）才能开启语音输入</strong>；转写始终使用「生效中」的那个模型。录音经浏览器采集后上传到模型配置的 OpenAI 兼容端点，API key 由系统钥匙串加密保存在主进程，不会出现在渲染进程。</p>
+        <p>配置就绪的 ASR 模型并设为「生效中」后，点击输入框的麦克风录音；转写文字追加到输入框，不会自动发送。</p>
+        <p>录音会上传到生效模型的接口地址；API key 由主进程保存，已保存的密钥不回显。兼容性与配置示例见 README「语音输入」。</p>
         <p role="status">{enabled
           ? `✓ 语音输入已开启 · ${readyCount} 个就绪模型${config?.activeId ? ` · 生效：${config.models.find(m => m.id === config.activeId)?.name ?? ''}` : ''}`
           : '○ 语音输入未开启 · 至少配置一个就绪的 ASR 模型'}</p>
@@ -59,7 +66,7 @@ export function VoicePane(props: { busy: boolean; act: (fn: () => Promise<unknow
             model={model}
             active={model.id === config.activeId}
             busy={props.busy}
-            onEdit={() => setEditing({ id: model.id, name: model.name, endpoint: model.endpoint, model: model.model, language: model.language, apiKey: '' })}
+            onEdit={() => setEditing({ id: model.id, name: model.name, endpoint: model.endpoint, model: model.model, language: model.language, style: model.style, apiKey: '' })}
             onActivate={() => void run(() => window.localPi.voiceSetActive(model.id), `「${model.name}」已设为生效模型`)}
             onRemove={() => {
               if (window.confirm(`移除 ASR 模型「${model.name}」？其 API key 会一并删除。`)) {
@@ -79,7 +86,13 @@ export function VoicePane(props: { busy: boolean; act: (fn: () => Promise<unknow
           <h2>{editing.id ? '编辑模型' : '添加 ASR 模型'}</h2>
           <label>模型名称<input value={editing.name ?? ''} placeholder="OpenAI whisper" onChange={e => setEditing({ ...editing, name: e.target.value })}/></label>
           <label>接口地址<input value={editing.endpoint ?? ''} placeholder="https://api.openai.com/v1（留空 = OpenAI 默认）" onChange={e => setEditing({ ...editing, endpoint: e.target.value })} spellCheck={false}/></label>
-          <label>转写模型 ID<input value={editing.model ?? ''} placeholder="whisper-1" onChange={e => setEditing({ ...editing, model: e.target.value })} spellCheck={false}/></label>
+          <label>转写模型 ID<input value={editing.model ?? ''} placeholder="whisper-1 或 mimo-v2.5-asr" onChange={e => setEditing({ ...editing, model: e.target.value })} spellCheck={false}/></label>
+          <label>调用方式
+            <select value={editing.style ?? 'transcriptions'} onChange={e => setEditing({ ...editing, style: e.target.value as VoiceAsrModelInput['style'] })}>
+              <option value="transcriptions">OpenAI 转写端点（/audio/transcriptions）</option>
+              <option value="chat">Chat 多模态（/chat/completions，MiMo 等）</option>
+            </select>
+          </label>
           <label>语言（ISO-639-1，留空自动检测）<input value={editing.language ?? ''} placeholder="zh" maxLength={16} onChange={e => setEditing({ ...editing, language: e.target.value })} spellCheck={false}/></label>
           <label>API key
             <input type="password" value={editing.apiKey ?? ''} placeholder={editing.id ? '留空保持已保存的 key' : 'sk-…'} onChange={e => setEditing({ ...editing, apiKey: e.target.value })} autoComplete="off" spellCheck={false}/>
@@ -90,11 +103,6 @@ export function VoicePane(props: { busy: boolean; act: (fn: () => Promise<unknow
           </div>
         </section>
       )}
-
-      <section className="pi-features__card">
-        <h2>兼容性说明</h2>
-        <p>接口需兼容 OpenAI <code>POST /audio/transcriptions</code>（multipart：<code>file</code>、<code>model</code>、可选 <code>language</code>，Bearer 鉴权）。录音格式为 webm/opus（Chromium 默认），单次最长 5 分钟。</p>
-      </section>
     </>
   );
 }
@@ -115,7 +123,7 @@ function AsrModelRow(props: {
         <span className="pi-features__badge">
           {props.active ? '生效中 · ' : ''}{m.ready ? '就绪' : `未就绪${!m.hasKey ? ' · 缺 API key' : ''}`}
         </span>
-        <code>{m.endpoint} · {m.model}{m.language ? ` · ${m.language}` : ''}</code>
+        <code>{m.endpoint} · {m.model}{m.style === 'chat' ? ' · chat 多模态' : ''}{m.language ? ` · ${m.language}` : ''}</code>
       </div>
       <div className="pi-features__actions">
         {!props.active && <button className="pi-btn pi-btn--outline" disabled={props.busy || !m.ready} onClick={props.onActivate}>设为生效</button>}

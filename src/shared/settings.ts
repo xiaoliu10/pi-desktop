@@ -71,7 +71,7 @@ export interface SettingsApi {
   resourceCreate(input: { kind: ResourceKind; scope: 'user' | 'project'; name: string; text: string; cwd?: string }): Promise<void>;
   resourceToggle(id: string, enabled: boolean, cwd?: string): Promise<void>;
   revealResource(id: string, cwd?: string): Promise<void>;
-  mcpSave(input: { name: string; scope: 'user' | 'project'; config?: string; enabled?: boolean; remove?: boolean; revision: string; cwd?: string }): Promise<void>;
+  mcpSave(input: { name: string; scope: 'user' | 'project'; config?: string; enabled?: boolean; remove?: boolean; revision: string; cwd?: string; /** 导入服务传 source：启停写入本作用域 mcp.json 的 disabledServers 覆盖层，不改原工具文件。 */ source?: string }): Promise<void>;
   mcpTest(id: string, cwd?: string): Promise<{ tools: string[] }>;
   projectSave(value: ProjectUpdate): Promise<void>;
   projectReveal(cwd: string): Promise<void>;

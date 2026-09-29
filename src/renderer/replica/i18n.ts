@@ -199,6 +199,7 @@ const en = {
     addProvider: 'Add provider',
     makeDefault: 'Make default',
     defaultBadge: 'Default',
+    alreadyDefault: 'Already default',
     addAccount: 'Add account',
     noVendor: 'No vendor account is signed in yet.',
     refreshCatalog: 'Refresh model catalog',
@@ -237,6 +238,8 @@ const en = {
     empty: 'You are all caught up',
     request: 'Request',
     demoNote: 'Demo notifications — no real system tasks are tracked.',
+    copy: 'Copy',
+    copied: 'Copied',
   } satisfies NotificationsLabels,
 };
 
@@ -420,6 +423,7 @@ const zh: typeof en = {
     addProvider: '添加提供商',
     makeDefault: '设为默认',
     defaultBadge: '默认',
+    alreadyDefault: '已设为默认',
     addAccount: '添加账号',
     noVendor: '尚未登录任何厂商账号。',
     refreshCatalog: '刷新模型目录',
@@ -458,6 +462,8 @@ const zh: typeof en = {
     empty: '没有新通知',
     request: '请求',
     demoNote: '演示通知——不追踪真实系统任务。',
+    copy: '复制',
+    copied: '已复制',
   },
 };
 

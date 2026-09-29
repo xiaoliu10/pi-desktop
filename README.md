@@ -85,6 +85,54 @@ Real process-isolation test run (no external model calls):
 PI_TEST_EXECUTABLE=/opt/homebrew/bin/pi pnpm exec vitest run tests
 ```
 
+## 语音输入
+
+语音输入使用独立配置的云端 ASR（语音识别）模型，不随会话的聊天模型切换。录音转写后只会**追加到输入框，不会自动发送**；检查文字后再手动发送。
+
+### 配置与使用
+
+1. 打开 **设置 → 语音输入 → 添加模型**，填写模型名称、接口地址、转写模型 ID 和 API key。
+   - 接口地址填写服务的基础地址（包含所需的 `/v1` 等前缀），**不要附加** `/audio/transcriptions` 或 `/chat/completions`；客户端会拼接路由。新建时留空使用 `https://api.openai.com/v1`。
+   - 模型名称仅用于显示；模型 ID 必须与服务商提供的音频识别模型一致。
+   - 语言可填 `zh` 等 ISO-639-1 代码，留空自动检测。编辑已有模型时，API key 留空会保留已保存的密钥。
+2. 根据服务实际支持的协议选择「调用方式」，保存后将模型设为「生效中」。可保存多个模型，转写只使用当前生效模型。
+3. 点击输入框右下角的麦克风并允许系统麦克风权限，再次点击停止并转写。当前生效模型必须就绪；「就绪」只表示地址、模型 ID 和密钥满足本地检查，**不代表已验证远端接口或账号权限**。
+
+配置示例（示意，不是服务可用性或套餐权限承诺）：
+
+| 设置项 | OpenAI 转写端点示例 | Chat 多模态网关示例 |
+| --- | --- | --- |
+| 模型名称 | 我的转写模型 | 我的 Chat ASR |
+| 接口地址 | `https://api.openai.com/v1` | `https://gateway.example.com/v1`（替换为实际地址） |
+| 转写模型 ID | `whisper-1` | 服务商支持下述音频请求格式的 ASR 模型 ID |
+| 调用方式 | OpenAI 转写端点 | Chat 多模态 |
+| 语言 | `zh` 或留空 | `zh` 或留空 |
+| API key | 对应服务的密钥 | 对应网关且有音频模型权限的密钥 |
+
+### 两种调用方式与兼容范围
+
+两种方式均使用 `Authorization: Bearer <API key>`，但请求与响应格式不同：
+
+- **OpenAI 转写端点（`transcriptions`，默认）**：向基础地址下的 `POST /audio/transcriptions` 发送 multipart 表单，包含 `file`、`model`、`response_format=json`，以及非空时的 `language`；读取响应 JSON 的 `text`。
+- **Chat 多模态（`chat`）**：向 `POST /chat/completions` 发送 JSON，包含 `model`、用户消息中的 `input_audio.data`（形如 `data:audio/wav;base64,…` 的 data URL），以及 `asr_options.language`（留空时为 `auto`）。读取 `choices[0].message.content`；支持字符串或带 `text` 的分段数组。
+
+「兼容 Chat」不等于支持音频输入；网关和模型必须接受上述请求格式。MiMo 等服务也需分别确认**具体接口地址、模型、API key 和套餐的音频权限**；不能仅凭模型名称或 token-plan 地址判断一定可用。
+
+### 404 自动回退与保存
+
+- 仅当当前调用方式为 `transcriptions`，且 `/audio/transcriptions` 返回 **HTTP 404** 时，使用同一基础地址、模型、密钥、语言和音频，**自动尝试一次** Chat 多模态请求。
+- Chat 返回成功响应且解析出非空文字后，本次转写成功并显示切换提示。若原模型未在请求期间被编辑或删除，会保存其调用方式为 `chat`；保存成功后，后续录音（包括应用重启后）直接走 Chat。
+- 若请求期间原模型已编辑或删除，不覆盖当前设置；若保存失败，仍保留转写文字并提示手动选择 Chat 多模态。切换生效模型不会被这次回退撤销。
+- Chat 尝试失败（包括空结果或超时）时，不更改调用方式，错误会说明两次尝试及检查方向。鉴权、参数、限流、其他非 404 HTTP 错误或网络错误不会触发自动切换；已选择 `chat` 时也不会反向回退。两次请求共用 120 秒超时预算。
+
+### 音频限制与隐私
+
+- 录音由浏览器采集，单次最长 **5 分钟**，到时自动停止并转写；上传音频字节上限为 **24 MiB**。服务端可能另有限制。
+- 上传前尝试在本地转为 **16 kHz、单声道、16-bit PCM WAV**。若 `AudioContext` 不可用或解码/转码失败，会上传浏览器的原始录音格式（如 WebM 或 MP4）；因此不能保证每次上传都是 WAV，服务端仍可能拒绝格式。
+- 录音会上传到当前生效模型配置的接口地址，并非离线识别。请选择可信接口，避免录入不应交给该服务的内容。
+- 配置存于 Electron `userData` 下的 `voice.json`。主进程通过 Electron `safeStorage` 保存 API key；**系统加密不可用时会退回带 `plain:` 前缀的 Base64 存储，这不是加密**，需保护本地用户数据目录。
+- 配置读取不向渲染进程回传已保存的密钥明文，只返回 `hasKey` 状态；新输入的密钥经设置表单交给主进程保存。删除模型也会删除该模型保存的密钥。
+
 ## Prototype architecture (legacy, pending migration)
 
 ```

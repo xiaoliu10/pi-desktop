@@ -1,8 +1,11 @@
 /** Tool-call policy; trusted extension Node code is outside this boundary. */
 import fs from 'node:fs';
 import { registerDesktopPlan } from './plan.mjs';
+import { installNetworkDiagnostics } from './network-diagnostics.mjs';
 import { classify, approvalMessage, approvalMeta, fileRevision, inputDigest, modes } from './policy.mjs';
 export default function desktopPolicy(pi) {
+  // Local to the Desktop-launched pi process; never propagate a preload to tool subprocesses.
+  if (process.env.PI_DESKTOP_PERMISSION) installNetworkDiagnostics();
   registerDesktopPlan(pi);
   const labels = { plan: '计划模式', ask: '变更前确认', autoEdit: '自动编辑', fullAccess: '完全访问' };
   let mode = process.env.PI_DESKTOP_PERMISSION || 'ask';
