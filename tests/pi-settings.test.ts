@@ -19,6 +19,73 @@ it('persists project pinning and sections, preserves them on rename, and restore
  expect(service.preferences().projects[0].name).toBe('Restored');
 });
 
+function projectOrderSetup() {
+ const { root, service, host } = setup();
+ const [a,b,c,d] = ['a','b','c','d'].map(name => { const p=path.join(root,name);fs.mkdirSync(p);return p; });
+ const check = (expected:string[]) => {
+  const saved=service.preferences();
+  expect(saved.projects.map(p=>p.path)).toEqual(expected);
+  const reloaded=new SettingsService(host,path.join(root,'data'),path.resolve('extensions/desktop-policy')).preferences();
+  expect(reloaded.projects).toEqual(saved.projects);
+  expect(reloaded.hiddenProjects).toEqual(saved.hiddenProjects);
+  expect(JSON.parse(fs.readFileSync(path.join(root,'data','desktop-preferences.json'),'utf8')).projects).toEqual(saved.projects);
+ };
+ return {service,a,b,c,d,check};
+}
+
+it('keeps ordinary saves, renames and section changes in their persisted positions',()=>{
+ const {service,a,b,c,check}=projectOrderSetup();
+ for(const p of [a,b,c])service.projectSave({path:p,name:path.basename(p)});
+ check([a,b,c]);
+ service.projectSave({path:a,name:'Renamed'});check([a,b,c]);
+ service.projectSave({path:b,name:'b',section:'Work'});check([a,b,c]);
+ service.projectSave({path:a+'/../a/',name:'Canonical same project',pinned:false});check([a,b,c]);
+ expect(service.preferences().projects[1].section).toBe('Work');
+});
+
+it('prepends only newly pinned projects and preserves the relative order of every other row',()=>{
+ const {service,a,b,c,d,check}=projectOrderSetup();
+ service.projectSave({path:a,name:'a'});
+ service.projectSave({path:b,name:'b',pinned:false});
+ service.projectSave({path:c,name:'c'});
+ service.projectSave({path:b,name:'b',pinned:true});check([b,a,c]); // false -> true
+ service.projectSave({path:c,name:'c',pinned:true});check([c,b,a]); // undefined -> true
+ service.projectSave({path:d,name:'d',pinned:true,section:'Personal'});check([d,c,b,a]); // new registration
+});
+
+it('does not move an already pinned project on repeated pin, rename or section save',()=>{
+ const {service,a,b,c,check}=projectOrderSetup();
+ service.projectSave({path:a,name:'a',pinned:true});
+ service.projectSave({path:b,name:'b',pinned:true});
+ service.projectSave({path:c,name:'c'});
+ // Check after saving a so the old append-on-every-save implementation fails independently.
+ service.projectSave({path:a,name:'a',pinned:true});check([b,a,c]);
+ service.projectSave({path:b,name:'Renamed'});check([b,a,c]);
+ service.projectSave({path:b,name:'Renamed',pinned:true,section:'Work'});check([b,a,c]);
+ expect(service.preferences().projects[0]).toMatchObject({pinned:true,section:'Work',name:'Renamed'});
+});
+
+it('unpins in place, repins at the front, removes only the target and appends ordinary re-adds',()=>{
+ const {service,a,b,c,d,check}=projectOrderSetup();
+ for(const p of [a,b,c])service.projectSave({path:p,name:path.basename(p)});
+ service.projectSave({path:b,name:'b',pinned:true});
+ service.projectSave({path:c,name:'c',pinned:true});
+ service.projectSave({path:c,name:'c',pinned:false});check([c,b,a]);
+ service.projectSave({path:c,name:'c',pinned:false});check([c,b,a]);
+ service.projectSave({path:c,name:'c',pinned:true});check([c,b,a]);
+ service.projectSave({path:b,name:'b',pinned:false});check([c,b,a]);
+ service.projectSave({path:b,name:'b',pinned:true});check([b,c,a]);
+ service.projectSave({path:c,name:'c',remove:true});check([b,a]);
+ expect(service.preferences().hiddenProjects).toContain(c);
+ service.projectSave({path:c,name:'Restored'});check([b,a,c]);
+ expect(service.preferences().hiddenProjects).not.toContain(c);
+ expect(service.preferences().projects[2].pinned).toBeUndefined();
+ service.projectSave({path:d,name:'New ordinary'});check([b,a,c,d]);
+ service.projectSave({path:c,name:'Restored',remove:true});check([b,a,d]);
+ service.projectSave({path:c,name:'Restored pinned',pinned:true});check([c,b,a,d]);
+ expect(service.preferences().hiddenProjects).not.toContain(c);
+});
+
 it('persists session renames as desktop-only display names',()=>{const{service,root}=setup();
  expect(service.preferences().sessionRenames).toEqual({});
  service.savePreferences({sessionRenames:{'key-1':'1111','key-2':'修复登录'}});

@@ -1,6 +1,7 @@
 /* Settings page styles (U05) — full-page layout, light-gray setting rows. */
 
 .pireplica .pi-settings {
+  -webkit-app-region: no-drag;
   flex: 1;
   min-width: 0;
   display: flex;
@@ -61,6 +62,8 @@
 }
 
 .pireplica .pi-settings__navitem {
+  -webkit-app-region: no-drag;
+  cursor: pointer;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -369,6 +372,32 @@
   }
 }
 
+/* 模型页自适应：内容区不整页滚动，master-detail 填满可视高度、两栏各自独立滚动——
+   点列表底部的供应商时，右侧模型列表始终在可视区内，不需要回滚到页顶。 */
+.pireplica .pi-settings__content--fill {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding-bottom: 34px;
+}
+
+.pireplica .pi-settings__content--fill > * {
+  flex-shrink: 0;
+}
+
+.pireplica .pi-settings__content--fill .pi-settings__block--fill {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  margin-bottom: 0;
+}
+
+.pireplica .pi-settings__content--fill .pi-models-split {
+  flex: 1;
+  min-height: 0;
+}
+
 /* 模型配置：左供应商列表 + 右模型明细（参考 ZCode 的 master-detail 交互）。 */
 .pireplica .pi-models-split {
   display: flex;
@@ -442,6 +471,7 @@
   flex: 1;
   min-width: 0;
   padding: 14px 18px 18px;
+  overflow-y: auto;
 }
 
 .pireplica .pi-models-split__head {
@@ -483,6 +513,25 @@
   color: var(--pi-text-secondary);
   margin-bottom: 8px;
   text-transform: uppercase;
+/* 模型列表关键字过滤（OpenRouter 等数百个模型时快速定位）。 */
+.pireplica .pi-models-split__filter {
+  flex: 1;
+  min-width: 0;
+  max-width: 300px;
+  border: 1px solid var(--pi-border);
+  background: var(--pi-bg-inset);
+  border-radius: var(--pi-radius-pill);
+  padding: 6px 12px;
+  font-size: var(--pi-font-size-sm);
+  color: var(--pi-text);
+}
+.pireplica .pi-models-split__filter:focus {
+  outline: none;
+  border-color: var(--pi-fg);
+  background: var(--pi-bg-card);
+}
+.pireplica .pi-model-editor__head .pi-models-split__listtitle { margin-bottom: 0; white-space: nowrap; }
+
   letter-spacing: 0.05em;
 }
 
@@ -494,6 +543,8 @@
 
 .pireplica .pi-models-split__model {
   display: flex;
+  flex-wrap: wrap;
+  min-width: 0;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
@@ -503,7 +554,31 @@
   background: var(--pi-bg-card);
 }
 
+.pireplica .pi-models-split__modeltitle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.pireplica .pi-model-default-badge {
+  display: inline-flex;
+  flex-shrink: 0;
+  white-space: nowrap;
+  padding: 1px 6px;
+  border: 1px solid var(--pi-border-strong);
+  border-radius: var(--pi-radius-pill);
+  background: var(--pi-bg-active);
+  color: var(--pi-text);
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 18px;
+}
+
 .pireplica .pi-models-split__modelname {
+  min-width: 0;
   font-size: var(--pi-font-size-md);
   overflow: hidden;
   text-overflow: ellipsis;
