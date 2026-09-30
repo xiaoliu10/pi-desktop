@@ -49,6 +49,53 @@ function readTomlServers(file) {
   return servers;
 }
 
+/**
+ * Normalize relative cwd/command in imported server configs. Some tools write
+ * relative paths (codex: `command = "./X.app/…/bin"`, `cwd = "."` resolved
+ * against its own working directory, which is not reproducible here). Strategy:
+ * resolve cwd against the source file's directory, then try the command against
+ * [resolved cwd, baseDir]; if still absent, shallow-search baseDir for the
+ * command's first path segment and adopt the unique hit (cwd follows it).
+ * Absolute paths and URL servers pass through untouched.
+ */
+function normalizeServerPaths(config, baseDir) {
+  if (!config || typeof config !== 'object' || !config.command || typeof config.command !== 'string') return config;
+  const absolute = (p) => path.isAbsolute(p) ? p : path.resolve(baseDir, p);
+  const cwd = typeof config.cwd === 'string' && config.cwd ? absolute(config.cwd) : baseDir;
+  let command = config.command;
+  let resolvedCwd = cwd;
+  if (!path.isAbsolute(command)) {
+    const candidates = [path.resolve(cwd, command), path.resolve(baseDir, command)];
+    const hit = candidates.find(candidate => fs.existsSync(candidate));
+    if (hit) {
+      command = hit;
+    } else {
+      const rel = command.replace(/^(?:\.[\\/])+/, ''); // './MyTool.app/…' → 'MyTool.app/…'
+      const first = rel.split('/')[0].split('\\')[0];
+      const hits = first && first !== '..' ? shallowFind(baseDir, first, 3) : [];
+      if (hits.length !== 1) return config; // unresolvable — keep as written; connect/test will report it
+      command = path.join(hits[0], rel.slice(first.length + 1));
+      // cwd follows the discovered segment's directory (the tool's own root).
+      resolvedCwd = path.dirname(hits[0]);
+    }
+  }
+  return { ...config, command, cwd: resolvedCwd };
+}
+
+/** Depth-limited search for entries named `name`; returns containing directories. */
+function shallowFind(dir, name, depth) {
+  const hits = [];
+  if (depth < 0 || !fs.existsSync(dir)) return hits;
+  let entries;
+  try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return hits; }
+  for (const entry of entries) {
+    if (entry.name === name) hits.push(path.join(dir, entry.name));
+    else if (entry.isDirectory() && !entry.name.startsWith('.')) hits.push(...shallowFind(path.join(dir, entry.name), name, depth - 1));
+    if (hits.length > 1) break;
+  }
+  return hits;
+}
+
 /** Return [{ name, config, source, file }] for every import source that resolves. */
 function resolveImports(imports) {
   const out = [];
@@ -61,7 +108,7 @@ function resolveImports(imports) {
       else { const cfg = JSON.parse(fs.readFileSync(src.file, 'utf8')); servers = cfg[src.key] || cfg.mcpServers || {}; }
       for (const [serverName, config] of Object.entries(servers || {})) {
         if (config && typeof config === 'object' && (config.command || config.url)) {
-          out.push({ name: serverName, config, source: name, file: src.file });
+          out.push({ name: serverName, config: normalizeServerPaths(config, path.dirname(src.file)), source: name, file: src.file });
         }
       }
     } catch { /* missing/unreadable source config is fine — skip it */ }
@@ -69,4 +116,4 @@ function resolveImports(imports) {
   return out;
 }
 
-module.exports = { resolveImports, readTomlServers, SOURCES };
+module.exports = { resolveImports, readTomlServers, normalizeServerPaths, SOURCES };
