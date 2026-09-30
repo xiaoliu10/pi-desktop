@@ -9,6 +9,9 @@
  * 否则输入框麦克风按钮引导去设置页。
  */
 
+/** 转写调用方式：transcriptions = OpenAI 兼容 /audio/transcriptions；chat = 走 chat/completions 多模态（MiMo 等只代理 chat 路由的网关）。 */
+export type VoiceAsrStyle = 'transcriptions' | 'chat';
+
 /** 单个 ASR 模型的回传视图：不含密钥明文。 */
 export interface VoiceAsrModel {
   id: string;
@@ -20,6 +23,8 @@ export interface VoiceAsrModel {
   model: string;
   /** ISO-639-1 语言码，空串 = 自动检测。 */
   language: string;
+  /** 调用方式；缺省 transcriptions。chat 方式按 MiMo ASR 文档走 input_audio + asr_options。 */
+  style: VoiceAsrStyle;
   /** 是否已保存 API key（明文只在 main 解密使用）。 */
   hasKey: boolean;
   /**
@@ -36,6 +41,7 @@ export interface VoiceAsrModelInput {
   endpoint?: string;
   model?: string;
   language?: string;
+  style?: VoiceAsrStyle;
   apiKey?: string;
 }
 
@@ -44,6 +50,12 @@ export interface VoiceConfig {
   models: VoiceAsrModel[];
   /** 生效模型 id；无模型时为 null。 */
   activeId: string | null;
+}
+
+/** 转写结果与可选的兼容性提示；不含密钥或服务端原始响应。 */
+export interface VoiceTranscribeResult {
+  text: string;
+  notice?: string;
 }
 
 /** 单次录音的上限：本地缓冲后一次性上传，5 分钟 webm/opus 约 2-4 MiB。 */

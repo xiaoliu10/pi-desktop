@@ -1,6 +1,10 @@
 import { contextPrompt, parseContextPrompt, type ContextItem, type ThinkingLevel } from '../../shared/composer';
 import { closeTransientPopovers } from '../replica/popovers';
+import { projectSubagents } from './subagents';
+import { dismissibleSubagentCalls } from './subagent-dismissal';
 import { applyAssistantStreamDelta } from './stream-delta';
+import { modelErrorPart } from './model-error';
+import { nextModelRetryState } from './model-retry';
 import { type AccessMode } from '../../shared/access-mode';
 import type { DesktopPreferences } from '../../shared/settings';
 import type { SettingsNavId } from '../replica/contracts';
@@ -30,6 +34,7 @@ import type {
   DemoFileDiff,
   MessagePart,
   ModelGroup,
+  ModelRetryState,
   NotificationItem,
   PluginRowData,
   ProjectNavItem,
@@ -43,6 +48,8 @@ export type Behavior = 'steer' | 'followUp';
 declare global {
   interface Window {
     localPi: LocalPiApi;
+    /** CDP 实机调试把手：控制台经 window.__store 直达 zustand store（仅调试用）。 */
+    __store?: { getState: () => { dialogs: unknown[] } };
   }
 }
 
@@ -95,6 +102,17 @@ function messageTime(value: unknown): number | undefined {
 // 缓存会 100% 失效 → 每次刷新全量重建 + 全量重渲染（千条会话秒级卡死）。
 const messageCache = new Map<string, ChatMessage>();
 
+// 会话预热在途表：selectSession 触发后台 connect，send 到达时若预热未完成则 await
+// 同一份 Promise，避免同一会话并发两次 connect 各自 spawn 一个 pi 进程。
+const prewarmInFlight = new Map<string, Promise<void>>();
+
+function modelOutcome(m: Record<string, unknown>): ChatMessage['modelOutcome'] {
+  if (m.stopReason === 'error' || m.errorMessage) return 'error';
+  if (m.stopReason === 'aborted') return 'aborted';
+  if (['stop', 'length', 'toolUse'].includes(String(m.stopReason))) return 'success';
+  return 'streaming';
+}
+
 export function historyToMessages(branch: PiEntry[]): ChatMessage[] {
   const out: ChatMessage[] = [];
   // thunk 形式：缓存命中时连构造都跳过（工具参数 JSON.stringify、工具结果全文 clean 是主要开销）。
@@ -119,6 +137,8 @@ export function historyToMessages(branch: PiEntry[]): ChatMessage[] {
   let prevAt: number | undefined;
   branch.forEach((entry, index) => {
     const id = String(entry.id ?? `entry-${index}`);
+    // Internal continuations are context, not a user prompt or a visible audit notice.
+    if (entry.customType === 'desktop-retry-continuation' || (entry.type === 'custom_message' && entry.display === false)) return;
     if (entry.type === 'message' && entry.message) {
       const m = entry.message as Record<string, unknown>;
       const role = String(m.role ?? '');
@@ -159,11 +179,10 @@ export function historyToMessages(branch: PiEntry[]): ChatMessage[] {
               }
             }
           }
-          if ((m as { errorMessage?: string }).errorMessage) {
-            parts.push({ kind: 'error', id: `${id}-err`, message: clean((m as { errorMessage?: string }).errorMessage) });
-          }
-          if (!parts.length) return undefined;
-          return { id, timestamp, role: 'assistant' as const, parts, model: (m as { model?: unknown }).model ? clean((m as { model?: { id?: unknown } }).model?.id) : undefined };
+          const error = modelErrorPart(m, `${id}-err`, timestamp);
+          if (error) parts.push(error);
+          if (!parts.length && modelOutcome(m) !== 'success') return undefined;
+          return { id, timestamp, role: 'assistant' as const, modelOutcome: modelOutcome(m), parts, model: (m as { model?: unknown }).model ? clean((m as { model?: { id?: unknown } }).model?.id) : undefined };
         });
         return;
       }
@@ -247,7 +266,9 @@ export function liveToMessages(
         }
       }
     }
-    if (parts.length) out.push({ id: `live-${id}`, role: 'assistant', timestamp: messageTime(m.timestamp), parts });
+    const error = modelErrorPart(m, `${id}-err`, messageTime(m.timestamp));
+    if (error) parts.push(error);
+    if (parts.length || modelOutcome(m) === 'success') out.push({ id: `live-${id}`, role: 'assistant', modelOutcome: modelOutcome(m), timestamp: messageTime(m.timestamp), parts });
   }
   if (tools?.length) {
     out.push({
@@ -425,27 +446,38 @@ export function groupModels(run: PiRun | undefined): ModelGroup[] {
   return [...byProvider.values()];
 }
 
-/** Build sidebar navigation from pi sessions + active runs. */
+/** Build sidebar navigation: stable project order, recent-first sessions within each project. */
 export function buildPiSidebar(
   sessions: PiSession[],
   runs: PiRun[],
   expanded: string[],
   renames: Record<string, string>,
+  preferences?: Pick<DesktopPreferences, 'projects' | 'hiddenProjects'>,
+  archivedKeys: string[] = [],
 ): { temporary: SessionNavItem[]; projects: ProjectNavItem[] } {
+  const archived = new Set(archivedKeys);
+  const hidden = new Set(preferences?.hiddenProjects ?? []);
+  const registered = new Map((preferences?.projects ?? []).map((p) => [p.path, p]));
+  const order = new Map((preferences?.projects ?? []).map((p, index) => [p.path, index]));
+  runs = runs.filter((r) => !archived.has(r.key));
   const runByKey = new Map(runs.map((r) => [r.key, r]));
   const byCwd = new Map<string, PiSession[]>();
   for (const s of sessions) {
     const list = byCwd.get(s.cwd) ?? [];
-    list.push(s);
+    // Archive-only discovered projects still belong in the sidebar.
+    if (!archived.has(s.key)) list.push(s);
     byCwd.set(s.cwd, list);
   }
+  for (const cwd of registered.keys()) if (!byCwd.has(cwd)) byCwd.set(cwd, []);
   const projects: ProjectNavItem[] = [...byCwd.entries()]
     .map(([cwd, list]) => ({
       id: cwd,
-      name: pathBase(cwd),
+      name: registered.get(cwd)?.name ?? pathBase(cwd),
       path: cwd,
+      pinned: registered.get(cwd)?.pinned,
+      section: registered.get(cwd)?.section,
       expanded: expanded.includes(cwd),
-      emptyHint: false,
+      emptyHint: list.length === 0,
       sessions: list
         .sort((a, b) => b.updatedAt - a.updatedAt)
         .map((s) => ({
@@ -460,14 +492,17 @@ export function buildPiSidebar(
           path: s.path,
         })),
     }))
-    .sort((a, b) => {
-      const am = Math.max(...(byCwd.get(a.id) ?? []).map((s) => s.updatedAt), 0);
-      const bm = Math.max(...(byCwd.get(b.id) ?? []).map((s) => s.updatedAt), 0);
-      return bm - am;
-    });
+    .filter((p) => !hidden.has(p.path))
+    .sort((a, b) =>
+      Number(!!b.pinned) - Number(!!a.pinned)
+      || (a.pinned ? 0 : (a.section || '\uffff').localeCompare(b.section || '\uffff'))
+      // Within a group, saved order wins; discovered projects follow by full path, never activity/name.
+      || (order.get(a.path) ?? Number.MAX_SAFE_INTEGER) - (order.get(b.path) ?? Number.MAX_SAFE_INTEGER)
+      || (a.path < b.path ? -1 : a.path > b.path ? 1 : 0),
+    );
   // Desktop runs whose session file has not appeared yet.
   const orphanRuns: SessionNavItem[] = runs
-    .filter((r) => !sessions.some((s) => s.key === r.key))
+    .filter((r) => !hidden.has(r.cwd) && !sessions.some((s) => s.key === r.key))
     .map((r) => ({
       id: r.key,
       title: '新桌面会话',
@@ -486,22 +521,47 @@ export interface OptimisticSend {
   images: import('../../shared/composer').PiImage[];
   baseline: string[];
   confirmedId?: string;
+  /** Runtime user boundary observed before disk history catches up (not a pending RPC). */
+  received?: boolean;
+  /** An anonymous user start may only consume an optimistic send once. */
+  userStarted?: boolean;
+  /** Runtime message identity, independent of the session entry's ID. */
+  messageIdentity?: string;
+  /** prompt RPC 已应答（pi 已持久化该消息）；此后仍未确认 = 确实无法认领的孤儿。 */
+  promptDone?: boolean;
 }
+
+/** Received boundaries keep transient history anchored; they are not local send requests. */
+export function isAwaitingSend(send: OptimisticSend): boolean {
+  return !send.received && !send.confirmedId;
+}
+
+const userMessageIdentity = (message: Record<string, unknown>): string | undefined => {
+  const identity = message.id ?? message.timestamp;
+  return identity == null ? undefined : String(identity);
+};
 
 /** Never acknowledge against a pre-send entry (including identical text/timestamps). */
 export function confirmSends(sends: OptimisticSend[], history: PiHistory, key: string): OptimisticSend[] {
-  const claimed = new Set(sends.flatMap(s => s.confirmedId ? [s.confirmedId] : []));
+  const claimed = new Set(sends.flatMap(s => s.key === key && s.confirmedId ? [s.confirmedId] : []));
   return sends.map(s => {
     if (s.key !== key || s.confirmedId) return s;
     const entry = history.branch.find(e => {
       if (!e.id || s.baseline.includes(e.id) || claimed.has(e.id) || e.message?.role !== 'user') return false;
+      if (s.messageIdentity !== undefined && userMessageIdentity(e.message) !== s.messageIdentity) return false;
       const content = e.message.content;
       const images = Array.isArray(content) ? content.filter((b: any) => b.type === 'image') : [];
-      return contentText(content) === s.text && images.length === s.images.length && images.every((b: any, i: number) => b.data === s.images[i].data && b.mimeType === s.images[i].mimeType);
+      if (images.length !== s.images.length) return false;
+      // pi 缩放超尺寸贴图时会改写落盘文本（追加「[Image: original …]」注记）并重编码图片字节，
+      // 文本逐字相等 + 字节相等永远匹配不上 → 乐观气泡永挂、工作条永续计时。放宽为
+      // 原文前缀 + 图片数量；claimed/baseline 已防跨条目误认领。
+      const text = contentText(content);
+      if (s.received) return text === s.text && images.every((image: any, i: number) => image.data === s.images[i].data && image.mimeType === s.images[i].mimeType);
+      return text === s.text || (s.text.length > 0 && text.startsWith(s.text));
     });
     if (!entry?.id) return s;
     claimed.add(entry.id);
-    return { ...s, confirmedId: entry.id };
+    return { ...s, confirmedId: entry.id, messageIdentity: s.messageIdentity ?? userMessageIdentity(entry.message!) };
   });
 }
 
@@ -521,6 +581,17 @@ export function sentConversationMessages(branch: PiEntry[], live: Record<string,
   ];
   const out: ChatMessage[] = [];
   let cursor = 0;
+  // send 的锚定位置（branch 下标）：confirmed 在其条目处；未确认 send 锚定在本轮自身产物
+  // （baseline 外首条落盘条目）之前。sends 按锚定排序后按时间序插入，而不是把未确认 send
+  // 无条件排到对话流最底部（那会让它永挂底部，把之后排队自动发出的消息挤到上面）。
+  const anchorOf = (s: OptimisticSend) => {
+    if (s.confirmedId) { const at = branch.findIndex(e => e.id === s.confirmedId); return at < 0 ? branch.length : at; }
+    if (s.baseline.length) { const first = branch.findIndex(e => e.id && !s.baseline.includes(e.id)); return first < 0 ? branch.length : first; }
+    return branch.length;
+  };
+  // 同锚点时未确认 send 必须排在该条目之前（它的锚就是“首个 baseline 外条目”的位置）；
+  // 已确认/history 边界排后，其余按发送时间。
+  sends = [...sends].sort((a, b) => (anchorOf(a) - anchorOf(b)) || (a.confirmedId ? 1 : b.confirmedId ? -1 : a.at - b.at));
   // A late result/update may arrive after its progress was retired. Persisted
   // call identity outranks the current event turn, otherwise old work resurfaces
   // after the new user despite having already been saved in an earlier segment.
@@ -552,9 +623,11 @@ export function sentConversationMessages(branch: PiEntry[], live: Record<string,
     const send = sends[i];
     const at = send.confirmedId ? branch.findIndex(e => e.id === send.confirmedId) : -1;
     // While history is late, everything already saved still belongs before this send.
-    const end = at >= cursor ? at : branch.length;
+    // 排序后锚定恒 >= cursor；陈旧确认（at < cursor）仍容忍回退到末尾。
+    const anchor = anchorOf(send);
+    const end = at >= cursor ? at : anchor >= cursor ? anchor : branch.length;
     out.push(...segment(branch.slice(cursor, end), sends[i - 1]?.id));
-    if (send.id.startsWith('history:') && at >= 0) out.push(...historyToMessages([branch[at]]));
+    if ((send.id.startsWith('history:') || send.received) && at >= 0) out.push(...historyToMessages([branch[at]]));
     else out.push({ id: send.id, role: 'user', timestamp: send.at, parts: [
       { kind: 'text', id: `${send.id}-text`, text: send.text },
       ...send.images.map((image, n) => ({ ...image, kind: 'image' as const, id: `${send.id}-image-${n}` })),
@@ -673,13 +746,15 @@ export interface PiReplicaState {
   notifications: NotificationItem[];
   notice?: string;
   error?: string;
+  /** 错误归属的会话：横幅只在该会话内展示（无 key = 应用级错误，全局展示）。 */
+  errorKey?: string;
 
   dialogs: Dialog[];
   live: Record<string, Record<string, Record<string, unknown>>>;
   toolProgress: Record<string, ToolProgress[]>;
   /** Per-run retry state (auto_retry_start…auto_retry_end): drives the working-bar
    *  "正在重试请求" label so a silent timeout-retry window doesn't look frozen. */
-  retrying: Record<string, { attempt: number; max: number } | null>;
+  retrying: Record<string, ModelRetryState | null>;
   widgets: Record<string, Record<string, string>>;
 
   resetCounter: number;
@@ -695,9 +770,12 @@ export interface PiReplicaActions {
   navigate: (view: PiReplicaState['view']) => void;
   openSettings: (page: PiReplicaState['settingsPage']) => void;
   backToApp: () => void;
+  refreshConversation: () => Promise<boolean>;
   toggleSidebar: () => void;
   toggleProject: (cwd: string) => void;
   selectSession: (key: string) => void;
+  /** 后台预热连接：打开会话即启动 pi 进程，发送时不再等「正在准备任务…」。失败静默。 */
+  prewarmSession: (key: string) => void;
   dismissSubagent: (callId: string) => void;
   dismissFinishedSubagents: (callIds: string[]) => void;
   setSessionArchived: (key: string, archived: boolean) => Promise<boolean>;
@@ -740,7 +818,7 @@ export interface PiReplicaActions {
   answerDialog: (response: { id: string; value?: string; confirmed?: boolean; cancelled?: boolean }) => void;
   scanResources: () => void;
   rescanAndReload: () => void;
-  loadCatalog: () => void;
+  loadCatalog: () => Promise<void>;
   loadPackages: () => void;
   searchMarketplace: (query: string) => void;
   installPackage: (spec: string) => void;
@@ -767,6 +845,7 @@ function currentRun(state: PiReplicaState): PiRun | undefined {
 let navPlayback = false;
 
 export const usePiStore = create<PiReplicaStore>((set, get) => {
+  let catalogLoadSeq = 0;
   const pushNotice = (text: string) => set({ notice: text });
   const pushNotification = (n: Omit<NotificationItem, 'id' | 'read'>) => {
     const item: NotificationItem = { ...n, id: `nt-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, read: false };
@@ -776,7 +855,7 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
     try {
       return await fn();
     } catch (e) {
-      set({ error: String((e as Error).message ?? e) });
+      set({ error: String((e as Error).message ?? e), errorKey: get().selectedKey ?? undefined });
       return undefined;
     }
   };
@@ -809,9 +888,10 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
     const key = state.selectedKey;
     if (!api || !key) return false;
     const seq = ++loadSeq;
+    const generation = state.runs.find(r => r.key === key)?.generation;
     try {
       const value = await api.history(key, state.leaf);
-      if (seq !== loadSeq || get().selectedKey !== key) return false;
+      if (seq !== loadSeq || get().selectedKey !== key || get().runs.find(r => r.key === key)?.generation !== generation) return false;
       settlePendingPrompt(value, key);
       if (historyReloadTimer) { clearTimeout(historyReloadTimer); historyReloadTimer = null; }
       return true;
@@ -820,7 +900,7 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
       // 但 selectSession 场景没有“旧 history”（进入会话时已置 undefined）：
       // 大会话序列化慢或 pi 忙时首次加载失败，流会永久空白且无事件再触发刷新。
       // 自动重试直到成功（退避 1s→2s→4s→…封顶 8s；成功/切会话/已加载即停）。
-      if (seq === loadSeq && get().selectedKey === key && get().history === undefined) {
+      if (seq === loadSeq && get().selectedKey === key) {
         scheduleHistoryReload(key, attempt + 1);
       }
       return false;
@@ -831,7 +911,12 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
     if (historyReloadTimer) clearTimeout(historyReloadTimer);
     historyReloadTimer = setTimeout(() => {
       historyReloadTimer = null;
-      void doRefreshHistory(attempt);
+      if (get().selectedKey !== key || historyInFlight || historyDebounce) return;
+      historyInFlight = true;
+      void doRefreshHistory(attempt).finally(() => {
+        historyInFlight = false;
+        scheduleHistoryRefresh();
+      });
     }, Math.min(8000, 1000 * 2 ** Math.max(0, attempt - 1)));
   };
   // 切屏/切窗回来（focus / 可见性恢复）：后台期间的事件与 IPC 可能丢失，
@@ -843,17 +928,24 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
     const state = get();
     const key = state.selectedKey;
     if (!key) return;
-    if (state.history === undefined) void refreshHistory();
+    // Existing history can be stale too: completed steps may have arrived while hidden.
+    void refreshHistory();
     const stuck = state.runs.find(r => r.key === key && ['running', 'starting', 'stopping'].includes(r.status) && !r.pending);
     if (stuck) {
+      const generation = stuck.generation;
       void (window.localPi?.runs?.() ?? Promise.resolve(null)).then((remote) => {
         if (!remote) return;
         const live = remote.find(r => r.key === key);
         if (live && ['running', 'starting', 'stopping'].includes(live.status)) return; // pi 侧真在跑
         const cur = get();
-        const still = cur.runs.find(r => r.key === key && ['running', 'starting', 'stopping'].includes(r.status) && !r.pending);
-        if (still) set({ runs: [...cur.runs.filter(r => r.key !== key), { ...still, status: 'idle' }] });
+        const still = cur.runs.find(r => r.key === key);
+        // 过代保护：响应期间会话可能已重连（新 generation 开了新一轮），旧快照不得套用。
+        if (!still || still.generation !== generation) return;
+        if (['running', 'starting', 'stopping'].includes(still.status) && !still.pending) {
+          set({ runs: [...cur.runs.filter(r => r.key !== key), { ...still, status: 'idle' }] });
+        }
         if (cur.sentAt?.key === key) set({ sentAt: undefined });
+        if (cur.retrying[key]) set({ retrying: { ...get().retrying, [key]: null } });
         void refreshHistory();
       }).catch(() => undefined);
     }
@@ -872,6 +964,8 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
     }, 400);
   };
   const refreshHistory = (): Promise<boolean> => new Promise(resolve => {
+    // New event/manual refresh supersedes a scheduled retry; never run both concurrently.
+    if (historyReloadTimer) { clearTimeout(historyReloadTimer); historyReloadTimer = null; }
     historyWaiters.push(resolve);
     scheduleHistoryRefresh();
   });
@@ -928,17 +1022,63 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
   };
 
   const activeTurn = new Map<string, string>();
+  // Backend onEvent emits rpc(queue_update), then its run snapshot synchronously.
+  // Capture object identities, not text: the paired snapshot acknowledges exactly
+  // this local watermark. A send inserted between those deliveries must survive.
+  type QueueItem = NonNullable<PiRun['queue']>[number];
+  const queueWatermarks = new Map<string, Set<QueueItem>>();
+  // The host emits its optimistic queue BEFORE forwarding prompt to the runtime.
+  // Until that echo arrives a local item cannot be consumed by a runtime snapshot.
+  const unobservedQueueItems = new WeakSet<QueueItem>();
   const handleRpcEvent = (key: string, raw: Record<string, unknown>) => {
     const type = String(raw.type ?? '');
     const state = get();
+    const retry = state.retrying[key] ?? null;
+    const nextRetry = nextModelRetryState(retry, raw, Date.now());
+    if (nextRetry !== retry) set({ retrying: { ...get().retrying, [key]: nextRetry } });
     const activeSend = state.sends?.find(s => s.key === key && s.id === activeTurn.get(key));
     const lastUser = state.selectedKey === key ? state.history?.branch.filter(e => e.message?.role === 'user').at(-1) : undefined;
     const currentOwner = activeSend && !activeSend.confirmedId ? activeSend.id
       : lastUser?.id ? state.sends?.find(s => s.key === key && s.confirmedId === lastUser.id)?.id ?? `history:${lastUser.id}`
-      : activeSend?.id;
+      : activeTurn.get(key) ?? state.sends?.filter(s => s.key === key).at(-1)?.id;
+    if (type === 'queue_update') {
+      queueWatermarks.set(key, new Set((state.runs.find(r => r.key === key)?.queue ?? []).filter(q => !unobservedQueueItems.has(q))));
+      return;
+    }
+    if (type === 'message_start' && (raw.message as any)?.role === 'user') {
+      const message = raw.message as Record<string, unknown>;
+      const messageIdentity = userMessageIdentity(message);
+      const text = contentText(message.content);
+      const images = Array.isArray(message.content) ? structuredClone(message.content.filter((b: any) => b.type === 'image')) : [];
+      const sends = state.sends ?? [];
+      // Identity can acknowledge a repeated delivery, whereas identical anonymous
+      // starts are distinct consumed inputs. Never reuse an old confirmed send by text.
+      const observed = messageIdentity === undefined ? undefined : sends.find(s => s.key === key && s.messageIdentity === messageIdentity);
+      const pending = sends.find(s => s.key === key && isAwaitingSend(s) && !s.userStarted && s.messageIdentity === undefined
+        && s.images.length === images.length && (s.text === text || (s.images.length > 0 && text.startsWith(`${s.text}\n\n[Image:`))));
+      const saved = messageIdentity === undefined || state.selectedKey !== key ? undefined
+        : state.history?.branch.find(e => e.message?.role === 'user' && userMessageIdentity(e.message) === messageIdentity);
+      const existing = observed ?? (saved ? sends.find(s => s.key === key && s.confirmedId === saved.id) : pending);
+      const boundary: OptimisticSend = existing ? { ...existing, messageIdentity, userStarted: true } : {
+        id: `received-${crypto.randomUUID()}`, key, at: Date.now(), text, images, received: true, messageIdentity,
+        baseline: [...new Set([
+          ...(state.selectedKey === key ? state.history?.branch ?? [] : []).flatMap(e => e.id ? [e.id] : []),
+          ...sends.filter(s => s.key === key).flatMap(s => [...s.baseline, ...(s.confirmedId ? [s.confirmedId] : [])]),
+        ])].filter(id => id !== saved?.id),
+        confirmedId: saved?.id,
+      };
+      // A repeated old user start may acknowledge history, but cannot take
+      // ownership back from a newer turn (including while this session is hidden).
+      if (!observed && (!saved || saved.id === lastUser?.id) && (!existing?.userStarted || activeTurn.get(key) === existing.id)) activeTurn.set(key, boundary.id);
+      set({ sends: existing ? sends.map(s => s === existing ? boundary : s) : [...sends, boundary] });
+      // Do not reset activeStreams: late anonymous updates still belong to the
+      // preceding assistant until an explicit assistant start establishes a new one.
+      void refreshHistory();
+      return;
+    }
     if (type === 'agent_start') {
-      const send = state.sends?.filter(s => s.key === key).at(-1);
-      if (send) activeTurn.set(key, send.id);
+      const send = state.sends?.filter(s => s.key === key && isAwaitingSend(s)).at(-1);
+      if (send || currentOwner) activeTurn.set(key, send?.id ?? currentOwner!);
       // 用户消息在 prompt 时即已落盘：agent_start 立刻刷历史，让真实用户气泡马上
       // 替换乐观气泡，而不是等到第一条助手消息 message_end（模型首 token 可能要几十秒）。
       void refreshHistory();
@@ -968,6 +1108,13 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
       scheduleStreamFlush(type === 'tool_execution_end');
       return;
     }
+    if (type === 'desktop_retry_group_wait') {
+      scheduleStreamFlush(true);
+      // Intermediate CLI settlement is NOT Desktop completion. Keep the host run,
+      // timing and budget untouched; only retire the inner retry and sync history.
+      void refreshHistory();
+      return;
+    }
     if (type === 'agent_settled') {
       scheduleStreamFlush(true);
       // 计时条兜底：agent_settled 是轮次结束的权威信号。run 状态事件若在传输中丢失
@@ -977,13 +1124,13 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
       if (get().sentAt?.key === key) set({ sentAt: undefined });
       const stuck = get().runs.find(r => r.key === key && ['running', 'starting', 'stopping'].includes(r.status) && !r.pending);
       if (stuck) set({ runs: [...get().runs.filter(r => r.key !== key), { ...stuck, status: 'idle' }] });
-      // 一轮落地：重试状态随轮结束清掉（auto_retry_end 通常已先到，这里是兜底，防 pi 某些路径不发 end）
-      const prevRetry = get().retrying[key];
-      if (prevRetry) set({ retrying: { ...get().retrying, [key]: null } });
       // 先确认该轮已成功落库再清实时工具步骤，否则历史刷新失败时刚跑完的过程信息会凭空消失；
       // 且刷新期间若下一轮工具事件已到（水位变化），不能把它们一并清掉。
       const epoch = toolEventEpoch.get(key) ?? 0;
+      const generation = get().runs.find(r => r.key === key)?.generation;
+      const settledSends = new Set(get().sends ?? []);
       void refreshHistory().then((ok) => {
+        if (get().runs.find(r => r.key === key)?.generation !== generation) return;
         // Only retire results actually present in this session's history; a successful
         // but stale refresh is not proof that every real tool step was persisted.
         if (ok && get().selectedKey === key && (toolEventEpoch.get(key) ?? 0) === epoch) {
@@ -1000,6 +1147,17 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
             delete rest[key];
             set({ pendingSteer: rest });
           }
+        }
+        // 结算兜底：轮次已完、刷新成功、本会话空闲且无排队，仍有「prompt 已应答却未确认」
+        // 的乐观发送 = 永不可能被历史认领的孤儿（如 fork 走了别的分支、pi 又引入新的注记
+        // 格式）——撤气泡。否则 sending 恒真：工作条照发送时刻永续计时，且该会话发不出
+        // 新消息（发送去重守卫会一直拦截）。prompt 未应答的不动（下一轮可能正在路上）。
+        const post = get();
+        const runNow = post.runs.find(r => r.key === key);
+        if (ok && get().selectedKey === key && (!runNow || (runNow.status === 'idle' && !runNow.pending))) {
+          const all = post.sends ?? [];
+          const kept = all.filter(x => x.key !== key || !isAwaitingSend(x) || !x.promptDone || !settledSends.has(x));
+          if (kept.length !== all.length) set({ sends: kept });
         }
       });
       void reloadSessions();
@@ -1031,7 +1189,7 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
         const identity = message?.timestamp ?? message?.id;
         const session = streams.get(key) ?? new Map<string, Stream>();
         let stream = identity !== undefined ? session.get(String(identity)) : activeStreams.get(key);
-        if (!stream || (identity === undefined && delta.type === 'start' && stream.blocks.length)) {
+        if (!stream || (identity === undefined && delta.type === 'start' && (stream.blocks.length || stream.owner !== currentOwner))) {
           const id = String(identity ?? `stream:${crypto.randomUUID()}`);
           const previous = pendingLive.get(key)?.[id] ?? state.live[key]?.[id];
           stream = { id, owner: previous ? previous._turnId as string | undefined : currentOwner, message: structuredClone(previous ?? message ?? { role: 'assistant' }), blocks: Array.isArray(previous?.content) ? structuredClone(previous.content) : [] };
@@ -1053,7 +1211,6 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
           bucket[stream.id] = { ...stream.message, role: 'assistant', _turnId: stream.owner, content: structuredClone(blocks) };
           pendingLive.set(key, bucket);
           scheduleStreamFlush();
-          if (get().retrying[key]) set({ retrying: { ...get().retrying, [key]: null } });
         }
         return;
       }
@@ -1092,33 +1249,20 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
         }
         pendingLive.set(key, bucket);
         scheduleStreamFlush(type === 'message_end');
-        // 重试后模型开始流式输出 → 重试已生效，清掉残留的「正在重试」状态（auto_retry_end 兜底）
-        if (get().retrying[key]) set({ retrying: { ...get().retrying, [key]: null } });
       }
       if (type === 'message_end') {
         void refreshHistory();
       }
       return;
     }
-    if (type === 'auto_retry_start') {
-      // 模型超时/错误后 pi 自动重试：把状态挂到 working bar，避免「转圈但不知在做啥」
-      set({ retrying: { ...get().retrying, [key]: { attempt: Number(raw.attempt ?? 1), max: Number(raw.maxAttempts ?? 0) } } });
-      const attempt = Number(raw.attempt ?? 1);
-      const max = Number(raw.maxAttempts ?? 0);
-      pushNotification({ kind: 'info', title: 'pi 正在自动重试', body: `第 ${attempt}${max ? `/${max}` : ''} 次重试：${clean(raw.errorMessage) || '当前任务尚未完成。'}`, time: '刚刚' });
-      return;
-    }
-    if (type === 'auto_retry_end') {
-      if (get().retrying[key]) set({ retrying: { ...get().retrying, [key]: null } });
-      return;
-    }
+    if (type === 'auto_retry_start' || type === 'auto_retry_end') return;
     if (type === 'compaction_start') {
       pushNotification({ kind: 'info', title: 'pi 正在压缩上下文', time: '刚刚' });
       return;
     }
     if (type === 'extension_error') {
       const message = `扩展错误：${clean(raw.error ?? raw.message)}`;
-      set({ error: message });
+      set({ error: message, errorKey: key });
       pushNotification({ kind: 'error', title: message, time: '刚刚' });
     }
   };
@@ -1255,22 +1399,54 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
             get().loadPackages();
             break;
           case 'run': {
-            // pi 的 queue_update 要等当前轮次告一段落才来，期间流式 run 事件会整包覆盖
-            // store、把乐观入队的追问“抹掉”近一分钟。后端视图未带回队列时保留仍处于
-            // pendingSync 的乐观项；任何权威队列（queue_update/队列管理）都用无标记项
-            // 整体替换，自然解除保留。
             const prevRun = state.runs.find((r) => r.key === event.run.key);
-            const preserved = (prevRun?.queue ?? []).filter((q) => q.pendingSync);
-            const mergedRun = preserved.length && !event.run.queue?.length && ['running', 'starting'].includes(event.run.status)
-              ? { ...event.run, queue: preserved, pending: Math.max(event.run.pending ?? 0, preserved.length) }
+            const watermark = queueWatermarks.get(event.run.key);
+            queueWatermarks.delete(event.run.key);
+            const sameGeneration = prevRun?.generation === event.run.generation;
+            const preserved = sameGeneration ? (prevRun?.queue ?? []).filter((q, index) => {
+              if (!q.pendingSync || watermark?.has(q)) return false;
+              if (watermark) return true;
+              if (!event.run.queue?.length) return true;
+              if (!unobservedQueueItems.has(q)) return false;
+              // Host prompt echoes append in order. Match this occurrence, not a
+              // same-text older entry (nor its image). Only the paired runtime
+              // snapshot may discard host-observed pendingSync entries.
+              const echo = event.run.queue[index];
+              return !(echo?.text === q.text && echo.behavior === q.behavior && JSON.stringify(echo.images ?? []) === JSON.stringify(q.images ?? []));
+            }) : [];
+            // Ordinary run updates may predate local IPC sends. A paired queue
+            // snapshot is authoritative even when empty, but only up to its watermark.
+            const preserve = preserved.length && ['running', 'starting'].includes(event.run.status);
+            const mergedRun = preserve
+              ? { ...event.run, queue: [...(event.run.queue ?? []), ...preserved], pending: (event.run.pending ?? 0) + preserved.length }
               : event.run;
+            if (!sameGeneration) {
+              activeTurn.delete(event.run.key);
+              activeStreams.delete(event.run.key);
+              streams.delete(event.run.key);
+              // Received-only records belong to the retired runtime. Keep disk
+              // history untouched; old live owners remain quarantined, not rehomed.
+              set({ sends: (state.sends ?? []).filter(s => s.key !== event.run.key || !s.received) });
+            }
             set({ runs: [...state.runs.filter((r) => r.key !== event.run.key), mergedRun] });
+            if (state.retrying[event.run.key] && (prevRun?.generation !== event.run.generation || ['idle', 'stopping', 'error'].includes(event.run.status) || (event.run.retryGroup && event.run.retryGroup.phase !== 'running'))) {
+              set({ retrying: { ...get().retrying, [event.run.key]: null } });
+            }
             // 任务真正开始/停止/出错后，发送空窗的即时计时完成使命
             if (['running', 'stopping', 'error'].includes(event.run.status)) set({ sentAt: undefined });
-            if (event.run.error) set({ error: event.run.error });
+            // 后端假 running 自愈（get_state 核实后拉直）及一切「run 事件代替 agent_settled 报完结」：
+            // run 从运行态翻 idle 时按 agent_settled 同语义收尾（清发送计时、刷历史、撤孤儿气泡、
+            // 退休工具步骤）。正常流里 rpc agent_settled 已触发过一次，两处均幂等可叠加。
+            if (sameGeneration && prevRun && ['running', 'starting', 'stopping'].includes(prevRun.status) && event.run.status === 'idle') {
+              if (get().sentAt?.key === event.run.key) set({ sentAt: undefined });
+              handleRpcEvent(event.run.key, { type: 'agent_settled' });
+            }
+            if (event.run.error) set({ error: event.run.error, errorKey: event.run.key });
             break; }
           case 'closed':
+            if (state.runs.some(r => r.key === event.key && r.generation !== event.generation)) break;
             set({
+              retrying: { ...state.retrying, [event.key]: null },
               runs: state.runs.filter((r) => !(r.key === event.key && r.generation === event.generation)),
               dialogs: state.dialogs.filter((d) => d.generation !== event.generation),
               // pi 退出后不会有任何 run 事件再来清发送计时，残留会让重连后的 idle 会话恒显工作条。
@@ -1287,6 +1463,7 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
             void refreshHistory();
             // 尝试从磁盘恢复未完成的子代理进度（扩展在 onUpdate 时持久化）。
             void window.localPi!.recoverSubagents(event.key).then((recovered: unknown) => {
+              if (get().selectedKey !== event.key || get().runs.some(r => r.key === event.key && r.generation !== event.generation)) return;
               if (Array.isArray(recovered) && recovered.length) set({ recoveredSubagents: recovered as PiReplicaState['recoveredSubagents'] });
             }).catch(() => undefined);
             break;
@@ -1367,6 +1544,7 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
     },
     openSettings: (page) => { closeTransientPopovers(); set({ view: 'settings', settingsPage: page, notificationsOpen: false }); },
     backToApp: () => { closeTransientPopovers(); set({ view: get().selectedKey ? 'chat' : 'home' }); },
+    refreshConversation: refreshHistory,
     toggleSidebar: () => set({ sidebarCollapsed: !get().sidebarCollapsed }),
     toggleProject: (cwd) =>
       set({
@@ -1394,25 +1572,39 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
     selectSession: (key) => {
       set((s) => ({ selectedKey: key, leaf: undefined, history: undefined, review: undefined, view: 'chat', draftText: '', contextItems: [], recoveredSubagents: [], subagentDismissed: s.desktopPreferences?.subagentDismissed?.[key] ?? [] }));
       void refreshHistory();
+      get().prewarmSession(key);
     },
-    dismissSubagent: (callId) => {
+    prewarmSession: (key) => {
       const s = get();
-      const key = s.selectedKey;
-      if (!key) return;
-      const dismissed = [...new Set([...(s.subagentDismissed ?? []), callId])];
-      set({ subagentDismissed: dismissed });
-      const prefs = s.desktopPreferences;
-      if (prefs) {
-        const map = { ...(prefs.subagentDismissed ?? {}), [key]: dismissed };
-        set({ desktopPreferences: { ...prefs, subagentDismissed: map } });
-        void window.localPi?.saveDesktopSettings({ subagentDismissed: map }).catch(() => undefined);
-      }
+      // 已在连/已连接/已归档/环境不可用/进程配额吃紧（backend 上限 6，留余量给用户主动操作）时不预热。
+      if (!key || s.connecting || prewarmInFlight.has(key) || s.runs.some(r => r.key === key) || s.archivedKeys.includes(key) || s.runs.length >= 4) return;
+      if (!s.env?.supported) return;
+      const p = (async () => {
+        try {
+          const rememberedMode = get().desktopPreferences?.sessionAccessModes?.[key];
+          const run = await window.localPi!.connect({ sourceKey: key, trustProject: false, permission: rememberedMode ?? get().desktopPreferences?.permission ?? 'ask' });
+          set(st => st.runs.some(r => r.key === run.key) ? st : { runs: [...st.runs, run] });
+        } catch { /* 预热失败静默：真正发送时 send 的完整 connect 会再次尝试并明确报错 */ }
+      })();
+      prewarmInFlight.set(key, p);
+      void p.finally(() => prewarmInFlight.delete(key));
     },
+    dismissSubagent: (callId) => get().dismissFinishedSubagents([callId]),
     dismissFinishedSubagents: (callIds) => {
       const s = get();
       const key = s.selectedKey;
       if (!key || !callIds.length) return;
-      const dismissed = [...new Set([...(s.subagentDismissed ?? []), ...callIds])];
+      const messages = sentConversationMessages(s.history?.branch ?? [], s.live[key], s.toolProgress[key], (s.sends ?? []).filter(send => send.key === key));
+      const run = currentRun(s);
+      const parentRunning = Boolean(run && ['starting', 'running', 'stopping'].includes(run.status));
+      const children = projectSubagents(messages, parentRunning, s.recoveredSubagents);
+      const allowed = new Set(dismissibleSubagentCalls(children));
+      // Revalidate against the latest selected-session state, not the rendered row.
+      // A shared callId must not hide a running/queued sibling.
+      const existing = s.subagentDismissed ?? s.desktopPreferences?.subagentDismissed?.[key] ?? [];
+      const finished = callIds.filter(id => allowed.has(id) && !existing.includes(id));
+      if (!finished.length) return;
+      const dismissed = [...new Set([...existing, ...finished])];
       set({ subagentDismissed: dismissed });
       const prefs = s.desktopPreferences;
       if (prefs) {
@@ -1430,7 +1622,7 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
       try {
         await window.localPi!.forkMessage(key, s.sends?.find(send => send.id === entryId)?.confirmedId ?? entryId);
       } catch (e) {
-        set({ error: String((e as Error).message || e) });
+        set({ error: String((e as Error).message || e), errorKey: key });
         return;
       }
       // 截断已生效：先刷新历史（旧轮从视图消失），再走普通发送（乐观气泡复用同一条链路）。
@@ -1446,8 +1638,8 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
       const trimmedCommand = text.trim();
       if (trimmedCommand === '/compact' || trimmedCommand.startsWith('/compact ')) {
         const run = currentRun(state);
-        if (!run) { set({ error: '没有运行中的任务；先发起对话后再压缩上下文。' }); return; }
-        if (run.status !== 'idle') { set({ error: '任务运行中，请等空闲后再压缩上下文。' }); return; }
+        if (!run) { set({ error: '没有运行中的任务；先发起对话后再压缩上下文。', errorKey: state.selectedKey ?? undefined }); return; }
+        if (run.status !== 'idle') { set({ error: '任务运行中，请等空闲后再压缩上下文。', errorKey: state.selectedKey ?? undefined }); return; }
         const customInstructions = trimmedCommand.startsWith('/compact ') ? trimmedCommand.slice('/compact '.length).trim() || undefined : undefined;
         set({ draftText: '' });
         void window.localPi!.compact(run.key, customInstructions)
@@ -1456,17 +1648,17 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
             pushNotification({ kind: 'success', title: before ? `上下文已压缩 · 压缩前约 ${before} tokens` : '上下文已压缩', time: '刚刚' });
             if (get().selectedKey === run.key) void refreshHistory();
           })
-          .catch((error) => set({ error: String((error as Error).message ?? error) }));
+          .catch((error) => set({ error: String((error as Error).message ?? error), errorKey: state.selectedKey ?? undefined }));
         return;
       }
       const existing = currentRun(state);
       const sourceKey = existing ? undefined : state.selectedKey ?? undefined;
       const behavior = state.behavior;
       // One in-flight idle send per session; running follow-ups retain queue semantics.
-      if (state.sends?.some(s => s.key === state.selectedKey && !s.confirmedId) && existing?.status === 'idle') return;
+      if (state.sends?.some(s => s.key === state.selectedKey && isAwaitingSend(s)) && existing?.status === 'idle') return;
       let message: string;
       try { message = contextPrompt(text.trim() || '请查看所附文件。', state.contextItems); }
-      catch (error) { set({ error: String((error as Error).message), draftText: text }); return; }
+      catch (error) { set({ error: String((error as Error).message), errorKey: state.selectedKey ?? undefined, draftText: text }); return; }
       const images = state.contextItems.flatMap(item => item.image ? [item.image] : []);
       const queued = existing && ['running', 'starting', 'stopping'].includes(existing.status);
       scheduleStreamFlush(true);
@@ -1480,6 +1672,11 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
       void (async () => {
         try {
           let run = existing;
+          if (!run) {
+            // 预热在途：等它完成直接复用现成 run，避免并发 connect 重复拉起 pi 进程。
+            const inflight = state.selectedKey ? prewarmInFlight.get(state.selectedKey) : undefined;
+            if (inflight) { await inflight; run = currentRun(get()); }
+          }
           if (!run) {
             if (!get().env?.supported) throw new Error('pi 内核不可用，请在设置中检查 pi 安装路径。');
             const cwd = sourceKey ? undefined : state.draftCwd || await window.localPi!.pickDirectory();
@@ -1503,6 +1700,7 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
           // replace this optimistic entry with the authoritative queue.
           if (queued) {
             queuedItem = { text: message, behavior, pendingSync: true, ...(images.length ? { images } : {}) };
+            unobservedQueueItems.add(queuedItem);
             const optimistic = { ...run, queue: [...(run.queue ?? []), queuedItem], pending: (run.pending ?? 0) + 1 };
             // 运行中追问：队列胶囊就是即时反馈，乐观气泡立即退场避免双份。
             set({ runs: [...get().runs.filter(r => r.key !== run.key), optimistic], sends: get().sends?.filter(s => s.id !== send.id), pendingPrompt: undefined, pendingPromptAt: undefined });
@@ -1510,12 +1708,13 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
           // 记录发送时刻：prompt 应答后到 agent_start 之间的空窗，聊天界面照样立刻转圈计时
           set({ sentAt: { key: run.key, at: send.at } });
           await window.localPi!.prompt(run.key, message, behavior, ...(images.length ? [images] : []));
+          set({ sends: get().sends?.map(x => (x.id === send.id ? { ...x, promptDone: true } : x)) });
           if (get().selectedKey === run.key) void refreshHistory();
         } catch (error) {
           const current = get();
           const own = current.sends?.find(s => s.id === send.id);
           // Late rejection cannot erase another session's draft or an already confirmed send.
-          set({ error: String((error as Error).message ?? error), sends: current.sends?.filter(s => s.id !== send.id || !!s.confirmedId),
+          set({ error: String((error as Error).message ?? error), errorKey: state.selectedKey ?? undefined, sends: current.sends?.filter(s => s.id !== send.id || !!s.confirmedId),
             ...(current.selectedKey === (own?.key ?? targetKey) && !own?.confirmedId && !current.draftText && !current.contextItems.length ? { draftText: text, contextItems: state.contextItems } : {}),
             ...(current.pendingPromptAt === send.at ? { pendingPrompt: undefined, pendingPromptAt: undefined } : {}),
             ...(!own?.confirmedId && current.sentAt?.key === targetKey && current.sentAt.at === send.at ? { sentAt: undefined } : {}),
@@ -1538,6 +1737,7 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
       if (!run) return;
       // 乐观反馈：立即置为 stopping，不等 IPC 往返，避免流式渲染繁工时按钮“按了没反应”。
       if (run.status === 'running') set({ runs: state.runs.map(r => (r.key === run.key ? { ...r, status: 'stopping' as const } : r)) });
+      if (state.retrying[run.key]) set({ retrying: { ...get().retrying, [run.key]: null } });
       // 停止会丢弃待分发的 steer：乐观气泡随之撤掉（未执行项由下方恢复到输入框）。
       if (state.pendingSteer?.[run.key]) {
         const rest = { ...state.pendingSteer };
@@ -1545,10 +1745,15 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
         set({ pendingSteer: rest });
       }
       void attempt(async () => {
-        const queue = (await window.localPi!.stop(run.key)) as { steering: string[]; followUp: string[] };
-        const restored = [...queue.steering, ...queue.followUp].join('\n');
-        if (restored) set({ draftText: restored });
-        pushNotification({ kind: 'info', title: '已停止', body: '未执行的排队输入已恢复到输入框。', time: '刚刚' });
+        try {
+          const queue = (await window.localPi!.stop(run.key)) as { steering: string[]; followUp: string[] };
+          const restored = [...queue.steering, ...queue.followUp].join('\n');
+          if (restored) set({ draftText: restored });
+          pushNotification({ kind: 'info', title: '已停止', body: '未执行的排队输入已恢复到输入框。', time: '刚刚' });
+        } catch (e) {
+          // 被更新的 stop 接管（重复点击/长工具等待中再点）：结果由后者负责，静默忽略。
+          if (!/停止请求已失效/.test(String((e as Error).message ?? e))) throw e;
+        }
       });
     },
     queueEdit: (op) => {
@@ -1559,7 +1764,12 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
       const target = op.type === 'now' ? run.queue[op.index] : undefined;
       const fullOp = op.type === 'now' ? { ...op, images: target?.images } : op;
       // 乐观更新；权威状态以 pi 的 queue_update 为准，随后会覆盖这里。
-      const items = run.queue.map((item, index) => (op.type === 'edit' && index === op.index ? { ...item, text: op.text } : { ...item }));
+      const items = run.queue.map((item, index) => {
+        if (op.type !== 'edit' || index !== op.index) return item;
+        const edited = { ...item, text: op.text };
+        if (unobservedQueueItems.has(item)) unobservedQueueItems.add(edited);
+        return edited;
+      });
       const next = op.type === 'edit' ? items : items.filter((_, index) => index !== op.index);
       set({
         runs: state.runs.map((r) => (r.key === run.key ? { ...r, queue: next, pending: next.length } : r)),
@@ -1573,7 +1783,7 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
         let failed: unknown;
         try { await window.localPi!.queueEdit(run.key, fullOp); } catch (error) { failed = error; }
         if (failed !== undefined) {
-          set({ error: String((failed as Error).message ?? failed) });
+          set({ error: String((failed as Error).message ?? failed), errorKey: state.selectedKey ?? undefined });
           // 后端失败：按逆操作撤掉乐观更新（含「立即」的气泡），被移除/改动的项按点击前
           // 快照补回；之后新入队的项（如撤回失败后立刻重发）保留不冲掉。撤回已载入输入框的
           // 草稿/附件不收回（不丢草稿），用户可改后重发；pi 侧未动时 queue_update 也会校正。
@@ -1781,7 +1991,7 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
     setSearchQuery: (searchQuery) => set({ searchQuery }),
     toggleNotifications: () => set({ notificationsOpen: !get().notificationsOpen }),
     markAllRead: () => set({ notifications: get().notifications.map((n) => ({ ...n, read: true })) }),
-    dismissError: () => set({ error: undefined }),
+    dismissError: () => set({ error: undefined, errorKey: undefined }),
     dismissNotice: () => set({ notice: undefined }),
 
     answerDialog: (response) => {
@@ -1817,16 +2027,18 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
       }
     },
 
-    loadCatalog: () => {
-      if (get().catalogLoading) return;
+    loadCatalog: async () => {
+      // A post-save refresh must not be dropped behind a pre-save read.
+      const seq = ++catalogLoadSeq;
       set({ catalogLoading: true });
-      void attempt(async () => {
+      try {
         const catalog = await window.localPi!.modelCatalog();
-        set({ catalog, catalogLoading: false });
-        return catalog;
-      }).then((ok) => {
-        if (ok === undefined) set({ catalogLoading: false });
-      });
+        if (seq === catalogLoadSeq) set({ catalog });
+      } catch (e) {
+        if (seq === catalogLoadSeq) set({ error: String((e as Error).message ?? e) });
+      } finally {
+        if (seq === catalogLoadSeq) set({ catalogLoading: false });
+      }
     },
 
     loadPackages: () => {
@@ -1982,3 +2194,5 @@ export function cwdOf(state: PiReplicaStore): string | undefined {
 
 // dev 调试出口：CDP/控制台可直接读 store 快照（生产构建为 no-op）。
 if (typeof window !== 'undefined' && (import.meta as { env?: { DEV?: boolean } }).env?.DEV) (window as unknown as Record<string, unknown>).__piStore = usePiStore;
+// 全模式调试把手：__store 在打包版也可用（answerDialog 的同店校验、CDP 注入对话框实测交互）。
+if (typeof window !== 'undefined') (window as unknown as Record<string, unknown>).__store = usePiStore;

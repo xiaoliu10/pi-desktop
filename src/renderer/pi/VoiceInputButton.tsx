@@ -2,8 +2,25 @@ import { useEffect, useRef, useState } from 'react';
 import { Icon } from '../replica/Icons';
 import type { ComposerLabels } from '../replica/contracts';
 import { VOICE_MAX_RECORD_MS } from '../../shared/voice';
+import { encodeWav16kMono } from '../../shared/voice-wav';
 
 type Phase = 'idle' | 'checking' | 'requesting' | 'recording' | 'transcribing';
+
+/** MediaRecorder 产物（webm/opus 等）解码重采样为 16k mono WAV——部分转写服务（MiMo 等）只收 wav/mp3。 */
+async function toWav16k(blob: Blob): Promise<Uint8Array | undefined> {
+  const ctxCtor = (globalThis as { AudioContext?: typeof AudioContext }).AudioContext;
+  if (!ctxCtor) return undefined;
+  const ctx = new ctxCtor();
+  try {
+    const decoded = await ctx.decodeAudioData(await blob.arrayBuffer());
+    const channels = Array.from({ length: decoded.numberOfChannels }, (_, i) => decoded.getChannelData(i));
+    return encodeWav16kMono(channels, decoded.sampleRate);
+  } catch {
+    return undefined; // 解码失败按原始格式上传，由服务端给出具体报错
+  } finally {
+    void ctx.close().catch(() => undefined);
+  }
+}
 
 export function VoiceInputButton(props: {
   labels: ComposerLabels;
@@ -14,6 +31,7 @@ export function VoiceInputButton(props: {
   onNotConfigured: () => void;
 }) {
   const [phase, setPhase] = useState<Phase>('idle');
+  const [notice, setNotice] = useState('');
   const phaseRef = useRef<Phase>('idle');
   const epoch = useRef(0);
   const mounted = useRef(false);
@@ -33,6 +51,7 @@ export function VoiceInputButton(props: {
   const transition = (next: Phase) => { phaseRef.current = next; setPhase(next); };
   const start = async () => {
     if (phaseRef.current !== 'idle') return;
+    setNotice('');
     const id = ++epoch.current;
     const live = () => mounted.current && epoch.current === id;
     const message = (zh: string, en: string) => latest.current.zh ? zh : en;
@@ -86,10 +105,16 @@ export function VoiceInputButton(props: {
         void (async () => {
           try {
             if (!blob.size) throw new Error(message('录音数据为空，请重试', 'Recording is empty; please retry'));
-            const bytes = new Uint8Array(await blob.arrayBuffer());
+            const wav = await toWav16k(blob);
+            const bytes = wav ?? new Uint8Array(await blob.arrayBuffer());
             if (!live()) return;
-            const text = (await window.localPi.voiceTranscribe(bytes, blob.type)).trim();
+            const result = await window.localPi.voiceTranscribe(bytes, wav ? 'audio/wav' : blob.type);
             if (!live()) return;
+            const text = result.text.trim();
+            if (result.notice) {
+              setNotice(result.notice);
+              window.dispatchEvent(new Event('pi:voice-config-changed'));
+            }
             if (!text) throw new Error(message('未识别到语音内容，请重试', 'No speech recognized; please retry'));
             latest.current.onTranscript(text);
             transition('idle');
@@ -124,6 +149,7 @@ export function VoiceInputButton(props: {
       disabled={props.disabled || busy} aria-label={label} aria-pressed={phase === 'recording'} title={label}>
       <Icon name={busy ? 'loader' : 'mic'} size={16} />
     </button>
+    {notice && <span role="status" style={{ fontSize: 12 }}>{notice}</span>}
     {phase !== 'idle' && <span role="status" style={{ fontSize: 12 }}>{phase === 'recording' ? (props.zh ? '正在录音，点击停止' : 'Recording; click to stop') : label}</span>}
   </>;
 }

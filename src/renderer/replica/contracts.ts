@@ -13,6 +13,7 @@
 import type { ReactNode } from 'react';
 import type { IconName } from './Icons';
 import type { PiImage } from '../../shared/composer';
+import type { PiRetryGroup } from '../../shared/pi';
 export type { PiImage };
 
 // ---------------------------------------------------------------------------
@@ -168,8 +169,12 @@ export interface ComposerProps {
   agentMode: AgentMode;
   permissionMode: PermissionChoice;
   slashCommands: SlashCommand[];
+  /** 斜杠补全面板打开且命令列表为空时触发一次（迟加载/初次拉取失败自愈）。 */
+  onSlashCommandsEmpty?: () => void;
   files: string[];
   running: boolean;
+  /** 在途但 run 尚未 running：未确认的乐观发送 / 自动化启动空窗。工作条亮起即停止键可用。 */
+  sending?: boolean;
   queued: number;
   queue?: {text: string; behavior: 'steer' | 'followUp'; images?: PiImage[]}[];
   /** Model chosen while running: shown with a "待生效" marker until applied. */
@@ -276,6 +281,22 @@ export interface ErrorPart {
   kind: 'error';
   id: string;
   message: string;
+  /** Sanitized model/provider and runtime diagnostics, never the request payload. */
+  context?: string;
+  details?: string;
+  missingCause?: boolean;
+  groupKey?: string;
+  /** Only model-request failures may be hidden after a successful retry. */
+  source?: 'model';
+  occurrences?: { id: string; details: string; missingCause?: boolean }[];
+}
+
+export interface ModelRetryState {
+  attempt: number;
+  max: number;
+  error?: string;
+  retryAt?: number;
+  phase?: 'waiting' | 'requesting' | 'streaming';
 }
 
 export interface NoticePart {
@@ -293,6 +314,8 @@ export type MessagePart =
   | NoticePart;
 
 export interface ChatMessage {
+  /** Terminal model outcome, distinct from tool results and partial streamed output. */
+  modelOutcome?: 'success' | 'error' | 'aborted' | 'streaming';
   timestamp?: number;
   id: string;
   role: 'user' | 'assistant';
@@ -306,6 +329,8 @@ export interface ChatViewProps {
   /** A new local send forces bottom once; subsequent manual scroll pauses following. */
   scrollRequest?: string;
   onOpenToolFile?: (part: ToolPart) => void;
+  /** Re-read persisted conversation without resending a prompt or restarting the run. */
+  onRefreshProcess?: () => Promise<boolean>;
   runTiming?: { startedAt: number; endedAt?: number };
   messages: ChatMessage[];
   running: boolean;
@@ -325,7 +350,11 @@ export interface ChatViewProps {
   sendingAt?: number;
   /** Ongoing model auto-retry (pi auto_retry_start…auto_retry_end): the working bar shows
    *  "正在重试请求（第 N/M 次）" so a silent timeout-retry window never looks frozen. */
-  retrying?: { attempt: number; max: number } | null;
+  retrying?: ModelRetryState | null;
+  /** Authoritative Desktop budget; never inferred/reset from CLI retry events. */
+  retryGroup?: PiRetryGroup;
+  onStop?: () => void;
+  stopping?: boolean;
   /** Model chosen while running: shown with a "待生效" marker until applied. */
   pendingModelId?: string;
   /** Queue row actions (production only): steer-now / inline edit / remove. */
@@ -340,6 +369,8 @@ export interface ChatViewProps {
   onEditUserMessage?: (entryId: string, text: string) => void;
   /** 下载已发送的图片附件：dataUrl + 建议文件名；缺省=灯箱里不显示下载按钮。 */
   onDownloadImage?: (dataUrl: string, name: string) => void;
+  /** pi 正在压缩上下文（compaction_start…end）：工作条显示「正在压缩上下文」。 */
+  compacting?: boolean;
 }
 
 export interface ChatLabels {
@@ -412,6 +443,8 @@ export interface WorkbenchProps {
   onToggle: () => void;
   onSelectTab: (tab: WorkbenchTab) => void;
   onSelectFile: (path: string | null) => void;
+  /** 选中文件为图片时的内嵌预览数据（base64）；缺省 = 非图片，走文本/二进制文案。 */
+  image?: { mime: string; base64: string };
 }
 
 /** Labels for the built-in browser panel (pi/BrowserPanel). */
@@ -610,6 +643,10 @@ export interface SettingsProps {
   providers: ProviderCardData[];
   providerForm: ProviderFormState;
   defaultModelLabel: string | null;
+  /** Persisted catalog identity, never the current session or a display name. */
+  defaultProvider?: string;
+  defaultModel?: string;
+  defaultModelSaving?: boolean;
   vendorEmpty: string;
   catalogInfo: string;
   demo: boolean;
@@ -635,7 +672,9 @@ export interface SettingsProps {
   onSelectDefaultModel?: (provider:string,model:string) => void;
   catalogWarning?: string;
   onSaveProvider: () => void;
-  onSaveProviderModel?: (providerId: string, model: import("../../shared/pi").PiCatalogModel, originalId?: string) => Promise<void>;
+  onSaveProviderModel?: (providerId: string, model: import("../../shared/pi").PiCatalogModel, originalId?: string, fields?: import("../../shared/pi").PiModelEditableField[]) => Promise<void>;
+  /** Built-in (auth-source) providers: set/clear the shared auth.json API key. */
+  onSaveProviderAuth?: (id: string, input: { apiKey?: string; clear?: boolean }) => Promise<void>;
   onEditProvider: (id: string) => void;
   onDeleteProvider: (id: string) => void;
   onToggleProvider: (id: string) => void;
@@ -673,7 +712,7 @@ export interface SettingsLabels {
   // models
   modelConfiguration: string;
   defaultModel: string; noDefault: string; change: string;
-  addProvider: string; makeDefault: string; defaultBadge: string;
+  addProvider: string; makeDefault: string; defaultBadge: string; alreadyDefault: string;
   addAccount: string; noVendor: string; refreshCatalog: string;
   providerFormTitle: string; providerFormEdit: string;
   edit: string; delete: string; authManagedHint: string; modelsListTitle: string;
@@ -745,6 +784,9 @@ export interface NotificationsLabels {
   empty: string;
   request: string;
   demoNote: string;
+  /** 行尾 hover 复制按钮（报错等长文本一键复制）。 */
+  copy: string;
+  copied: string;
 }
 
 // ---------------------------------------------------------------------------

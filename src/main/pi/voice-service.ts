@@ -2,12 +2,18 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { decryptSecret, encryptSecret } from '../secrets';
-import type { VoiceAsrModel, VoiceAsrModelInput, VoiceConfig } from '../../shared/voice';
+import type { VoiceAsrModel, VoiceAsrModelInput, VoiceAsrStyle, VoiceConfig, VoiceTranscribeResult } from '../../shared/voice';
 import { VOICE_MAX_BYTES } from '../../shared/voice';
 
 /**
  * 云端语音转写服务：ASR 模型列表（voice.json，密钥经 safeStorage 加密）
  * + 转写请求。只被主进程调用；renderer 拿到的 VoiceConfig 不含密钥明文。
+ *
+ * 两种调用方式（style）：
+ * - transcriptions（默认）：POST {endpoint}/audio/transcriptions（OpenAI 兼容）。
+ * - chat：POST {endpoint}/chat/completions 多模态——MiMo 等只代理 chat 路由的网关
+ *   没有转写端点，按 MiMo ASR 文档用 input_audio（base64 data URL）+ asr_options.language。
+ * 上传音频统一为 16k mono wav（renderer 端转码），两种方式都接受。
  *
  * 开启语音输入的门槛 = 当前生效 ASR 模型 ready。
  */
@@ -23,6 +29,7 @@ interface StoredModel {
   endpoint?: string;
   model?: string;
   language?: string;
+  style?: VoiceAsrStyle;
   /** encryptSecret 后的密文；空串 = 未配置。 */
   apiKey?: string;
 }
@@ -99,6 +106,7 @@ export class VoiceService {
       endpoint,
       model: modelId,
       language: (model.language ?? '').trim(),
+      style: model.style === 'chat' ? 'chat' : 'transcriptions',
       hasKey,
       ready: isValidEndpoint(endpoint) && Boolean(modelId) && hasKey,
     };
@@ -124,12 +132,13 @@ export class VoiceService {
     const endpoint = (input.endpoint ?? current?.endpoint ?? '').trim();
     const modelId = (input.model ?? current?.model ?? '').trim();
     const language = (input.language ?? current?.language ?? '').trim();
+    const style: VoiceAsrStyle = input.style === 'chat' || input.style === 'transcriptions' ? input.style : current?.style === 'chat' ? 'chat' : 'transcriptions';
 
     if (!name) throw new Error('请填写模型名称');
     if (!modelId) throw new Error('请填写转写模型 ID');
     if (endpoint && !isValidEndpoint(endpoint)) throw new Error('接口地址需以 http(s):// 开头');
 
-    const next: StoredModel = { ...current, id: current?.id ?? randomUUID(), name, model: modelId, language };
+    const next: StoredModel = { ...current, id: current?.id ?? randomUUID(), name, model: modelId, language, style };
     if (endpoint) next.endpoint = endpoint;
     if (typeof input.apiKey === 'string') {
       const key = input.apiKey.trim();
@@ -160,10 +169,11 @@ export class VoiceService {
   }
 
   /**
-   * 用生效模型上传一段录音到 {endpoint}/audio/transcriptions，返回转写文本。
-   * 密钥只在主进程解密并放进 Authorization 头。
+   * 用生效模型转写一段录音，返回文本。密钥只在主进程解密并放进 Authorization 头。
+   * style=chat（MiMo 等）：POST {base}/chat/completions，input_audio 走 base64 data URL，
+   * 文本取 choices[0].message.content；style=transcriptions（默认）：POST {base}/audio/transcriptions。
    */
-  async transcribe(bytes: Uint8Array, mime: string): Promise<string> {
+  async transcribe(bytes: Uint8Array, mime: string): Promise<VoiceTranscribeResult> {
     const active = this.activeStored();
     if (!active) throw new Error('尚未配置 ASR 模型，请到设置 → 语音输入至少添加一个模型');
     const cfg = this.viewModel(active);
@@ -173,34 +183,90 @@ export class VoiceService {
     if (bytes.byteLength > VOICE_MAX_BYTES) throw new Error(`录音超过 ${Math.floor(VOICE_MAX_BYTES / 1024 / 1024)} MiB 上限，请缩短录音`);
 
     const base = cfg.endpoint.replace(/\/+$/, '');
-    const cleanMime = (mime || 'audio/webm').split(';')[0].trim().toLowerCase();
-    const ext = MIME_EXT[cleanMime] ?? 'webm';
-    const form = new FormData();
-    form.append('file', new Blob([Buffer.from(bytes)], { type: cleanMime }), `recording.${ext}`);
-    form.append('model', cfg.model);
-    form.append('response_format', 'json');
-    if (cfg.language) form.append('language', cfg.language);
-
+    const cleanMime = (mime || 'audio/wav').split(';')[0].trim().toLowerCase();
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), TRANSCRIBE_TIMEOUT_MS);
+    const redact = (message: string) => message.split(apiKey).join('[REDACTED]');
+    let fallbackStatus: number | undefined;
+    let chatStatus: number | undefined;
+    const fail = (status: number, detail: string, url: string): Error => {
+      if (status === 404) {
+        // 网关层 404 = 接口地址的服务没有实现对应端点（实测 MiMo 等中转只代理 chat 路由）。
+        // 甩 openresty HTML 毫无可操作性，直接告诉用户往哪查。
+        return new Error(`转写端点不存在（404）：${url}。当前接口地址的服务未提供该端点，请确认服务商支持（或把模型调用方式切换为 Chat 多模态），或更换接口地址`);
+      }
+      return new Error(`转写服务返回 ${status}${detail ? `：${detail}` : ''}`);
+    };
     try {
+      const transcribeChat = async (): Promise<string> => {
+        const dataUrl = `data:${cleanMime};base64,${Buffer.from(bytes).toString('base64')}`;
+        const res = await this.fetchImpl(`${base}/chat/completions`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' },
+          body: JSON.stringify({
+            model: cfg.model,
+            messages: [{ role: 'user', content: [{ type: 'input_audio', input_audio: { data: dataUrl } }] }],
+            asr_options: { language: cfg.language || 'auto' },
+          }),
+          signal: controller.signal,
+        });
+        chatStatus = res.status;
+        if (!res.ok) throw fail(res.status, redact(await res.text()).slice(0, 300), `${base}/chat/completions`);
+        const data = await res.json() as { choices?: Array<{ message?: { content?: unknown } }> } | null;
+        const content = data?.choices?.[0]?.message?.content;
+        const text = (typeof content === 'string' ? content : Array.isArray(content) ? content.map(p => typeof (p as { text?: unknown })?.text === 'string' ? (p as { text: string }).text : '').join('') : '').trim();
+        if (!text) throw new Error('转写结果为空，未识别到语音内容');
+        return text;
+      };
+      if (cfg.style === 'chat') return { text: await transcribeChat() };
+      const ext = MIME_EXT[cleanMime] ?? 'wav';
+      const form = new FormData();
+      form.append('file', new Blob([Buffer.from(bytes)], { type: cleanMime }), `recording.${ext}`);
+      form.append('model', cfg.model);
+      form.append('response_format', 'json');
+      if (cfg.language) form.append('language', cfg.language);
       const res = await this.fetchImpl(`${base}/audio/transcriptions`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${apiKey}` },
         body: form,
         signal: controller.signal,
       });
-      if (!res.ok) {
-        const detail = (await res.text()).slice(0, 300);
-        throw new Error(`转写服务返回 ${res.status}${detail ? `：${detail}` : ''}`);
+      // Only the missing endpoint case gets one compatibility attempt. In particular,
+      // auth, invalid audio/model, rate limits and network failures never switch styles.
+      if (res.status === 404) {
+        fallbackStatus = res.status;
+        // Discard the gateway's HTML body; do not wait for it before trying Chat.
+        void res.body?.cancel().catch(() => undefined);
+        const text = await transcribeChat();
+        let notice = '服务商未提供 /audio/transcriptions 端点（404），本次已自动切换为 Chat 多模态。';
+        const stored = this.read();
+        // Do not resurrect a removed model or overwrite edits made while awaiting HTTP.
+        if (stored.models.find(m => m.id === active.id) === active) {
+          try {
+            this.write({ ...stored, models: stored.models.map(m => m === active ? { ...m, style: 'chat' } : m) });
+            notice += '调用方式已保存，后续录音将直接使用 Chat 多模态。';
+          } catch {
+            notice += '但保存调用方式失败，请在设置 → 语音输入中手动选择 Chat 多模态。';
+          }
+        } else {
+          notice += '模型配置已变更，未覆盖当前设置；如需保留此方式，请在设置 → 语音输入中选择 Chat 多模态。';
+        }
+        return { text, notice };
       }
+      if (!res.ok) throw fail(res.status, redact(await res.text()).slice(0, 300), `${base}/audio/transcriptions`);
       const data = await res.json() as { text?: unknown } | null;
       const text = typeof data?.text === 'string' ? data.text.trim() : '';
       if (!text) throw new Error('转写结果为空，未识别到语音内容');
-      return text;
+      return { text };
     } catch (err) {
-      if (controller.signal.aborted || (err as Error)?.name === 'AbortError') throw new Error('转写超时');
-      throw new Error(`转写失败：${String((err as Error)?.message || err)}`);
+      const timedOut = controller.signal.aborted || (err as Error)?.name === 'AbortError';
+      const message = timedOut ? '转写超时' : redact(String((err as Error)?.message || err));
+      if (fallbackStatus !== undefined) {
+        throw new Error(`转写失败：/audio/transcriptions 返回 ${fallbackStatus}（端点不存在）；已自动尝试一次 Chat 多模态 /chat/completions（${chatStatus === undefined ? '未收到 HTTP 响应' : `HTTP ${chatStatus}`}），仍失败：${message}。未更改调用方式，请在设置 → 语音输入检查接口地址、模型的音频支持和 API key 权限，或更换支持语音的服务商。`);
+      }
+      if (timedOut) throw new Error('转写超时');
+      if (message.startsWith('转写端点不存在')) throw new Error(message);
+      throw new Error(`转写失败：${message}`);
     } finally {
       // Keep the deadline alive while reading both success and error bodies.
       clearTimeout(timer);
@@ -221,6 +287,7 @@ function normalizeStored(raw: unknown): StoredVoice {
         endpoint: typeof m.endpoint === 'string' ? m.endpoint : undefined,
         model: typeof m.model === 'string' ? m.model : undefined,
         language: typeof m.language === 'string' ? m.language : undefined,
+        style: m.style === 'chat' ? 'chat' as const : undefined,
         apiKey: typeof m.apiKey === 'string' ? m.apiKey : undefined,
       }));
     const activeId = typeof record.activeId === 'string' && record.activeId ? record.activeId : (models[0]?.id ?? null);

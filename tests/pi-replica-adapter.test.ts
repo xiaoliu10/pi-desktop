@@ -215,7 +215,7 @@ describe('P08 models & sidebar', () => {
     ];
     const { temporary, projects } = buildPiSidebar(sessions, [], ['/w/apps'], {});
     expect(temporary).toEqual([]);
-    expect(projects[0].id).toBe('/w/web'); // most recent first
+    expect(projects[0].id).toBe('/w/apps'); // unregistered projects use stable full-path order
     const apps = projects.find((p) => p.id === '/w/apps')!;
     expect(apps.name).toBe('apps');
     expect(apps.sessions.map((s) => s.id)).toEqual(['k2', 'k1']);

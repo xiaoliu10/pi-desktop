@@ -8,18 +8,29 @@ import { PiRpcClient } from './rpc-client';
 import { SessionIndex, fileKey } from './session-index';
 import { summarizeContext } from './context-details';
 import { detectThirdPartySubagent, migrateOldSubagentExtension, persistSubagentEvent } from './official-subagent';
+import { clearMemoryEnv, memorySessionEnv } from './memory-bridge';
+import { repairPackages } from './packages-repair';
+import { RetryGroups } from './retry-groups';
 /** prompt 出栈前登记的图片 sidecar：pi 的 queue_update 只回文本，权威队列到达后
  *  按 文本+behavior+出现次序 把图接回。at 用于过期清理（暂存一直未被任何 queue_update
  *  确认 = pi 已直接分发或丢弃该项，不能再把图配给后来同文本的纯文本排队项）。 */
 interface StagedQueueImage { text: string; behavior: 'steer' | 'followUp'; images: PiImage[]; at: number }
 /** 未被 queue_update 确认的暂存图最多保留 2 分钟。 */
 const QUEUE_IMAGE_STAGE_TTL = 120_000;
-interface Running { policyReady: boolean; client: PiRpcClient; view: PiRun; input: { cwd: string; trustProject: boolean; permission: AccessMode; executionMode?: Exclude<AccessMode, 'plan'>; file: string; origin: string; systemPrompt?: string; tools?: string[]; model?: string }; dialogs: Map<string, { timer?: ReturnType<typeof setTimeout>; method: string; request: PiUiRequest }>; queueImages: StagedQueueImage[] }
+/** 假 running 自愈：run 无任何 pi 事件超过该时长即视为可疑，主动向 pi 本体 get_state 核实。
+ *  真实在跑（静默长工具/扩展审计，isStreaming 恒真）只被周期性轻询；
+ *  pi 已空闲而 Desktop 没收到结算事件（agent_settled 丢失/终止路径不发，实测 goal 完成
+ *  后计时条永续 1.5h+）则拉直为 idle。 */
+const STUCK_SILENCE_MS = 120_000;
+const STUCK_WATCHDOG_INTERVAL_MS = 30_000;
+type QueuedInput = NonNullable<PiRun['queue']>[number];
+interface Running { recheckTimer?: ReturnType<typeof setTimeout>; stopQueueSnapshot?: QueuedInput[]; settlement?: { token: string; timer: ReturnType<typeof setTimeout> }; activity: number; /** 假 running 自愈用：全部 pi 事件计数与最近事件时刻 */ eventCount: number; lastEventAt: number; verifying?: boolean; promptSequence: number; retryUncertain: boolean; stopUnconfirmed: boolean; retry: RetryGroups; retryReady: boolean; retryEntryId?: string; deferredQueue: QueuedInput[]; stopEpoch: number; policyReady: boolean; client: PiRpcClient; view: PiRun; input: { cwd: string; trustProject: boolean; permission: AccessMode; executionMode?: Exclude<AccessMode, 'plan'>; file: string; origin: string; systemPrompt?: string; tools?: string[]; model?: string }; dialogs: Map<string, { timer?: ReturnType<typeof setTimeout>; method: string; request: PiUiRequest }>; queueImages: StagedQueueImage[] }
 export class PiBackend {
   private active = new Map<string, Running>();
+  private watchdog: ReturnType<typeof setInterval> | undefined;
   /** 记忆衔接：main 在 SettingsService 就绪后注入；每次 launch 现取最新开关与目录。 */
   memoryOptions: (() => { enabled: boolean; dir: string }) | undefined;
-  constructor(private env: PiEnvironment, private index: SessionIndex, private ownedRoot: string, private policyPath: string, private emit: (e: PiEvent) => void) {}
+  constructor(private env: PiEnvironment, private index: SessionIndex, private ownedRoot: string, private policyPath: string, private emit: (e: PiEvent) => void, private dataDir?: string) {}
   hasPendingDialogs(key: string) { return (this.active.get(key)?.dialogs.size ?? 0) > 0; }
   /** 待处理的 UI 审批快照（远控页刷新后据此恢复审批卡片）。 */
   pendingDialogs(key: string): Array<{ generation: string; request: PiUiRequest }> {
@@ -118,13 +129,16 @@ export class PiBackend {
 
   private async launch(input: Running['input']): Promise<PiRun> {
     if (!fs.existsSync(this.policyPath)) throw new Error("Desktop 工具权限扩展缺失，无法启动执行会话。");
+    // pi 会话退出会写回旧 settings 副本抹掉包注册（/goal 等命令消失的根因）——
+    // 每次启动会话前按期望列表补回，保证新会话总是带全 packages。
+    if (this.dataDir) repairPackages(this.dataDir, this.env.agentDir);
     const key = fileKey(input.file), generation = randomUUID();
     // The policy extension re-reads this file per tool call, so the access
     // mode can change mid-run without restarting the session process.
     const modeFile = path.join(this.ownedRoot, `.mode-${key}`);
     fs.mkdirSync(this.ownedRoot, { recursive: true });
     fs.writeFileSync(modeFile, input.permission, 'utf8');
-    const env: NodeJS.ProcessEnv = { ...process.env, PI_CODING_AGENT_DIR: this.env.agentDir, PI_OFFLINE: '1', PI_SKIP_VERSION_CHECK: '1', PI_DESKTOP_PERMISSION: input.permission, PI_DESKTOP_MODE_FILE: modeFile, PI_DESKTOP_TRUST_PROJECT: input.trustProject ? '1' : '0' };
+    const env: NodeJS.ProcessEnv = { ...process.env, PI_CODING_AGENT_DIR: this.env.agentDir, PI_OFFLINE: '1', PI_SKIP_VERSION_CHECK: '1', PI_DESKTOP_PERMISSION: input.permission, PI_DESKTOP_GENERATION: generation, PI_DESKTOP_MODE_FILE: modeFile, PI_DESKTOP_TRUST_PROJECT: input.trustProject ? '1' : '0' };
     delete env.ELECTRON_RUN_AS_NODE;
     // GUI applications may not inherit the same PATH as a terminal.
     env.PATH = [path.dirname(this.env.executable!), '/opt/homebrew/bin', '/usr/local/bin', env.PATH || ''].join(path.delimiter);
@@ -135,10 +149,11 @@ export class PiBackend {
     const memory = this.memoryOptions?.() ?? { enabled: false, dir: '' };
     const memoryPath = path.join(path.dirname(this.policyPath), '..', 'desktop-memory', 'index.mjs');
     const memoryArgs = memory.enabled && fs.existsSync(memoryPath) ? ['-e', memoryPath] : [];
-    if (memory.enabled) {
-      env.PI_DESKTOP_MEMORY = '1';
-      if (memory.dir) env.PI_DESKTOP_MEMORY_DIR = memory.dir;
-    }
+    // Do not inherit a parent session's (or Desktop's own) memory scope/enable flag:
+    // global sessions must land on the plugin default root, project sessions get a
+    // freshly computed per-project injection. See memorySessionEnv for the tradeoff.
+    clearMemoryEnv(env);
+    Object.assign(env, memorySessionEnv(memory, input.cwd, this.env.agentDir));
     // Subagent fallback：仅在用户没有安装第三方 subagent 插件时加载。
     // 检测 agentDir/extensions/ + settings.json packages 里的 subagent 扩展。
     // 旧版 desktop-official-subagent 在 agentDir/extensions/ 里会和 npm 包冲突，
@@ -154,6 +169,7 @@ export class PiBackend {
       input.trustProject ? '--approve' : '--no-approve',
       '-e', this.policyPath,
       '-e', path.join(path.dirname(this.policyPath), 'mcp-bridge.mjs'),
+      '-e', path.join(path.dirname(this.policyPath), 'retry-continuation.mjs'),
       ...askArgs,
       ...memoryArgs,
       ...subagentArgs,
@@ -166,12 +182,25 @@ export class PiBackend {
     ];
     const client = new PiRpcClient(this.env.executable!, args, input.cwd, env);
     const view: PiRun = { accessMode: input.permission, executionMode: input.permission === 'plan' ? input.executionMode ?? 'ask' : input.permission, key, generation, cwd: input.cwd, file: input.file, status: 'starting', models: [], commands: [], pending: 0 };
-    const run: Running = { policyReady: false, client, view, input, dialogs: new Map(), queueImages: [] };
+    const run: Running = { activity: 0, eventCount: 0, lastEventAt: Date.now(), promptSequence: 0, retryUncertain: false, stopUnconfirmed: false, retry: undefined!, retryReady: false, deferredQueue: [], stopEpoch: 0, policyReady: false, client, view, input, dialogs: new Map(), queueImages: [] };
+    run.retry = new RetryGroups(state => {
+      view.retryGroup = state;
+      if (state?.error) {
+        view.error = state.error;
+        // A continuation ACK timeout does not prove the command did not start.
+        // Keep Stop available until a real settlement/abort confirms quiescence.
+        view.status = run.retryUncertain ? 'running' : 'error';
+        if (!run.retryUncertain && view.timing) view.timing = { ...view.timing, endedAt: Date.now() };
+      }
+      if (this.active.get(key) === run) this.emit({ type: 'run', run: { ...view } });
+    }, () => this.continueRetryGroup(run));
     this.active.set(key, run); this.emit({ type: 'run', run: { ...view } });
+    this.ensureWatchdog();
     client.on('event', event => this.onEvent(run, event));
     client.on('closed', () => {
       if (this.active.get(key) !== run) return;
       this.active.delete(key);
+      this.clearSettlement(run); run.retry.dispose(); ++run.stopEpoch;
       if (view.timing && view.timing.endedAt === undefined) view.timing = { ...view.timing, endedAt: Date.now() };
       view.status = 'error';
       const stderr = client.stderrDetail();
@@ -186,21 +215,88 @@ export class PiBackend {
       const cleanModel = (m: any) => ({ id: String(m.id), name: String(m.name || m.id), provider: String(m.provider), reasoning: !!m.reasoning, input: Array.isArray(m.input) ? m.input : undefined });
       view.models = (models?.models || []).map(cleanModel);
       view.model = state?.model ? cleanModel(state.model) : undefined;
-      view.commands = (commands?.commands || []).map((c: any) => ({ name: String(c.name), description: c.description, source: c.source, path: c.path ?? String(c.sourceInfo?.path ?? '') }));
+      view.commands = (commands?.commands || []).filter((c: any) => !String(c.name).startsWith('desktop-retry-')).map((c: any) => ({ name: String(c.name), description: c.description, source: c.source, path: c.path ?? String(c.sourceInfo?.path ?? '') }));
       view.thinkingLevel = state?.thinkingLevel ?? 'off';
       view.thinkingLevels = (await client.request('get_available_thinking_levels').catch(() => ({levels: []})))?.levels ?? [];
       view.status = state?.isStreaming || state?.isCompacting ? 'running' : 'idle';
       this.emit({ type: 'run', run: { ...view } }); this.emit({ type: 'sessions-changed' });
       this.refreshContextUsage(run);
+      // 迟加载自愈：扩展/npm 包若在初次拉取后才注册命令（或初次拉取失败），
+      // 命令列表会永远空。短延时后复检一次，有新增则更新并广播。
+      run.recheckTimer = setTimeout(() => {
+        if (run.client !== client || this.active.get(key) !== run) return;
+        void client.request('get_commands').then((again: any) => {
+          if (this.active.get(key) !== run || run.client !== client) return;
+          const list = ((again?.commands || []) as any[]).filter((c: any) => !String(c.name).startsWith('desktop-retry-'))
+            .map((c: any) => ({ name: String(c.name), description: c.description, source: c.source, path: c.path ?? String(c.sourceInfo?.path ?? '') }));
+          if (list.length > view.commands.length) {
+            view.commands = list;
+            this.emit({ type: 'run', run: { ...view } });
+          }
+        }).catch(() => { /* 会话可能已关闭；下次打开补全面板时还会按需重拉 */ });
+      }, 8000).unref();
       return { ...view };
     } catch (err) { this.close(key); throw err; }
   }
+  /** 周期哨兵：只在有活动 run 时启动一次，进程级共享，无 run 时空转成本可忽略。 */
+  private async verifyStuckRun(run: Running) {
+    const { key, generation } = run.view;
+    const eventsAtCheck = run.eventCount;
+    run.verifying = true;
+    try {
+      const state = await run.client.request('get_state', {}, 10_000).catch(() => null);
+      if (!state) return; // pi 暂不可达：维持现状，下个窗口再试。
+      // 等待期间来过任何事件（真活动）或 run 已被关闭/重连/进入停止流程 → 放弃本次结论。
+      if (run.eventCount !== eventsAtCheck) return;
+      if (this.active.get(key) !== run || run.view.generation !== generation) return;
+      if (run.view.status !== 'running' || run.stopUnconfirmed) return;
+      if (state.isStreaming || state.isCompacting || (Number(state.pendingMessageCount) || 0) > 0) {
+        run.lastEventAt = Date.now();
+        return;
+      }
+      this.forceSettle(run);
+    } finally {
+      run.verifying = false;
+    }
+  }
+  /** 结算事件丢失时的就地收尾：与 agent_settled 的非中间态分支同语义（队列还原、计时收口、
+   *  上下文刷新、挂起切换下发、续发派发），endedAt 尽量取转写末条真实时间而非纠正时刻，
+   *  计时条停在与真实完成一致的用时上。 */
+  private forceSettle(run: Running) {
+    const key = run.view.key;
+    if (this.active.get(key) !== run || run.view.status !== 'running') return;
+    let endedAt = Date.now();
+    try {
+      const last = this.index.history(key).branch.at(-1);
+      const ts = last?.timestamp ? Date.parse(last.timestamp) : NaN;
+      if (Number.isFinite(ts) && ts > (run.view.timing?.startedAt ?? 0) && ts <= endedAt) endedAt = ts;
+    } catch { /* 历史不可读时退回当前时刻。 */ }
+    if (run.view.timing && run.view.timing.endedAt === undefined) run.view.timing = { ...run.view.timing, endedAt };
+    run.view.queue = [...run.deferredQueue]; run.view.pending = run.deferredQueue.length; run.queueImages = [];
+    run.view.status = 'idle';
+    this.refreshContextUsage(run);
+    void this.flushPendingSwitches(key);
+    if (run.view.retryGroup?.phase === 'completed') this.dispatchDeferred(run);
+    this.emit({ type: 'run', run: { ...run.view } });
+  }
   private onEvent(run: Running, event: Record<string, any>) {
     if (this.active.get(run.view.key) !== run) return;
+    run.eventCount++; run.lastEventAt = Date.now();
     const { key, generation } = run.view;
     if (event.type === 'extension_ui_request') {
       const req = event as unknown as PiUiRequest;
       if (req.method === 'setStatus' && req.statusKey === 'desktop-policy' && req.statusText) run.policyReady = true;
+      if (req.method === 'setStatus' && req.statusKey === 'desktop-retry-ready' && req.statusText === generation) { run.retryReady = true; return; }
+      if (req.method === 'setStatus' && req.statusKey === 'desktop-retry-settled') {
+        try {
+          const result = JSON.parse(String(req.statusText ?? ''));
+          if (result.generation === generation && result.token === run.settlement?.token) {
+            this.clearSettlement(run);
+            this.onEvent(run, { type: 'agent_settled', source: 'desktop-wait-for-idle' });
+          }
+        } catch { /* Ignore malformed/stale bridge notifications. */ }
+        return;
+      }
       if (run.view.status === 'stopping' && ['select', 'confirm', 'input', 'editor'].includes(req.method)) { run.client.send({ type: 'extension_ui_response', id: req.id, cancelled: true }); return; }
       if (['select', 'confirm', 'input', 'editor'].includes(req.method)) {
         const timer = typeof req.timeout === 'number' && Number.isFinite(req.timeout) && req.timeout > 0 ? setTimeout(() => { run.dialogs.delete(req.id); this.emit({ type: 'rpc', key, generation, event: { type: 'ui-expired', id: req.id } }); }, Math.max(0, req.timeout)) : undefined;
@@ -208,22 +304,56 @@ export class PiBackend {
       }
       this.emit({ type: 'ui', key, generation, request: req }); return;
     }
-    if (event.type === 'agent_start' || event.type === 'auto_retry_start' || event.type === 'compaction_start') {
+    if (event.type === 'extension_error' && run.settlement && event.extensionPath === `command:desktop-retry-${generation}-settle`) {
+      this.clearSettlement(run);
+      run.retryUncertain = true;
+      run.retry.fail(event.error || '当前运行时无法确认安全空闲，已停止自动续接；请停止后手动恢复。');
+    }
+    if (event.type === 'extension_error' && run.retry.recovering &&
+      (event.extensionPath === `command:desktop-retry-${generation}` || event.event === 'send_message')) {
+      run.retry.fail(event.error || 'Desktop continuation failed');
+    }
+    if (['agent_start', 'message_start', 'auto_retry_start', 'agent_settled'].includes(event.type)) ++run.activity;
+    if (event.type === 'agent_start' || event.type === 'agent_settled') this.clearSettlement(run);
+    if (event.type === 'agent_settled') run.retryUncertain = false;
+    const intermediateSettlement = run.retry.event(event);
+    if ((event.type === 'auto_retry_end' && run.retry.needsSettlement)
+      || (event.type === 'agent_end' && event.willRetry === false && run.retry.tracking)) this.ensureSettlement(run);
+    if (event.type === 'agent_start') run.retryEntryId = undefined;
+    if ((event.type === 'agent_start' || event.type === 'auto_retry_start' || event.type === 'compaction_start') && run.view.status !== 'stopping') {
       if (!run.view.timing || run.view.timing.endedAt !== undefined) run.view.timing = { startedAt: Date.now() };
       run.view.status = 'running';
       run.view.planReady = false;
     }
+    // 压缩状态贯通到渲染层：过程列表据此显示「正在压缩上下文」。
+    if (event.type === 'compaction_start') run.view.compacting = true;
+    if (event.type === 'compaction_end') run.view.compacting = false;
     if (event.type === 'agent_settled') {
       this.clearDialogs(run);
-      if (run.view.timing) run.view.timing = { ...run.view.timing, endedAt: Date.now() }; run.view.status = 'idle'; run.view.pending = 0; run.view.queue = []; run.queueImages = [];
-      this.refreshContextUsage(run);
-      void this.flushPendingSwitches(key);
+      if (!run.stopUnconfirmed) {
+        run.view.queue = [...run.deferredQueue]; run.view.pending = run.deferredQueue.length; run.queueImages = [];
+      }
+      if (intermediateSettlement) {
+        run.view.status = 'running';
+        if (!run.retryEntryId) {
+          try {
+            const entry = [...this.index.history(key).branch].reverse().find(e => e.type === 'message' || e.type === 'custom_message');
+            if (entry?.message?.role === 'assistant' && entry.message.stopReason === 'error') run.retryEntryId = entry.id;
+          } catch { /* The timer fails closed if no persisted failed entry is available. */ }
+        }
+      } else {
+        if (run.view.timing) run.view.timing = { ...run.view.timing, endedAt: Date.now() };
+        if (run.view.status !== 'stopping' && !run.stopUnconfirmed) run.view.status = 'idle';
+        this.refreshContextUsage(run);
+        void this.flushPendingSwitches(key);
+        if (run.view.retryGroup?.phase === 'completed') this.dispatchDeferred(run);
+      }
     }
     // 一次模型调用刚结束、下一次尚未开始：挂起的模型/思考切换在这里下发，并顺带刷新上下文占用。
     if (event.type === 'message_end' && event.message?.role === 'assistant' && event.message?.stopReason !== 'error' && event.message?.stopReason !== 'aborted') { void this.flushPendingSwitches(key); this.refreshContextUsage(run); }
     if (event.type === 'message_end' && event.message?.role === 'assistant' && event.message?.stopReason !== 'error' && event.message?.stopReason !== 'aborted' && event.message?.content?.some((c: any) => c.type === 'text' && c.text?.trim()) && run.view.accessMode === 'plan') run.view.planReady = true;
-    if (event.type === 'queue_update') {
-      const prev = run.view.queue ?? [];
+    if (event.type === 'queue_update' && !run.stopUnconfirmed) {
+      const prev = (run.view.queue ?? []).slice(0, (run.view.queue?.length ?? 0) - run.deferredQueue.length);
       const usedPrev = new Set<number>(), usedStaged = new Set<number>();
       // 先清掉过期暂存（从未被任何 queue_update 确认的陈旧登记），防止漏配给后来的同文项。
       const now = Date.now();
@@ -250,6 +380,7 @@ export class PiBackend {
         return images?.length ? { text, behavior, images } : { text, behavior };
       }));
       if (usedStaged.size) run.queueImages = run.queueImages.filter((_, i) => !usedStaged.has(i));
+      run.view.queue.push(...run.deferredQueue);
       run.view.pending = run.view.queue.length;
     }
     // Event-level subagent persistence: works for ANY subagent implementation
@@ -257,21 +388,107 @@ export class PiBackend {
     if (['tool_execution_start', 'tool_execution_update', 'tool_execution_end'].includes(event.type) && event.toolName === 'subagent') {
       persistSubagentEvent(this.env.agentDir, key, String(event.toolCallId ?? ''), event);
     }
-    this.emit({ type: 'rpc', key, generation, event });
+    // Preserve the CLI boundary for diagnostics without advertising a final Desktop
+    // settlement to automation/notifications while an outer retry is pending.
+    this.emit({ type: 'rpc', key, generation, event: intermediateSettlement ? { type: 'desktop_retry_group_wait', retryGroup: run.view.retryGroup } : event });
     // message_update / tool_execution_update 逐 delta 到达（每秒几十个），上面的分支
     // 不会在它们上改 view；逐条重发完整 run 视图只会让渲染层每秒白渲染几十次。
     if (event.type !== 'message_update' && event.type !== 'tool_execution_update') this.emit({ type: 'run', run: { ...run.view } });
   }
-  async prompt(key: string, text: string, behavior: 'steer' | 'followUp', images?: import('../../shared/composer').PiImage[]) {
+  private clearSettlement(run: Running) {
+    if (run.settlement) clearTimeout(run.settlement.timer);
+    run.settlement = undefined;
+  }
+  private ensureSettlement(run: Running) {
+    if (run.settlement) return;
+    const token = randomUUID(), epoch = run.stopEpoch;
+    const current = () => this.active.get(run.view.key) === run && run.stopEpoch === epoch && run.settlement?.token === token;
+    const fail = (error: unknown) => {
+      if (!current()) return;
+      this.clearSettlement(run);
+      run.retryUncertain = true;
+      run.retry.fail(error);
+    };
+    // Native settlement normally arrives in the same event drain. Only ask the
+    // command bridge if it did not; never infer settlement from agent_end/state.
+    const timer = setTimeout(() => {
+      if (!current()) return;
+      if (!run.retryReady) { fail(new Error('运行时缺少安全空闲确认扩展，无法自动续接；请停止后手动恢复。')); return; }
+      run.settlement!.timer = setTimeout(() => fail(new Error('运行时未确认安全空闲，无法自动续接；请停止后手动恢复。')), 10_000);
+      run.settlement!.timer.unref?.();
+      void run.client.request('prompt', { message: `/desktop-retry-${run.view.generation}-settle ${JSON.stringify({ generation: run.view.generation, sessionFile: run.input.file, token })}` }, 10_000).catch(fail);
+    }, 250);
+    timer.unref?.();
+    run.settlement = { token, timer };
+  }
+  private async continueRetryGroup(run: Running) {
+    const { key, generation } = run.view;
+    const epoch = run.stopEpoch;
+    const failedEntryId = run.retryEntryId;
+    run.retryEntryId = undefined;
+    const current = () => this.active.get(key) === run && run.stopEpoch === epoch && run.view.status !== 'stopping';
+    if (!current()) return;
+    if (!run.retryReady) throw new Error('Desktop 安全续接扩展未就绪，未自动重放任务。');
+    // Read the persisted active branch, not the last UI message or abandoned leaves.
+    const history = this.index.history(key);
+    const entry = [...history.branch].reverse().find(e => e.type === 'message' || e.type === 'custom_message');
+    if (!failedEntryId || entry?.id !== failedEntryId || entry.message?.role !== 'assistant' || entry.message.stopReason !== 'error') throw new Error('重试上下文已变化，未自动重放任务。');
+    const state = await run.client.request('get_state', {}, 5_000);
+    if (!current()) return;
+    if (state?.isStreaming || state?.isCompacting || state?.pendingMessageCount > 0) throw new Error('pi 尚未完全空闲，未重复分发重试。');
+    if (!current()) return;
+    const stateAtDispatch = run.retry.state;
+    try {
+      await run.client.request('prompt', { message: `/desktop-retry-${generation} ${JSON.stringify({ generation, sessionFile: run.input.file, entryId: entry.id, group: run.view.retryGroup!.group })}` }, 10_000);
+    } catch (error) {
+      if (!current()) return;
+      // Observable progress is stronger evidence than an old/missing ACK. Do not
+      // cancel a later group's timer (or a fresh task) because this ACK was late.
+      if (run.retry.state !== stateAtDispatch) return;
+      run.retryUncertain = true;
+      throw error; // stop outer dispatch, but retain a cancellable running view
+    }
+  }
+  private dispatchDeferred(run: Running, explicit = false) {
+    if (!run.deferredQueue.length || run.view.status === 'stopping' || run.stopUnconfirmed || run.retryUncertain) return;
+    const epoch = run.stopEpoch;
+    const retryState = run.retry.state;
+    // Run after the current settled notification has been delivered; never dispatch
+    // inside the callback that consumes it, and never send an item twice on timeout.
+    queueMicrotask(() => {
+      if (this.active.get(run.view.key) !== run || run.stopEpoch !== epoch || run.retry.state !== retryState || run.view.status !== 'idle' || (!explicit && run.view.retryGroup?.phase !== 'completed')) return;
+      const item = run.deferredQueue.shift();
+      if (!item) return;
+      run.view.queue = [...run.deferredQueue]; run.view.pending = run.deferredQueue.length;
+      void this.prompt(run.view.key, item.text, item.behavior, item.images, true).catch(error => {
+        if (this.active.get(run.view.key) !== run || run.stopEpoch !== epoch) return;
+        // Acceptance may be unknown. Surface the error, never put the sent item back.
+        run.view.error = String(error instanceof Error ? error.message : error);
+        this.emit({ type: 'run', run: { ...run.view } });
+      });
+    });
+  }
+  async prompt(key: string, text: string, behavior: 'steer' | 'followUp', images?: import('../../shared/composer').PiImage[], dispatchDeferred = false) {
     if (!text.trim() || text.length > 200_000) throw new Error('输入为空或超过 200000 字符');
     const run = this.get(key);
-    if (!['idle', 'running'].includes(run.view.status)) throw new Error('当前会话暂不能发送');
+    if (!['idle', 'running'].includes(run.view.status) || run.stopUnconfirmed || run.retryUncertain) throw new Error('当前会话暂不能发送；请先停止确认执行状态');
     if (run.input.permission === 'plan' && text.trimStart().startsWith('/')) throw new Error('计划模式不运行斜杠命令，请使用普通输入研究项目。');
     if (images !== undefined && !Array.isArray(images)) throw new Error('图片格式无效');
     if (images?.length) {
       if (!Array.isArray(images) || images.length > 10 || images.some(i => !i || i.type !== 'image' || !['image/png','image/jpeg','image/webp','image/gif'].includes(i.mimeType) || typeof i.data !== 'string' || !/^[A-Za-z0-9+/]+={0,2}$/.test(i.data)) || images.reduce((n,i)=>n+i.data.length,0) > 10*1024*1024) throw new Error('图片格式无效或总大小超过 10 MiB，请减少图片。');
       if (run.view.model?.input && !run.view.model.input.includes('image')) throw new Error('当前模型不支持图片，请选择支持图片的模型。');
     }
+    if (!dispatchDeferred && run.view.status === 'idle' && run.deferredQueue.length > 0) throw new Error('上次任务未恢复，追问已保留；请先停止取回，或在队列中选择立即发送。');
+    if (!dispatchDeferred && (run.retry.holding || run.deferredQueue.length > 0)) {
+      const item = { text, behavior, ...(images?.length ? { images } : {}) };
+      run.deferredQueue.push(item);
+      run.view.queue = [...(run.view.queue ?? []), item]; run.view.pending = run.view.queue.length;
+      this.emit({ type: 'run', run: { ...run.view } });
+      return;
+    }
+    const startsGroup = run.view.status === 'idle';
+    if (startsGroup) { ++run.promptSequence; run.retryEntryId = undefined; run.retry.begin(); run.view.error = undefined; }
+    const promptEpoch = run.stopEpoch, promptSequence = run.promptSequence, activity = run.activity;
     // 运行中发送 = 排队：先把图片登记进 sidecar（pi 的 queue_update 只回文本，权威队列到达后
     // 按 文本+behavior+出现次序 接回），并乐观进入 view.queue，让队列管理（撤回/删除/立即）
     // 在 queue_update 到达前就能按索引命中。RPC 失败则暂存与乐观项一并撤回，不留残渣。
@@ -288,6 +505,18 @@ export class PiBackend {
     try {
       await run.client.request('prompt', { message: text, streamingBehavior: behavior, ...(images?.length ? {images} : {}) }, 300_000);
     } catch (error) {
+      if (this.active.get(key) !== run || run.stopEpoch !== promptEpoch) throw error;
+      // Some runtimes/commands defer prompt's response; a transport timeout is
+      // not a task deadline. Once events prove acceptance, do not reject the UI's
+      // send or cancel this (possibly now >5-minute) retry budget.
+      if (startsGroup && (run.activity !== activity || run.promptSequence !== promptSequence)) return;
+      if (startsGroup && /超时|timeout|timed out/i.test(String(error))) {
+        run.view.error = '发送确认超时，执行状态未知；未自动重发，请停止后确认。';
+        run.retryUncertain = true; run.view.status = 'running';
+        this.emit({ type: 'run', run: { ...run.view } });
+        return;
+      }
+      if (startsGroup) run.retry.cancel();
       if (staged) run.queueImages = run.queueImages.filter(s => s !== staged);
       if (optimisticEntry && run.view.queue?.includes(optimisticEntry)) {
         run.view.queue = run.view.queue.filter(q => q !== optimisticEntry);
@@ -315,13 +544,64 @@ export class PiBackend {
   }
   async stop(key: string) {
     const run = this.get(key);
+    const stopEpoch = ++run.stopEpoch;
+    this.clearSettlement(run);
+    run.retry.cancel(); run.retryEntryId = undefined; // cancel timer before the first RPC/await
+    run.stopUnconfirmed = true;
+    const deferred = [...run.deferredQueue];
+    const snapshot = run.stopQueueSnapshot ?? [...(run.view.queue ?? [])];
     run.view.status = 'stopping'; this.emit({ type: 'run', run: { ...run.view } });
     // Resolve dialogs first; extension commands can otherwise block the RPC handler.
     for (const id of run.dialogs.keys()) run.client.send({ type: 'extension_ui_response', id, cancelled: true });
     this.clearDialogs(run);
-    const queue = await run.client.request('clear_queue');
+    // Send clear_queue and abort in wire order without waiting for clear_queue's
+    // response: a stalled request must not postpone cancelling the model/retry.
+    const cleared = run.client.request('clear_queue');
+    const aborted = run.client.request('abort', {}, 30_000);
+    const [clearResult, abortResult] = await Promise.allSettled([cleared, aborted]);
+    if (this.active.get(key) !== run || run.stopEpoch !== stopEpoch) {
+      // 被更新的一次 stop（或已退出的 run）顶替：结果由后者接管，静默退出。
+      // 抛错只会把良性的重复点击变成红色报错（用户在长工具执行期间重复点停止是常态）。
+      return { steering: [], followUp: [] };
+    }
+    if (clearResult.status === 'rejected' || abortResult.status === 'rejected') {
+      run.stopQueueSnapshot = snapshot;
+      // Keep host-owned inputs until BOTH operations succeed. If clear succeeded,
+      // its returned remote inputs are now host-owned too (retain image sidecars).
+      if (clearResult.status === 'fulfilled') {
+        const remote = clearResult.value ?? { steering: [], followUp: [] };
+        const available = snapshot.slice(0, snapshot.length - deferred.length);
+        run.deferredQueue = (['steering', 'followUp'] as const).flatMap(kind => (remote[kind] ?? []).map((text: string) => {
+          const behavior = kind === 'steering' ? 'steer' as const : 'followUp' as const;
+          const at = available.findIndex(q => q.text === text && q.behavior === behavior);
+          return at >= 0 ? available.splice(at, 1)[0] : { text, behavior };
+        })).concat(deferred);
+        run.view.queue = [...run.deferredQueue];
+      } else run.view.queue = snapshot;
+      run.view.pending = run.view.queue!.length;
+      run.view.status = 'running'; // Stop remains available; sends blocked until confirmed.
+      run.view.error = '停止未确认，追问已保留；请再次停止。';
+      this.emit({ type: 'run', run: { ...run.view } });
+      throw clearResult.status === 'rejected' ? clearResult.reason : (abortResult as PromiseRejectedResult).reason;
+    }
+    const queue = clearResult.value || { steering: [], followUp: [] };
+    run.deferredQueue = []; run.stopUnconfirmed = false; run.retryUncertain = false;
+    for (const item of deferred) (queue[item.behavior === 'steer' ? 'steering' : 'followUp'] ??= []).push(item.text);
+    // A rejected clear_queue may already have cleared its remote queue. On a
+    // later successful Stop, reconcile retained text by occurrence (not Set),
+    // without duplicating items still returned by the runtime. Never auto-send it.
+    if (run.stopQueueSnapshot) {
+      for (const [kind, behavior] of [['steering', 'steer'], ['followUp', 'followUp']] as const) {
+        const unmatched = [...(queue[kind] ?? [])];
+        for (const item of run.stopQueueSnapshot.filter(q => q.behavior === behavior)) {
+          const at = unmatched.indexOf(item.text);
+          if (at >= 0) unmatched.splice(at, 1);
+          else (queue[kind] ??= []).push(item.text);
+        }
+      }
+    }
+    run.stopQueueSnapshot = undefined;
     run.queueImages = [];
-    await run.client.request('abort', {}, 30_000);
     if (run.view.timing && run.view.timing.endedAt === undefined) run.view.timing = { ...run.view.timing, endedAt: Date.now() };
     run.view.status = 'idle'; run.view.pending = 0; run.view.queue = []; this.emit({ type: 'run', run: { ...run.view } });
     return queue || { steering: [], followUp: [] };
@@ -331,6 +611,21 @@ export class PiBackend {
    * 所以 Desktop 拦截 /compact 路由到这里（TUI interactive-mode 的同款能力）。
    * 压缩只发 compaction_start/end、不发 agent_settled，完成后需在此复位状态。
    */
+  /** 按需重拉斜杠命令列表：补全面板发现列表为空时可调用；有新增则更新并广播。 */
+  async refreshCommands(key: string): Promise<number> {
+    const run = this.get(key);
+    if (run.view.status === 'error') return run.view.commands.length;
+    const result = await run.client.request('get_commands', {}, 15_000);
+    const view = run.view;
+    const list = ((result?.commands || []) as any[]).filter((c: any) => !String(c.name).startsWith('desktop-retry-'))
+      .map((c: any) => ({ name: String(c.name), description: c.description, source: c.source, path: c.path ?? String(c.sourceInfo?.path ?? '') }));
+    if (list.length > view.commands.length) {
+      view.commands = list;
+      this.emit({ type: 'run', run: { ...view } });
+    }
+    return view.commands.length;
+  }
+
   async compact(key: string, customInstructions?: string) {
     const run = this.get(key);
     if (run.view.status !== 'idle') throw new Error('请在任务空闲时压缩上下文');
@@ -354,7 +649,26 @@ export class PiBackend {
    */
   async queueEdit(key: string, op: import('../../shared/pi').PiQueueOp) {
     const run = this.get(key);
-    if (run.view.status !== 'running' && run.view.status !== 'starting') throw new Error('仅在任务运行中可以管理追问队列');
+    if (run.view.status !== 'running' && run.view.status !== 'starting' && !(run.view.status === 'idle' && run.deferredQueue.length)) throw new Error('仅在任务运行中可以管理追问队列');
+    if (run.retry.holding || run.deferredQueue.length) {
+      const remoteCount = (run.view.queue?.length ?? 0) - run.deferredQueue.length;
+      const index = op.index - remoteCount;
+      if (!Number.isInteger(index) || index < 0 || index >= run.deferredQueue.length) throw new Error('恢复期间仅可管理 Desktop 暂存的追问');
+      if (op.type === 'edit') {
+        const text = String(op.text ?? '').trim();
+        if (!text || text.length > 200_000) throw new Error('内容为空或超过 200000 字符');
+        run.deferredQueue[index] = { ...run.deferredQueue[index], text };
+      } else {
+        const [item] = run.deferredQueue.splice(index, 1);
+        if (op.type === 'now') run.deferredQueue.unshift({ ...item, behavior: 'steer' });
+      }
+      run.view.queue = [...(run.view.queue ?? []).slice(0, remoteCount), ...run.deferredQueue];
+      run.view.pending = run.view.queue.length;
+      this.emit({ type: 'run', run: { ...run.view } });
+      if (op.type === 'now' && run.view.status === 'idle') this.dispatchDeferred(run, true);
+      return;
+    }
+    const editEpoch = run.stopEpoch;
     const items = (run.view.queue ?? []).map((item) => ({ ...item }));
     if (!Number.isInteger(op.index) || op.index < 0 || op.index >= items.length) throw new Error('队列项不存在');
     if (op.type === 'edit') {
@@ -368,6 +682,7 @@ export class PiBackend {
     // 避免旧登记漏给后来同文本的纯文本排队项。
     run.queueImages = [];
     await run.client.request('clear_queue');
+    if (this.active.get(key) !== run || run.stopEpoch !== editEpoch) return;
     // pi 的 prompt 响应依赖 preflight 回调，回合边界期可能长时间不回（消息其实
     // 已进入 agent 队列）——不能同步等待，否则「立即」在 UI 上像没反应。
     // 重发的 prompt body 必须携带图片附件（pi 自己不会记住 queue_update 之外的图），
@@ -482,7 +797,26 @@ export class PiBackend {
     }
     run.dialogs.clear();
   }
-  close(key: string) { const run = this.active.get(key); if (!run) return; this.active.delete(key); this.clearDialogs(run); run.client.close(); fs.rm(path.join(this.ownedRoot, `.mode-${key}`), () => undefined); this.emit({ type: 'closed', key, generation: run.view.generation }); }
+  close(key: string) { const run = this.active.get(key); if (!run) return; this.active.delete(key); ++run.stopEpoch; if (run.recheckTimer) { clearTimeout(run.recheckTimer); run.recheckTimer = undefined; } this.clearSettlement(run); run.retry.dispose(); run.deferredQueue = []; this.clearDialogs(run); run.client.close(); fs.rm(path.join(this.ownedRoot, `.mode-${key}`), () => undefined); this.emit({ type: 'closed', key, generation: run.view.generation }); }
   async refresh(key: string) { const run = this.get(key); if (run.view.status !== 'idle' || run.view.pending || run.dialogs.size) throw new Error('会话仍在运行或等待交互，请完成或停止后刷新。'); const input = run.input; const executionMode = run.view.executionMode; const timing = run.view.timing; this.close(key); await this.launch(input); const active = this.get(key); active.view.executionMode = executionMode; active.view.timing = timing; this.emit({ type: 'run', run: { ...active.view } }); return { ...active.view }; }
-  dispose() { for (const key of this.active.keys()) this.close(key); }
+  /** 周期哨兵：只在有活动 run 时启动一次，进程级共享，无 run 时空转成本可忽略。 */
+  private ensureWatchdog() {
+    if (this.watchdog) return;
+    this.watchdog = setInterval(() => this.stuckScan(), STUCK_WATCHDOG_INTERVAL_MS);
+    this.watchdog.unref?.();
+  }
+  /** 扫描当前活动 run：只有长时间无任何 pi 事件的 running 才值得向 pi 本体核实。
+   *  重试链持有期（holding：等待续接/已进入续接）与结算桥进行中不得打扰——那自己会收口；
+   *  普通轮次（group=1 phase=running）正是需要巡逻的对象。 */
+  private stuckScan() {
+    const now = Date.now();
+    for (const run of this.active.values()) {
+      if (run.view.status !== 'running' || run.verifying) continue;
+      if (run.stopUnconfirmed || run.retryUncertain || run.settlement || run.retry.holding) continue;
+      if (run.dialogs.size > 0) continue;
+      if (now - run.lastEventAt < STUCK_SILENCE_MS) continue;
+      void this.verifyStuckRun(run);
+    }
+  }
+  dispose() { for (const key of this.active.keys()) this.close(key); if (this.watchdog) { clearInterval(this.watchdog); this.watchdog = undefined; } }
 }

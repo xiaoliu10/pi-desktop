@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { readModelCatalog, writeDefaultModel, writeModelProvider, removeModelProvider } from '../src/main/pi/model-catalog';
+import { readModelCatalog, writeDefaultModel, writeModelProvider, removeModelProvider, writeProviderApiKey } from '../src/main/pi/model-catalog';
 
 function makeAgentDir(): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-catalog-'));
@@ -164,4 +164,54 @@ it('persists thinking maps and clears them when restoring pi defaults',()=>{
     writeModelProvider(dir,{...draft,models:[{...model,thinkingLevelMap:undefined}]});
     expect(JSON.parse(fs.readFileSync(file,'utf8')).providers[provider.id].models[0]).not.toHaveProperty('thinkingLevelMap');
   } finally {fs.rmSync(dir,{recursive:true,force:true});}
+});
+
+describe('P08 provider API key (auth.json, shared with pi CLI)', () => {
+  it('sets an api_key for a provider without one, preserving other credentials, mode 0600', () => {
+    const dir = makeAgentDir();
+    const before = fs.readFileSync(path.join(dir, 'auth.json'), 'utf8');
+    const catalog = writeProviderApiKey(dir, { id: 'zai-coding-cn', apiKey: '  sk-zai-new  ' });
+    expect(catalog.providers.find((p) => p.id === 'zai-coding-cn')?.auth).toBe('api_key');
+    const doc = JSON.parse(fs.readFileSync(path.join(dir, 'auth.json'), 'utf8'));
+    expect(doc['zai-coding-cn']).toEqual({ type: 'api_key', key: 'sk-zai-new' });
+    expect(doc['openai-codex']).toEqual({ type: 'oauth', access: 'tok', refresh: 'tok2', expires: 1 });
+    expect(doc.deepseek).toEqual({ type: 'api_key', key: 'sk-also-secret' });
+    expect((fs.statSync(path.join(dir, 'auth.json')).mode & 0o777)).toBe(0o600);
+    expect(JSON.stringify(catalog)).not.toContain('sk-zai-new');
+    expect(before).not.toContain('zai-coding-cn');
+  });
+
+  it('replaces an existing api_key without disturbing the rest of the file', () => {
+    const dir = makeAgentDir();
+    writeProviderApiKey(dir, { id: 'deepseek', apiKey: 'sk-ds-replaced' });
+    const doc = JSON.parse(fs.readFileSync(path.join(dir, 'auth.json'), 'utf8'));
+    expect(doc.deepseek).toEqual({ type: 'api_key', key: 'sk-ds-replaced' });
+    expect(doc['openai-codex'].type).toBe('oauth');
+  });
+
+  it('refuses to overwrite an OAuth login and leaves the file untouched', () => {
+    const dir = makeAgentDir();
+    const before = fs.readFileSync(path.join(dir, 'auth.json'), 'utf8');
+    expect(() => writeProviderApiKey(dir, { id: 'openai-codex', apiKey: 'sk-x' })).toThrow('套餐登录');
+    expect(fs.readFileSync(path.join(dir, 'auth.json'), 'utf8')).toBe(before);
+  });
+
+  it('clears the key when asked; clearing a missing entry is a no-op', () => {
+    const dir = makeAgentDir();
+    writeProviderApiKey(dir, { id: 'deepseek', clear: true });
+    let doc = JSON.parse(fs.readFileSync(path.join(dir, 'auth.json'), 'utf8'));
+    expect(doc.deepseek).toBeUndefined();
+    expect(doc['openai-codex']).toBeDefined();
+    const before = fs.readFileSync(path.join(dir, 'auth.json'), 'utf8');
+    writeProviderApiKey(dir, { id: 'never-configured', clear: true });
+    expect(fs.readFileSync(path.join(dir, 'auth.json'), 'utf8')).toBe(before);
+    doc = JSON.parse(fs.readFileSync(path.join(dir, 'auth.json'), 'utf8'));
+    expect(doc['never-configured']).toBeUndefined();
+  });
+
+  it('rejects empty keys and malformed provider ids', () => {
+    const dir = makeAgentDir();
+    expect(() => writeProviderApiKey(dir, { id: 'deepseek', apiKey: '   ' })).toThrow('请填写');
+    expect(() => writeProviderApiKey(dir, { id: 'bad id!', apiKey: 'sk-x' })).toThrow('供应商 ID');
+  });
 });
