@@ -1,4 +1,5 @@
 import type { AccessMode } from '../../shared/access-mode';
+import { Icon } from '../replica/Icons';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { ARCHIVE_RETENTION_DAYS, DEFAULT_ARCHIVE_RETENTION_DAYS, DEFAULT_SHORTCUTS, type ResourceKind, type EditableResource, type ResourceDocument, type SettingsSnapshot, type ShortcutAction } from '../../shared/settings';
 import type { SettingsNavId } from '../replica/contracts';
@@ -20,7 +21,31 @@ export function SettingsFeatures({page,cwd,query,workspace,loadedExtensionPaths}
   const [editor,setEditor]=useState<(ResourceDocument & {resource:EditableResource})>();
   const [creating,setCreating]=useState(false),[kind,setKind]=useState<ResourceKind>('skills'),[scope,setScope]=useState<'user'|'project'>('user'),[name,setName]=useState(''),[content,setContent]=useState('');
   const [mcpName,setMcpName]=useState(''),[mcpConfig,setMcpConfig]=useState('{\n  "command": "npx",\n  "args": ["-y", "your-mcp-server"]\n}');
+  const [mcpDialogOpen,setMcpDialogOpen]=useState(false);
+  const mcpDialogRef=useRef<HTMLDialogElement>(null);
+  useEffect(()=>{
+    const dialog=mcpDialogRef.current;
+    if(!dialog) return;
+    if(mcpDialogOpen&&!dialog.open){const previous=document.activeElement as HTMLElement|null;dialog.showModal();return()=>{dialog.close();previous?.isConnected&&previous.focus();};}
+    if(!mcpDialogOpen&&dialog.open)dialog.close();
+    return undefined;
+  },[mcpDialogOpen]);
   const [testResults,setTestResults]=useState<Record<string,string>>({});
+  // MCP 连接状态点（ZCode 同款）：进入页面自动探测启用的服务——连接中橙点闪烁/成功绿点/失败红点/禁用灰点。
+  const [probe,setProbe]=useState<Record<string,{state:'connecting'|'ok'|'failed';detail?:string}>>({});
+  const probingRef=useRef<Set<string>>(new Set());
+  const probeServer=useRef(async(id:string)=>{
+    if(probingRef.current.has(id))return;
+    probingRef.current.add(id);
+    setProbe(v=>({...v,[id]:{state:'connecting'}}));
+    try{ const result=await api().mcpTest(id,project||undefined); setProbe(v=>({...v,[id]:{state:'ok',detail:`${result.tools.length} 个工具`}})); }
+    catch(e){ setProbe(v=>({...v,[id]:{state:'failed',detail:String((e as Error).message||e).slice(0,120)}})); }
+    finally{ probingRef.current.delete(id); }
+  });
+  useEffect(()=>{ if(page!=='mcp'||!data) return;
+    for(const r of data.mcp){ if(r.enabled&&probe[r.id]?.state!=='ok') void probeServer.current(r.id); }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[page,data]);
   const [task,setTask]=useState(''),[agent,setAgent]=useState('');
   const [memStatus,setMemStatus]=useState<{enabled:boolean;plugin:{kind:'extension';id:string;label?:string}|{kind:'builtin'};builtinDir:string;hint:string}>();
   const sequence=useRef(0);
@@ -41,7 +66,21 @@ export function SettingsFeatures({page,cwd,query,workspace,loadedExtensionPaths}
     {/* 诊断提示只在与 mcp.json 相关的页面展示，避免在每个设置页顶部都出现。 */}
     {page==='mcp'&&data?.diagnostics.map(d=><p className="pi-features__alert" key={d}>{d}</p>)}
     {page==='subagents'&&<OfficialSubagentSetup onInstalled={load}/>}
-    {['instructions','skills','extensions','subagents','mcp'].includes(page)&&<label className="pi-features__scope">项目上下文<select value={project} onChange={e=>setProject(e.target.value)}><option value="">仅全局资源</option>{data?.projects.map(p=><option key={p.path} value={p.path}>{p.name} · {p.path}</option>)}</select><span>项目资源运行时仍需在连接窗口授权。</span></label>}
+    {/* ZCode 式资源范围选择：小型 pill 下拉（仅全局资源 / 项目名），右侧资源计数；授权提示收进 tooltip 与下方小字。 */}
+    {['instructions','skills','extensions','subagents','mcp'].includes(page)&&(
+      <div className="pi-features__scopebar">
+        <label className="pi-features__scope" title="项目上下文：选择要查看/编辑的资源范围。项目资源运行时仍需在连接窗口授权。">
+          <select value={project} onChange={e=>setProject(e.target.value)} aria-label="项目上下文">
+            <option value="">仅全局资源</option>
+            {data?.projects.map(p=><option key={p.path} value={p.path}>{p.name}</option>)}
+          </select>
+          <Icon name="chevron-down" size={13}/>
+        </label>
+        <span className="pi-features__count">{names[page]||page} {resources.length}{query?` · 匹配 ${resources.length}`:''}</span>
+        {!project&&<span className="pi-features__scopehint">正在查看全局资源；选择项目可查看该项目 .pi/ 下的专属资源（运行时仍需在连接窗口授权）。</span>}
+        {project&&<span className="pi-features__scopehint">正在查看 {data?.projects.find(p=>p.path===project)?.name||'项目'} 的专属资源；运行时仍需在连接窗口授权。</span>}
+      </div>
+    )}
     {!data&&!error&&<p>正在读取本地配置…</p>}
     {/* AI 默认行为/Desktop 执行偏好已并入通用页（PiReplicaApp generalSections 行内保存）；
         记忆独立成页（对齐 ZCode 独立记忆管理页），原 page==='ai' 入口随 AI 页移除而失效。 */}
@@ -50,7 +89,7 @@ export function SettingsFeatures({page,cwd,query,workspace,loadedExtensionPaths}
         <MemorySwitch enabled={Boolean(data.preferences.memoryAssist)} disabled={busy} onSaving={setBusy} onSaved={enabled=>{setData(current=>current?{...current,preferences:{...current.preferences,memoryAssist:enabled}}:current);usePiStore.setState(state=>({desktopPreferences:{...(state.desktopPreferences??data.preferences),memoryAssist:enabled}}));}}/>
         <p className="pi-memory__hint">{memStatus ? `当前链路：${memStatus.plugin.kind==='extension'?(memStatus.plugin.label??memStatus.plugin.id)+'（用户已装，沿用）':'Desktop 内置桥（agentDir/memory/）'}。开启后每轮对话完成会自动整理记忆。` : '正在检测记忆链路…'}</p>
         {memStatus?.plugin.kind==='builtin'&&<div className="pi-features__actions"><button className="pi-btn pi-btn--primary" disabled={busy} onClick={()=>void act(async()=>{ await window.localPi!.memoryEnableDefault(); await api().memoryAssistStatus(true).then(setMemStatus); },'pi-memory 已安装并注册；新会话生效')}>安装内置记忆插件 pi-memory</button></div>}
-        <MemoryBrowser cwd={cwd} projects={data.projects}/>
+        <MemoryBrowser cwd={cwd} projects={data.projects} globalDir={memStatus?.builtinDir}/>
       </section>}
     {data&&page==='shortcuts'&&<ShortcutsPane data={data} query={query} busy={busy} act={act}/>}
     {page==='voice'&&<VoicePane busy={busy} act={act}/>}
@@ -65,10 +104,22 @@ export function SettingsFeatures({page,cwd,query,workspace,loadedExtensionPaths}
       {agent&&<section className="pi-features__card"><h2>启动子代理</h2><p>工作目录：{project}。将调用本地 pi 与你配置的模型；从当前运行任务继承权限；独立启动默认变更前确认。</p><textarea aria-label="子代理任务" rows={4} value={task} onChange={e=>setTask(e.target.value)} placeholder="明确描述要交给这个子代理的任务…"/><div className="pi-features__actions"><button className="pi-btn pi-btn--primary" disabled={busy||!task.trim()} onClick={()=>void act(async()=>{const run=await api().runSubagent(agent,project,task,usePiStore.getState().runs.find(r=>r.key===usePiStore.getState().selectedKey)?.key);usePiStore.setState(s=>({runs:[...s.runs.filter(r=>r.key!==run.key),run]}));usePiStore.getState().selectSession(run.key);setAgent('');})}>创建并运行</button><button className="pi-btn pi-btn--outline" onClick={()=>setAgent('')}>取消</button></div></section>}
     </>}
     {data&&page==='mcp'&&<>
-      <p>读取全局与项目 mcp.json 的 mcpServers，并解析 imports 从 claude-code / cursor / codex / opencode / claude-desktop 导入的 MCP 服务。Desktop 附带 MCP 桥，通过 pi 工具调用标准 MCP 服务；支持 stdio 和 Streamable HTTP。此页面不自动启动服务，点击“检测连接”才会运行对应命令或访问地址。启用服务会在下一次 pi 连接时加载。</p>
-      {data.mcp.filter(r=>`${r.name} ${r.target} ${r.source??''}`.toLowerCase().includes(query.toLowerCase())).map(r=><article className="pi-features__row" key={r.id}><div><strong>{r.name}</strong><span className="pi-features__badge">{r.source?`导入自 ${r.source}`:`${r.scope==='user'?'全局':'项目'} · ${r.transport}`} · {r.enabled?'已配置启用':'已禁用'}</span><code>{r.target}</code><p>{r.source?`${r.path}（由 ${r.source} 管理，编辑请到对应工具）`:r.path}</p>{testResults[r.id]&&<p role="status">{testResults[r.id]}</p>}</div><div className="pi-features__actions"><button className="pi-btn pi-btn--outline" disabled={busy} onClick={()=>void act(async()=>{const result=await api().mcpTest(r.id,project||undefined);setTestResults(v=>({...v,[r.id]:`连接成功 · ${result.tools.length} 个工具：${result.tools.join('、')||'无工具'}`}));})}>检测连接</button>{!r.source&&<><button className="pi-btn pi-btn--outline" disabled={busy} onClick={()=>void act(()=>api().mcpSave({name:r.name,scope:r.scope,enabled:!r.enabled,revision:r.revision,cwd:project||undefined}),'配置已保存；新建或重载会话生效')}>{r.enabled?'禁用':'启用'}</button><button className="pi-btn pi-btn--ghost" disabled={busy} onClick={()=>{if(window.confirm(`移除 ${r.name} 的 MCP 配置？原配置会先备份。`))void act(()=>api().mcpSave({name:r.name,scope:r.scope,remove:true,revision:r.revision,cwd:project||undefined}),'配置已移除');}}>移除</button></>}</div></article>)}
-      {!data.mcp.length&&<div className="pi-features__empty">未配置 MCP 服务。可以添加已有服务的命令或 HTTP 地址；本页面不会自动安装软件。</div>}
-      <section className="pi-features__card"><h2>添加 / 替换服务配置</h2><label>范围<select value={scope} onChange={e=>setScope(e.target.value as typeof scope)}><option value="user">全局</option><option value="project" disabled={!project}>当前项目</option></select></label><label>服务名称<input value={mcpName} onChange={e=>setMcpName(e.target.value)}/></label><label>服务 JSON 配置<textarea aria-label="MCP 配置" rows={8} className="pi-features__code" value={mcpConfig} onChange={e=>setMcpConfig(e.target.value)} spellCheck={false}/></label><p>stdio 使用 command / args / env；HTTP 使用 url / headers。认证仅存入原生 mcp.json，已有认证不会回填到页面。相同范围同名服务会完整替换，请提供完整配置。</p><button className="pi-btn pi-btn--primary" disabled={busy||!mcpName.trim()} onClick={()=>{if(data.mcp.some(r=>r.name===mcpName&&r.scope===scope)&&!window.confirm('将完整替换同名服务，包括认证配置。继续？'))return;void act(async()=>{await api().mcpSave({name:mcpName,scope,config:mcpConfig,revision:data.mcpRevisions[scope]||'missing',cwd:project||undefined});setMcpName('');setMcpConfig('{}');},'MCP 已保存；重载 pi 后注册工具');}}>保存完整配置</button></section>
+      <p>读取全局与项目 mcp.json 的 mcpServers，并解析 imports 从 claude-code / cursor / codex / opencode / claude-desktop 导入的 MCP 服务。Desktop 附带 MCP 桥，通过 pi 工具调用标准 MCP 服务；支持 stdio 和 Streamable HTTP。此页面不自动启动服务，点击“检测连接”才会运行对应命令或访问地址。启用服务会在下一次 pi 连接时加载。导入服务的启停只会写入 Desktop 自己的 mcp.json（disabledServers 覆盖层），不会修改原工具的配置文件；来源工具里被禁用（enabled=false）的服务也可在此强制启用，导入配置里的相对路径按来源工具的配置目录自动解析。</p>
+      <div className="pi-features__toolbar"><button className="pi-btn pi-btn--primary" onClick={()=>{setMcpName('');setMcpConfig('{\n  "command": "npx",\n  "args": ["-y", "your-mcp-server"]\n}');setMcpDialogOpen(true);}}>新增服务</button></div>
+      {data.mcp.filter(r=>`${r.name} ${r.target} ${r.source??''}`.toLowerCase().includes(query.toLowerCase())).map(r=>{
+          const pr=!r.enabled?{cls:'pi-mcpdot--off',label:'已禁用'}:(()=>{const p=probe[r.id];if(!p||p.state==='connecting')return{cls:'pi-mcpdot--wait',label:'连接中…'};return p.state==='ok'?{cls:'pi-mcpdot--ok',label:`已连接 · ${p.detail}`}:{cls:'pi-mcpdot--fail',label:`连接失败：${p.detail??''}`};})();
+          return <article className="pi-features__row" key={r.id}><div><strong><span className={`pi-mcpdot ${pr.cls}`} role="img" aria-label={pr.label} title={pr.label}/>{r.name}</strong><span className="pi-features__badge">{r.source?`导入自 ${r.source}`:`${r.scope==='user'?'全局':'项目'} · ${r.transport}`} · {r.enabled?'已配置启用':'已禁用'}</span><code>{r.target}</code><p>{r.source?`${r.path}（由 ${r.source} 管理，编辑请到对应工具）`:r.path}</p>{testResults[r.id]&&<p role="status">{testResults[r.id]}</p>}</div><div className="pi-features__actions"><button className="pi-btn pi-btn--outline" disabled={busy} onClick={()=>void act(async()=>{const result=await api().mcpTest(r.id,project||undefined);setTestResults(v=>({...v,[r.id]:`连接成功 · ${result.tools.length} 个工具：${result.tools.join('、')||'无工具'}`}));setProbe(v=>({...v,[r.id]:{state:'ok',detail:`${result.tools.length} 个工具`}}));})}>检测连接</button><button className="pi-btn pi-btn--outline" disabled={busy} onClick={()=>void act(()=>api().mcpSave({name:r.name,scope:r.scope,enabled:!r.enabled,revision:r.source?(data.mcpRevisions[r.scope]||'missing'):r.revision,source:r.source,cwd:project||undefined}),`已${r.enabled?'停用':'启用'} ${r.name}；新建或重载会话生效`)}>{r.enabled?'禁用':'启用'}</button>{!r.source&&<><button className="pi-btn pi-btn--ghost" disabled={busy} onClick={()=>{if(window.confirm(`移除 ${r.name} 的 MCP 配置？原配置会先备份。`))void act(()=>api().mcpSave({name:r.name,scope:r.scope,remove:true,revision:r.revision,cwd:project||undefined}),'配置已移除');}}>移除</button></>}</div></article>;})}
+      {!data.mcp.length&&<div className="pi-features__empty">未配置 MCP 服务。点击上方「新增服务」添加已有服务的命令或 HTTP 地址；本页面不会自动安装软件。</div>}
+      <dialog ref={mcpDialogRef} className="pi-mcp-dialog" aria-labelledby="pi-mcp-dialog-title" onCancel={e=>{e.preventDefault();setMcpDialogOpen(false);}} onClick={e=>{if(e.target===e.currentTarget){const r=e.currentTarget.getBoundingClientRect();if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)setMcpDialogOpen(false);}}}>
+        <header className="pi-mcp-dialog__header"><h2 id="pi-mcp-dialog-title">添加 / 替换服务配置</h2><button type="button" className="pi-iconbtn" aria-label="关闭新增服务" onClick={()=>setMcpDialogOpen(false)}>×</button></header>
+        <div className="pi-mcp-dialog__body">
+          <label>范围<select value={scope} onChange={e=>setScope(e.target.value as typeof scope)}><option value="user">全局</option><option value="project" disabled={!project}>当前项目</option></select></label>
+          <label>服务名称<input value={mcpName} onChange={e=>setMcpName(e.target.value)}/></label>
+          <label>服务 JSON 配置<textarea aria-label="MCP 配置" rows={8} className="pi-features__code" value={mcpConfig} onChange={e=>setMcpConfig(e.target.value)} spellCheck={false}/></label>
+          <p>stdio 使用 command / args / env；HTTP 使用 url / headers。认证仅存入原生 mcp.json，已有认证不会回填到页面。相同范围同名服务会完整替换，请提供完整配置。</p>
+          <button className="pi-btn pi-btn--primary" disabled={busy||!mcpName.trim()} onClick={()=>{if(data.mcp.some(r=>r.name===mcpName&&r.scope===scope)&&!window.confirm('将完整替换同名服务，包括认证配置。继续？'))return;void act(async()=>{await api().mcpSave({name:mcpName,scope,config:mcpConfig,revision:data.mcpRevisions[scope]||'missing',cwd:project||undefined});setMcpName('');setMcpConfig('{}');setMcpDialogOpen(false);},'MCP 已保存；重载 pi 后注册工具');}}>保存完整配置</button>
+        </div>
+      </dialog>
     </>}
     {data&&page==='projects'&&<><section className="pi-features__card"><h2>自动归档旧任务</h2><label className="pi-features__check"><input type="checkbox" checked={data.preferences.autoArchive??false} onChange={e=>setData({...data,preferences:{...data.preferences,autoArchive:e.target.checked}})}/>开启自动归档</label><p>定时扫描最近打开过的工作区，将已完成、所属项目未置顶且超过保留期的任务自动归档。</p><label>归档保留时长<select value={data.preferences.archiveRetentionDays??DEFAULT_ARCHIVE_RETENTION_DAYS} onChange={e=>setData({...data,preferences:{...data.preferences,archiveRetentionDays:Number(e.target.value)}})}>{ARCHIVE_RETENTION_DAYS.map(d=><option key={d} value={d}>{d} 天后归档</option>)}</select></label><p>任务最后更新时间早于该时长，才会进入自动归档候选；运行中、排队或等待确认的任务不会被动。归档后可在“已归档”中恢复。</p><button className="pi-btn pi-btn--primary" disabled={busy} onClick={()=>void act(saveArchivePrefs,'自动归档设置已保存')}>保存归档设置</button></section><p>项目名称只保存在 Desktop；移除登记不会删除目录或 CLI 历史。已有 CLI 会话的项目仍会作为自动发现项显示。</p><button className="pi-btn pi-btn--primary" disabled={busy} onClick={()=>void act(async()=>{const chosen=await api().pickDirectory();if(chosen)await api().projectSave({path:chosen,name:chosen.split(/[\\/]/).at(-1)||chosen});},'项目列表已更新')}>添加本地项目</button>{data.projects.filter(p=>`${p.name} ${p.path}`.toLowerCase().includes(query.toLowerCase())).map(p=><ProjectRow key={p.path} project={p} busy={busy} act={act}/>)}{!data.projects.length&&<div className="pi-features__empty">还没有项目。添加目录后即可创建 pi 会话。</div>}</>}
     {page==='workspace'&&workspace}
