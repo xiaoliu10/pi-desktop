@@ -35,16 +35,28 @@ describe('working bar status text', () => {
     expect(html).not.toContain('pi-chat__working-now');
   });
 
-  it('shows no status text during a model auto-retry', () => {
+  it('replaces the ordinary working bar with the actual retry count', () => {
     const html = renderToStaticMarkup(createElement(ChatView, { ...base, running: true, messages: [doneTool('bash', 'ls')], retrying: { attempt: 2, max: 3 } }));
-    expect(html).toContain('pi-chat__working');
-    expect(html).not.toContain('pi-chat__working-now');
+    expect(html).toContain('pi-chat__retry');
+    expect(html).toContain('正在重试请求（第 2/3 次）');
+    expect(html).toContain('等待模型响应…');
+    expect(html).not.toContain('class="pi-chat__working"');
   });
 
   it('shows no tool name text when a tool is running', () => {
     const html = renderToStaticMarkup(createElement(ChatView, { ...base, running: true, messages: [runningTool('bash', 'git status')] }));
     expect(html).toContain('pi-chat__working');
     expect(html).not.toContain('pi-chat__working-now');
+  });
+
+  it('always exposes a process disclosure while waiting with no process output', () => {
+    const html = renderToStaticMarkup(createElement(ChatView, { ...base, running: true, messages: [{ id: 'waiting-user', role: 'user', parts: [{ id: 'waiting-text', kind: 'text', text: 'hi' }] }], runTiming: { startedAt: 1 }, onRefreshProcess: async () => true }));
+    expect(html).toContain('pi-waiting-process');
+    expect(html).toContain('查看过程');
+    expect(html).toContain('重新同步过程');
+    expect(html).toContain('本轮当前没有可展示的思考或工具过程');
+    expect(html).toContain('不代表已验证请求仍在运行');
+    expect(html).not.toMatch(/<details[^>]*\sopen=/);
   });
 
   it('renders no working bar when idle and not sending', () => {

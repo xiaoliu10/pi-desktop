@@ -3,7 +3,7 @@
  * Purely presentational — selection handlers are demo callbacks.
  */
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { GlobalSearchProps, NotificationItem, NotificationsProps } from '../contracts';
 import { Icon } from '../Icons';
 import './overlays.css';
@@ -73,6 +73,9 @@ export function GlobalSearch(props: GlobalSearchProps) {
 }
 
 export function Notifications(props: NotificationsProps) {
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+  const copiedTimer = useRef<number>(0);
+  useEffect(() => () => window.clearTimeout(copiedTimer.current), []);
   useEffect(() => {
     if (!props.open) return;
     const onKey = (e: KeyboardEvent) => {
@@ -89,6 +92,14 @@ export function Notifications(props: NotificationsProps) {
     error: 'pi-notif__dot pi-notif__dot--bad',
     request: 'pi-notif__dot pi-notif__dot--req',
   };
+  const copy = (n: NotificationItem) => {
+    const text = [n.title, n.body].filter(Boolean).join('\n');
+    navigator.clipboard.writeText(text).then(() => {
+      setCopiedId(n.id);
+      window.clearTimeout(copiedTimer.current);
+      copiedTimer.current = window.setTimeout(() => setCopiedId(null), 1600);
+    }).catch(() => undefined);
+  };
 
   return (
     <div className="pi-notifwrap" onMouseDown={props.onClose}>
@@ -101,7 +112,8 @@ export function Notifications(props: NotificationsProps) {
         </div>
         {props.items.length === 0 && <div className="pi-notif__empty">{props.labels.empty}</div>}
         {props.items.map((n) => (
-          <button key={n.id} className="pi-notif__row" onClick={() => props.onSelect(n)}>
+          // 语义容器而非 button：button 内容默认禁止选中文本，报错全文无法复制。
+          <div key={n.id} className="pi-notif__row" role="button" tabIndex={0} onClick={() => props.onSelect(n)} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); props.onSelect(n); } }}>
             <span className={`${dot[n.kind]} ${n.read ? 'pi-notif__dot--read' : ''}`} />
             <span className="pi-notif__body">
               <span className="pi-notif__rowtitle">
@@ -110,8 +122,11 @@ export function Notifications(props: NotificationsProps) {
               </span>
               {n.body && <span className="pi-notif__rowbody">{n.body}</span>}
             </span>
+            <button type="button" className="pi-notif__copy" title={copiedId === n.id ? props.labels.copied : props.labels.copy} aria-label={props.labels.copy} onClick={(e) => { e.stopPropagation(); copy(n); }}>
+              {copiedId === n.id ? props.labels.copied : <Icon name="copy" size={13} />}
+            </button>
             <span className="pi-notif__time">{n.time}</span>
-          </button>
+          </div>
         ))}
         <div className="pi-notif__note">{props.labels.demoNote}</div>
       </div>

@@ -1,6 +1,7 @@
 .pi-status-rail{flex:0 0 294px;width:294px;padding:20px 16px 16px 0;min-width:0;align-self:flex-start;max-height:100%;overflow:auto}
 .pi-status-rail.is-expanded{flex-basis:370px;width:370px}
 .pi-status-card{position:relative;border:1px solid var(--pi-border);border-radius:18px;background:var(--pi-bg);box-shadow:0 2px 4px #0000000c;padding:10px 9px;color:var(--pi-text);font-size:13px}
+.pi-status-card .pi-status-heading{font-weight:600;color:var(--pi-text)}
 .pi-status-card header{display:flex;align-items:center;gap:8px;padding:2px 5px 8px;color:var(--pi-text-secondary)}
 .pi-status-card header button{display:flex;align-items:center;gap:5px;padding:4px;border-radius:5px}.pi-status-card header button:first-child{flex:1;text-align:left}
 .pi-status-card button:hover{background:var(--pi-bg-hover)}
@@ -20,3 +21,24 @@
 .pi-status-statgrid > div { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
 .pi-status-statgrid small { color: var(--pi-text-tertiary, #8a8a8a); font-size: 10px; }
 .pi-status-statgrid b { font-size: 12px; font-variant-numeric: tabular-nums; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* 终端入口 + 子代理执行列表（ZCode 状态面板终端/智能体区的同位复刻） */
+.pi-status-agents{border-top:1px solid var(--pi-border);margin-top:7px;padding:10px 7px 2px}
+.pi-status-agents .pi-status-terminal-meta{margin-left:auto;font-size:11px;color:var(--pi-text-secondary);font-variant-numeric:tabular-nums}
+.pi-status-agents ol{padding:0;margin:10px 0 0;list-style:none;max-height:220px;overflow:auto}
+.pi-status-agent{display:flex;align-items:center;gap:8px;width:100%;padding:6px 7px;margin:0 0 4px;border-radius:6px;text-align:left}
+.pi-status-agent-row{display:flex;align-items:center;gap:2px;margin-bottom:4px}
+.pi-status-agent-row>.pi-status-agent{flex:1;min-width:0;margin-bottom:0}
+.pi-status-agent-remove{display:flex;align-items:center;justify-content:center;flex:0 0 28px;min-height:28px;border-radius:6px;color:var(--pi-text-secondary);cursor:pointer}
+.pi-status-agent-actions{display:flex;justify-content:flex-end;margin-top:5px}
+.pi-status-agent-clear{padding:4px 6px;min-height:28px;border-radius:6px;font-size:11px;color:var(--pi-text-secondary);cursor:pointer}
+.pi-status-agent-remove:hover,.pi-status-agent-clear:hover{color:var(--pi-text)}
+.pi-status-agent-row>button:focus-visible,.pi-status-agent-clear:focus-visible{outline:2px solid var(--pi-text-secondary);outline-offset:-2px}
+@media(pointer:coarse){.pi-status-agent-remove{flex-basis:36px;min-height:36px}.pi-status-agent-clear{min-height:36px}}
+.pi-status-agent>span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pi-status-agent>em{flex-shrink:0;font-style:normal;font-size:11px;color:var(--pi-text-secondary)}
+.pi-status-agent>svg{flex-shrink:0;color:var(--pi-text-secondary)}
+.pi-status-agent.is-running>svg{color:#27ad61;animation:pi-status-spin 1.6s linear infinite}
+.pi-status-agent.is-running>em{color:#27ad61}
+@keyframes pi-status-spin{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion: reduce){.pi-status-agent.is-running>svg{animation:none}}

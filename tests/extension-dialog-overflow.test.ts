@@ -62,13 +62,15 @@ describe('命令权限审批：ZCode 五选项内联卡（不再弹窗/抽屉）
     expect(html).toContain('pi-approval-inline');
   });
 
-  it('非审批扩展交互（select）仍走居中弹窗', () => {
+  it('非审批扩展交互（select）停靠输入框位置：内联卡片、非遮罩弹窗', () => {
     const html = renderToStaticMarkup(createElement(ExtensionDialog, {
       dialog: { ...base, request: { id: 'r3', method: 'select', title: 'pi extension', options: ['方案一', '方案二'] } },
     }));
+    expect(html).toContain('pi-extdock');
     expect(html).toContain('pi-connectmodal__body');
     expect(html).toContain('pi-connectmodal__options');
     expect(html).toContain('方案一');
+    expect(html).not.toContain('pi-overlay');
     expect(html).not.toContain('pi-approval-drawer');
   });
 });

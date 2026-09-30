@@ -185,6 +185,7 @@
 .pireplica .pi-btn--primary {
   background: var(--pi-accent);
   color: var(--pi-text-on-accent);
+  border: 1px solid transparent;
 }
 
 .pireplica .pi-btn--primary:hover {
@@ -200,8 +201,21 @@
   background: var(--pi-bg-hover);
 }
 
+/* 危险操作（qoderwaker 审批条样式）：红字红框透明底，hover 红底；
+   双类名提高优先级，避免被操作条内的 border 重置覆盖 */
+.pireplica .pi-btn.pi-btn--danger {
+  background: transparent;
+  border: 1px solid color-mix(in srgb, var(--pi-red) 45%, transparent);
+  color: var(--pi-red);
+}
+
+.pireplica .pi-btn.pi-btn--danger:hover:not(:disabled) {
+  background: var(--pi-red-bg);
+}
+
 .pireplica .pi-btn--ghost {
   color: var(--pi-text-secondary);
+  border: 1px solid transparent;
 }
 
 .pireplica .pi-btn--ghost:hover {

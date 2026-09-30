@@ -1,11 +1,16 @@
 import { TerminalOutput } from './TerminalOutput';
+import { ChatError } from './ChatError';
+import { RetryStatus } from './RetryStatus';
+import { retryPresentation } from '../../pi/model-retry';
+import { retryErrorIds } from './error-groups';
+import { WaitingProcess } from './WaitingProcess';
 import { officialSubagentDetails, SubagentNavigation } from '../../pi/subagents';
 /**
  * Chat replica components (U03): markdown rendering, tool cards, diffs,
  * message nav rail, composer with menus, and the conversation/home views.
  */
 
-import { memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { navigatePromptHistory } from '../prompt-history';
 import { onCloseTransientPopovers } from '../popovers';
@@ -65,7 +70,7 @@ export function DiffBlock({ diff, hideHead }: { diff: DemoFileDiff; hideHead?: b
   );
 }
 
-export function ToolCard({ part, labels, onOpenToolFile }: { part: ToolPart; labels: ChatViewProps['labels']; onOpenToolFile?: ChatViewProps['onOpenToolFile'] }) {
+export function ToolCard({ part, labels, onOpenToolFile, live }: { part: ToolPart; labels: ChatViewProps['labels']; onOpenToolFile?: ChatViewProps['onOpenToolFile']; /** 组流式中且这是最后一个 part：运行中的工具行展示加粗「正在执行」（与正在思考同款） */ live?: boolean }) {
   const openSubagents=useContext(SubagentNavigation);
   const zh = labels.you === '你';
   let args: Record<string, unknown> = {};
@@ -91,6 +96,7 @@ export function ToolCard({ part, labels, onOpenToolFile }: { part: ToolPart; lab
       <details>
         <summary className="pi-tool__summary">
           <Icon name={icon} size={17} />
+          {live && part.status === 'running' && <strong className="pi-execution__thinking">{zh ? '正在执行' : 'Executing'}</strong>}
           <span className="pi-tool__name">{toolLabel || part.tool}</span>
           {file && <span className="pi-tool__file-icon" aria-hidden="true"><FileIcon path={file} size={17} /></span>}
           <span className="pi-tool__arg" title={file || command || part.summary}>{file ? <>{onOpenToolFile && toolFilePreview(part) ? <button type="button" className="pi-tool__file-link" title={toolFilePreview(part)?.current ? '在右侧查看文件及变更' : '在右侧查看本次文件修改'} onClick={event=>{event.preventDefault();event.stopPropagation();onOpenToolFile(part);}}>{fileName}</button> : fileName}<span className="pi-tool__directory">{directory}</span></> : command || part.summary}</span>
@@ -125,7 +131,7 @@ export function ToolCard({ part, labels, onOpenToolFile }: { part: ToolPart; lab
   );
 }
 
-function MessageParts({ parts, labels, onOpenToolFile, live }: { parts: MessagePart[]; labels: ChatViewProps['labels']; onOpenToolFile?: ChatViewProps['onOpenToolFile']; /** 组处于流式且这是最后一个 part：思考行滚动展示内容 */ live?: boolean }) {
+function MessageParts({ parts, labels, onOpenToolFile, live, hiddenErrors }: { parts: MessagePart[]; labels: ChatViewProps['labels']; onOpenToolFile?: ChatViewProps['onOpenToolFile']; /** 组处于流式且这是最后一个 part：思考行滚动展示内容 */ live?: boolean; hiddenErrors?: Set<string> }) {
   return (
     <>
       {parts.map((p) => {
@@ -137,7 +143,7 @@ function MessageParts({ parts, labels, onOpenToolFile, live }: { parts: MessageP
           case 'thinking':
             return <ExecutionNote key={p.id} title={`${labels.you === '你' ? '思考' : 'Thought'}${p.durationMs !== undefined ? ` · ${labels.you === '你' ? `用时 ${Math.max(1, Math.ceil(p.durationMs / 1000))} 秒` : `took ${Math.max(1, Math.ceil(p.durationMs / 1000))}s`}` : ''}`} text={p.text} active={live} />;
           case 'tool':
-            return <ToolCard key={p.id} part={p} labels={labels} onOpenToolFile={onOpenToolFile} />;
+            return <ToolCard key={p.id} part={p} labels={labels} onOpenToolFile={onOpenToolFile} live={live} />;
           case 'notice':
             return (
               <div key={p.id} className="pi-notice">
@@ -145,11 +151,7 @@ function MessageParts({ parts, labels, onOpenToolFile, live }: { parts: MessageP
               </div>
             );
           case 'error':
-            return (
-              <div key={p.id} className="pi-error">
-                {p.message}
-              </div>
-            );
+            return hiddenErrors?.has(p.id) ? null : <ChatError key={p.id} part={p} zh={labels.you === '你'} />;
         }
       })}
     </>
@@ -176,9 +178,9 @@ function MessageImage({ part, labels, onDownload }: { part: Extract<MessagePart,
     </button>
     {open && createPortal(
       <div className="pi-lightbox" role="dialog" aria-modal="true" aria-label={labels.viewImage} onClick={() => setOpen(false)}>
-        <div className="pi-lightbox__bar">
-          {onDownload && <button type="button" className="pi-lightbox__btn" title={labels.downloadImage} aria-label={labels.downloadImage} onClick={e => { e.stopPropagation(); onDownload(dataUrl, name); }}><Icon name="download-cloud" size={15} /></button>}
-          <button type="button" className="pi-lightbox__btn" title={labels.close} aria-label={labels.close} onClick={() => setOpen(false)}><Icon name="x" size={15} /></button>
+        <div className="pi-lightbox__bar" onClick={e => e.stopPropagation()}>
+          {onDownload && <button type="button" className="pi-lightbox__btn" title={labels.downloadImage} aria-label={labels.downloadImage} onClick={() => onDownload(dataUrl, name)}><Icon name="download-cloud" size={22} /></button>}
+          <button type="button" className="pi-lightbox__btn" title={labels.close} aria-label={labels.close} onClick={() => setOpen(false)}><Icon name="x" size={22} /></button>
         </div>
         <img className="pi-lightbox__img" src={dataUrl} alt="附件图片" onClick={e => e.stopPropagation()} />
       </div>,
@@ -253,10 +255,85 @@ export function ExecutionGroup({ turn, parts, running, active, expanded, showEla
       {live && <Spinner label={zh ? '运行中' : 'Running'} />}
       <Icon name="chevron-right" size={14} className="pi-execution__chevron" />
     </summary>
-    <div className="pi-execution__steps">{parts.map((p, i) => p.kind === 'text'
-      ? <div key={p.id} className="pi-execution__commentary"><ChatMarkdown text={p.text} /></div>
-      : <MessageParts key={p.id} parts={[p]} labels={labels} onOpenToolFile={onOpenToolFile} live={live && i === parts.length - 1} />)}</div>
+    <div className="pi-execution__steps">{renderSteps(parts, live, zh, labels, onOpenToolFile)}</div>
   </details>;
+}
+
+/** 工具的聚合分类：连续同类工具折叠成「查阅 · N 搜索」式子组（参考 ZCode）。 */
+function toolCategory(part: ToolPart, zh: boolean): { key: string; label: string; noun: string; icon: 'search' | 'terminal' | 'book' | 'pencil' } | null {
+  const search = { key: 'search', label: zh ? '查阅' : 'Search', noun: zh ? '搜索' : 'searches', icon: 'search' as const };
+  if (['grep', 'find', 'ls', 'glob'].includes(part.tool)) return search;
+  if (part.tool === 'read') return { key: 'read', label: zh ? '读取' : 'Read', noun: zh ? '个文件' : 'files', icon: 'book' as const };
+  if (['edit', 'write'].includes(part.tool)) return { key: 'edit', label: zh ? '编辑' : 'Edit', noun: zh ? '处修改' : 'edits', icon: 'pencil' as const };
+  if (['bash', 'run_command'].includes(part.tool)) {
+    // 终端命令按内容嗅探：grep/rg/find/ls 等搜索类命令归「查阅」，其余归「终端」。
+    let command = '';
+    try { const args = JSON.parse(part.argumentsText || '{}') || {}; command = typeof args.command === 'string' ? args.command : ''; } catch { /* 无参数摘要时直接归终端 */ }
+    const bin = command.trim().split(/[\s|;&]+/)[0]?.split('/').pop() ?? '';
+    if (['grep', 'rg', 'ag', 'find', 'fd', 'ls', 'tree'].includes(bin)) return search;
+    return { key: 'shell', label: zh ? '终端' : 'Terminal', noun: zh ? '条命令' : 'commands', icon: 'terminal' as const };
+  }
+  return null;
+}
+
+function ToolGroupBlock({ cat, items, last, zh, live, running, labels, onOpenToolFile }: { cat: { key: string; label: string; noun: string; icon: 'search' | 'terminal' | 'book' | 'pencil' }; items: Array<{ p: MessagePart; i: number }>; /** 整个 steps 的最后一个下标（加粗「正在执行」只落在它上） */ last: number; zh: boolean; live: boolean; running: boolean; labels: ChatViewProps['labels']; onOpenToolFile?: ChatViewProps['onOpenToolFile'] }) {
+  const anyRunning = items.some(({ p }) => p.kind === 'tool' && p.status === 'running');
+  const [userOpen, setUserOpen] = useState(false);
+  // 有子项在跑时钉住展开（正在执行的行必须可见）；完成态默认折叠，用户可开合。
+  const open = (running && anyRunning) || userOpen;
+  return <div className="pi-execution__subgroup">
+    <button type="button" className="pi-execution__subhead" onClick={() => { if (!(running && anyRunning)) setUserOpen(o => !o); }}>
+      <Icon name={cat.icon} size={15} />
+      <span>{cat.label} · {items.length} {cat.noun}</span>
+      <Icon name="chevron-right" size={12} className={`pi-execution__chevron ${open ? 'pi-execution__chevron--open' : ''}`} />
+    </button>
+    {open && <div className="pi-execution__subitems">
+      {items.map(({ p, i }) => <MessageParts key={p.id} parts={[p]} labels={labels} onOpenToolFile={onOpenToolFile} live={partLive(p, i, live, last)} />)}
+    </div>}
+  </div>;
+}
+
+/** 每部分的 live 语义：tool 跟「组流式 + 自身运行中」走（加粗正在执行）；thinking 仍只最后一条（滚动 ticker 只出现一处）。 */
+function partLive(p: MessagePart, i: number, live: boolean, last: number): boolean {
+  return p.kind === 'tool' ? live : live && i === last;
+}
+
+/** 步骤渲染：连续同类工具（≥2）折叠成子组，其余按原样逐条渲染。 */
+function renderSteps(parts: MessagePart[], live: boolean, zh: boolean, labels: ChatViewProps['labels'], onOpenToolFile?: ChatViewProps['onOpenToolFile']) {
+  const out: ReactNode[] = [];
+  const last = parts.length - 1;
+  let i = 0;
+  while (i < parts.length) {
+    const p = parts[i]!;
+    if (p.kind !== 'tool') {
+      out.push(p.kind === 'text'
+        ? <div key={p.id} className="pi-execution__commentary"><ChatMarkdown text={p.text} /></div>
+        : <MessageParts key={p.id} parts={[p]} labels={labels} onOpenToolFile={onOpenToolFile} live={partLive(p, i, live, last)} />);
+      i += 1;
+      continue;
+    }
+    const cat = toolCategory(p, zh);
+    if (!cat) {
+      out.push(<MessageParts key={p.id} parts={[p]} labels={labels} onOpenToolFile={onOpenToolFile} live={partLive(p, i, live, last)} />);
+      i += 1;
+      continue;
+    }
+    let j = i + 1;
+    while (j < parts.length) {
+      const q = parts[j]!;
+      if (q.kind !== 'tool') break;
+      const cq = toolCategory(q, zh);
+      if (!cq || cq.key !== cat.key) break;
+      j += 1;
+    }
+    if (j - i >= 2) {
+      out.push(<ToolGroupBlock key={`grp-${p.id}`} cat={cat} items={parts.slice(i, j).map((pp, k) => ({ p: pp, i: i + k }))} last={last} zh={zh} live={live} running={live} labels={labels} onOpenToolFile={onOpenToolFile} />);
+    } else {
+      out.push(<MessageParts key={p.id} parts={[p]} labels={labels} onOpenToolFile={onOpenToolFile} live={partLive(p, i, live, last)} />);
+    }
+    i = j;
+  }
+  return out;
 }
 
 function firstText(parts: MessagePart[]): string {
@@ -383,7 +460,7 @@ export function MessageNav({ turns, listRef, onJump }: { turns: ChatTurn[]; list
 // own props changed.
 /** 单轮消息：memo 化 + turn/消息身份稳定（adapter 缓存 + executionTurns 缓存），
  *  千条级会话流式时每次事件只重渲染活动轮，而不是全量 600+ 行。 */
-export const TurnArticle = memo(function TurnArticle({ m, liveTurn, labels, onOpenToolFile, onEditUser, onDownloadImage }: { m: ChatTurn; liveTurn: boolean; labels: ChatViewProps['labels']; onOpenToolFile?: ChatViewProps['onOpenToolFile']; /** 提供时用户消息可「编辑并重发」（先 fork 截断再发送，等价 ZCode 编辑语义）。 */ onEditUser?: (entryId: string, text: string) => void; onDownloadImage?: ChatViewProps['onDownloadImage'] }) {
+export const TurnArticle = memo(function TurnArticle({ m, liveTurn, retrying, suppressModelErrors, retryingError, labels, onOpenToolFile, onEditUser, onDownloadImage }: { m: ChatTurn; liveTurn: boolean; retrying?: boolean; suppressModelErrors?: boolean; /** 本次重试的错误首行：只藏末尾同类的失败，异类错误保持可见。 */ retryingError?: string; labels: ChatViewProps['labels']; onOpenToolFile?: ChatViewProps['onOpenToolFile']; /** 提供时用户消息可「编辑并重发」（先 fork 截断再发送，等价 ZCode 编辑语义）。 */ onEditUser?: (entryId: string, text: string) => void; onDownloadImage?: ChatViewProps['onDownloadImage'] }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
   const [copied, setCopied] = useState(false);
@@ -441,15 +518,20 @@ export const TurnArticle = memo(function TurnArticle({ m, liveTurn, labels, onOp
         </>
         : (() => {
           if (liveTurn) {
+            const hiddenErrors = retrying || suppressModelErrors ? new Set([
+              ...retryErrorIds(m.segments.flatMap(segment => segment.parts), retryingError),
+              ...m.segments.flatMap(segment => segment.parts).filter(part => part.kind === 'error' && part.source === 'model').map(part => part.id),
+            ]) : undefined;
             // 活动轮：保持时间顺序，逐步段渲染；所有过程段保持展开（用户要求：
             // 工作进行中进度可见，中途出现结论文字也不折叠，完成态才统一收起）
             return <>{m.segments.map((seg, si) => {
               const liveSegment = si === m.segments.length - 1;
               if (seg.kind === 'steps' && seg.parts.length > 0) {
-                return <ExecutionGroup key={`${m.id}-seg-${si}`} turn={m} parts={seg.parts} running={liveSegment} active={liveSegment} expanded showElapsed={liveSegment} labels={labels} onOpenToolFile={onOpenToolFile} />;
+                return <ExecutionGroup key={`${m.id}-seg-${si}`} turn={m} parts={seg.parts} running={liveSegment && !retrying} active={liveSegment && !retrying} expanded showElapsed={liveSegment && !retrying} labels={labels} onOpenToolFile={onOpenToolFile} />;
               }
               if (seg.kind === 'text' && seg.parts.length > 0) {
-                return <div key={`${m.id}-seg-${si}`} className="pi-msg__answer"><MessageParts parts={seg.parts} labels={labels} onOpenToolFile={onOpenToolFile} /></div>;
+                if (seg.parts.every(part => hiddenErrors?.has(part.id))) return null;
+                return <div key={`${m.id}-seg-${si}`} className="pi-msg__answer"><MessageParts parts={seg.parts} labels={labels} onOpenToolFile={onOpenToolFile} hiddenErrors={hiddenErrors} /></div>;
               }
               return null;
             })}</>;
@@ -539,6 +621,7 @@ export const ChatView = memo(function ChatView(props: ChatViewProps) {
     setShowJump(false);
   }, [props.scrollRequest]);
 
+  const retryUI = retryPresentation(props.retryGroup, props.retrying, props.stopping);
   const turns = useMemo(() => {
     const result = executionTurns(props.messages);
     const last = result[result.length - 1];
@@ -621,7 +704,7 @@ export const ChatView = memo(function ChatView(props: ChatViewProps) {
             </button>
           )}
           {visibleTurns.map((m) => (
-            <TurnArticle key={m.id} m={m} liveTurn={props.running && !props.sendingText && m === turns[turns.length - 1]} labels={props.labels} onOpenToolFile={props.onOpenToolFile} onEditUser={props.onEditUserMessage} onDownloadImage={props.onDownloadImage} />
+            <TurnArticle key={m.id} m={m} liveTurn={Boolean(props.running || retryUI.recovering) && !props.sendingText && m === turns[turns.length - 1]} retrying={retryUI.visible && retryUI.recovering && m === turns[turns.length - 1]} suppressModelErrors={retryUI.recovering && m === turns[turns.length - 1]} retryingError={retryUI.retry?.error} labels={props.labels} onOpenToolFile={props.onOpenToolFile} onEditUser={props.onEditUserMessage} onDownloadImage={props.onDownloadImage} />
           ))}
           {props.sending && props.sendingText && (
             <article className="pi-msg pi-msg--user pi-msg--pending">
@@ -643,17 +726,21 @@ export const ChatView = memo(function ChatView(props: ChatViewProps) {
             // 发送后立刻转圈计时；一旦执行组（steps）开始流式输出，计时交还给组内，避免重复。
             const lastTurn = turns[turns.length - 1];
             const stepsLive = (lastTurn?.segments.at(-1)?.kind ?? 'text') === 'steps';
+            if (retryUI.visible) return <RetryStatus retry={props.retrying} group={props.retryGroup} stopping={props.stopping} onStop={props.onStop} zh={props.labels.you === '你'} />;
             if (!props.sending && !props.running) return null;
             const timerStart = props.runTiming?.startedAt ?? props.sendingAt;
             const zh = props.labels.you === '你';
-            return (
+            const working = (
               <div className="pi-chat__working" role="status" aria-label={props.labels.working}>
                 <Spinner />
+                {props.compacting && <span>{zh ? '正在压缩上下文…' : 'Compacting context…'}</span>}
                 {props.queued > 0 && <span>{props.queued} {props.labels.queued}</span>}
-                {!stepsLive && timerStart !== undefined && <ElapsedTime startedAt={timerStart} running zh={zh} />}
+                {!stepsLive && !props.compacting && timerStart !== undefined && <ElapsedTime startedAt={timerStart} running zh={zh} />}
                 <span className="pi-chat__caret" />
               </div>
             );
+            const hasProcess = !props.sendingText && lastTurn?.role === 'assistant' && lastTurn.steps.length > 0;
+            return hasProcess || props.compacting ? working : <WaitingProcess zh={zh} onRefresh={props.onRefreshProcess}>{working}</WaitingProcess>;
           })()}
         </div>
       </div>
@@ -779,6 +866,15 @@ export function Composer(props: ComposerProps) {
   const [scannedFiles, setScannedFiles] = useState<string[] | null>(null);
   const files = scannedFiles ?? props.files;
   const commands = popup.kind === 'slash' ? filterCommands(props.slashCommands, popup.query) : [];
+  // 自愈：面板打开但命令列表为空时请父层重拉一次（每次弹窗至多一次，列表到位后不再触发）。
+  const refreshedEmpty = useRef(false);
+  useEffect(() => {
+    if (popup.kind !== 'slash') { refreshedEmpty.current = false; return; }
+    if (!refreshedEmpty.current && props.slashCommands.length === 0 && props.onSlashCommandsEmpty) {
+      refreshedEmpty.current = true;
+      props.onSlashCommandsEmpty();
+    }
+  }, [popup.kind, props.slashCommands.length, props.onSlashCommandsEmpty]);
   const fileHits = popup.kind === 'file' ? filterFiles(files, popup.query) : [];
   const popupIndex = useRef(0);
   popupIndex.current = 0;
@@ -1170,10 +1266,11 @@ export function Composer(props: ComposerProps) {
               props.onDraftChange?.(next);
               taRef.current?.focus();
             }) : props.voiceSlot}
-            {/* One morphing action button, like the reference: while a task
-                runs it is Stop; typing a follow-up turns it into Send
-                (queued), clearing text returns it to Stop. */}
-            {props.running && !text.trim() && !props.hasAttachments ? (
+            {/* One morphing action button, like the reference: while anything
+                is in flight (working bar up: running or still-sending) it is
+                Stop; typing a follow-up turns it into Send (queued), clearing
+                text returns it to Stop. */}
+            {(props.running || props.sending) && !text.trim() && !props.hasAttachments ? (
               <button className="pi-composer__send pi-composer__send--stop" onClick={props.onStop} aria-label={props.labels.stop} title={props.labels.stop}>
                 <Icon name="stop" size={14} />
               </button>

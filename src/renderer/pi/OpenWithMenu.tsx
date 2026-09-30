@@ -3,11 +3,9 @@ import { Icon } from '../replica/Icons';
 import type { ExternalApp } from '../../shared/open-with';
 import { usePiStore } from './adapter';
 
-/**
- * 顶栏「打开方式」分割按钮：主按钮用已选应用打开当前项目目录（默认 Finder），
- * 下拉选择其他已安装应用并记住偏好（勾选标记）。Escape / 外部点击关闭，
- * 无 cwd 时主按钮禁用。错误显示在下拉面板内（role="alert"）。
- */
+/** 顶栏「打开方式」图标按钮：只展示当前应用图标，点击弹下拉；
+ *  列表内选应用 = 用它打开当前项目并记住偏好。Escape / 外部点击关闭，
+ *  无 cwd 时禁用。错误显示在下拉面板内（role="alert"）。 */
 export function OpenWithMenu({ cwd, lang }: { cwd?: string; lang: 'en' | 'zh' }) {
   const zh = lang === 'zh';
   const saved = usePiStore(s => s.desktopPreferences?.openWithApp);
@@ -47,60 +45,50 @@ export function OpenWithMenu({ cwd, lang }: { cwd?: string; lang: 'en' | 'zh' })
     setPosition({ left: Math.max(8, rect.right - 230), top: Math.max(8, Math.min(window.innerHeight - 280, rect.bottom + 4)) });
   };
 
-  const openCwd = async (appId?: string) => {
-    if (!cwd || !appId || busy) return;
+  // 列表内选应用 = 用它打开当前项目并记住偏好；打开失败时错误留在面板内，菜单不关。
+  const pickAndOpen = async (id: string) => {
+    if (!cwd || busy) return;
     setBusy(true); setError('');
-    try { await window.localPi!.openWith(cwd, appId); setOpen(false); }
-    catch (e) { placeMenu(); setError((e as Error).message); setOpen(true); }
-    finally { setBusy(false); }
-  };
-
-  const choose = async (id: string) => {
-    setError(''); setOpen(false); trigger.current?.focus();
     try {
-      await window.localPi!.saveDesktopSettings({ openWithApp: id });
-      const snapshot = await window.localPi!.settingsSnapshot();
-      usePiStore.setState({ desktopPreferences: snapshot.preferences });
-    } catch (e) { placeMenu(); setError((e as Error).message); setOpen(true); }
+      await window.localPi!.openWith(cwd, id);
+      setOpen(false); trigger.current?.focus();
+      try {
+        await window.localPi!.saveDesktopSettings({ openWithApp: id });
+        const snapshot = await window.localPi!.settingsSnapshot();
+        usePiStore.setState({ desktopPreferences: snapshot.preferences });
+      } catch { /* 偏好保存失败不影响本次打开 */ }
+    } catch (e) {
+      placeMenu(); setError((e as Error).message); setOpen(true);
+    } finally { setBusy(false); }
   };
 
   const openLabel = selected
-    ? zh ? `用 ${appName(selected)} 打开当前项目` : `Open current project in ${appName(selected)}`
+    ? zh ? `打开方式：${appName(selected)}` : `Open with: ${appName(selected)}`
     : zh ? '打开当前项目' : 'Open current project';
   return (
     <div className="pi-openwith" ref={root}>
-      <div className="pi-openwith__split">
-        <button
-          className="pi-openwith__main"
-          disabled={!cwd || busy || !selected}
-          aria-label={openLabel}
-          title={cwd ? openLabel : zh ? '没有可打开的项目目录' : 'No project folder to open'}
-          onClick={() => void openCwd(selected?.id)}
-        >
-          {selected?.icon ? <img src={selected.icon} alt="" width={16} height={16} /> : <Icon name={selected?.kind === 'terminal' ? 'terminal' : selected?.kind === 'editor' ? 'code' : 'folder'} size={15} />}
-          <span>{selected ? appName(selected) : '…'}</span>
-        </button>
-        <button
-          ref={trigger}
-          className="pi-openwith__caret"
-          aria-haspopup="menu"
-          aria-expanded={open}
-          aria-label={zh ? '选择打开方式' : 'Choose app to open with'}
-          title={zh ? '选择打开方式' : 'Choose app to open with'}
-          onClick={() => {
-            placeMenu();
-            setOpen(v => !v); setError('');
-          }}
-        >
-          <Icon name="chevron-down" size={13} />
-        </button>
-      </div>
+      <button
+        ref={trigger}
+        className="pi-openwith__iconbtn"
+        disabled={!cwd || busy || !selected}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-label={openLabel}
+        title={cwd ? `${openLabel}（${zh ? '点击选择其他应用' : 'click to pick another app'}）` : zh ? '没有可打开的项目目录' : 'No project folder to open'}
+        onClick={() => {
+          placeMenu();
+          setOpen(v => !v); setError('');
+        }}
+      >
+        <span className="pi-openwith__appicon">{selected?.icon ? <img src={selected.icon} alt="" width={17} height={17} /> : <Icon name={selected?.kind === 'terminal' ? 'terminal' : selected?.kind === 'editor' ? 'code' : 'folder'} size={16} />}</span>
+        <Icon name="chevron-down" size={12} className="pi-openwith__chevron" />
+      </button>
       {open && (
         <div className="pi-project-menu pi-openwith__menu" style={position} role="menu" aria-label={zh ? '打开方式' : 'Open with'}>
           {loadError && <p role="alert">{loadError}</p>}
           {error && !loadError && <p role="alert">{error}</p>}
           {(apps ?? []).map(app => (
-            <button key={app.id} role="menuitemradio" aria-checked={app.id === selected?.id} autoFocus={app.id === selected?.id} onClick={() => void choose(app.id)}>
+            <button key={app.id} role="menuitemradio" aria-checked={app.id === selected?.id} autoFocus={app.id === selected?.id} disabled={busy} title={cwd ? (zh ? `用 ${appName(app)} 打开当前项目` : `Open current project in ${appName(app)}`) : appName(app)} onClick={() => { void pickAndOpen(app.id); }}>
               {app.icon ? <img src={app.icon} alt="" width={16} height={16} /> : <Icon name={app.kind === 'terminal' ? 'terminal' : app.kind === 'editor' ? 'code' : 'folder'} size={15} />}
               <span>{appName(app)}</span>
               {app.id === selected?.id && <small><Icon name="check" size={14} /></small>}

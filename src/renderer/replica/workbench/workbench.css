@@ -194,6 +194,10 @@
 .pireplica .pi-workbench__filetoolbar{display:flex;align-items:center;gap:6px;min-width:0;padding-right:6px}
 .pireplica .pi-workbench__filetoolbar>.pi-workbench__filehead{flex:1;min-width:0}
 .pireplica .pi-workbench__filename{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:10px;font-size:12px;color:var(--pi-text-secondary)}
+
+/* 图片预览（文件 tab）：面板内适配宽度，点击进灯箱放大。 */
+.pireplica .pi-workbench__imgbtn{display:block;width:100%;border:0;background:none;padding:0 10px 10px;cursor:zoom-in}
+.pireplica .pi-workbench__img{display:block;max-width:100%;max-height:420px;margin:0 auto;object-fit:contain;border-radius:8px;border:1px solid var(--pi-border)}
 .pireplica .pi-file-path-menu{position:relative;flex-shrink:0;margin-left:auto}
 .pireplica .pi-file-path-menu__popup{position:absolute;right:0;top:calc(100% + 4px);width:188px;padding:5px;z-index:30;background:var(--pi-bg);border:1px solid var(--pi-border);border-radius:10px;box-shadow:0 5px 18px #0002}
 .pireplica .pi-file-path-menu__popup button{display:flex;align-items:center;gap:9px;width:100%;padding:9px 10px;background:transparent;border:0;border-radius:6px;text-align:left;color:var(--pi-text);font:inherit;font-size:12px;cursor:pointer}

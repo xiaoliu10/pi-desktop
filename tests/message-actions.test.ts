@@ -36,5 +36,10 @@ describe('已发送用户消息的复制/编辑动作', () => {
     expect(html).toContain('pi-msg__imagebtn');
     expect(html).toContain('查看原图');
     expect(html).not.toContain('pi-lightbox'); // 灯箱只在点击后出现
+    expect(html).not.toContain('pi-msg__actions'); // 无文字时不新增复制操作
+    const editableHtml = renderToStaticMarkup(createElement(TurnArticle, { m: turn, liveTurn: false, labels, onEditUser: () => {} }));
+    expect(editableHtml).not.toContain('aria-label="复制"');
+    expect(editableHtml).not.toContain('aria-label="编辑并重发"');
+    expect(editableHtml).not.toContain('pi-msg__bubble');
   });
 });

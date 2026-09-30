@@ -5,6 +5,16 @@
 
 import type { SettingsNavSection, SettingsSectionData, SettingRowData } from '../contracts';
 
+/** Compare both raw IDs: model names and IDs from other providers are not identities. */
+export function isDefaultModel(
+  defaults: { defaultProvider?: string; defaultModel?: string },
+  providerId: string,
+  modelId: string,
+): boolean {
+  return !!defaults.defaultProvider && !!defaults.defaultModel
+    && defaults.defaultProvider === providerId && defaults.defaultModel === modelId;
+}
+
 export function filterNavSections(
   sections: SettingsNavSection[],
   query: string,
