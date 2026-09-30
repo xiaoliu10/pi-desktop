@@ -10,8 +10,12 @@ export default async function desktopMcp(pi) {
   if (process.env.PI_DESKTOP_PERMISSION === 'plan') return;
   const clients=[]; const failures=[];
   const roots=[process.env.PI_CODING_AGENT_DIR];if(process.env.PI_DESKTOP_TRUST_PROJECT==='1')roots.push(path.join(process.cwd(),'.pi'));
-  const servers=new Map(); const source=new Map();
-  for(const root of roots.filter(Boolean)){const file=path.join(root,'mcp.json');try{const cfg=JSON.parse(fs.readFileSync(file,'utf8'));for(const [name,config]of Object.entries(cfg.mcpServers||{}))servers.set(name,config);for(const e of resolveImports(cfg.imports))if(!servers.has(e.name)){servers.set(e.name,e.config);source.set(e.name,e.source);}}catch{if(fs.existsSync(file))failures.push('配置文件');}}
+  const servers=new Map(); const source=new Map(); const scopeDisabled=new Map(); const scopeEnabled=new Map();
+  // Desktop 停用/启用覆盖层：mcp.json 顶层 disabledServers:[名称] / enabledServers:[名称]
+  // （设置页对导入服务的启停写这里，不改 cursor/claude 等原工具文件）。enabledServers 显式
+  // 启用可覆盖来源工具自己的 enabled=false（否则 codex 里关掉的导入服务在 Desktop 永远启用不了）。
+  // 按“定义该服务的那个作用域”的列表生效：项目同名覆盖全局时，以项目作用域的状态为准。
+  for(const root of roots.filter(Boolean)){const file=path.join(root,'mcp.json');try{const cfg=JSON.parse(fs.readFileSync(file,'utf8'));const off=new Set(Array.isArray(cfg.disabledServers)?cfg.disabledServers.filter(n=>typeof n==='string').map(String):[]);const on=new Set(Array.isArray(cfg.enabledServers)?cfg.enabledServers.filter(n=>typeof n==='string').map(String):[]);for(const [name,config]of Object.entries(cfg.mcpServers||{})){servers.set(name,config);scopeDisabled.set(name,off);scopeEnabled.set(name,on);}for(const e of resolveImports(cfg.imports))if(!servers.has(e.name)){servers.set(e.name,e.config);scopeDisabled.set(e.name,off);scopeEnabled.set(e.name,on);source.set(e.name,e.source);}}catch{if(fs.existsSync(file))failures.push('配置文件');}}
   // 连接全部后台化：扩展 init 只解析配置（毫秒级），绝不 await 网络。
   // 工具在各自连上后补注册（下一轮对话生效），失败与状态延迟到 before_agent_start 补报。
   pi.on('session_shutdown',()=>{for(const client of clients)client.close();});
@@ -21,7 +25,8 @@ export default async function desktopMcp(pi) {
   // 首轮对话前也会触发：后台连接晚于 session_start 完成时状态仍能报出来。
   pi.on('before_agent_start',(_e,ctx)=>flushStatus(ctx));
   void Promise.all([...servers].map(async([name,config])=>{
-    if(config.disabled||config.enabled===false)return;
+    if(scopeDisabled.get(name)?.has(name))return;
+    if((config.disabled||config.enabled===false)&&!scopeEnabled.get(name)?.has(name))return;
     const client=new McpClient(config,process.cwd());
     try{
       await Promise.race([

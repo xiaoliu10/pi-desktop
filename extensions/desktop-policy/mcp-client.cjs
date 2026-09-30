@@ -5,7 +5,9 @@ class McpClient {
   constructor(config, cwd, options = {}) { this.options = options; this.config = config; this.cwd = cwd; this.pending = new Map(); this.controllers = new Set(); this.closed = false; }
   async connect() {
     if (this.config.command) {
-      this.child = spawn(this.config.command, this.config.args || [], { cwd: this.cwd, shell: false, detached: !!this.options.detached && process.platform !== 'win32', stdio: 'pipe', env: { ...process.env, ...this.config.env } });
+      // 服务自己声明的 cwd 优先（imports 归一化后是绝对路径）；否则用调用方目录。
+      const spawnCwd = typeof this.config.cwd === 'string' && this.config.cwd ? this.config.cwd : this.cwd;
+      this.child = spawn(this.config.command, this.config.args || [], { cwd: spawnCwd, shell: false, detached: !!this.options.detached && process.platform !== 'win32', stdio: 'pipe', env: { ...process.env, ...this.config.env } });
       let buffer = ''; this.child.stdout.setEncoding('utf8');
       this.child.stdout.on('data', data => { buffer += data; if (Buffer.byteLength(buffer) > 8*1024*1024) { this.close(); return; } let at; while ((at=buffer.indexOf('\n'))>=0) { const line=buffer.slice(0,at);buffer=buffer.slice(at+1);try { this.receive(JSON.parse(line)); } catch {} } });
       this.child.stderr.on('data',()=>{});
