@@ -65,6 +65,29 @@ it('切屏回来 focus reconcile：pi 侧已结束的卡死 run 被拉直为 idl
   expect(state.history?.branch.map(e => e.id)).toEqual(['u1', 'a1']);
 });
 
+it('已有历史刷新失败也自动重试，保留旧内容直到恢复', async () => {
+  const old = history([entry('retained-user', 'user', 'hi')]);
+  usePiStore.setState({ history: old });
+  api.history.mockRejectedValueOnce(new Error('transient read failure')).mockResolvedValueOnce(history([entry('retained-user', 'user', 'hi'), entry('new-step', 'assistant', 'recovered process')]));
+  const refreshed = usePiStore.getState().refreshConversation();
+  await vi.advanceTimersByTimeAsync(400);
+  expect(await refreshed).toBe(false);
+  expect(usePiStore.getState().history).toBe(old);
+  await vi.advanceTimersByTimeAsync(1000);
+  expect(usePiStore.getState().history?.branch.at(-1)?.id).toBe('new-step');
+});
+
+it('切回仍运行的会话也同步已有历史，不必等待任务结束', async () => {
+  usePiStore.setState({ runs: [{ ...run, status: 'running' }], history: history([entry('focus-user', 'user', 'hi')]) });
+  api.runs.mockResolvedValue([{ ...run, status: 'running' }]);
+  api.history.mockResolvedValue(history([entry('focus-user', 'user', 'hi'), entry('focus-step', 'assistant', 'new process')]));
+  const listener = (window.addEventListener as any).mock.calls.find(([event]: any[]) => event === 'focus')?.[1];
+  listener();
+  await vi.advanceTimersByTimeAsync(500);
+  expect(usePiStore.getState().history?.branch.at(-1)?.id).toBe('focus-step');
+  expect(usePiStore.getState().runs[0].status).toBe('running');
+});
+
 it('pi 侧确实还在跑时不拉直本地 run', async () => {
   usePiStore.setState({ runs: [{ ...run, status: 'running' }], sentAt: { key: run.key, at: Date.now(), text: 'x' } });
   api.runs.mockResolvedValue([{ ...run, status: 'running' }]);

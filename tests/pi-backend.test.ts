@@ -1,9 +1,58 @@
 import { afterEach, expect, it, vi } from 'vitest';
+import * as childProcess from 'node:child_process';
+vi.mock('node:child_process', async importOriginal => {
+ const actual = await importOriginal<typeof import('node:child_process')>();
+ return { ...actual, spawn: vi.fn(actual.spawn) };
+});
 import fs from 'node:fs';import os from 'node:os';import path from 'node:path';
 import { PiBackend } from '../src/main/pi/backend';import { SessionIndex } from '../src/main/pi/session-index';import type { PiEvent } from '../src/shared/pi';
 const roots:string[]=[],backends:PiBackend[]=[];
 afterEach(()=>{backends.splice(0).forEach(b=>b.dispose());roots.splice(0).forEach(p=>fs.rmSync(p,{recursive:true,force:true}));});
 function setup(){const root=fs.mkdtempSync(path.join(os.tmpdir(),'pi-backend-'));roots.push(root);const owned=path.join(root,'desktop');fs.mkdirSync(owned,{recursive:true});const index=new SessionIndex([root,owned],owned);const events:PiEvent[]=[];const backend=new PiBackend({executable:path.resolve('tests/fixtures/fake-pi.mjs'),version:'0.85.1',supported:true,agentDir:root,sessionDirs:[root],diagnostics:[]},index,owned,path.resolve('extensions/desktop-policy/index.mjs'),e=>events.push(structuredClone(e)));backends.push(backend);return{root,owned,index,events,backend};}
+it('launch injects the session project cwd and memory directory into the child environment', async () => {
+ const { root, backend } = setup();
+ backend.memoryOptions = () => ({ enabled: true, dir: path.join(root, 'memory') });
+ const spawn = vi.mocked(childProcess.spawn);
+ spawn.mockClear();
+ try {
+  await backend.connect({ cwd: root, trustProject: false, permission: 'ask' });
+  const options = spawn.mock.calls[0][2] as childProcess.SpawnOptions;
+  expect(options.env).toMatchObject({ PI_DESKTOP_MEMORY: '1', PI_DESKTOP_MEMORY_DIR: path.join(root, 'memory'), PI_DESKTOP_MEMORY_CWD: root });
+  // Project session: pi-memory 0.4.2 per-project root + qmd reindex/search off (names per plugin README).
+  expect(options.env).toMatchObject({ PI_MEMORY_DIR: path.join(root, '.pi', 'memory'), PI_MEMORY_QMD_UPDATE: 'off', PI_MEMORY_NO_SEARCH: '1' });
+ } finally { spawn.mockClear(); }
+});
+it('project launch replaces stale inherited PI_MEMORY_* scope with the recomputed project root', async () => {
+ const { root, backend } = setup();
+ backend.memoryOptions = () => ({ enabled: true, dir: path.join(root, 'memory') });
+ vi.stubEnv('PI_MEMORY_DIR', '/stale-global-memory'); vi.stubEnv('PI_MEMORY_QMD_UPDATE', 'background'); vi.stubEnv('PI_MEMORY_NO_SEARCH', '1');
+ const spawn = vi.mocked(childProcess.spawn); spawn.mockClear();
+ try {
+  await backend.connect({ cwd: root, trustProject: false, permission: 'ask' });
+  const options = spawn.mock.calls[0][2] as childProcess.SpawnOptions;
+  expect(options.env?.PI_MEMORY_DIR).toBe(path.join(root, '.pi', 'memory'));
+  expect(options.env?.PI_MEMORY_QMD_UPDATE).toBe('off');
+  expect(options.env?.PI_MEMORY_NO_SEARCH).toBe('1');
+ } finally { vi.unstubAllEnvs(); spawn.mockClear(); }
+});
+it('memory launch clears inherited enable/scope variables when disabled', async () => {
+ const { root, backend } = setup();
+ vi.stubEnv('PI_DESKTOP_MEMORY', '1'); vi.stubEnv('PI_DESKTOP_MEMORY_CWD', '/other-project'); vi.stubEnv('PI_DESKTOP_MEMORY_DIR', '/other-memory');
+ vi.stubEnv('PI_MEMORY_DIR', '/stale-global-memory'); vi.stubEnv('PI_MEMORY_QMD_UPDATE', 'background'); vi.stubEnv('PI_MEMORY_NO_SEARCH', '1');
+ const spawn = vi.mocked(childProcess.spawn); spawn.mockClear();
+ try {
+  await backend.connect({ cwd: root, trustProject: false, permission: 'ask' });
+  const options = spawn.mock.calls[0][2] as childProcess.SpawnOptions;
+  expect(options.env?.PI_DESKTOP_MEMORY).toBeUndefined();
+  expect(options.env?.PI_DESKTOP_MEMORY_CWD).toBeUndefined();
+  expect(options.env?.PI_DESKTOP_MEMORY_DIR).toBeUndefined();
+  // Disabled memory: pi-memory vars stay unset too — the plugin must fall back to its global default.
+  expect(options.env?.PI_MEMORY_DIR).toBeUndefined();
+  expect(options.env?.PI_MEMORY_QMD_UPDATE).toBeUndefined();
+  expect(options.env?.PI_MEMORY_NO_SEARCH).toBeUndefined();
+  expect(spawn.mock.calls[0][1]).not.toContain(path.resolve('extensions/desktop-memory/index.mjs'));
+ } finally { vi.unstubAllEnvs(); spawn.mockClear(); }
+});
 it('opens a new copy and never writes the external CLI session; redacts model metadata',async()=>{
  const {root,index,backend}=setup(),file=path.join(root,'cli.jsonl');const original=JSON.stringify({type:'session',version:3,id:'cli',cwd:root})+'\n';fs.writeFileSync(file,original);
  const session=index.scan()[0];const run=await backend.connect({sourceKey:session.key,trustProject:false,permission:'ask'});
@@ -96,6 +145,25 @@ it('forks back to an entry only while idle and without pending dialogs (edit-and
  await vi.waitFor(()=>expect(events.some(e=>e.type==='ui'&&e.request.id==='dialog')).toBe(true));
  await expect(backend.forkTo(run.key,'entry-1')).rejects.toThrow('等待交互');
  backend.respond(run.key,run.generation,{id:'dialog',cancelled:true});await pending;
+});
+
+it('shows compacting during compaction and repairs wiped package registrations on launch',async()=>{
+ const{root,index,owned}=setup();
+ // 模拟 pi 会话写回旧副本：期望列表里有 pi-goal-x，settings.json 里被抹掉
+ const dataDir=path.join(root,'desktop-data');fs.mkdirSync(dataDir,{recursive:true});
+ fs.writeFileSync(path.join(dataDir,'pi-desktop.json'),JSON.stringify({piPackages:['npm:pi-memory','npm:pi-goal-x']}));
+ fs.writeFileSync(path.join(root,'settings.json'),JSON.stringify({theme:'x',packages:['npm:pi-memory']}));
+ const backend2=new PiBackend({executable:path.resolve('tests/fixtures/fake-pi.mjs'),version:'0.85.1',supported:true,agentDir:root,sessionDirs:[root],diagnostics:[]},index,owned,path.resolve('extensions/desktop-policy/index.mjs'),()=>{},dataDir);backends.push(backend2);
+ const run=await backend2.connect({cwd:root,trustProject:false,permission:'ask'});
+ const packages=JSON.parse(fs.readFileSync(path.join(root,'settings.json'),'utf8')).packages;
+ expect(packages).toContain('npm:pi-goal-x');expect(packages).toContain('npm:pi-memory');
+ // 压缩指示：compaction_start → compacting=true（状态 running），end → false
+ await backend2.prompt(run.key,'/compact-start','followUp');
+ await vi.waitFor(()=>expect(backend2.runs()[0]?.compacting).toBe(true));
+ expect(backend2.runs()[0]?.status).toBe('running');
+ await backend2.prompt(run.key,'/compact-end','followUp');
+ await vi.waitFor(()=>expect(backend2.runs()[0]?.compacting).toBe(false));
+ await vi.waitFor(()=>expect(backend2.runs()[0]?.status).toBe('idle'));
 });
 
 it('fails closed when the mandatory policy extension is missing',async()=>{const {root,index,owned}=setup();const backend=new PiBackend({executable:path.resolve('tests/fixtures/fake-pi.mjs'),version:'0.85.1',supported:true,agentDir:root,sessionDirs:[root],diagnostics:[]},index,owned,path.join(root,'missing.mjs'),()=>{});backends.push(backend);await expect(backend.connect({cwd:root,trustProject:false,permission:'ask'})).rejects.toThrow('权限扩展缺失');expect(backend.runs()).toEqual([]);});
@@ -224,4 +292,32 @@ it('reuses the active writer when opening a Desktop-owned session by file key',a
  const selected=index.scan().find(s=>s.key===run.key)!;expect(selected).toBeDefined();
  const again=await backend.connect({sourceKey:selected.key,trustProject:false,permission:'ask'});
  expect(again.generation).toBe(run.generation);expect(backend.runs()).toHaveLength(1);
+});
+
+it('slash commands: initial fetch is filtered; connect schedules one late-load recheck', async () => {
+ const spy = vi.spyOn(global, 'setTimeout');
+ try {
+  const { backend } = setup();
+  await backend.connect({ cwd: '/', trustProject: false, permission: 'ask' });
+  // 初次：1 条（fake 第 1 次）。
+  expect(backend.runs()[0].commands.map(c => c.name)).toEqual(['hello']);
+  // 连接完成时调度了迟加载复检定时器（8s 档）。
+  expect(spy.mock.calls.some(([, delay]) => delay === 8000)).toBe(true);
+ } finally { spy.mockRestore(); }
+});
+
+it('slash commands: refreshCommands re-pulls on demand, never shrinks, and dedupes repeat broadcasts', async () => {
+ const { backend, events } = setup();
+ const run = await backend.connect({ cwd: '/', trustProject: false, permission: 'ask' });
+ expect(backend.runs()[0].commands.map(c => c.name)).toEqual(['hello']);
+ // 第 2 次拉取（fake 迟加载列表）：3 条 + desktop-retry 被滤 → 3 条。
+ expect(await backend.refreshCommands(run.key)).toBe(3);
+ expect(backend.runs()[0].commands.map(c => c.name)).toEqual(['hello', 'goal', 'goal-resume']);
+ // 第 3 次拉取结果不再多于当前：不广播、不回退。
+ const namesBefore = backend.runs()[0].commands.map(c => c.name);
+ expect(await backend.refreshCommands(run.key)).toBe(3);
+ // 不回退：重复拉取后命令集合保持稳定（迟加载复检/按需拉取幂等）。
+ expect(backend.runs()[0].commands.map(c => c.name)).toEqual(namesBefore);
+ expect(backend.runs()[0].commands.map(c => c.name)).toEqual(['hello', 'goal', 'goal-resume']);
+ void run;
 });

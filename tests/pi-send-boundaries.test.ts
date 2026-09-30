@@ -207,10 +207,122 @@ it('routes a late old-tool update by persisted call identity even after progress
   expect(JSON.stringify(saved)).not.toContain('late');
 });
 
+it('anchors multiple anonymous identical consumed starts one-to-one without moving old streams or tools', async () => {
+  rpc({ type: 'message_start', message: { role: 'assistant', timestamp: 810, content: [] } });
+  rpc({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', contentIndex: 0, delta: 'old stream' } });
+  rpc({ type: 'tool_execution_start', toolCallId: 'old-boundary-tool', toolName: 'read', args: {} });
+  for (const timestamp of [811, 812]) {
+    rpc({ type: 'message_start', message: { role: 'user', content: 'same consumed text' } });
+    // Late anonymous updates continue the previous stream until explicit start.
+    rpc({ type: 'message_update', assistantMessageEvent: { type: timestamp === 811 ? 'text_delta' : 'thinking_delta', contentIndex: 0, delta: ' late' } });
+    rpc({ type: 'message_start', message: { role: 'assistant', timestamp, content: [] } });
+    rpc({ type: 'message_update', assistantMessageEvent: { type: 'thinking_delta', contentIndex: 0, delta: `thinking-${timestamp}` } });
+  }
+  api.history.mockResolvedValue(history([entry('old-user', 'user', 'old'), entry('consume-1', 'user', 'same consumed text'), entry('consume-2', 'user', 'same consumed text')]));
+  const refreshed = usePiStore.getState().refreshConversation();
+  await vi.advanceTimersByTimeAsync(500); await refreshed;
+  rpc({ type: 'message_update', message: { role: 'assistant', timestamp: 810 }, assistantMessageEvent: { type: 'text_delta', contentIndex: 0, delta: ' identified late' } });
+  rpc({ type: 'tool_execution_end', toolCallId: 'old-boundary-tool', toolName: 'read', result: { content: 'late old result' } });
+  expect(usePiStore.getState().sends.map(s => s.confirmedId)).toEqual(['consume-1', 'consume-2']);
+  const turns = executionTurns(messages()).filter(t => t.role === 'assistant');
+  expect(turns).toHaveLength(3);
+  expect(JSON.stringify(turns[0])).toContain('old stream late identified late');
+  expect(JSON.stringify(turns[0])).toContain('late old result');
+  expect(JSON.stringify(turns[1])).toContain('thinking-811 late');
+  expect(JSON.stringify(turns[2])).toContain('thinking-812');
+});
+
+it('does not reuse a direct optimistic send for a second identical anonymous consumed start', async () => {
+  api.prompt.mockReturnValue(deferred().promise);
+  usePiStore.getState().send('same');
+  rpc({ type: 'agent_start' });
+  rpc({ type: 'message_start', message: { role: 'user', content: 'same' } });
+  rpc({ type: 'message_start', message: { role: 'assistant', timestamp: 815, content: 'first answer' } });
+  rpc({ type: 'message_start', message: { role: 'user', content: 'same' } });
+  rpc({ type: 'message_start', message: { role: 'assistant', timestamp: 816, content: 'second answer' } });
+  api.history.mockResolvedValue(history([entry('old-user', 'user', 'old'), entry('first', 'user', 'same'), entry('second', 'user', 'same')]));
+  const refreshed = usePiStore.getState().refreshConversation(); await vi.advanceTimersByTimeAsync(500); await refreshed;
+  expect(usePiStore.getState().sends.map(s => s.confirmedId)).toEqual(['first', 'second']);
+  expect(messages().map(m => m.role)).toEqual(['user', 'user', 'assistant', 'user', 'assistant']);
+  expect(JSON.stringify(messages()[2])).toContain('first answer');
+  expect(JSON.stringify(messages()[4])).toContain('second answer');
+});
+
+it('uses runtime user identity to acknowledge a confirmed send without duplicating it', async () => {
+  const saved = { ...entry('saved-user', 'user', 'same'), message: { role: 'user', timestamp: 820, content: 'same' } } as PiEntry;
+  usePiStore.setState({ history: history([entry('old-user', 'user', 'old'), saved]), sends: [{ id: 'already-confirmed', key: run.key, at: 1, text: 'same', images: [], baseline: ['old-user'], confirmedId: saved.id }] });
+  rpc({ type: 'message_start', message: { role: 'user', timestamp: '820', content: 'same' } });
+  rpc({ type: 'message_start', message: { role: 'assistant', content: [] } });
+  rpc({ type: 'message_update', assistantMessageEvent: { type: 'thinking_delta', contentIndex: 0, delta: 'anonymous thinking' } });
+  await vi.advanceTimersByTimeAsync(150);
+  expect(usePiStore.getState().sends).toHaveLength(1);
+  expect(messages().filter(m => m.role === 'user')).toHaveLength(2);
+  expect(messages().at(-1)?.parts[0]).toMatchObject({ text: 'anonymous thinking' });
+});
+
+it('matches consumed image boundaries by runtime identity and image bytes rather than same text', async () => {
+  const image = (data: string) => ({ type: 'image', mimeType: 'image/png', data });
+  for (const [timestamp, data] of [[830, 'FIRST'], [831, 'SECOND']] as const) {
+    rpc({ type: 'message_start', message: { role: 'user', timestamp, content: [{ type: 'text', text: 'same' }, image(data)] } });
+    rpc({ type: 'message_start', message: { role: 'assistant', timestamp: timestamp + 10, content: 'answer-' + data } });
+  }
+  api.history.mockResolvedValue(history([entry('old-user', 'user', 'old'),
+    { ...entry('first-image', 'user', [{ type: 'text', text: 'same' }, image('FIRST')]), message: { role: 'user', timestamp: 830, content: [{ type: 'text', text: 'same' }, image('FIRST')] } },
+    { ...entry('second-image', 'user', [{ type: 'text', text: 'same' }, image('SECOND')]), message: { role: 'user', timestamp: 831, content: [{ type: 'text', text: 'same' }, image('SECOND')] } },
+  ]));
+  const refreshed = usePiStore.getState().refreshConversation(); await vi.advanceTimersByTimeAsync(500); await refreshed;
+  expect(usePiStore.getState().sends.map(s => s.confirmedId)).toEqual(['first-image', 'second-image']);
+  expect(messages().filter(m => m.role === 'user')).toHaveLength(3);
+  expect(messages().map(m => m.role)).toEqual(['user', 'user', 'assistant', 'user', 'assistant']);
+  expect(JSON.stringify(messages()[2])).toContain('answer-FIRST');
+  expect(JSON.stringify(messages()[4])).toContain('answer-SECOND');
+});
+
+it('starts a new anonymous delta stream at a consumed boundary even when the previous stream is empty', async () => {
+  rpc({ type: 'message_start', message: { role: 'assistant', content: [] } });
+  rpc({ type: 'message_start', message: { role: 'user', content: 'consumed' } });
+  rpc({ type: 'message_update', assistantMessageEvent: { type: 'start' } });
+  rpc({ type: 'message_update', assistantMessageEvent: { type: 'thinking_delta', contentIndex: 0, delta: 'new thinking' } });
+  await vi.advanceTimersByTimeAsync(150);
+  expect(messages().at(-1)?.parts[0]).toMatchObject({ text: 'new thinking' });
+  expect(messages().map(m => m.role)).toEqual(['user', 'user', 'assistant']);
+});
+
 it('does not match a same-text baseline entry or claim one entry twice', () => {
   const send = { id: 's1', key: run.key, at: 1, text: 'same', images: [], baseline: ['baseline'] };
   const result = confirmSends([send, { ...send, id: 's2' }], history([entry('baseline', 'user', 'same'), entry('new', 'user', 'same')]), run.key);
   expect(result.map(s => s.confirmedId)).toEqual(['new', undefined]);
+});
+
+it('confirms an image send even after pi resizes the image and annotates the text', () => {
+  // pi 缩放超尺寸贴图时会改写落盘文本（追加 [Image: …] 注记）并重编码图片字节：
+  // 逐字/逐字节匹配永远失败 → 乐观气泡永挂、工作条永续计时（2026-09-27 实测）。
+  const original = { type: 'image' as const, mimeType: 'image/png', data: 'ORIGINAL_BYTES' };
+  const resized = { type: 'image' as const, mimeType: 'image/png', data: 'RESIZED_BYTES' };
+  const send = { id: 's-img', key: run.key, at: 1, text: '看看这个交互', images: [original], baseline: [] };
+  const annotated = [
+    { type: 'text', text: '看看这个交互\n\n[Image: original 2048x1140, displayed at 2000x1113. Multiply coordinates by 1.02 to map to original image.]' },
+    resized,
+  ];
+  expect(confirmSends([send], history([entry('u-img', 'user', annotated)]), run.key)[0].confirmedId).toBe('u-img');
+  // 无图历史条目不能被带图发送认领（图片数量仍是硬条件）
+  expect(confirmSends([send], history([entry('u-plain', 'user', '看看这个交互')]), run.key)[0].confirmedId).toBeUndefined();
+});
+
+it('settle retires an unconfirmable orphan send, but not one still awaiting the prompt RPC', async () => {
+  const orphan = { id: 'orphan', key: run.key, at: 1, text: 'lost', images: [], baseline: [], promptDone: true };
+  const inflight = { ...orphan, id: 'inflight', text: 'travelling', promptDone: false };
+  api.history.mockResolvedValue(history([entry('old-user', 'user', 'old')]));
+  usePiStore.setState({ sends: [orphan, inflight] });
+  rpc({ type: 'agent_settled' });
+  await vi.advanceTimersByTimeAsync(1200);
+  expect(usePiStore.getState().sends?.map(s => s.id)).toEqual(['inflight']);
+  // run 不空闲（starting/排队）时同样不动：可能在途
+  usePiStore.setState({ runs: [{ ...run, status: 'starting' }] });
+  rpc({ type: 'agent_settled' });
+  await vi.advanceTimersByTimeAsync(1200);
+  expect(usePiStore.getState().sends?.map(s => s.id)).toEqual(['inflight']);
+  usePiStore.setState({ runs: [run] });
 });
 
 it.each(['draft', 'session'])('late failure preserves a newer %s', async mode => {
@@ -257,4 +369,27 @@ it('rolls back only its own optimistic queue item on failure', async () => {
   prompt.reject(new Error('queue rejected')); await vi.advanceTimersByTimeAsync(0);
   expect(usePiStore.getState().runs[0].queue).toEqual([prior]);
   expect(usePiStore.getState().runs[0].pending).toBe(1);
+});
+
+it('unconfirmed send bubbles anchor to its baseline position, not the chat bottom (queued follow-ups land after it)', () => {
+  // 场景：A 是不落 user 条目的本地 send（扩展命令轮，永无确认边界）；用户随后排队 B，
+  // B 自动发出落盘（user 条目）+ 回复。A 的气泡必须排在 B 之前——不能永挂对话流最底部
+  // 把排队发出的 B 及其回复挤到上面。
+  const branch = [
+    entry('old-user', 'user', 'old'),
+    entry('reply1', 'assistant', '第一轮回复'),
+    entry('queued-b', 'user', '排队发出的任务 B'),
+    entry('reply2', 'assistant', 'B 的回复'),
+  ];
+  const sendA = { id: 'send-a', key: run.key, at: 1, text: '本地命令轮 A', images: [], baseline: ['old-user', 'reply1'] };
+  const out = sentConversationMessages(branch, undefined, undefined, [sendA as any]);
+  const ids = out.map(m => m.id);
+  // A 气泡在 queued-b 之前、第一轮回复之后
+  const iA = ids.indexOf('send-a');
+  const iB = ids.indexOf('queued-b');
+  const iReply1 = ids.indexOf('reply1');
+  expect(iA).toBeGreaterThan(iReply1);
+  expect(iB).toBeGreaterThan(iA);
+  // B 的回复在最下面
+  expect(ids.at(-1)).toBe('reply2');
 });

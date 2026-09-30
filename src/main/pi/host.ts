@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import type { PiEnvironment, PiEvent, PiModelProviderDraft, PiPreferences } from '../../shared/pi';
 import { discoverPi, expand } from './environment';
-import { readModelCatalog, writeDefaultModel, writeModelProvider, removeModelProvider } from './model-catalog';
+import { readModelCatalog, mergeModelCatalog, writeDefaultModel, writeModelProvider, removeModelProvider, writeProviderApiKey } from './model-catalog';
 import { UsageStatsService } from './usage-stats';
 import { SessionIndex } from './session-index';
 import { PiBackend } from './backend';
@@ -24,7 +24,7 @@ export class PiHost {
     this.environment = discoverPi(this.preferences);
     const owned = path.join(this.environment.agentDir, 'sessions', 'desktop');
     this.index = new SessionIndex([...new Set([...this.environment.sessionDirs, owned])], owned);
-    this.backend = new PiBackend(this.environment, this.index, owned, policyPath, emit);
+    this.backend = new PiBackend(this.environment, this.index, owned, policyPath, emit, this.dataDir);
     this.index.start(() => emit({ type: 'sessions-changed' }));
     let stamp = '';
     this.resourcesTimer = setInterval(() => {
@@ -50,7 +50,7 @@ export class PiHost {
     this.environment = discoverPi(this.preferences);
     const owned = path.join(this.environment.agentDir, 'sessions', 'desktop');
     this.index = new SessionIndex([...new Set([...this.environment.sessionDirs, owned])], owned);
-    this.backend = new PiBackend(this.environment, this.index, owned, this.policyPath, this.emit);
+    this.backend = new PiBackend(this.environment, this.index, owned, this.policyPath, this.emit, this.dataDir);
     this.index.start(() => this.emit({ type: 'sessions-changed' })); this.emit({ type: 'sessions-changed' });
     return this.environment;
   }
@@ -92,23 +92,19 @@ export class PiHost {
   }
   private scanNotify() { this.emit({ type: 'resources-changed' }); }
   async modelCatalog() {
-    const catalog=readModelCatalog(this.environment.agentDir);
     try {
       const native=await this.accounts.catalog();
-      for(const provider of native){
-        const existing=catalog.providers.find(p=>p.id===provider.id);
-        if(existing){
-          existing.loginAvailable=provider.loginAvailable;
-          if(existing.auth==='none')existing.auth=provider.auth;
-          if(existing.source==='auth'){existing.models=provider.models;existing.name=provider.name;}
-
-        }else if(provider.loginAvailable)catalog.providers.push(provider);
-      }
-    }catch(e){catalog.warning=e instanceof Error?e.message:String(e);}
-    return catalog;
+      // Read local configuration AFTER the worker returns: a concurrent save must win.
+      return mergeModelCatalog(readModelCatalog(this.environment.agentDir), native);
+    }catch(e){
+      const catalog=readModelCatalog(this.environment.agentDir);
+      catalog.warning=e instanceof Error?e.message:String(e);
+      return catalog;
+    }
   }
   modelDefaultSave(input: { provider?: string; model?: string }) { return writeDefaultModel(this.environment.agentDir, input); }
   modelProviderSave(provider: PiModelProviderDraft) { return writeModelProvider(this.environment.agentDir, provider); }
+  modelProviderAuthSave(input: { id: string; apiKey?: string; clear?: boolean }) { return writeProviderApiKey(this.environment.agentDir, input); }
   modelProviderRemove(id: string) { return removeModelProvider(this.environment.agentDir, id); }
   usageStats() { return this.usage.get(); }
   review(cwd: string) {

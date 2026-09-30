@@ -26,7 +26,13 @@ export interface PiResource { id: string; name: string; kind: string; path: stri
 export interface PiCommand { name: string; description?: string; source?: string; path?: string }
 export interface PiModel { id: string; name: string; provider: string; reasoning?: boolean; input?: string[] }
 export interface PiUiRequest { id: string; method: string; title?: string; message?: string; options?: string[]; placeholder?: string; prefill?: string; timeout?: number; [key: string]: unknown }
-export interface PiRun { queue?: {text: string; behavior: 'steer' | 'followUp'; images?: PiImage[]; pendingSync?: boolean}[]; pendingModel?: { provider: string; id: string }; pendingThinking?: ThinkingLevel; thinkingLevel?: ThinkingLevel; thinkingLevels?: ThinkingLevel[]; planReady?: boolean; accessMode?: AccessMode; executionMode?: Exclude<AccessMode, 'plan'>; timing?: { startedAt: number; endedAt?: number }; key: string; generation: string; cwd: string; file: string; status: 'starting' | 'idle' | 'running' | 'stopping' | 'error'; model?: PiModel; models: PiModel[]; commands: PiCommand[]; pending: number; error?: string; contextDetails?: import('./context-details').ContextDetails; contextUsage?: { tokens: number; contextWindow: number; percent: number }; stats?: PiSessionStats }
+/** Host-owned outer groups. CLI auto_retry_* attempt/maxAttempts remain separate. */
+export interface PiRetryGroup {
+  group: number; maxGroups: number;
+  phase: 'running' | 'waiting' | 'completed' | 'exhausted' | 'cancelled' | 'failed';
+  delayMs?: number; nextRetryAt?: number; error?: string;
+}
+export interface PiRun { retryGroup?: PiRetryGroup; queue?: {text: string; behavior: 'steer' | 'followUp'; images?: PiImage[]; pendingSync?: boolean}[]; pendingModel?: { provider: string; id: string }; pendingThinking?: ThinkingLevel; thinkingLevel?: ThinkingLevel; thinkingLevels?: ThinkingLevel[]; planReady?: boolean; accessMode?: AccessMode; executionMode?: Exclude<AccessMode, 'plan'>; timing?: { startedAt: number; endedAt?: number }; compacting?: boolean; key: string; generation: string; cwd: string; file: string; status: 'starting' | 'idle' | 'running' | 'stopping' | 'error'; model?: PiModel; models: PiModel[]; commands: PiCommand[]; pending: number; error?: string; contextDetails?: import('./context-details').ContextDetails; contextUsage?: { tokens: number; contextWindow: number; percent: number }; stats?: PiSessionStats }
 export interface PiSessionStats { tokens: { input: number; output: number; cacheRead: number; cacheWrite: number; total: number }; cost?: number; totalMessages?: number; toolCalls?: number }
 export type PiEvent = { type: 'sessions-changed' } | { type: 'resources-changed' } | { type: 'run'; run: PiRun } | { type: 'rpc'; key: string; generation: string; event: Record<string, unknown> } | { type: 'ui'; key: string; generation: string; request: PiUiRequest } | { type: 'closed'; key: string; generation: string };
 export interface PiReview { root: string; baseline: string; diff: string; untracked: string[]; untrackedFiles?: { path: string; lines: number }[]; warning?: string }
@@ -83,7 +89,7 @@ export interface LocalPiApi extends importSettingsApi {
   voiceSaveModel(input: import('./voice').VoiceAsrModelInput): Promise<import('./voice').VoiceConfig>;
   voiceRemoveModel(id: string): Promise<import('./voice').VoiceConfig>;
   voiceSetActive(id: string): Promise<import('./voice').VoiceConfig>;
-  voiceTranscribe(bytes: Uint8Array, mime: string): Promise<string>;
+  voiceTranscribe(bytes: Uint8Array, mime: string): Promise<import('./voice').VoiceTranscribeResult>;
   projectFiles(cwd: string): Promise<string[]>;
   projectContext(cwd: string, relative: string): Promise<ContextItem>;
   importAttachments(files: AttachmentInput[]): Promise<ContextItem[]>;
@@ -111,6 +117,8 @@ export interface LocalPiApi extends importSettingsApi {
   prompt(key: string, text: string, behavior: 'steer' | 'followUp', images?: PiImage[]): Promise<void>;
   /** 手动压缩会话上下文（内置 /compact：pi RPC 专用 compact 命令，get_commands 不含内置命令）。 */
   compact(key: string, customInstructions?: string): Promise<{ summary: string; tokensBefore?: number }>;
+  /** 按需重拉斜杠命令列表（补全面板为空时自愈）；返回最新命令数。 */
+  refreshCommands(key: string): Promise<number>;
   stop(key: string): Promise<{ steering: string[]; followUp: string[] }>;
   /** Mutate the queued follow-ups of a running session: remove / edit / steer-now. */
   queueEdit(key: string, op: PiQueueOp): Promise<void>;
@@ -128,7 +136,7 @@ export interface LocalPiApi extends importSettingsApi {
   respond(key: string, generation: string, response: { id: string; value?: string; confirmed?: boolean; cancelled?: boolean }): Promise<void>;
   /** 编辑已发送消息：pi fork RPC 把会话树截断回该条目，返回被编辑消息的原文。 */
   forkMessage(key: string, entryId: string): Promise<string>;
-  filePreview(cwd: string, file: string): Promise<{path: string; content?: string; diff: string; note: string}>;
+  filePreview(cwd: string, file: string): Promise<{path: string; content?: string; diff: string; note: string; image?: {mime: string; base64: string}}>;
   gitStatus(cwd: string): Promise<import('./conversation-status').GitStatus>;
   review(cwd: string): Promise<PiReview>;
   officialSubagentStatus(): Promise<{installed:boolean;thirdParty:boolean;thirdPartySource?:string;outdated:boolean;scoutExists:boolean;path:string}>;
@@ -137,10 +145,14 @@ export interface LocalPiApi extends importSettingsApi {
   /** 记忆衔接层状态：探测 CLI 记忆插件并返回当前链路。 */
   memoryAssistStatus(enabled: boolean): Promise<{ enabled: boolean; plugin: { kind: 'extension'; id: string; label?: string } | { kind: 'builtin' }; builtinDir: string; hint: string }>;
   /** 无 cwd 仅全局；指定 cwd 时附加项目 .pi/memory 与旧版路径映射文件（可能共用），仍包含全局。 */
-  memoryList(cwd?: string): Promise<Array<{ name: string; path: string; bytes: number; updatedAt: number; scope: 'global' | 'project'; entries: number; rel: string }>>;
+  memoryList(cwd?: string): Promise<Array<{ name: string; path: string; bytes: number; updatedAt: number; scope: 'global' | 'project'; entries: number; rel: string; /** 旧版 projects/ 映射文件的归属项目名（无法识别时缺失）。 */ project?: string; /** 唯一归属项目路径（共用/未识别时缺失），可用于迁移。 */ projectPath?: string }>>;
   /** 只读预览；projects-external/ 相对路径必须携带列举时的 cwd。 */
   memoryRead(rel: string, cwd?: string): Promise<string>;
   memoryOpen(rel: string, cwd: string | undefined, appId: string): Promise<void>;
+  /** 把旧版 projects/ 映射文件迁回唯一归属项目 <项目>/.pi/memory/legacy/。 */
+  memoryMigrateLegacy(rel: string): Promise<{ movedTo: string }>;
+  /** 把全局记忆中的主题文件移入指定项目 <项目>/.pi/memory/<name>.md。 */
+  memoryMoveToProject(rel: string, projectPath: string): Promise<{ movedTo: string }>;
   /** 一键启用内置默认记忆插件（未装 → pi install；已装未登记 → 补注册）。 */
   memoryEnableDefault(): Promise<{ installed: boolean; registered: boolean }>;
 
@@ -175,6 +187,7 @@ export interface LocalPiApi extends importSettingsApi {
   /** Shared-config writes: pi reads the same settings.json / models.json. */
   modelDefaultSave(input: { provider?: string; model?: string }): Promise<PiModelCatalog>;
   modelProviderSave(provider: PiModelProviderDraft): Promise<PiModelCatalog>;
+  modelProviderAuthSave(input: { id: string; apiKey?: string; clear?: boolean }): Promise<PiModelCatalog>;
   modelProviderRemove(id: string): Promise<PiModelCatalog>;
   usageStats(): Promise<PiUsageStats>;
   onEvent(callback: (event: PiEvent) => void): () => void;
@@ -184,7 +197,8 @@ export interface LocalPiApi extends importSettingsApi {
 // Read-only model catalog (pi configuration, secrets stripped server-side).
 // ---------------------------------------------------------------------------
 
-export interface PiCatalogModel { thinkingLevelMap?: Partial<Record<'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max', string | null>>; id: string; name?: string; contextWindow?: number; maxTokens?: number; reasoning?: boolean; input?: string[] }
+export type PiModelEditableField = 'name' | 'contextWindow' | 'maxTokens' | 'reasoning' | 'input' | 'thinkingLevelMap';
+export interface PiCatalogModel { definition?: 'custom' | 'override'; thinkingLevelMap?: Partial<Record<'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max', string | null>>; id: string; name?: string; contextWindow?: number; maxTokens?: number; reasoning?: boolean; input?: string[] }
 export interface PiCatalogProvider {
   loginAvailable?: boolean;
   id: string;
@@ -217,6 +231,8 @@ export interface PiModelProviderDraft {
   /** New key to store; omit/empty on update to keep the existing one. */
   apiKey?: string;
   models: PiCatalogModel[];
+  /** Single-model patch: never replace a provider or replay other models from the renderer. */
+  modelEdit?: { originalId?: string; kind: 'custom' | 'override'; fields?: PiModelEditableField[] };
 }
 /** Aggregated usage statistics computed from local pi session files. */
 export interface PiUsageStats {

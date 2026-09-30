@@ -55,4 +55,29 @@ describe('agent_settled 拉直卡死的计时状态', () => {
     listeners[0]!({ type: 'closed', key: 'k1', generation: 'g1' });
     expect(usePiStore.getState().sentAt).toBeUndefined();
   });
+
+  // 后端假 running 自愈：run 事件从运行态翻 idle（同代）时按 agent_settled 同语义收尾，
+  // 否则后端拉直了 run、渲染层的历史/孤儿气泡仍停留在事件丢失的那一轮。
+  it('run 事件 running→idle（同代）合成 settle：清 sentAt、撤孤儿气泡', async () => {
+    seedStuck();
+    const orphan = { id: 's1', key: 'k1', at: 1, text: '丢了结算的任务', images: [], baseline: [], promptDone: true };
+    usePiStore.setState({ sends: [orphan] } as never);
+    listeners[0]!({ type: 'run', run: { key: 'k1', generation: 'g1', cwd: '/tmp', file: '/tmp/a.jsonl', status: 'idle', models: [], pending: 0 } });
+    await vi.waitFor(() => {
+      const s = usePiStore.getState();
+      expect(s.runs.find(r => r.key === 'k1')?.status).toBe('idle');
+      expect(s.sentAt).toBeUndefined();
+      expect((s.sends ?? []).length).toBe(0);
+    });
+  });
+
+  it('跨代 run 事件（重连新运行时）不合成 settle', async () => {
+    seedStuck();
+    const orphan = { id: 's2', key: 'k1', at: 1, text: '旧代任务', images: [], baseline: [], promptDone: true };
+    usePiStore.setState({ sends: [orphan] } as never);
+    listeners[0]!({ type: 'run', run: { key: 'k1', generation: 'g2', cwd: '/tmp', file: '/tmp/a.jsonl', status: 'idle', models: [], pending: 0 } });
+    await new Promise(r => setTimeout(r, 50));
+    const s = usePiStore.getState();
+    expect((s.sends ?? []).some(x => x.id === 's2')).toBe(true);
+  });
 });

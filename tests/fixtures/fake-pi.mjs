@@ -5,6 +5,8 @@ if (process.argv.includes('--session') && !fs.existsSync(file)) fs.writeFileSync
 const send = obj => process.stdout.write(JSON.stringify(obj)+'\n');
 let pendingUi, queue = {steering:[],followUp:[]};
 let promptLog = [];
+let commandFetches = 0;
+let policySent = false;
 let streaming = false;
 let thinking = 'medium';
 let input = '';
@@ -13,9 +15,15 @@ process.stdin.on('data', chunk => { input += chunk; let i; while ((i = input.ind
 function handle(r) {
  const ok = data => send({type:'response',id:r.id,success:true,data});
  switch(r.type) {
- case 'get_state': send({type:'extension_ui_request',id:'policy',method:'setStatus',statusKey:'desktop-policy',statusText:'工具权限：逐次确认'}); return ok({isStreaming:streaming,thinkingLevel:thinking});
+ case 'get_state': if(!policySent){ policySent=true; send({type:'extension_ui_request',id:'policy',method:'setStatus',statusKey:'desktop-policy',statusText:'工具权限：逐次确认'}); } return ok({isStreaming:streaming,thinkingLevel:thinking,isCompacting:false,pendingMessageCount:0});
  case 'get_available_models': return ok({models:[{id:'fake-model',provider:'test',name:'Test model',apiKey:'DO NOT EXPOSE'}]});
- case 'get_commands': return ok({commands:[{name:'hello',source:'extension',path:'/tmp/test.mjs'}]});
+ case 'get_commands': { // 第 2 次起返回更多命令：验证迟加载自愈（连接后复检 / refreshCommands）。
+   commandFetches += 1;
+   const list = commandFetches >= 2
+     ? [{name:'hello',source:'extension',path:'/tmp/test.mjs'},{name:'goal',source:'extension',path:'/tmp/goal.ts'},{name:'goal-resume',source:'extension',path:'/tmp/goal.ts'},{name:'desktop-retry-x',source:'extension',path:'/tmp/retry.mjs'}]
+     : [{name:'hello',source:'extension',path:'/tmp/test.mjs'}];
+   return ok({commands:list});
+ }
  case 'set_model': return ok({});
  case 'set_thinking_level': thinking = r.level ?? thinking; return ok({});
  case 'get_available_thinking_levels': return ok({levels:['off','minimal','low','medium','high','xhigh','max']});
@@ -34,8 +42,13 @@ function handle(r) {
   if(r.message === '/dialog') { pendingUi=r; send({type:'extension_ui_request',id:'dialog',method:'confirm',title:'Confirm?'}); return; }
   if(r.message === '/long') { ok({}); streaming=true; send({type:'agent_start'}); return; }
   if(r.message === '/endlong') { streaming=false; send({type:'agent_settled'}); return ok({}); }
+  // 假 running：agent_start 后既不结算也不 streaming（pi 循环已结束但 Desktop 没收到事件），
+  // 用于验证后端 get_state 核实拉直。
+  if(r.message === '/stuck') { ok({}); send({type:'agent_start'}); return; }
   // 一次模型调用的结束边界：常用于验证挂起的模型/思考切换在此下发。
   if(r.message === '/boundary') { send({type:'message_end',message:{role:'assistant',stopReason:'stop',content:[{type:'text',text:'step done'}]}}); return ok({}); }
+  if(r.message === '/compact-start') { ok({}); streaming=true; send({type:'compaction_start'}); return; }
+  if(r.message === '/compact-end') { streaming=false; send({type:'compaction_end'}); send({type:'agent_settled'}); return ok({}); }
   if(streaming) {
    const kind = r.streamingBehavior === 'steer' ? 'steering' : 'followUp';
    queue[kind].push(r.message);
