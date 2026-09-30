@@ -111,6 +111,8 @@ export function Notifications(props: NotificationsProps) {
           </button>
         </div>
         {props.items.length === 0 && <div className="pi-notif__empty">{props.labels.empty}</div>}
+        {/* 列表独立滚动：头部与底部注记钉住，长列表不再把面板撑出屏幕。 */}
+        <div className="pi-notif__list" role="list">
         {props.items.map((n) => (
           // 语义容器而非 button：button 内容默认禁止选中文本，报错全文无法复制。
           <div key={n.id} className="pi-notif__row" role="button" tabIndex={0} onClick={() => props.onSelect(n)} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); props.onSelect(n); } }}>
@@ -119,6 +121,7 @@ export function Notifications(props: NotificationsProps) {
               <span className="pi-notif__rowtitle">
                 {n.kind === 'request' && <em className="pi-notif__req">{props.labels.request}</em>}
                 {n.title}
+                {(n.count ?? 1) > 1 && <span className="pi-notif__count">×{n.count}</span>}
               </span>
               {n.body && <span className="pi-notif__rowbody">{n.body}</span>}
             </span>
@@ -128,6 +131,7 @@ export function Notifications(props: NotificationsProps) {
             <span className="pi-notif__time">{n.time}</span>
           </div>
         ))}
+        </div>
         <div className="pi-notif__note">{props.labels.demoNote}</div>
       </div>
     </div>

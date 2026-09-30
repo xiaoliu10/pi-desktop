@@ -106,12 +106,21 @@
   bottom: 64px;
   width: 360px;
   max-height: 60vh;
-  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
   background: var(--pi-bg);
   border: 1px solid var(--pi-border);
   border-radius: var(--pi-radius-md);
   box-shadow: var(--pi-shadow-popover);
   padding: 8px;
+}
+
+/* 长列表独立滚动：头部/底部注记钉住，面板不会被撑出屏幕。 */
+.pireplica .pi-notif__list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .pireplica .pi-notif__head {
@@ -237,6 +246,18 @@
 .pireplica .pi-notif__rowbody {
   font-size: var(--pi-font-size-xs);
   color: var(--pi-text-tertiary);
+}
+
+/* 相同通知合并计数：×N 徽标（次级样式，不抢睛）。 */
+.pireplica .pi-notif__count {
+  margin-left: 6px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--pi-bg-subtle, rgba(127, 127, 127, 0.16));
+  color: var(--pi-text-tertiary);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 17px;
 }
 
 .pireplica .pi-notif__time {

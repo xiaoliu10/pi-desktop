@@ -766,6 +766,8 @@ export interface NotificationItem {
   body?: string;
   time: string;
   read: boolean;
+  /** 相同通知（kind+title+body 全同）合并计数：压缩/插入等高频事件不刷屏。 */
+  count?: number;
 }
 
 export interface NotificationsProps {

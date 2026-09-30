@@ -848,8 +848,17 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
   let catalogLoadSeq = 0;
   const pushNotice = (text: string) => set({ notice: text });
   const pushNotification = (n: Omit<NotificationItem, 'id' | 'read'>) => {
+    // 相同通知（kind+title+body 全同）合并为一条并计数：「pi 正在压缩上下文」/「已插入当前任务」
+    // 等高频事件每个会话/每次操作各发一条，不合并的话列表被刷屏（实测 5 条重复）。
+    const list = get().notifications;
+    const same = list.findIndex((x) => x.kind === n.kind && x.title === n.title && (x.body ?? '') === (n.body ?? ''));
+    if (same >= 0) {
+      const merged = { ...list[same]!, count: (list[same]!.count ?? 1) + 1, time: n.time };
+      set({ notifications: [merged, ...list.filter((_, i) => i !== same)].slice(0, 20) });
+      return;
+    }
     const item: NotificationItem = { ...n, id: `nt-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, read: false };
-    set({ notifications: [item, ...get().notifications].slice(0, 20) });
+    set({ notifications: [item, ...list].slice(0, 20) });
   };
   const attempt = async (fn: () => Promise<unknown>): Promise<unknown> => {
     try {
