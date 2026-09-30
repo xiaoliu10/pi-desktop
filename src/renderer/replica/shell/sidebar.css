@@ -8,8 +8,9 @@
   flex-direction: column;
   min-height: 0;
   padding-top: env(titlebar-area-height, 0px);
-  /* hiddenInset window: sidebar top strip doubles as the title bar. */
-  -webkit-app-region: drag;
+  /* Only the title strip drags the window. A full-height drag region can steal
+     native mouse input from a settings overlay, regardless of CSS z-index. */
+  -webkit-app-region: no-drag;
 }
 
 /* Interactive sidebar elements must stay clickable inside the drag region. */
@@ -34,6 +35,7 @@
 }
 
 .pireplica .pi-sidebar__top {
+  -webkit-app-region: drag;
   display: flex;
   align-items: center;
   gap: 6px;

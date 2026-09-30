@@ -134,10 +134,48 @@
   text-align: left;
   padding: 9px 10px;
   border-radius: var(--pi-radius-sm);
+  cursor: default;
 }
 
 .pireplica .pi-notif__row:hover {
   background: var(--pi-bg-hover);
+}
+
+/* 通知正文可选中复制（原为 button，浏览器默认禁选）；长报错也可用行尾复制按钮。 */
+.pireplica .pi-notif__body,
+.pireplica .pi-notif__rowtitle,
+.pireplica .pi-notif__rowbody {
+  user-select: text;
+  cursor: text;
+}
+
+.pireplica .pi-notif__copy {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  border: 0;
+  background: none;
+  color: var(--pi-text-tertiary);
+  font-size: 11px;
+  line-height: 1;
+  padding: 3px 5px;
+  margin-top: 3px;
+  border-radius: 6px;
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease;
+}
+
+.pireplica .pi-notif__row:hover .pi-notif__copy,
+.pireplica .pi-notif__copy:focus-visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.pireplica .pi-notif__copy:hover {
+  background: var(--pi-bg-hover);
+  color: var(--pi-text);
 }
 
 .pireplica .pi-notif__dot {

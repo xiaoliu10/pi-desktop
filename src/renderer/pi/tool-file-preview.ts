@@ -26,7 +26,7 @@ export function parsePiDiff(text: string): DemoFileDiff | null {
 }
 
 /** Completed edits preview historical inputs; pending/failed operations open the current file. */
-export function toolFilePreview(part: ToolPart): {path:string; diff?:DemoFileDiff; content?:string; note:string; current?:boolean; line?:number} | null {
+export function toolFilePreview(part: ToolPart): {path:string; diff?:DemoFileDiff; content?:string; note:string; current?:boolean; line?:number; image?:{mime:string;base64:string}} | null {
   if (!['read','edit','write'].includes(part.tool)) return null;
   let args: Record<string, unknown>;
   try { args = JSON.parse(part.argumentsText || '{}') || {}; } catch { return null; }

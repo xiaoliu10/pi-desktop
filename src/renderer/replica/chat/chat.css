@@ -41,6 +41,9 @@
 /* 用户消息结构（参考 ZCode）：图片先独立展示在上（无气泡底），文字气泡在下。 */
 .pireplica .pi-msg--user .pi-msg__imagebtn {
   display: block;
+  /* 宽度上限放按钮层：100% 参照宽度确定的消息容器，无循环。
+     图片上的 min(100%,320px) 会因按钮宽度由图片决定而循环失效，横长图超宽。 */
+  max-width: min(320px, 100%);
   border: 0;
   background: none;
   padding: 0;
@@ -48,7 +51,8 @@
 }
 .pireplica .pi-msg--user .pi-msg__image {
   display: block;
-  max-width: min(100%, 320px);
+  width: auto;
+  max-width: 100%;
   max-height: 240px;
   object-fit: cover;
   border-radius: 12px;
@@ -56,45 +60,66 @@
   margin-bottom: 6px;
 }
 
-/* 图片灯箱：点击消息里的图片放大，Esc/背景点击关闭，右上角下载。 */
-.pireplica .pi-lightbox {
+/* Body portals are outside .pireplica. Scope by lightbox itself, not the app root. */
+.pi-lightbox {
   position: fixed;
   inset: 0;
   z-index: 1000;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(0, 0, 0, 0.82);
+  box-sizing: border-box;
+  padding: 80px 24px 24px;
+  background: rgba(8, 10, 14, .72);
+  backdrop-filter: blur(4px);
   cursor: zoom-out;
+  -webkit-app-region: no-drag;
+  animation: pi-lightbox-in .16s ease;
 }
-.pireplica .pi-lightbox__img {
-  max-width: 94vw;
-  max-height: 90vh;
+.pi-lightbox > img {
+  display: block;
+  max-width: min(100%, 1440px);
+  max-height: calc(100dvh - 104px);
   object-fit: contain;
-  border-radius: 8px;
+  border-radius: 12px;
+  box-shadow: 0 18px 60px rgba(0, 0, 0, .45);
   cursor: default;
 }
-.pireplica .pi-lightbox__bar {
-  position: fixed;
-  top: 14px;
-  right: 16px;
+.pi-lightbox > .pi-lightbox__bar {
+  position: absolute;
+  top: 20px;
+  right: 24px;
+  z-index: 1;
   display: flex;
-  gap: 6px;
+  gap: 12px;
+  cursor: default;
+  -webkit-app-region: no-drag;
 }
-.pireplica .pi-lightbox__btn {
+.pi-lightbox .pi-lightbox__btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 32px;
-  height: 32px;
-  border: 0;
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.14);
-  color: #fff;
+  box-sizing: border-box;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 1px solid rgba(0, 0, 0, .16);
+  border-radius: 50%;
+  background: #f8f8fa;
+  color: #202124;
+  box-shadow: 0 3px 12px rgba(0, 0, 0, .28);
   cursor: pointer;
+  transition: background .12s ease, box-shadow .12s ease;
 }
-.pireplica .pi-lightbox__btn:hover {
-  background: rgba(255, 255, 255, 0.26);
+.pi-lightbox .pi-lightbox__btn svg { width: 22px; height: 22px; stroke-width: 2; }
+.pi-lightbox .pi-lightbox__btn:hover { background: #fff; box-shadow: 0 4px 16px rgba(0, 0, 0, .4); }
+.pi-lightbox .pi-lightbox__btn:active { background: #dedee3; }
+.pi-lightbox .pi-lightbox__btn:focus-visible { outline: 3px solid #7bb4ff; outline-offset: 3px; }
+@keyframes pi-lightbox-in { from { opacity: 0; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .pi-lightbox { animation: none; } }
+@media (max-width: 480px) {
+  .pi-lightbox { padding: 76px 12px 16px; }
+  .pi-lightbox > .pi-lightbox__bar { top: 16px; right: 16px; }
 }
 
 .pireplica .pi-msg--user .pi-msg__bubble {
@@ -110,14 +135,19 @@
   overflow-wrap: anywhere;
 }
 
-/* 已发送消息的 hover 动作（复制/编辑并重发，对齐 ZCode chat.message.*）：默认隐藏。 */
+/* 已发送消息的动作行在正常流中靠右，和气泡底边留出间距。
+   仅切换透明度/鼠标命中，保留占位与键盘可达性，hover/focus 不推动后续消息。 */
 .pireplica .pi-msg--user .pi-msg__actions {
   display: flex;
   gap: 2px;
-  margin-top: 2px;
+  margin-top: 6px;
   opacity: 0;
   pointer-events: none;
   transition: opacity 120ms ease;
+}
+/* 纯图片消息可能有空动作容器，不为它新增操作行或间距。 */
+.pireplica .pi-msg--user .pi-msg__actions:empty {
+  display: none;
 }
 .pireplica .pi-msg--user:hover .pi-msg__actions,
 .pireplica .pi-msg--user:focus-within .pi-msg__actions {
@@ -188,6 +218,15 @@
   width: fit-content;
 }
 
+.pireplica .pi-waiting-process { color: var(--pi-text-secondary); font-size: var(--pi-font-size-sm); }
+.pireplica .pi-waiting-process > summary { cursor: pointer; display: flex; align-items: center; justify-content: space-between; gap: 16px; list-style: none; padding: 8px 0; }
+.pireplica .pi-waiting-process > summary::-webkit-details-marker { display: none; }
+.pireplica .pi-waiting-process > summary > span::after { content: ' ›'; display: inline-block; margin-left: 6px; }
+.pireplica .pi-waiting-process[open] > summary > span::after { transform: rotate(90deg); }
+.pireplica .pi-waiting-process > summary:focus-visible { outline: 2px solid var(--pi-text-secondary); outline-offset: 3px; }
+.pireplica .pi-waiting-process__body { padding: 12px 16px; border-radius: 10px; background: var(--pi-bg-inset); line-height: 1.7; }
+.pireplica .pi-waiting-process__body p { margin: 0 0 10px; }
+
 .pireplica .pi-chat__working {
   color: var(--pi-text-tertiary);
   font-size: var(--pi-font-size-sm);
@@ -195,6 +234,13 @@
   align-items: center;
   gap: 8px;
 }
+
+.pireplica .pi-chat__retry { min-width: 0; color: var(--pi-orange-text); font-size: var(--pi-font-size-sm); }
+.pireplica .pi-chat__retry-heading { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
+.pireplica .pi-chat__retry-icon { flex-shrink: 0; animation: pi-spin 1.8s linear infinite; }
+.pireplica .pi-chat__retry-wait { color: var(--pi-text-secondary); font-variant-numeric: tabular-nums; }
+.pireplica .pi-chat__retry-error { margin: 4px 0 0 22px; color: var(--pi-text-tertiary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (prefers-reduced-motion: reduce) { .pireplica .pi-chat__retry-icon { animation: none; } }
 
 
 /* 乐观展示的待回显用户气泡：比已确认消息稍淡 */
@@ -355,6 +401,22 @@
   font-size: var(--pi-font-size-sm);
   margin: 8px 0;
 }
+
+/* Structured error card: keep the summary compact, details selectable and bounded. */
+.pireplica .pi-error-card { min-width: 0; overflow-wrap: anywhere; }
+.pireplica .pi-error-card__heading { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 7px; }
+.pireplica .pi-error-card__count { flex-shrink: 0; padding: 1px 7px; border: 1px solid currentColor; border-radius: var(--pi-radius-pill); font-size: var(--pi-font-size-xs); }
+.pireplica .pi-error-card__details { margin-top: 6px; }
+.pireplica .pi-error-card__heading > svg { flex-shrink: 0; margin-top: 2px; }
+.pireplica .pi-error-card__heading strong { min-width: 0; font-weight: 500; white-space: pre-wrap; }
+.pireplica .pi-error-card__context { margin-top: 4px; color: var(--pi-text-secondary); }
+.pireplica .pi-error-card__hint { margin: 5px 0 8px; color: var(--pi-text-secondary); }
+.pireplica .pi-error-card__details > summary { cursor: pointer; width: fit-content; }
+.pireplica .pi-error-card__details > summary:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
+.pireplica .pi-error-card__tools { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 12px; margin: 10px 0 6px; color: var(--pi-text-secondary); }
+.pireplica .pi-error-card__tools button { display: inline-flex; align-items: center; gap: 5px; padding: 4px 7px; border-radius: 5px; flex-shrink: 0; }
+.pireplica .pi-error-card__tools button:hover { background: var(--pi-bg-hover); color: var(--pi-text); }
+.pireplica .pi-error-card pre { margin: 0; padding: 10px; max-height: 280px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; color: var(--pi-text); background: var(--pi-bg-inset); border-radius: 6px; font-family: var(--pi-font-mono); font-size: 11px; line-height: 1.6; }
 
 /* tool card */
 .pireplica .pi-tool {
@@ -1086,6 +1148,13 @@
 .pireplica .pi-execution__note > summary:focus-visible > .pi-execution__chevron,
 .pireplica details[open] > summary > .pi-execution__chevron { opacity: 1; }
 .pireplica details[open] > summary > .pi-execution__chevron { transform: rotate(90deg); }
+/* 连续同类工具的折叠子组（参考 ZCode「查阅 · N 搜索」）：头行 + 左侧竖线的子项列表。 */
+.pireplica .pi-execution__subgroup { margin: 2px 0; }
+.pireplica .pi-execution__subhead { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; padding: 6px 4px 6px 0; border: 0; background: transparent; color: var(--pi-text-secondary); font-size: var(--pi-font-size-sm); border-radius: 8px; cursor: pointer; }
+.pireplica .pi-execution__subhead:hover { background: var(--pi-bg-hover); }
+.pireplica .pi-execution__subhead > .pi-execution__chevron { margin-left: auto; color: var(--pi-text-tertiary); }
+.pireplica .pi-execution__subhead > .pi-execution__chevron.pi-execution__chevron--open { transform: rotate(90deg); }
+.pireplica .pi-execution__subitems { margin: 0 0 4px 9px; padding-left: 12px; border-left: 1px solid var(--pi-border); }
 .pireplica .pi-execution__steps { margin: 18px 0 0; padding: 0; }
 .pireplica .pi-execution__steps .pi-tool { margin: 5px 0; background: transparent; border: 0; }
 .pireplica .pi-execution__steps .pi-tool__summary { padding: 9px 4px; }
@@ -1143,8 +1212,10 @@
 .pireplica .pi-execution__summary .pi-execution__elapsed { font-size: 14px; }
 .pireplica .pi-execution__summary:hover { color: var(--pi-text); }
 .pireplica .pi-execution__commentary { margin: 18px 0; }
-.pireplica .pi-execution__steps .pi-tool__summary { padding: 10px 0; color: var(--pi-text-secondary); }
-.pireplica .pi-execution__note > summary { padding: 10px 0; margin-left: -10px; font-size: 13px; }
+/* 过程行图标统一左对齐（对齐组头 x=0）：工具行/思考行底样式的 -10px 反补只在
+   steps 内取消，子组头也不再用 padding-left 右移——三种行图标同一竖线，仅子项列表缩进。 */
+.pireplica .pi-execution__steps .pi-tool__summary { padding: 10px 0; margin-left: 0; color: var(--pi-text-secondary); }
+.pireplica .pi-execution__note > summary { padding: 10px 0; font-size: 13px; }
 .pireplica .pi-chat__elapsed:not(:empty) { padding: 4px 0 10px; border-bottom: 1px solid var(--pi-border); margin-bottom: 18px; }
 .pireplica .pi-chat__elapsed .pi-execution__elapsed { font-size: 14px; }
 

@@ -11,6 +11,7 @@ export type IconName =
   | 'expand-diagonal' | 'git-commit' | 'file-plus' | 'pin' | 'git-branch' | 'calendar-clock' | 'grid' | 'plus-circle' | 'sidebar' | 'plus' | 'plus-square' | 'search' | 'panel' | 'settings' | 'plug'
   | 'bell' | 'chevron-down' | 'chevron-right' | 'chevron-left' | 'folder' | 'chat'
   | 'send' | 'stop' | 'shield' | 'shield-alert' | 'attach' | 'bot' | 'sparkle' | 'brain' | 'sliders' | 'keyboard'
+  | 'lightbulb' | 'hand' | 'square-pen' | 'timer'
   | 'book' | 'stack' | 'box' | 'download' | 'archive' | 'info' | 'instructions'
   | 'file' | 'code' | 'globe' | 'diff' | 'check' | 'check-circle' | 'x' | 'warning'
   | 'refresh' | 'download-cloud' | 'link' | 'trash' | 'pencil' | 'circle' | 'more' | 'copy'
@@ -101,8 +102,36 @@ const paths: Record<IconName, ReactNode> = {
   ),
   send: <path d="M12 18V6.5M6.5 11.5 12 6l5.5 5.5" />,
   stop: <rect x="7" y="7" width="10" height="10" rx="2.5" fill="currentColor" stroke="none" />,
-  shield: <path d="M12 3.5 5.5 6v5.2c0 4.2 2.8 7 6.5 8.8 3.7-1.8 6.5-4.6 6.5-8.8V6L12 3.5Z" />,
-  'shield-alert': <><path d="M12 3.5 5.5 6v5.2c0 4.2 2.8 7 6.5 8.8 3.7-1.8 6.5-4.6 6.5-8.8V6L12 3.5Z" /><path d="M12 8v4" /><circle cx="12" cy="15.5" r="0.9" fill="currentColor" stroke="none" /></>,
+  shield: <path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z" />,
+  'shield-alert': <><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z" /><path d="M12 8v4" /><path d="M12 16h.01" /></>,
+  lightbulb: (
+    <>
+      <path d="M15 14c.2-1 .7-1.7 1.5-2.5 1-.9 1.5-2.2 1.5-3.5A6 6 0 0 0 6 8c0 1.3.5 2.6 1.5 3.5.8.8 1.3 1.5 1.5 2.5" />
+      <path d="M9 18h6" />
+      <path d="M10 22h4" />
+    </>
+  ),
+  hand: (
+    <>
+      <path d="M18 11V6a2 2 0 0 0-4 0" />
+      <path d="M14 10V4a2 2 0 0 0-4 0v2" />
+      <path d="M10 10.5V6a2 2 0 0 0-4 0v8" />
+      <path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15" />
+    </>
+  ),
+  'square-pen': (
+    <>
+      <path d="M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+      <path d="M18.375 2.625a2.121 2.121 0 1 1 3 3L12 15l-4 1 1-4Z" />
+    </>
+  ),
+  timer: (
+    <>
+      <path d="M10 2h4" />
+      <path d="M12 14v-4" />
+      <circle cx="12" cy="14" r="8" />
+    </>
+  ),
   attach: (
     <>
       <path d="M12 5v14" />
@@ -124,9 +153,15 @@ const paths: Record<IconName, ReactNode> = {
   ),
   brain: (
     <>
-      <path d="M12 5a3 3 0 0 0-5.9-.7A4 4 0 0 0 3.4 10a4 4 0 0 0-.4 7 4 4 0 0 0 4 4 3 3 0 0 0 5-2.2V5Z" />
-      <path d="M12 5a3 3 0 0 1 5.9-.7 4 4 0 0 1 2.7 5.7 4 4 0 0 1 .4 7 4 4 0 0 1-4 4 3 3 0 0 1-5-2.2" />
-      <path d="M6.1 4.3A3 3 0 0 0 7 7M17.9 4.3A3 3 0 0 1 17 7M8 12a4 4 0 0 0 4-4 4 4 0 0 0 4 4M3 17a4 4 0 0 1 2-1M21 17a4 4 0 0 0-2-1M7 21a4 4 0 0 0 1-3M17 21a4 4 0 0 1-1-3" />
+      <path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z" />
+      <path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z" />
+      <path d="M15 13a4.5 4.5 0 0 1-3-4 4.5 4.5 0 0 1-3 4" />
+      <path d="M17.599 6.5a3 3 0 0 0 .399-1.375" />
+      <path d="M6.003 5.125A3 3 0 0 0 6.401 6.5" />
+      <path d="M3.477 10.896a4 4 0 0 1 .585-.396" />
+      <path d="M19.938 10.5a4 4 0 0 1 .585.396" />
+      <path d="M6 18a4 4 0 0 1-1.967-.516" />
+      <path d="M19.964 17.484A4 4 0 0 1 18 18" />
     </>
   ),
   sliders: (
@@ -273,8 +308,8 @@ const paths: Record<IconName, ReactNode> = {
   ),
   'edit-files': (
     <>
-      <rect x="4" y="5" width="12" height="14" rx="2" />
-      <path d="M17.5 3.5 21 7l-5.5 5.5-3 .8.8-3 4.2-4.3Z" />
+      <path d="M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+      <path d="M18.375 2.625a2.121 2.121 0 1 1 3 3L12 15l-4 1 1-4Z" />
     </>
   ),
   'read-files': (

@@ -15,3 +15,17 @@ it('supports deleted files and reports missing or binary contents',async()=>{
  const {cwd}=await setup();await fs.unlink(path.join(cwd,'a1.ts'));const deleted=await filePreview(cwd,'a1.ts');expect(deleted.content).toBeUndefined();expect(parseUnifiedDiff(deleted.diff)[0]).toMatchObject({path:'a1.ts',deletions:1});
  expect((await filePreview(cwd,'missing.txt')).note).toContain('不存在');await fs.writeFile(path.join(cwd,'binary'),Buffer.from([0,1,2]));expect((await filePreview(cwd,'binary')).note).toContain('二进制');
 });
+it('renders image files as base64 previews instead of the binary note',async()=>{
+ const {cwd}=await setup();
+ const png=Buffer.from([0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a,0,1,2,3]); // PNG 魔数含 NUL
+ await fs.writeFile(path.join(cwd,'shot.png'),png);
+ const result=await filePreview(cwd,'shot.png');
+ expect(result.image).toEqual({mime:'image/png',base64:png.toString('base64')});
+ expect(result.content).toBeUndefined();
+ expect(result.note).toContain('图像预览');
+ await fs.writeFile(path.join(cwd,'photo.JPG'),png);
+ expect((await filePreview(cwd,'photo.JPG')).image?.mime).toBe('image/jpeg');
+ // 超过 10 MiB 的图片退回二进制文案
+ await fs.writeFile(path.join(cwd,'huge.png'),Buffer.concat([png,Buffer.alloc(10*1024*1024)]));
+ const huge=await filePreview(cwd,'huge.png');expect(huge.image).toBeUndefined();expect(huge.note).toContain('2 MiB');
+});

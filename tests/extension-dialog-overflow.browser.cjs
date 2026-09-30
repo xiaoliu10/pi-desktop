@@ -50,11 +50,11 @@ async (page) => {
   const meta = { name: 'parity-audit.md', dir: 'docs', add: 119, del: 4, cmd: '' };
   const encoded = (msg) => ['Desktop 审批 · write', '[pi-desktop-meta]' + JSON.stringify(meta), '[pi-desktop-message]' + msg].join('\n');
 
-  // Case 1: select with many options -> centered modal, constrained + footer reachable
+  // Case 1: select with many options -> docked card (ZCode style), constrained + footer reachable, no overlay
   await page.evaluate(() => window.renderDlg({ id: 'r1', method: 'select', title: 'pi extension', options: Array.from({ length: 30 }, (_, i) => `选项 ${i + 1} — 一段比较长的选项描述用来占高度`) }));
-  await page.locator('.pi-connectmodal').waitFor();
-  const m1 = await page.evaluate(() => ({ modal: Boolean(document.querySelector('.pi-connectmodal')), footerVisible: (() => { const f = document.querySelector('.pi-connectmodal__actions'); const r = f.getBoundingClientRect(); return r.bottom <= innerHeight && r.top >= 0; })() }));
-  assert(m1.modal && m1.footerVisible, `select modal must fit viewport: ${JSON.stringify(m1)}`);
+  await page.locator('.pi-extdock').waitFor();
+  const m1 = await page.evaluate(() => ({ modal: Boolean(document.querySelector('.pi-extdock.pi-connectmodal')), overlay: Boolean(document.querySelector('.pi-overlay')), footerVisible: (() => { const f = document.querySelector('.pi-connectmodal__actions'); const r = f.getBoundingClientRect(); return r.bottom <= innerHeight && r.top >= 0; })() }));
+  assert(m1.modal && m1.footerVisible && !m1.overlay, `docked select card must fit viewport without overlay: ${JSON.stringify(m1)}`);
   await page.screenshot({ path: 'output/playwright/modal-overflow-select-after.png' });
 
   // Case 2: command approval -> ZCode 五选项内联卡，工具行 + 选项可见

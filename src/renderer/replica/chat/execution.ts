@@ -1,4 +1,5 @@
 import type { ChatMessage, MessagePart, ToolPart } from '../contracts';
+import { coalesceErrors } from './error-groups';
 /** Chronological slice of a turn: tool/thinking runs, or visible text. */
 export interface ChatSegment {
   kind: 'steps' | 'text';
@@ -28,7 +29,7 @@ export interface ChatTurn {
  * an unchanged turn keeps its object identity. Signature = member count plus
  * first/last member identity (the tail is what streaming mutates).
  */
-const turnCache = new Map<string, { count: number; first: ChatMessage; last: ChatMessage; turn: ChatTurn }>();
+const turnCache = new Map<string, { count: number; first: ChatMessage; last: ChatMessage; members?: ChatMessage[]; turn: ChatTurn }>();
 
 export function executionTurns(messages: ChatMessage[]): ChatTurn[] {
   const turns: ChatTurn[] = [];
@@ -59,16 +60,20 @@ export function executionTurns(messages: ChatMessage[]): ChatTurn[] {
     const first = group.members[0]!;
     const last = group.members[group.members.length - 1]!;
     const hit = turnCache.get(group.id);
-    if (hit && hit.count === group.members.length && hit.first === first && hit.last === last) { turns.push(hit.turn); continue; }
+    if (hit && hit.count === group.members.length && hit.members?.every((message, index) => message === group.members[index]) && hit.turn.startedAt === group.startedAt) { turns.push(hit.turn); continue; }
     const turn: ChatTurn = { startedAt: group.startedAt, id: group.id, role: 'assistant', messageIds: [], segments: [], steps: [], answer: [], simulated: first.simulated, model: first.model };
-    for (const message of group.members) {
+    // A successful model response settles earlier failed attempts within THIS user turn.
+    // Tool results/partial thinking/empty stream starts are not evidence of recovery.
+    let recoveredThrough = -1;
+    group.members.forEach((message, index) => { if (message.modelOutcome === 'success') recoveredThrough = index; });
+    for (const [index, message] of group.members.entries()) {
       if (message.timestamp !== undefined) turn.endedAt = Math.max(turn.endedAt ?? message.timestamp, message.timestamp);
       turn.messageIds.push(message.id);
-      turn.steps.push(...message.parts);
+      turn.steps.push(...message.parts.filter(part => !(index < recoveredThrough && part.kind === 'error' && part.source === 'model')));
     }
     const flattened: MessagePart[] = [];
     const tools = new Map<string, ToolPart>();
-    for (const part of turn.steps) {
+    for (const part of coalesceErrors(turn.steps)) {
       if (part.kind !== 'tool' || !part.callId) { flattened.push(part); continue; }
       const existing = tools.get(part.callId);
       if (!existing) {
@@ -120,7 +125,7 @@ export function executionTurns(messages: ChatMessage[]): ChatTurn[] {
     turn.segments = segments;
     turn.steps = segments.flatMap((s) => (s.kind === 'steps' ? s.parts : []));
     turn.answer = segments.flatMap((s) => (s.kind === 'text' ? s.parts : []));
-    turnCache.set(group.id, { count: group.members.length, first, last, turn });
+    turnCache.set(group.id, { count: group.members.length, first, last, members: group.members, turn });
     turns.push(turn);
   }
   return turns;
