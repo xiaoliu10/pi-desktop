@@ -312,6 +312,7 @@
 .pi-remote__channelitem--on { border-color: var(--pi-text); }
 .pi-remote__channelitem--off { opacity: 0.5; cursor: not-allowed; }
 .pi-remote__channelicon { display: flex; align-items: center; justify-content: center; width: 40px; height: 40px; border-radius: 10px; border: 1px solid var(--pi-border); background: var(--pi-bg); color: var(--pi-text-secondary); flex: none; }
+.pi-remote__channelicon img { width: 24px; height: 24px; border-radius: 6px; display: block; }
 .pi-remote__channelbody { display: flex; flex-direction: column; gap: 3px; min-width: 0; flex: 1; }
 .pi-remote__channelname { display: flex; align-items: center; gap: 6px; font-size: 14px; font-weight: 500; color: var(--pi-text); }
 .pi-remote__channelnametext { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -361,6 +362,8 @@
 .pi-approval-inline__name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--pi-text); font-weight: 500; }
 .pi-approval-inline__dir { color: var(--pi-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pi-approval-inline__add { color: #1a7f37; font-variant-numeric: tabular-nums; }
+/* 审批卡的键盘位置就是选中项（choice）：--on 需要强可见（同 ask 卡活动项描边）。 */
+.pi-approval-inline .pi-eli__opt--on { outline: 1.5px solid var(--pi-accent, #1d1d1f); outline-offset: -1.5px; }
 .pi-approval-inline__del { color: #cf222e; font-variant-numeric: tabular-nums; }
 .pi-approval-inline__cmd { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--pi-text); font-family: var(--pi-mono, ui-monospace, SFMono-Regular, monospace); font-size: 12px; }
 .pi-approval-inline__tool > svg:last-child { margin-left: auto; flex-shrink: 0; }
@@ -625,7 +628,11 @@
 .pi-eli__pager-count { min-width: 36px; text-align: center; }
 .pi-eli__options { display: flex; flex-direction: column; gap: 4px; }
 .pi-eli__opt { display: flex; align-items: flex-start; gap: 12px; width: 100%; border: 0; border-radius: 12px; padding: 8px 12px; text-align: left; background: transparent; cursor: pointer; transition: background-color .12s; }
-.pi-eli__opt:hover, .pi-eli__opt--active { background: var(--pi-bg-hover, rgba(0,0,0,.04)); }
+.pi-eli__opt:hover { background: var(--pi-bg-hover, rgba(0,0,0,.04)); }
+/* 键盘高亮（↑↓/Tab 活动项）：之前只有 4% 透明度悬停灰，浅色主题下不可感知，
+   用户体感“键盘上下翻没反应”。活动项 = 选中底色 + 主色描边 + 序号加粗主色。 */
+.pi-eli__opt--active { background: var(--pi-bg-selected, rgba(0,0,0,.06)); outline: 1.5px solid var(--pi-accent, #1d1d1f); outline-offset: -1.5px; }
+.pi-eli__opt--active .pi-eli__num { color: var(--pi-text); font-weight: 700; }
 .pi-eli__opt--on { background: var(--pi-bg-selected, rgba(0,0,0,.06)); }
 .pi-eli__opt--custom { cursor: text; }
 .pi-eli__num { flex-shrink: 0; width: 20px; font-size: 13px; font-weight: 500; color: var(--pi-muted); }
