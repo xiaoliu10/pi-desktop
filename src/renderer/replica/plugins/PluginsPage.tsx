@@ -42,7 +42,6 @@ export function PluginsPage(props: PluginsPageProps) {
   const groups = groupByStatus(filteredInstalled);
   const marketplaceCards = filterMarketplace(props.marketplace, props.search, props.tag);
   const tagList = uniqueTags(props.marketplace);
-
   return (
     <div className="pi-plugins">
       <header className="pi-plugins__header">
@@ -51,6 +50,18 @@ export function PluginsPage(props: PluginsPageProps) {
           <h1>{props.labels.title}</h1>
         </div>
         <div className="pi-plugins__headactions">
+          {props.tab === 'installed' && props.onCreateExtension && (
+            <button className="pi-btn pi-btn--outline" onClick={props.onCreateExtension} title={props.labels.newExtension}>
+              <Icon name="edit-files" size={14} />
+              {props.labels.newExtension}
+            </button>
+          )}
+          {props.tab === 'installed' && props.onReloadResources && (
+            <button className="pi-btn pi-btn--outline" onClick={props.onReloadResources} title={props.labels.reloadResources}>
+              <Icon name="refresh" size={14} />
+              {props.labels.reloadResources}
+            </button>
+          )}
           {props.tab === 'installed' ? (
             props.hideMarketplace ? (
               <button className="pi-btn pi-btn--primary" onClick={props.onRefreshMarketplace}>
@@ -148,10 +159,19 @@ export function PluginsPage(props: PluginsPageProps) {
                   onToggleExpand={() => setExpanded(expanded === p.id ? null : p.id)}
                   onToggle={() => props.onTogglePlugin(p.id)}
                   onUpdate={() => props.onUpdatePlugin(p.id)}
+                  onEdit={p.packageId === 'extensions' ? props.onEditExtension : undefined}
+                  onReveal={p.packageId === 'extensions' ? props.onRevealExtension : undefined}
                 />
               ))}
             </section>
           ))}
+          {groups.length > 0 && props.builtinExtensions && props.builtinExtensions.length > 0 && (
+            <section className="pi-plugins__builtin">
+              <div className="pi-plugins__grouplabel">{props.labels.builtinTitle}</div>
+              <p className="pi-plugins__builtinhint">{props.labels.builtinHint}</p>
+              {props.builtinExtensions.map((p) => <code key={p} className="pi-plugins__builtinpath">{p}</code>)}
+            </section>
+          )}
         </div>
       ) : (
         <div className="pi-plugins__market">
@@ -200,6 +220,8 @@ function PluginRowItem(props: {
   onToggleExpand: () => void;
   onToggle: () => void;
   onUpdate: () => void;
+  onEdit?: (id: string) => void;
+  onReveal?: (id: string) => void;
 }) {
   const p = props.plugin;
   const attention = p.status === 'attention';
@@ -251,9 +273,17 @@ function PluginRowItem(props: {
             <Icon name="chevron-down" size={12} />
           </button>
         )}
-        <button className="pi-iconbtn" aria-label="More" title="More">
-          <Icon name="more" />
-        </button>
+        {p.packageId === 'extensions' && props.onEdit && (
+          <button className="pi-btn pi-btn--outline" onClick={() => props.onEdit?.(p.id)} title={props.labels.editSource}>{props.labels.editSource}</button>
+        )}
+        {p.packageId === 'extensions' && props.onReveal && (
+          <button className="pi-btn pi-btn--ghost" onClick={() => props.onReveal?.(p.id)} title={props.labels.reveal}>{props.labels.reveal}</button>
+        )}
+        {p.packageId !== 'extensions' && (
+          <button className="pi-iconbtn" aria-label="More" title="More">
+            <Icon name="more" />
+          </button>
+        )}
       </div>
     </article>
   );

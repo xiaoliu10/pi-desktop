@@ -39,6 +39,7 @@ import { TopBar } from '../replica/shell/TopBar';
 import { ChatView, Composer, HomeView } from '../replica/chat/ChatView';
 import { VoiceInputButton } from './VoiceInputButton';
 import { PluginsPage } from '../replica/plugins/PluginsPage';
+import { ExtensionSourceDialog, type ExtensionDialogInit } from '../replica/plugins/ExtensionEditor';
 import { SettingsPage } from '../replica/settings/SettingsPage';
 import { isDefaultModel } from '../replica/settings/helpers';
 import { WorkbenchPanel } from '../replica/workbench/WorkbenchPanel';
@@ -280,6 +281,8 @@ export default function PiReplicaApp() {
   const [filePreview, setFilePreview] = useState<ReturnType<typeof toolFilePreview>>(null);
   const [pluginTab, setPluginTab] = useState<'installed' | 'marketplace'>('installed');
   const [pluginTag, setPluginTag] = useState('all');
+  // 扩展统一管理：源码编辑器/新建对话框（入口收拢在插件市场页）
+  const [extDialog, setExtDialog] = useState<ExtensionDialogInit | null>(null);
   const [, setFilePreviewVersion] = useState(0);
   const [sidebarWidth, setSidebarWidth, resetSidebarWidth] = usePanelWidth('pi.sidebarWidth', 366, 220, 520);
   const [workbenchWidth, setWorkbenchWidth, resetWorkbenchWidth] = usePanelWidth('pi.workbenchWidth', 415, 300, 700);
@@ -774,6 +777,7 @@ export default function PiReplicaApp() {
               )}
               {s.view === 'automations' && <AutomationsPage projects={[...new Set([...(s.desktopPreferences?.projects.map(p=>p.path)||[]),...s.sessions.map(session=>session.cwd)])]} models={(s.catalog?.providers||[]).flatMap(p=>p.models.map(m=>({id:`${p.id}/${m.id}`,name:`${p.id} / ${m.name||m.id}`})))} onOpenSession={key=>s.selectSession(key)} onRunTask={task=>s.runAutomationNow(task)} />}
               {s.view === 'plugins' && (
+                <>
                 <PluginsPage
                   tab={pluginTab}
                   installed={[
@@ -824,6 +828,16 @@ export default function PiReplicaApp() {
                   onTogglePlugin={(id) => {
                     const pkg = s.piPackages.find((p) => `pkg:${p.name}` === id);
                     if (pkg && !pkg.registered) { s.registerPackage(pkg.spec); return; }
+                    // 扩展资源行：真正启停（原只弹提示不干活——与设置页行为不一致的另一半）
+                    const res = s.resources.find((r) => r.id === id);
+                    if (res && res.kind === 'extensions') {
+                      const enabling = res.status === 'disabled';
+                      void window.localPi.resourceToggle(res.id, enabling).then(() => {
+                        s.scanResources();
+                        s.notify({ kind: 'info', title: `已${enabling ? '启用' : '禁用'} ${res.name}；重载会话后生效`, time: '刚刚' });
+                      }).catch((e) => s.notify({ kind: 'error', title: String(e), time: '刚刚' }));
+                      return;
+                    }
                     s.notify({ kind: 'info', title: s.lang === 'zh' ? '资源的启停请在 pi 配置中管理' : 'Manage resources in the pi configuration', time: '刚刚' });
                   }}
                   onUpdatePlugin={(id) => { const pkg = s.market.find((m) => m.name === id); if (pkg) s.installPackage(`npm:${pkg.name}`); }}
@@ -831,7 +845,21 @@ export default function PiReplicaApp() {
                   onOpenMarketplace={() => setPluginTab('marketplace')}
                   onRefreshMarketplace={() => { if (pluginTab === 'marketplace') s.searchMarketplace(s.marketQuery); else { s.loadPackages(); s.scanResources(); } }}
                   onApplyUpdates={() => undefined}
+                  builtinExtensions={run ? [...new Set((run.commands ?? []).filter(c => c.source === 'extension' && c.path).map(c => c.path as string))] : []}
+                  onCreateExtension={() => setExtDialog({ mode: 'create' })}
+                  onEditExtension={(id) => setExtDialog({ mode: 'edit', id })}
+                  onRevealExtension={(id) => { void window.localPi.revealResource(id).catch((e) => s.notify({ kind: 'error', title: String(e), time: '刚刚' })); }}
+                  onReloadResources={() => { s.loadPackages(); s.scanResources(); s.notify({ kind: 'info', title: '已刷新扩展与资源列表', time: '刚刚' }); }}
                 />
+                {extDialog && <ExtensionSourceDialog
+                  init={extDialog}
+                  resource={extDialog.mode === 'edit' ? (() => { const r = s.resources.find((x) => x.id === extDialog.id); return r ? { name: r.name, path: r.path, editable: r.status !== 'missing' } : undefined; })() : undefined}
+                  projects={s.desktopPreferences?.projects ?? []}
+                  onClose={() => setExtDialog(null)}
+                  onSaved={(msg) => { setExtDialog(null); s.scanResources(); s.notify({ kind: 'info', title: msg, time: '刚刚' }); }}
+                  onError={(msg) => s.notify({ kind: 'error', title: msg, time: '刚刚' })}
+                />}
+                </>
               )}
               {subagentPanel && s.view==='chat' && <ResizeHandle side="right" width={subagentWidth} min={300} max={720} onChange={setSubagentWidth} onReset={resetSubagentWidth} label="子代理面板宽度" />}
               {subagentPanel && s.view==='chat' && <SubagentPanel key={`${s.selectedKey}:${subagentPanel.callId||''}`} children={subagents} initialCall={subagentPanel.callId} parentRunning={parentRunning} onClose={()=>setSubagentPanel(null)} onStop={s.stop}/>}
