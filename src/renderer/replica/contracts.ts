@@ -77,7 +77,8 @@ export interface SidebarProps {
   onToggleProject: (id: string) => void;
   onToggleCollapse: () => void;
   onOpenSettings: () => void;
-  onOpenPlugins: () => void;
+  /** 已废弃：插件市场入口移至设置菜单，Sidebar 不再渲染该按钮。 */
+  onOpenPlugins?: () => void;
   onToggleNotifications: () => void;
   /** Rename a session's desktop display name (Electron has no window.prompt). */
   onRenameSession?: (id: string, name: string) => void;
