@@ -59,7 +59,7 @@ export function SettingsFeatures({page,cwd,query,workspace,loadedExtensionPaths}
   const beginCreate=(next:ResourceKind)=>{setKind(next);setName('my-'+next);setContent(template(next,'my-'+next));setCreating(true);setEditor(undefined);};
   const applyDefaults=async()=>{if(!data)return;await api().saveDesktopSettings({behavior:data.preferences.behavior,permission:data.preferences.permission});usePiStore.setState({behavior:data.preferences.behavior,desktopPreferences:data.preferences});};
   const saveArchivePrefs=async()=>{if(!data)return;await api().saveDesktopSettings({autoArchive:data.preferences.autoArchive??false,archiveRetentionDays:data.preferences.archiveRetentionDays??DEFAULT_ARCHIVE_RETENTION_DAYS});usePiStore.setState({desktopPreferences:data.preferences});};
-  const resourcePages=['instructions','skills','extensions','subagents'].includes(page);
+  const resourcePages=['instructions','skills','subagents'].includes(page);
   return <div className="pi-features" aria-busy={busy}>
     <header className="pi-features__heading"><div><h1 className="pi-settings__title">{names[page]||page}</h1><p>真实本地设置 · 修改会保存到对应配置文件</p></div><button className="pi-btn pi-btn--outline" disabled={busy} onClick={()=>void act(load,'已刷新')}>刷新</button></header>
     {error&&<div className="pi-features__alert" role="alert">{error}</div>}{notice&&<div className="pi-features__notice" role="status">{notice}</div>}
@@ -67,7 +67,7 @@ export function SettingsFeatures({page,cwd,query,workspace,loadedExtensionPaths}
     {page==='mcp'&&data?.diagnostics.map(d=><p className="pi-features__alert" key={d}>{d}</p>)}
     {page==='subagents'&&<OfficialSubagentSetup onInstalled={load}/>}
     {/* ZCode 式资源范围选择：小型 pill 下拉（仅全局资源 / 项目名），右侧资源计数；授权提示收进 tooltip 与下方小字。 */}
-    {['instructions','skills','extensions','subagents','mcp'].includes(page)&&(
+    {['instructions','skills','subagents','mcp'].includes(page)&&(
       <div className="pi-features__scopebar">
         <label className="pi-features__scope" title="项目上下文：选择要查看/编辑的资源范围。项目资源运行时仍需在连接窗口授权。">
           <select value={project} onChange={e=>setProject(e.target.value)} aria-label="项目上下文">
@@ -93,10 +93,12 @@ export function SettingsFeatures({page,cwd,query,workspace,loadedExtensionPaths}
       </section>}
     {data&&page==='shortcuts'&&<ShortcutsPane data={data} query={query} busy={busy} act={act}/>}
     {page==='voice'&&<VoicePane busy={busy} act={act}/>}
+    {/* 扩展管理已统一到侧边栏「插件市场」（安装/启停/新建/源码编辑/内置扩展列表）；
+        本页只留跳转，避免两个入口内容不一致。技能/指令/子代理资源仍在设置内管理。 */}
+    {data&&page==='extensions'&&<section className="pi-features__card"><h2>扩展管理已合并到「插件市场」</h2><p>安装与注册 npm 包、扩展启停、新建扩展、源码编辑、定位文件以及 Desktop 内置扩展列表，现在统一在侧边栏「插件市场」管理，本页不再重复展示。技能 / 指令 / 子代理等 pi 资源仍在设置内管理。</p><div className="pi-features__actions"><button className="pi-btn pi-btn--primary" onClick={()=>usePiStore.getState().navigate('plugins')}>打开插件市场</button></div></section>}
     {data&&resourcePages&&<>
       <div className="pi-features__actions"><button className="pi-btn pi-btn--primary" disabled={busy} onClick={()=>beginCreate(resourceKind)}>新建{names[page]}</button>{page==='instructions'&&<button className="pi-btn pi-btn--outline" onClick={()=>beginCreate('prompts')}>新建 / 提示词模板</button>}<button className="pi-btn pi-btn--outline" onClick={()=>{usePiStore.getState().rescanAndReload();setNotice('已请求重载当前连接；运行中的任务需先停止。');}}>重载当前会话资源</button></div>
       <p>{page==='instructions'?'AGENTS.md 是常驻上下文指令；prompts/*.md 是 / 命令模板。上级目录指令只读展示。':page==='subagents'?'读取 agents/*.md。可作为独立 pi 会话运行，采用逐次确认权限；支持 tools（内置工具逗号列表）与 model 字段。它有独立上下文，不会自动将结果注入主会话。':'全局与选定项目资源直接来自 pi。发现不代表已加载；新增与启停在重载或下次连接时生效。'}</p>
-      {page==='extensions' && (()=>{const loaded=[...new Set([...(data?.loadedExtensions??[]),...(loadedExtensionPaths??[])])];return loaded.length>0?<section className="pi-features__card"><h2>Desktop 内置扩展（随会话装载）</h2><p>这些扩展由 Desktop 经 -e 装载到每个会话，不来自 pi 资源目录，因此不出现在上方列表。</p>{loaded.map(p=><code key={p} style={{display:'block',margin:'4px 0',fontSize:12,wordBreak:'break-all'}}>{p}</code>)}</section>:null;})()}
       {creating&&<section className="pi-features__card"><h2>新建 {kind}</h2><label>范围<select value={scope} onChange={e=>setScope(e.target.value as typeof scope)}><option value="user">全局</option><option value="project" disabled={!project}>当前项目</option></select></label><label>名称<input value={name} onChange={e=>setName(e.target.value)}/></label><label>内容<textarea className="pi-features__code" rows={12} value={content} onChange={e=>setContent(e.target.value)}/></label><p>{kind==='extensions'?'扩展将作为本地代码执行，请审阅源码后再重载。':'资源以原生 pi 文件格式保存。'} 保存已有文件会被拒绝。</p><div className="pi-features__actions"><button className="pi-btn pi-btn--primary" disabled={busy} onClick={()=>void act(async()=>{await api().resourceCreate({kind,scope,name,text:content,cwd:project||undefined});setCreating(false);},'资源已创建；重载后生效')}>创建文件</button><button className="pi-btn pi-btn--outline" onClick={()=>setCreating(false)}>取消</button></div></section>}
       {editor&&<section className="pi-features__card"><h2>{editor.resource.name}</h2><code>{editor.resource.path}</code><textarea aria-label="资源内容" className="pi-features__code" rows={16} readOnly={!editor.resource.editable} value={editor.text} onChange={e=>setEditor({...editor,text:e.target.value})}/><p>保存前检查磁盘版本，并为原文件生成备份。包内资源与上级指令只读，避免破坏包管理器。</p><div className="pi-features__actions"><button className="pi-btn pi-btn--primary" disabled={busy||!editor.resource.editable} onClick={()=>void act(async()=>{await api().resourceSave({id:editor.id,text:editor.text,revision:editor.revision,cwd:project||undefined});setEditor(undefined);},'资源已保存；请重载运行中的会话')}>保存内容</button><button className="pi-btn pi-btn--outline" onClick={()=>setEditor(undefined)}>关闭编辑器</button></div></section>}
       {!resources.length&&<div className="pi-features__empty">{query?'没有匹配的资源。':'当前范围没有这类资源。可新建文件或切换项目；无需重新接入 pi。'}</div>}

@@ -550,6 +550,16 @@ export interface PluginsPageProps {
   onOpenMarketplace: () => void;
   onRefreshMarketplace: () => void;
   onApplyUpdates: () => void;
+  /** 扩展统一管理：Desktop 内置扩展（-e 装载）路径列表，展示在已装列表末尾。 */
+  builtinExtensions?: string[];
+  /** 新建扩展（源码模板编辑器）。缺省时不展示入口。 */
+  onCreateExtension?: () => void;
+  /** 打开扩展源码编辑器（资源型行：packageId === 'extensions'）。 */
+  onEditExtension?: (id: string) => void;
+  /** 在访达中定位扩展文件。 */
+  onRevealExtension?: (id: string) => void;
+  /** 重扫 npm 包与 pi 资源。 */
+  onReloadResources?: () => void;
 }
 
 export interface PluginsLabels {
@@ -586,6 +596,12 @@ export interface PluginsLabels {
   notPublished: string;
   extensionMarketplace: string;
   allTag: string;
+  newExtension: string;
+  reloadResources: string;
+  editSource: string;
+  reveal: string;
+  builtinTitle: string;
+  builtinHint: string;
 }
 
 // ---------------------------------------------------------------------------
