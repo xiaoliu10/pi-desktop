@@ -86,7 +86,8 @@ function demoNavFromLabels(props: SettingsProps) {
         { id: 'models' as const, label: L.models, icon: 'bot' as const },
         { id: 'skills' as const, label: L.skills, icon: 'book' as const },
         { id: 'mcp' as const, label: L.mcp, icon: 'stack' as const },
-        { id: 'extensions' as const, label: L.extensions, icon: 'plug' as const },
+        // 「扩展」入口已取消：扩展管理统一在侧边栏「插件市场」（含新建/源码编辑/启停/内置扩展列表），
+        // 设置内不再重复展示；settingsPage==='extensions' 仅作为遗留跳转卡保留在 SettingsFeatures。
         { id: 'subagents' as const, label: L.subagents, icon: 'box' as const },
         ...(!props.demo ? [{ id: 'memory' as const, label: L.appearance === 'Appearance' ? 'Memory' : '记忆', icon: 'brain' as const }] : []),
       ],
