@@ -283,6 +283,92 @@ export default function PiReplicaApp() {
   const [pluginTag, setPluginTag] = useState('all');
   // 扩展统一管理：源码编辑器/新建对话框（入口收拢在插件市场页）
   const [extDialog, setExtDialog] = useState<ExtensionDialogInit | null>(null);
+  // 插件市场管理页（同一份元素：设置→插件市场 内嵌；view==='plugins' 独立路由保留兼容）
+  const pluginsContent = (
+                <>
+                <PluginsPage
+                  tab={pluginTab}
+                  installed={[
+                    // 已装 npm 包（pi install 那套）；未注册的给「注册」入口
+                    ...s.piPackages.map((p): PluginRowData => ({
+                      id: `pkg:${p.name}`,
+                      name: p.name.replace(/^@[^/]+\//, '').replace(/^pi-/, ''),
+                      packageId: 'npm 包',
+                      version: p.version,
+                      status: p.registered ? 'active' : 'off',
+                      scope: 'everywhere',
+                      badge: p.registered ? undefined : (s.lang === 'zh' ? '未注册' : 'Unregistered'),
+                      primaryAction: p.registered ? undefined : (s.lang === 'zh' ? '注册' : 'Register'),
+                      details: [p.description, `${s.lang === 'zh' ? '来源' : 'Source'}：${p.spec}`, p.path].filter(Boolean),
+                    })),
+                    ...resourcesToPluginRows(s.resources.filter((r) => r.kind === 'extensions')),
+                  ]}
+                  marketplace={s.market.map((pkg) => {
+                    const installedPkg = s.piPackages.find((p) => p.name === pkg.name);
+                    return {
+                      id: pkg.name,
+                      name: pkg.name.replace(/^@[^/]+\//, '').replace(/^pi-/, ''),
+                      verified: false,
+                      publisher: pkg.publisher,
+                      version: pkg.version,
+                      installs: 0,
+                      description: pkg.description || pkg.name,
+                      permissions: [],
+                      installedVersion: installedPkg?.version || undefined,
+                      updateAvailable: Boolean(installedPkg && installedPkg.version !== pkg.version),
+                      published: true,
+                      tags: pkg.keywords.filter((k) => !['pi', 'pi-package', 'pi-coding-agent'].includes(k)).slice(0, 3),
+                      covers: s.covers[pkg.name],
+                    };
+                  })}
+                  search={pluginTab === 'marketplace' ? s.marketQuery : s.searchQuery}
+                  marketplaceSource="npm"
+                  marketplaceSources={['npm']}
+                  tag={pluginTag}
+                  tags={[]}
+                  updatesReady={0}
+                  demo={false}
+                  labels={{ ...t.plugins, searchInstalled: s.lang === 'zh' ? '过滤已装资源…' : 'Filter installed…', searchMarketplace: s.lang === 'zh' ? '搜索 npm 上的 pi 包…' : 'Search pi packages on npm…' }}
+                  onSelectTab={(tab) => { setPluginTab(tab); if (tab === 'marketplace' && !s.market.length && !s.marketLoading && !s.marketQuery) s.searchMarketplace(''); }}
+                  onSearch={(q) => { if (pluginTab === 'marketplace') s.searchMarketplace(q); else usePiStore.setState({ searchQuery: q }); }}
+                  onSelectTag={setPluginTag}
+                  onSelectSource={() => undefined}
+                  onTogglePlugin={(id) => {
+                    const pkg = s.piPackages.find((p) => `pkg:${p.name}` === id);
+                    if (pkg && !pkg.registered) { s.registerPackage(pkg.spec); return; }
+                    // 扩展资源行：真正启停（原只弹提示不干活——与设置页行为不一致的另一半）
+                    const res = s.resources.find((r) => r.id === id);
+                    if (res && res.kind === 'extensions') {
+                      const enabling = res.status === 'disabled';
+                      void window.localPi.resourceToggle(res.id, enabling).then(() => {
+                        s.scanResources();
+                        s.notify({ kind: 'info', title: `已${enabling ? '启用' : '禁用'} ${res.name}；重载会话后生效`, time: '刚刚' });
+                      }).catch((e) => s.notify({ kind: 'error', title: String(e), time: '刚刚' }));
+                      return;
+                    }
+                    s.notify({ kind: 'info', title: s.lang === 'zh' ? '资源的启停请在 pi 配置中管理' : 'Manage resources in the pi configuration', time: '刚刚' });
+                  }}
+                  onUpdatePlugin={(id) => { const pkg = s.market.find((m) => m.name === id); if (pkg) s.installPackage(`npm:${pkg.name}`); }}
+                  onInstallPlugin={(id) => { const pkg = s.market.find((m) => m.name === id); if (pkg) s.installPackage(`npm:${pkg.name}`); }}
+                  onOpenMarketplace={() => setPluginTab('marketplace')}
+                  onRefreshMarketplace={() => { if (pluginTab === 'marketplace') s.searchMarketplace(s.marketQuery); else { s.loadPackages(); s.scanResources(); } }}
+                  onApplyUpdates={() => undefined}
+                  builtinExtensions={run ? [...new Set((run.commands ?? []).filter(c => c.source === 'extension' && c.path).map(c => c.path as string))] : []}
+                  onCreateExtension={() => setExtDialog({ mode: 'create' })}
+                  onEditExtension={(id) => setExtDialog({ mode: 'edit', id })}
+                  onRevealExtension={(id) => { void window.localPi.revealResource(id).catch((e) => s.notify({ kind: 'error', title: String(e), time: '刚刚' })); }}
+                  onReloadResources={() => { s.loadPackages(); s.scanResources(); s.notify({ kind: 'info', title: '已刷新扩展与资源列表', time: '刚刚' }); }}
+                />
+                {extDialog && <ExtensionSourceDialog
+                  init={extDialog}
+                  resource={extDialog.mode === 'edit' ? (() => { const r = s.resources.find((x) => x.id === extDialog.id); return r ? { name: r.name, path: r.path, editable: r.status !== 'missing' } : undefined; })() : undefined}
+                  projects={s.desktopPreferences?.projects ?? []}
+                  onClose={() => setExtDialog(null)}
+                  onSaved={(msg) => { setExtDialog(null); s.scanResources(); s.notify({ kind: 'info', title: msg, time: '刚刚' }); }}
+                  onError={(msg) => s.notify({ kind: 'error', title: msg, time: '刚刚' })}
+                />}
+                </>
+  );
   const [, setFilePreviewVersion] = useState(0);
   const [sidebarWidth, setSidebarWidth, resetSidebarWidth] = usePanelWidth('pi.sidebarWidth', 366, 220, 520);
   const [workbenchWidth, setWorkbenchWidth, resetWorkbenchWidth] = usePanelWidth('pi.workbenchWidth', 415, 300, 700);
@@ -426,7 +512,7 @@ export default function PiReplicaApp() {
       s.setDraftText(`${item.title} `);
       s.navigate('chat');
     } else if (item.id === 'pg-plugins') {
-      s.navigate('plugins');
+      s.openSettings('extensions'); // 插件市场已内嵌设置菜单，搜索面板入口也指向那里
     } else if (item.id === 'pg-settings') {
       s.openSettings('general');
     } else if (item.id.startsWith('sess-')) {
@@ -650,7 +736,7 @@ export default function PiReplicaApp() {
           onMakeDefault={makeDefault}
           onRefreshCatalog={s.loadCatalog}
           infoExtra={<ConnectionPane />}
-          pageContent={!['general', 'models', 'info'].includes(s.settingsPage) ? <SettingsFeatures key={s.settingsPage} page={s.settingsPage} cwd={composerCwd} query={s.searchQuery} loadedExtensionPaths={run ? [...new Set((run.commands ?? []).filter(c => c.source === 'extension' && c.path).map(c => c.path as string))] : []} workspace={<RemotePane />} /> : undefined}
+          pageContent={!['general', 'models', 'info'].includes(s.settingsPage) ? <SettingsFeatures key={s.settingsPage} page={s.settingsPage} cwd={composerCwd} query={s.searchQuery} loadedExtensionPaths={run ? [...new Set((run.commands ?? []).filter(c => c.source === 'extension' && c.path).map(c => c.path as string))] : []} workspace={<RemotePane />} extensionsContent={pluginsContent} /> : undefined}
         />
         </div>
       )}
@@ -675,7 +761,6 @@ export default function PiReplicaApp() {
             onToggleCollapse={s.toggleSidebar}
             onOpenSettings={() => s.openSettings('general')}
             onOpenAutomations={()=>s.navigate('automations')}
-            onOpenPlugins={() => s.navigate('plugins')}
             onToggleNotifications={s.toggleNotifications}
             onRenameSession={(id, name) => s.renameSession(id, name)}
             notificationsCount={s.notifications.filter((n) => !n.read).length}
@@ -776,91 +861,7 @@ export default function PiReplicaApp() {
                 </div>
               )}
               {s.view === 'automations' && <AutomationsPage projects={[...new Set([...(s.desktopPreferences?.projects.map(p=>p.path)||[]),...s.sessions.map(session=>session.cwd)])]} models={(s.catalog?.providers||[]).flatMap(p=>p.models.map(m=>({id:`${p.id}/${m.id}`,name:`${p.id} / ${m.name||m.id}`})))} onOpenSession={key=>s.selectSession(key)} onRunTask={task=>s.runAutomationNow(task)} />}
-              {s.view === 'plugins' && (
-                <>
-                <PluginsPage
-                  tab={pluginTab}
-                  installed={[
-                    // 已装 npm 包（pi install 那套）；未注册的给「注册」入口
-                    ...s.piPackages.map((p): PluginRowData => ({
-                      id: `pkg:${p.name}`,
-                      name: p.name.replace(/^@[^/]+\//, '').replace(/^pi-/, ''),
-                      packageId: 'npm 包',
-                      version: p.version,
-                      status: p.registered ? 'active' : 'off',
-                      scope: 'everywhere',
-                      badge: p.registered ? undefined : (s.lang === 'zh' ? '未注册' : 'Unregistered'),
-                      primaryAction: p.registered ? undefined : (s.lang === 'zh' ? '注册' : 'Register'),
-                      details: [p.description, `${s.lang === 'zh' ? '来源' : 'Source'}：${p.spec}`, p.path].filter(Boolean),
-                    })),
-                    ...resourcesToPluginRows(s.resources.filter((r) => r.kind === 'extensions')),
-                  ]}
-                  marketplace={s.market.map((pkg) => {
-                    const installedPkg = s.piPackages.find((p) => p.name === pkg.name);
-                    return {
-                      id: pkg.name,
-                      name: pkg.name.replace(/^@[^/]+\//, '').replace(/^pi-/, ''),
-                      verified: false,
-                      publisher: pkg.publisher,
-                      version: pkg.version,
-                      installs: 0,
-                      description: pkg.description || pkg.name,
-                      permissions: [],
-                      installedVersion: installedPkg?.version || undefined,
-                      updateAvailable: Boolean(installedPkg && installedPkg.version !== pkg.version),
-                      published: true,
-                      tags: pkg.keywords.filter((k) => !['pi', 'pi-package', 'pi-coding-agent'].includes(k)).slice(0, 3),
-                      covers: s.covers[pkg.name],
-                    };
-                  })}
-                  search={pluginTab === 'marketplace' ? s.marketQuery : s.searchQuery}
-                  marketplaceSource="npm"
-                  marketplaceSources={['npm']}
-                  tag={pluginTag}
-                  tags={[]}
-                  updatesReady={0}
-                  demo={false}
-                  labels={{ ...t.plugins, searchInstalled: s.lang === 'zh' ? '过滤已装资源…' : 'Filter installed…', searchMarketplace: s.lang === 'zh' ? '搜索 npm 上的 pi 包…' : 'Search pi packages on npm…' }}
-                  onSelectTab={(tab) => { setPluginTab(tab); if (tab === 'marketplace' && !s.market.length && !s.marketLoading && !s.marketQuery) s.searchMarketplace(''); }}
-                  onSearch={(q) => { if (pluginTab === 'marketplace') s.searchMarketplace(q); else usePiStore.setState({ searchQuery: q }); }}
-                  onSelectTag={setPluginTag}
-                  onSelectSource={() => undefined}
-                  onTogglePlugin={(id) => {
-                    const pkg = s.piPackages.find((p) => `pkg:${p.name}` === id);
-                    if (pkg && !pkg.registered) { s.registerPackage(pkg.spec); return; }
-                    // 扩展资源行：真正启停（原只弹提示不干活——与设置页行为不一致的另一半）
-                    const res = s.resources.find((r) => r.id === id);
-                    if (res && res.kind === 'extensions') {
-                      const enabling = res.status === 'disabled';
-                      void window.localPi.resourceToggle(res.id, enabling).then(() => {
-                        s.scanResources();
-                        s.notify({ kind: 'info', title: `已${enabling ? '启用' : '禁用'} ${res.name}；重载会话后生效`, time: '刚刚' });
-                      }).catch((e) => s.notify({ kind: 'error', title: String(e), time: '刚刚' }));
-                      return;
-                    }
-                    s.notify({ kind: 'info', title: s.lang === 'zh' ? '资源的启停请在 pi 配置中管理' : 'Manage resources in the pi configuration', time: '刚刚' });
-                  }}
-                  onUpdatePlugin={(id) => { const pkg = s.market.find((m) => m.name === id); if (pkg) s.installPackage(`npm:${pkg.name}`); }}
-                  onInstallPlugin={(id) => { const pkg = s.market.find((m) => m.name === id); if (pkg) s.installPackage(`npm:${pkg.name}`); }}
-                  onOpenMarketplace={() => setPluginTab('marketplace')}
-                  onRefreshMarketplace={() => { if (pluginTab === 'marketplace') s.searchMarketplace(s.marketQuery); else { s.loadPackages(); s.scanResources(); } }}
-                  onApplyUpdates={() => undefined}
-                  builtinExtensions={run ? [...new Set((run.commands ?? []).filter(c => c.source === 'extension' && c.path).map(c => c.path as string))] : []}
-                  onCreateExtension={() => setExtDialog({ mode: 'create' })}
-                  onEditExtension={(id) => setExtDialog({ mode: 'edit', id })}
-                  onRevealExtension={(id) => { void window.localPi.revealResource(id).catch((e) => s.notify({ kind: 'error', title: String(e), time: '刚刚' })); }}
-                  onReloadResources={() => { s.loadPackages(); s.scanResources(); s.notify({ kind: 'info', title: '已刷新扩展与资源列表', time: '刚刚' }); }}
-                />
-                {extDialog && <ExtensionSourceDialog
-                  init={extDialog}
-                  resource={extDialog.mode === 'edit' ? (() => { const r = s.resources.find((x) => x.id === extDialog.id); return r ? { name: r.name, path: r.path, editable: r.status !== 'missing' } : undefined; })() : undefined}
-                  projects={s.desktopPreferences?.projects ?? []}
-                  onClose={() => setExtDialog(null)}
-                  onSaved={(msg) => { setExtDialog(null); s.scanResources(); s.notify({ kind: 'info', title: msg, time: '刚刚' }); }}
-                  onError={(msg) => s.notify({ kind: 'error', title: msg, time: '刚刚' })}
-                />}
-                </>
-              )}
+              {s.view === 'plugins' && pluginsContent}
               {subagentPanel && s.view==='chat' && <ResizeHandle side="right" width={subagentWidth} min={300} max={720} onChange={setSubagentWidth} onReset={resetSubagentWidth} label="子代理面板宽度" />}
               {subagentPanel && s.view==='chat' && <SubagentPanel key={`${s.selectedKey}:${subagentPanel.callId||''}`} children={subagents} initialCall={subagentPanel.callId} parentRunning={parentRunning} onClose={()=>setSubagentPanel(null)} onStop={s.stop}/>}
               {s.view==='chat' && planOpen && <ResizeHandle side="right" width={planWidth} min={320} max={720} onChange={setPlanWidth} onReset={resetPlanWidth} label="计划面板宽度" />}

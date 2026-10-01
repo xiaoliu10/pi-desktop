@@ -15,7 +15,7 @@ const api = () => window.localPi;
 const names: Record<string,string>={ai:'AI 默认行为',memory:'记忆',shortcuts:'快捷键',voice:'语音输入',instructions:'指令与提示词',skills:'技能',mcp:'MCP 服务',extensions:'扩展',subagents:'子代理',workspace:'连接',import:'导入会话',projects:'项目',archived:'已归档会话',usage:'数据统计'};
 const actionNames:Record<ShortcutAction,string>={search:'全局搜索',newSession:'新建会话',settings:'打开设置',workbench:'显示 / 隐藏工作面板',sidebar:'折叠 / 展开侧栏',stop:'停止当前任务'};
 const template=(kind:ResourceKind,name:string)=>kind==='extensions'?`export default function(pi) {\n  pi.registerCommand('${name}', {\n    description: '我的扩展命令',\n    handler: async (_args, ctx) => { ctx.ui.notify('扩展已运行'); }\n  });\n}\n`:kind==='skills'?`---\nname: ${name}\ndescription: 描述何时应该使用这个技能\n---\n\n# ${name}\n\n在这里填写步骤。\n`:kind==='subagents'?`---\nname: ${name}\ndescription: 专注的只读研究助手\ntools: read, grep, find, ls\n---\n\n你是一个只读研究助手。根据任务检查项目并给出结论，不修改文件。\n`:`# ${name}\n\n在这里填写指令。\n`;
-export function SettingsFeatures({page,cwd,query,workspace,loadedExtensionPaths}:{page:SettingsNavId;cwd?:string;query:string;workspace:ReactNode;loadedExtensionPaths?: string[]}) {
+export function SettingsFeatures({page,cwd,query,workspace,loadedExtensionPaths,extensionsContent}:{page:SettingsNavId;cwd?:string;query:string;workspace:ReactNode;loadedExtensionPaths?: string[];extensionsContent?:ReactNode}) {
   const [data,setData]=useState<SettingsSnapshot>();const [project,setProject]=useState(cwd||'');
   const [error,setError]=useState(''),[notice,setNotice]=useState(''),[busy,setBusy]=useState(false);
   const [editor,setEditor]=useState<(ResourceDocument & {resource:EditableResource})>();
@@ -93,9 +93,9 @@ export function SettingsFeatures({page,cwd,query,workspace,loadedExtensionPaths}
       </section>}
     {data&&page==='shortcuts'&&<ShortcutsPane data={data} query={query} busy={busy} act={act}/>}
     {page==='voice'&&<VoicePane busy={busy} act={act}/>}
-    {/* 扩展管理已统一到侧边栏「插件市场」（安装/启停/新建/源码编辑/内置扩展列表）；
-        本页只留跳转，避免两个入口内容不一致。技能/指令/子代理资源仍在设置内管理。 */}
-    {data&&page==='extensions'&&<section className="pi-features__card"><h2>扩展管理已合并到「插件市场」</h2><p>安装与注册 npm 包、扩展启停、新建扩展、源码编辑、定位文件以及 Desktop 内置扩展列表，现在统一在侧边栏「插件市场」管理，本页不再重复展示。技能 / 指令 / 子代理等 pi 资源仍在设置内管理。</p><div className="pi-features__actions"><button className="pi-btn pi-btn--primary" onClick={()=>usePiStore.getState().navigate('plugins')}>打开插件市场</button></div></section>}
+    {/* 扩展管理：完整能力（安装/启停/新建/源码编辑/内置扩展列表）由插件市场页内嵌于此（extensionsContent）。
+        extensionsContent 缺省时（预览环境）退化为跳转提示。 */}
+    {data&&page==='extensions'&&(extensionsContent??<section className="pi-features__card"><h2>扩展管理在「插件市场」</h2><p>安装与注册 npm 包、扩展启停、新建扩展、源码编辑与 Desktop 内置扩展列表，统一在「插件市场」管理。</p></section>)}
     {data&&resourcePages&&<>
       <div className="pi-features__actions"><button className="pi-btn pi-btn--primary" disabled={busy} onClick={()=>beginCreate(resourceKind)}>新建{names[page]}</button>{page==='instructions'&&<button className="pi-btn pi-btn--outline" onClick={()=>beginCreate('prompts')}>新建 / 提示词模板</button>}<button className="pi-btn pi-btn--outline" onClick={()=>{usePiStore.getState().rescanAndReload();setNotice('已请求重载当前连接；运行中的任务需先停止。');}}>重载当前会话资源</button></div>
       <p>{page==='instructions'?'AGENTS.md 是常驻上下文指令；prompts/*.md 是 / 命令模板。上级目录指令只读展示。':page==='subagents'?'读取 agents/*.md。可作为独立 pi 会话运行，采用逐次确认权限；支持 tools（内置工具逗号列表）与 model 字段。它有独立上下文，不会自动将结果注入主会话。':'全局与选定项目资源直接来自 pi。发现不代表已加载；新增与启停在重载或下次连接时生效。'}</p>
