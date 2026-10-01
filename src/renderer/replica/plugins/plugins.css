@@ -408,3 +408,108 @@
 .pireplica .pi-plugins__emptyhint {
   font-size: var(--pi-font-size-sm);
 }
+
+/* ─── 扩展统一管理：新建/源码编辑对话框 + 内置扩展列表 ─── */
+
+.pireplica .pi-plugins__builtin {
+  margin-top: 16px;
+  padding: 12px 14px;
+  border: 1px dashed var(--pi-border, rgba(0,0,0,.12));
+  border-radius: 10px;
+}
+
+.pireplica .pi-plugins__builtinhint {
+  margin: 4px 0 8px;
+  font-size: var(--pi-font-size-sm);
+  color: var(--pi-muted, rgba(0,0,0,.5));
+}
+
+.pireplica .pi-plugins__builtinpath {
+  display: block;
+  margin: 3px 0;
+  font-size: 12px;
+  word-break: break-all;
+  color: var(--pi-muted, rgba(0,0,0,.55));
+}
+
+.pireplica .pi-exteditor {
+  position: fixed;
+  inset: 0;
+  z-index: 220;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0,0,0,.35);
+}
+
+.pireplica .pi-exteditor__card {
+  width: min(680px, calc(100vw - 48px));
+  max-height: calc(100vh - 96px);
+  overflow: auto;
+  background: var(--pi-bg, #fff);
+  border: 1px solid var(--pi-border, rgba(0,0,0,.12));
+  border-radius: 14px;
+  padding: 16px 18px;
+  box-shadow: 0 18px 48px rgba(0,0,0,.22);
+  outline: none;
+}
+
+.pireplica .pi-exteditor__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.pireplica .pi-exteditor__head h2 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.pireplica .pi-exteditor__path {
+  display: block;
+  margin: 6px 0 0;
+  font-size: 12px;
+  word-break: break-all;
+  color: var(--pi-muted, rgba(0,0,0,.55));
+}
+
+.pireplica .pi-exteditor__fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+  margin: 12px 0 0;
+}
+
+.pireplica .pi-exteditor__fields label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--pi-font-size-sm);
+  color: var(--pi-muted, rgba(0,0,0,.6));
+}
+
+.pireplica .pi-exteditor__code {
+  width: 100%;
+  margin-top: 12px;
+  padding: 10px 12px;
+  font-family: var(--pi-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 12px;
+  line-height: 1.5;
+  border: 1px solid var(--pi-border, rgba(0,0,0,.12));
+  border-radius: 8px;
+  resize: vertical;
+}
+
+.pireplica .pi-exteditor__hint {
+  margin: 8px 0 0;
+  font-size: var(--pi-font-size-sm);
+  color: var(--pi-muted, rgba(0,0,0,.5));
+}
+
+.pireplica .pi-exteditor__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 12px;
+}
