@@ -25,9 +25,7 @@ export function Sidebar(props: SidebarProps) {
     <button className={`pi-sidebar__action ${props.activeOverlay === 'automations' ? 'pi-sidebar__action--active' : ''}`} aria-current={props.activeOverlay === 'automations' ? 'page' : undefined} onClick={props.onOpenAutomations} disabled={!props.onOpenAutomations} title={props.onOpenAutomations ? (zh ? '自动化' : 'Automations') : (zh ? '自动化：定时任务功能尚未实现' : 'Automations: scheduling is not implemented yet')}>
       <Icon name="calendar-clock" size={16} /><span>{zh ? '自动化' : 'Automations'}</span>
     </button>
-    <button className={`pi-sidebar__action ${props.activeOverlay === 'plugins' ? 'pi-sidebar__action--active' : ''}`} onClick={props.onOpenPlugins} aria-current={props.activeOverlay === 'plugins' ? 'page' : undefined} title={zh ? '查看本地扩展；在线插件市场尚未接入' : 'Browse local extensions; online marketplace is not connected'}>
-      <Icon name="grid" size={16} /><span>{zh ? '插件市场' : 'Plugin marketplace'}</span>
-    </button>
+    {/* 插件市场入口已移至设置菜单（SettingsPage → 插件市场）；侧边栏不再重复展示 */}
   </nav>;
 
   if (props.collapsed) {
@@ -136,14 +134,7 @@ export function Sidebar(props: SidebarProps) {
           >
             <Icon name="settings" />
           </button>
-          <button
-            className={`pi-iconbtn ${props.activeOverlay === 'plugins' ? 'pi-iconbtn--on' : ''}`}
-            onClick={props.onOpenPlugins}
-            aria-label={props.labels.plugins}
-            title={props.labels.plugins}
-          >
-            <Icon name="plug" />
-          </button>
+          {/* 插件市场按钮已移除：入口统一在设置菜单内；底部只保留配置 + 通知 */}
           <button
             className={`pi-iconbtn ${props.notificationsCount ? 'pi-iconbtn--dot' : ''} ${props.activeOverlay === 'notifications' ? 'pi-iconbtn--on' : ''}`}
             onClick={props.onToggleNotifications}
