@@ -17,13 +17,13 @@ const branch: PiEntry[] = [
 describe('nested execution transcript',()=>{
   it('pairs requests and results once, preserves reasoning and ordering, keeps final reply outside',()=>{
     const turns=executionTurns(historyToMessages(branch));expect(turns).toHaveLength(2);
-    const turn=turns[1];expect(turn.steps.map(p=>p.kind)).toEqual(['thinking','tool','thinking','tool']);
+    const turn=turns[1];expect(turn.steps.map(p=>p.kind)).toEqual(['thinking','text','tool','thinking','tool']);
     const tools=turn.steps.filter(p=>p.kind==='tool') as ToolPart[];expect(tools).toHaveLength(2);
     expect(tools[0]).toMatchObject({callId:'call-1',phase:'result',detailLines:['file contents'],argumentsText:JSON.stringify({path:'app.ts'},null,2)});
     expect(tools[1].status).toBe('error');
-    // 过程叙述收进思考块，只有结论直接可见。
+    // 过程叙述保持时间线原位（ZCode 同款），只有结论直接可见。
     expect(turn.answer.map(p=>(p as {text:string}).text)).toEqual(['最终回复保持直接可见。']);
-    expect((turn.steps[0] as {text:string}).text).toContain('我先读取文件。');
+    expect((turn.steps[1] as {text:string}).text).toBe('我先读取文件。');
   });
   it('never merges across user turns or merges calls by name alone',()=>{
     const more=[...branch,{id:'u2',type:'message',message:{role:'user',content:'再试一次'}},{id:'a4',type:'message',message:{role:'assistant',content:[{type:'toolCall',id:'call-1',name:'read',arguments:{path:'other'}}]}}];
@@ -44,10 +44,25 @@ describe('nested execution transcript',()=>{
     const turn=turns[1];
     expect(turn.segments.map((s)=>s.kind)).toEqual(['steps','text']);
     expect(turn.segments[0].parts[0]).toMatchObject({kind:'thinking'});
-    expect((turn.segments[0].parts[0] as {text:string}).text).toContain('我先读取文件。');
+    // 过程叙述留在组内时间线原位（不再折进思考块）
+    expect(turn.segments[0].parts.some((p)=>p.kind==='text'&&(p as {text:string}).text==='我先读取文件。')).toBe(true);
     expect(turn.segments[1].parts[0]).toMatchObject({kind:'text',text:'最终回复保持直接可见。'});
     // the merged group still holds the failing bash call
     expect(turn.segments[0].parts.some((p)=>p.kind==='tool'&&(p as ToolPart).status==='error')).toBe(true);
+  });
+  it('displays native mcp__ tools as server / tool with the plug icon',()=>{
+    const labels={you:'你',assistant:'pi',simulatedRun:'演示',toolRunning:'运行中',toolDone:'完成',toolError:'失败',details:'详情',queued:'排队',working:'执行中'};
+    const messages=[{id:'u',role:'user' as const,parts:[]},{id:'a',role:'assistant' as const,parts:[{id:'t',kind:'tool',tool:'mcp__filesystem__read_file',status:'done',phase:'result',summary:'x'} as never]}];
+    const markup=renderToStaticMarkup(createElement(ChatView,{messages,running:false,queued:0,demo:false,labels,onJumpToMessage:()=>{}}));
+    expect(markup).toContain('filesystem / read_file');
+  });
+  it('renders mid-turn narration as visible commentary paragraphs inside the execution group',()=>{
+    const labels={you:'你',assistant:'pi',simulatedRun:'演示',toolRunning:'运行中',toolDone:'完成',toolError:'失败',details:'详情',queued:'排队',working:'执行中'};
+    const markup=renderToStaticMarkup(createElement(ChatView, {messages:historyToMessages(branch),running:false,queued:0,demo:false,labels,onJumpToMessage:()=>{}}));
+    // 组内以 commentary 段落出现（展开执行过程可见），且不再并入思考正文
+    expect(markup).toContain('pi-execution__commentary');
+    expect(markup).toContain('我先读取文件。');
+    expect(markup).toContain('最终回复保持直接可见。');
   });
   it('renders two collapsed disclosure levels with visible failure summary and normal text-only responses',()=>{
     const labels={you:'你',assistant:'pi',simulatedRun:'演示',toolRunning:'运行中',toolDone:'完成',toolError:'失败',details:'详情',queued:'排队',working:'执行中'};

@@ -43,6 +43,10 @@ const en = {
   composer: {
     placeholderSession: 'Ask anything',
     placeholderHome: 'Type / for commands · @ for files',
+    placeholderImage: 'Describe the image to generate…',
+    imageGen: 'Image generation',
+    imageGenBusy: 'Generating image…',
+    imageGenCaption: 'Generated image',
     send: 'Send',
     stop: 'Stop',
     queued: 'queued',
@@ -273,6 +277,10 @@ const zh: typeof en = {
   composer: {
     placeholderSession: '随便问点什么',
     placeholderHome: '输入 / 使用命令 · 输入 @ 引用文件',
+    placeholderImage: '描述想生成的图像…',
+    imageGen: '图像生成',
+    imageGenBusy: '正在生成图像…',
+    imageGenCaption: '生成的图像',
     send: '发送',
     stop: '停止',
     queued: '已排队',

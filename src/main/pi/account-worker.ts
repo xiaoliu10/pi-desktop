@@ -3,7 +3,7 @@ export const ACCOUNT_WORKER = String.raw`
 const { pathToFileURL } = require('node:url');
 const path = require('node:path');
 const readline = require('node:readline');
-const [modulePath, agentDir, operation, providerId] = process.argv.slice(1);
+const [modulePath, agentDir, operation, providerId, payloadJson] = process.argv.slice(1);
 const send = data => process.stdout.write(JSON.stringify(data)+'\n');
 const CONTROLLED = new Set(['read', 'create', 'list', 'add', 'update', 'delete', 'codeReview', 'health', 'storage', 'use', 'user', 'chaos', 'storage']);
 const controller = new AbortController();
@@ -37,9 +37,23 @@ input.on('line', line=>{try {const msg=JSON.parse(line);if(msg.type==='cancel')c
   const credentials=await runtime.listCredentials();
   const providers=runtime.getProviders().filter(p=>p.auth.oauth||credentials.some(c=>c.providerId===p.id)).map(p=>({
    id:p.id,name:p.name,loginAvailable:!!p.auth.oauth,auth:credentials.find(c=>c.providerId===p.id)?.type??'none',source:'auth',
-   models:runtime.getModels(p.id).map(m=>({id:m.id,name:m.name,contextWindow:m.contextWindow,maxTokens:m.maxTokens,reasoning:m.reasoning,input:m.input,thinkingLevelMap:m.thinkingLevelMap}))
+   models:runtime.getModels(p.id).map(m=>({id:m.id,name:m.name,contextWindow:m.contextWindow,maxTokens:m.maxTokens,reasoning:m.reasoning,input:m.input,thinkingLevelMap:m.thinkingLevelMap})),
+   imageModels:(typeof runtime.getModelsOfType==='function'?runtime.getModelsOfType('image',p.id):[]).filter(m=>m&&m.id).map(m=>({id:m.id,name:m.name||m.id}))
   }));
   send({type:'catalog',providers});return;
+ }
+ if(operation==='generate') {
+  if(typeof runtime.generateImages!=='function')throw Object.assign(new Error('生图需要 Desktop 内置 pi 运行时 ≥ 0.99，请更新 Desktop 后重试'),{code:'unsupported'});
+  let req={};try{req=JSON.parse(payloadJson||'{}')}catch{throw Object.assign(new Error('生图请求格式无效'),{code:'invalid'})}
+  const prompt=typeof req.prompt==='string'?req.prompt.trim().slice(0,4000):'';
+  if(!prompt)throw Object.assign(new Error('生图描述不能为空'),{code:'invalid'});
+  const model=typeof runtime.getModelOfType==='function'?runtime.getModelOfType('image',providerId,String(req.model||'')):undefined;
+  if(!model)throw Object.assign(new Error('该提供商没有这个图像模型'),{code:'unsupported'});
+  const result=await runtime.generateImages(model,{input:[{type:'text',text:prompt}]},{signal:AbortSignal.any([controller.signal,AbortSignal.timeout(180000)])});
+  if(result&&result.stopReason==='error')throw Object.assign(new Error(String(result.errorMessage||'图像生成失败').slice(0,200)),{code:'provider'});
+  const images=((result&&result.output)||[]).filter(c=>c&&c.type==='image'&&typeof c.data==='string'&&c.data.length<16000000).map(c=>({mime:typeof c.mimeType==='string'?c.mimeType:'image/png',data:c.data}));
+  if(!images.length)throw Object.assign(new Error('生成结果中没有图像'),{code:'provider'});
+  send({type:'images',images});return;
  }
  if(!runtime.getProvider(providerId)?.auth.oauth)throw new Error('此提供商不支持套餐登录');
  await runtime.login(providerId,'oauth',{
@@ -57,5 +71,5 @@ input.on('line', line=>{try {const msg=JSON.parse(line);if(msg.type==='cancel')c
  });
  try {await runtime.refresh({allowNetwork:true,providers:[providerId],signal:AbortSignal.any([controller.signal,AbortSignal.timeout(15000)])});} catch {}
  send({type:'done'});
-})().catch(()=>send({type:'error',message:'登录或模型目录读取失败，请检查网络、授权结果和 pi 配置后重试。'})).finally(()=>{input.close();process.stdout.write('',()=>process.exit());});
+})().catch(err=>send({type:'error',message:err&&err.code?String(err.message).slice(0,200):'登录或模型目录读取失败，请检查网络、授权结果和 pi 配置后重试。'})).finally(()=>{input.close();process.stdout.write('',()=>process.exit());});
 `;

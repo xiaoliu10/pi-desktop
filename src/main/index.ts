@@ -131,6 +131,7 @@ function registerIpc() {
   handle('resourceToggle', (id, enabled, cwd) => settings.toggleResource(id, enabled, cwd));
   handle('revealResource', (id, cwd) => shell.showItemInFolder(settings.resourcePath(id, cwd)));
   handle('mcpSave', input => settings.mcpSave(input));
+  handle('mcpConfig', (id, cwd) => settings.mcpConfig(id, cwd));
   handle('mcpTest', (id, cwd) => settings.mcpTest(id, cwd));
   handle('projectSave', value => settings.projectSave(value));
   const knownProject = (cwd:string) => {
@@ -253,6 +254,7 @@ function registerIpc() {
   handle('accountCancel', id => host.accounts.cancel(id));
   handle('accountOpen', id => shell.openExternal(host.accounts.url(id)));
   handle('planQuota', provider => host.accounts.quota(String(provider)));
+  handle('imageGenerate', (provider, model, prompt) => host.accounts.generate(String(provider), String(model), String(prompt)));
   handle('modelDefaultSave', input => host.modelDefaultSave(input));
   handle('modelProviderSave', draft => host.modelProviderSave(draft));
   handle('modelProviderAuthSave', input => host.modelProviderAuthSave(input));
