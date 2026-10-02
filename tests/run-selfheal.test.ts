@@ -80,6 +80,46 @@ it('沉默不足阈值或处于停止/重试流程时不核实、不拉直', asy
   expect(statuses.filter(s => s === 'idle').length).toBe(0);
 });
 
+it('holding 自愈：续接轮结算丢失（组状态机卡 running）→ 按转写末条落定组 + run idle，横幅随组退场', async () => {
+  const { backend, events } = setup();
+  const view = await backend.connect({ cwd: process.cwd(), trustProject: false, permission: 'ask' });
+  await backend.prompt(view.key, '/stuck', 'followUp');
+  const run = await waitStatus(backend, view.key, 'running');
+  // 注入持有期状态：第 4/10 组 running（对应横幅"等待模型响应…"），上一轮 assistant 以 stop 收尾。
+  (run.retry as any).begin();
+  (run.retry as any).lastOutcome = 'stop';
+  (run.retry as any).publish({ group: 4, phase: 'running' });
+  run.view.timing = { startedAt: Date.now() - 120_000 };
+  backdate(run, 601_000);
+  (backend as any).stuckScan();
+  await vi.waitFor(() => {
+    const last = runEvents(events).at(-1)!;
+    expect(last.run.status).toBe('idle');
+  });
+  expect((backend as any).active.get(view.key).view.status).toBe('idle');
+  expect(run.view.retryGroup).toMatchObject({ group: 4, phase: 'completed' });
+  expect((run.retry as any).active).toBe(false);
+});
+
+it('holding 自愈中间态：组耗尽待退避（exhausted+error）→ 合成结算排下组，run 保持 running', async () => {
+  const { backend } = setup();
+  const view = await backend.connect({ cwd: process.cwd(), trustProject: false, permission: 'ask' });
+  await backend.prompt(view.key, '/stuck', 'followUp');
+  const run = await waitStatus(backend, view.key, 'running');
+  (run.retry as any).begin();
+  (run.retry as any).lastOutcome = 'error';
+  (run.retry as any).exhausted = true;
+  (run.retry as any).publish({ group: 4, phase: 'running' });
+  backdate(run, 601_000);
+  (backend as any).stuckScan();
+  await new Promise(r => setTimeout(r, 300));
+  // 重试链判为中间态（排下一组退避，组号在退避到点后才递增）：任务未结束，run 不得被拉直。
+  expect((backend as any).active.get(view.key).view.status).toBe('running');
+  expect(run.view.retryGroup).toMatchObject({ group: 4, phase: 'waiting' });
+  expect(run.view.retryGroup?.delayMs).toBeGreaterThan(0);
+  expect((run.retry as any).active).toBe(true);
+});
+
 it('watchdog 只启动一次、dispose 时清除', async () => {
   const { backend } = setup();
   expect((backend as any).watchdog).toBeUndefined();
