@@ -22,6 +22,9 @@ const QUEUE_IMAGE_STAGE_TTL = 120_000;
  *  pi 已空闲而 Desktop 没收到结算事件（agent_settled 丢失/终止路径不发，实测 goal 完成
  *  后计时条永续 1.5h+）则拉直为 idle。 */
 const STUCK_SILENCE_MS = 120_000;
+/** 重试链持有期（holding：组>1 或已排队续接）的静默阈值更宽：组间退避最长 20 分钟、
+ *  续接后的模型响应也可能持续数分钟，100% 无事件满 10 分钟才值得核实。 */
+const RETRY_HOLDING_SILENCE_MS = 600_000;
 const STUCK_WATCHDOG_INTERVAL_MS = 30_000;
 type QueuedInput = NonNullable<PiRun['queue']>[number];
 interface Running { recheckTimer?: ReturnType<typeof setTimeout>; stopQueueSnapshot?: QueuedInput[]; settlement?: { token: string; timer: ReturnType<typeof setTimeout> }; activity: number; /** 假 running 自愈用：全部 pi 事件计数与最近事件时刻 */ eventCount: number; lastEventAt: number; verifying?: boolean; promptSequence: number; retryUncertain: boolean; stopUnconfirmed: boolean; retry: RetryGroups; retryReady: boolean; retryEntryId?: string; deferredQueue: QueuedInput[]; stopEpoch: number; policyReady: boolean; client: PiRpcClient; view: PiRun; input: { cwd: string; trustProject: boolean; permission: AccessMode; executionMode?: Exclude<AccessMode, 'plan'>; file: string; origin: string; systemPrompt?: string; tools?: string[]; model?: string }; dialogs: Map<string, { timer?: ReturnType<typeof setTimeout>; method: string; request: PiUiRequest }>; queueImages: StagedQueueImage[] }
@@ -265,6 +268,14 @@ export class PiBackend {
   private forceSettle(run: Running) {
     const key = run.view.key;
     if (this.active.get(key) !== run || run.view.status !== 'running') return;
+    // 结算丢失同样打击重试链：组状态机只认 agent_settled，不补发就永远停在
+    // phase='running'（横幅永续"等待模型响应"）。按 pi 已空闲的事实补发合成结算，
+    // 让它按 lastOutcome 走完（completed/failed/exhausted→waiting）。若判为中间态
+    // （排下了下一组退避），任务未结束：保持 running，只刷新静默起点与横幅。
+    if (run.retry.event({ type: 'agent_settled', source: 'desktop-force-settle' })) {
+      run.lastEventAt = Date.now();
+      return;
+    }
     let endedAt = Date.now();
     try {
       const last = this.index.history(key).branch.at(-1);
@@ -826,15 +837,18 @@ export class PiBackend {
     this.watchdog.unref?.();
   }
   /** 扫描当前活动 run：只有长时间无任何 pi 事件的 running 才值得向 pi 本体核实。
-   *  重试链持有期（holding：等待续接/已进入续接）与结算桥进行中不得打扰——那自己会收口；
-   *  普通轮次（group=1 phase=running）正是需要巡逻的对象。 */
+   *  重试链持有期（holding：等待续接/已进入续接）正常由 agent_settled 收口，但结算事件
+   *  一样可能丢失（实测第 4/10 组模型已回、横幅永续"等待模型响应"）——用更宽的静默窗
+   *  纳入巡逻（get_state 核实对真实在跑/等待期均无副作用）；结算桥进行中仍不打扰。
+   *  普通轮次（group=1 phase=running）用基础阈值。 */
   private stuckScan() {
     const now = Date.now();
     for (const run of this.active.values()) {
       if (run.view.status !== 'running' || run.verifying) continue;
-      if (run.stopUnconfirmed || run.retryUncertain || run.settlement || run.retry.holding) continue;
+      if (run.stopUnconfirmed || run.retryUncertain || run.settlement) continue;
       if (run.dialogs.size > 0) continue;
-      if (now - run.lastEventAt < STUCK_SILENCE_MS) continue;
+      const silence = run.retry.holding ? RETRY_HOLDING_SILENCE_MS : STUCK_SILENCE_MS;
+      if (now - run.lastEventAt < silence) continue;
       void this.verifyStuckRun(run);
     }
   }
