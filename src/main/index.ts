@@ -194,6 +194,7 @@ function registerIpc() {
   handle('runs', () => host.backend.runs());
   handle('prompt', (key, text, behavior, images) => { if (typeof text !== 'string' || !['steer', 'followUp'].includes(behavior)) throw new Error('输入无效'); return host.backend.prompt(key, text, behavior, images); });
   handle('refreshCommands', key => { if (typeof key !== 'string' || !key) throw new Error('输入无效'); return host.backend.refreshCommands(key); });
+  handle('refreshModels', key => { if (typeof key !== 'string' || !key) throw new Error('输入无效'); return host.backend.refreshModels(key); });
   handle('compact', (key, customInstructions) => { if (customInstructions !== undefined && typeof customInstructions !== 'string') throw new Error('输入无效'); return host.backend.compact(key, customInstructions || undefined); });
   handle('stop', key => host.backend.stop(key));
   handle('queueEdit', (key, op) => {

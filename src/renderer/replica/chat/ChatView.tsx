@@ -1231,6 +1231,16 @@ export function Composer(props: ComposerProps) {
                 </div>
               )}
               {!visibleGroups.length && !imageItems.length && <div className="pi-composer__menuhint">没有匹配「{modelQuery}」的模型</div>}
+              {props.onRefreshModels && menu === 'model' && (
+                <button
+                  className="pi-composer__menurow"
+                  role="menuitem"
+                  onClick={() => { props.onRefreshModels?.(); setMenu(null); }}
+                >
+                  <Icon name="refresh" size={14} />
+                  <span>{props.labels.refreshModels ?? '刷新模型列表'}</span>
+                </button>
+              )}
               {!props.hideReasoning && (
                 <button
                   className="pi-composer__menurow"

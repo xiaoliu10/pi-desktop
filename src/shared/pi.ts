@@ -119,6 +119,7 @@ export interface LocalPiApi extends importSettingsApi {
   compact(key: string, customInstructions?: string): Promise<{ summary: string; tokensBefore?: number }>;
   /** 按需重拉斜杠命令列表（补全面板为空时自愈）；返回最新命令数。 */
   refreshCommands(key: string): Promise<number>;
+  refreshModels(key: string): Promise<number>;
   stop(key: string): Promise<{ steering: string[]; followUp: string[] }>;
   /** Mutate the queued follow-ups of a running session: remove / edit / steer-now. */
   queueEdit(key: string, op: PiQueueOp): Promise<void>;
