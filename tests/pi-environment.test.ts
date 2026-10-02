@@ -1,6 +1,6 @@
 import { afterEach, expect, it } from 'vitest';
 import fs from 'node:fs';import os from 'node:os';import path from 'node:path';
-import { discoverPi, piVersionSupported, compareVersion } from '../src/main/pi/environment';
+import { discoverPi, piVersionSupported, compareVersion, piHasNativeMcp } from '../src/main/pi/environment';
 const roots:string[]=[];afterEach(()=>roots.splice(0).forEach(p=>fs.rmSync(p,{recursive:true,force:true})));
 
 it('discovers a symlinked npm installation with spaces without executing it',()=>{
@@ -45,11 +45,18 @@ it('accepts pi 0.85.1 and 0.87.0 as supported, rejects 0.84.0',()=>{
   expect(piVersionSupported('0.84.0')).toBe(false);
   expect(piVersionSupported(null)).toBe(false);
 });
-it('treats 0.90.0 as an exclusive external CLI compatibility bound',()=>{
-  expect(piVersionSupported('0.89.9')).toBe(process.platform !== 'win32');
-  expect(piVersionSupported('0.90.0')).toBe(false);
-  expect(piVersionSupported('0.91.0')).toBe(false);
-  const local=localFixture('0.90.0');const bundled=bundledFixture();
+it('accepts pi 0.99.x–1.0.0 (native MCP era) and keeps 1.1.0 as the exclusive bound',()=>{
+  expect(piVersionSupported('0.90.0')).toBe(process.platform !== 'win32');
+  expect(piVersionSupported('0.99.0')).toBe(process.platform !== 'win32');
+  expect(piVersionSupported('0.99.1')).toBe(process.platform !== 'win32');
+  expect(piVersionSupported('1.0.0')).toBe(process.platform !== 'win32');
+  expect(piVersionSupported('1.0.1')).toBe(process.platform !== 'win32');
+  expect(piVersionSupported('1.1.0')).toBe(false);
+  expect(piVersionSupported('2.0.0')).toBe(false);
+  expect(piHasNativeMcp('0.99.0')).toBe(true);
+  expect(piHasNativeMcp('1.0.0')).toBe(true);
+  expect(piHasNativeMcp('0.87.0')).toBe(false);
+  const local=localFixture('1.1.0');const bundled=bundledFixture();
   expect(discoverPi({agentDir:local},{PATH:path.join(local,'bin')},bundled))
     .toMatchObject({runtime:'bundled',requestedRuntime:'auto',supported:true,fallback:true,systemSupported:false});
 });

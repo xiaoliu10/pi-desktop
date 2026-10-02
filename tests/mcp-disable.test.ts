@@ -1,12 +1,14 @@
-// MCP 启停全覆盖：导入服务（claude-code 等）在 Desktop 的禁用只能写自己 mcp.json 的
-// disabledServers 覆盖层（不改原工具文件）；直连服务沿用配置内 disabled 字段。
-// 覆盖：settings-service 快照/启停往返 + mcp-bridge 运行时跳过被禁服务。
+// pi ≥0.99 原生 MCP 适配全覆盖：
+// ① mcp.json 迁移——覆盖层（disabledServers/enabledServers）折叠 + imports 物化 + per-entry enabled 标志；
+// ② 启停写 per-entry enabled（pi 原生语义，desktop 与 pi 共用同一份文件）；
+// ③ mcp-bridge 版本门——<0.99 按标志连接（旧 CLI 无原生 MCP），≥0.99 整体让位给 builtin:mcp。
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { PiHost } from '../src/main/pi/host';
 import { SettingsService } from '../src/main/pi/settings-service';
+import { piHasNativeMcp } from '../src/main/pi/environment';
 
 const roots: string[] = [];
 const hosts: PiHost[] = [];
@@ -32,6 +34,7 @@ fs.writeFileSync(toolBin, '#!/bin/sh\n', { mode: 0o755 });
 afterEach(() => {
   hosts.splice(0).forEach(h => h.dispose());
   roots.splice(0).forEach(p => fs.rmSync(p, { recursive: true, force: true }));
+  delete process.env.PI_DESKTOP_PI_VERSION;
 });
 
 function setup() {
@@ -46,137 +49,141 @@ function setup() {
   return { root, agent, project, service, host };
 }
 
-it('imported servers list with overlay-disabled state and stay editable only in Desktop', () => {
-  const { agent, service } = setup();
-  fs.writeFileSync(path.join(agent, 'mcp.json'), JSON.stringify({
-    imports: ['claude-code'],
-    mcpServers: { direct: { command: node, args: [fakeMcp] }, directoff: { command: node, args: [fakeMcp] } },
-    disabledServers: ['claudeoff', 'directoff'],
-  }));
-  const rows = service.snapshot().mcp;
-  const by = (name: string) => rows.find(r => r.name === name)!;
-  expect(by('fromclaude')).toMatchObject({ source: 'claude-code', enabled: true, scope: 'user' });
-  expect(by('claudeoff')).toMatchObject({ source: 'claude-code', enabled: false });
-  expect(by('selfoff')).toMatchObject({ source: 'claude-code', enabled: false });
-  expect(by('direct')).toMatchObject({ enabled: true, scope: 'user' });
-  expect(by('directoff')).toMatchObject({ enabled: false });
-});
+describe('mcp.json 迁移（pi ≥0.99 原生语义）', () => {
+  it('folds overlay lists and materializes imports into per-entry enabled flags, with a one-time backup', () => {
+    const { agent, service } = setup();
+    const file = path.join(agent, 'mcp.json');
+    const legacy = {
+      imports: ['claude-code'],
+      mcpServers: { direct: { command: node, args: [fakeMcp] }, directoff: { command: node, args: [fakeMcp] }, selfoff: { command: node, args: [fakeMcp], disabled: true } },
+      disabledServers: ['claudeoff', 'directoff'],
+      enabledServers: ['sourceoff'],
+    };
+    fs.writeFileSync(file, JSON.stringify(legacy));
+    const rows = service.snapshot().mcp;
+    const raw = JSON.parse(fs.readFileSync(file, 'utf8'));
+    expect(raw.imports).toBeUndefined();
+    expect(raw.disabledServers).toBeUndefined();
+    expect(raw.enabledServers).toBeUndefined();
+    for (const name of ['fromclaude', 'claudeoff', 'selfoff', 'sourceoff', 'direct', 'directoff']) expect(raw.mcpServers[name]).toBeTruthy();
+    expect(raw.mcpServers.claudeoff).toMatchObject({ enabled: false });
+    expect(raw.mcpServers.directoff).toMatchObject({ enabled: false });
+    expect(raw.mcpServers.selfoff).toMatchObject({ enabled: false });
+    expect(raw.mcpServers.selfoff.disabled).toBeUndefined();
+    expect(raw.mcpServers.sourceoff).toMatchObject({ enabled: true });
+    expect(raw.mcpServers.direct.enabled).toBeUndefined();
+    expect(fs.existsSync(file + '.bak-pre099')).toBe(true);
+    expect(JSON.parse(fs.readFileSync(file + '.bak-pre099', 'utf8'))).toEqual(legacy);
+    const by = (n: string) => rows.find(r => r.name === n)!;
+    expect(by('fromclaude')).toMatchObject({ enabled: true, path: file });
+    expect(by('fromclaude').source).toBeUndefined();
+    expect(by('claudeoff').enabled).toBe(false);
+    expect(by('sourceoff').enabled).toBe(true);
+    expect(by('directoff').enabled).toBe(false);
+    // 幂等：无迁移目标时不再落盘
+    const after = fs.readFileSync(file, 'utf8');
+    service.snapshot();
+    expect(fs.readFileSync(file, 'utf8')).toBe(after);
+  });
 
-it('toggling an imported server rewrites only the Desktop disabledServers overlay', () => {
-  const { agent, service } = setup();
-  const file = path.join(agent, 'mcp.json');
-  fs.writeFileSync(file, JSON.stringify({ imports: ['claude-code'], mcpServers: {}, disabledServers: [] }));
-  const rev = () => service.snapshot().mcpRevisions.user;
-  // 禁用：加入覆盖层
-  service.mcpSave({ name: 'fromclaude', scope: 'user', enabled: false, source: 'claude-code', revision: rev() });
-  let raw = JSON.parse(fs.readFileSync(file, 'utf8'));
-  expect(raw.disabledServers).toEqual(['fromclaude']);
-  expect(raw.mcpServers).toEqual({});
-  expect(service.snapshot().mcp.find(r => r.name === 'fromclaude')!.enabled).toBe(false);
-  // 重复禁用不产生重复项；再启用则移除，列表清空后键整体删除
-  service.mcpSave({ name: 'fromclaude', scope: 'user', enabled: false, source: 'claude-code', revision: rev() });
-  service.mcpSave({ name: 'fromclaude', scope: 'user', enabled: true, source: 'claude-code', revision: rev() });
-  raw = JSON.parse(fs.readFileSync(file, 'utf8'));
-  expect(raw.disabledServers).toBeUndefined();
-  expect(service.snapshot().mcp.find(r => r.name === 'fromclaude')!.enabled).toBe(true);
-  // 导入服务不接受编辑/移除路径；revision 过期照旧拒绝
-  expect(() => service.mcpSave({ name: 'fromclaude', scope: 'user', enabled: false, source: 'claude-code', revision: rev(), config: '{"command":"x"}' })).toThrow('仅支持启停');
-  expect(() => service.mcpSave({ name: 'fromclaude', scope: 'user', enabled: false, source: 'claude-code', revision: 'missing' })).toThrow('配置已变化');
-});
-
-it('direct servers keep in-place disabled flag; mcpTest still reaches a disabled import', async () => {
-  const { agent, service } = setup();
-  fs.writeFileSync(path.join(agent, 'mcp.json'), JSON.stringify({ imports: ['claude-code'], mcpServers: { direct: { command: node, args: [fakeMcp] } } }));
-  const row = service.snapshot().mcp.find(r => r.name === 'direct')!;
-  service.mcpSave({ name: 'direct', scope: 'user', enabled: false, revision: row.revision });
-  expect(JSON.parse(fs.readFileSync(path.join(agent, 'mcp.json'), 'utf8')).mcpServers.direct).toMatchObject({ disabled: true });
-  // 检测连接不受停用影响（显式运行命令诊断连通性）
-  const result = await service.mcpTest(service.snapshot().mcp.find(r => r.name === 'fromclaude')!.id);
-  expect(result.tools).toContain('echo');
-});
-
-it('mcp-bridge skips overlay-disabled servers and registers the rest', async () => {
-  const { agent, service } = setup();
-  void service;
-  fs.writeFileSync(path.join(agent, 'mcp.json'), JSON.stringify({
-    imports: ['claude-code'],
-    mcpServers: { direct: { command: node, args: [fakeMcp] }, directoff: { command: node, args: [fakeMcp] } },
-    disabledServers: ['claudeoff', 'directoff'],
-  }));
-  const prevAgent = process.env.PI_CODING_AGENT_DIR, prevPerm = process.env.PI_DESKTOP_PERMISSION, prevTrust = process.env.PI_DESKTOP_TRUST_PROJECT;
-  process.env.PI_CODING_AGENT_DIR = agent;
-  process.env.PI_DESKTOP_PERMISSION = 'full';
-  process.env.PI_DESKTOP_TRUST_PROJECT = '0';
-  const tools: { label: string }[] = [];
-  const handlers: Record<string, (e?: unknown, ctx?: unknown) => void> = {};
-  const pi = { on: (ev: string, fn: (e?: unknown, ctx?: unknown) => void) => { handlers[ev] = fn; }, registerTool: (t: { label: string }) => tools.push(t) };
-  try {
-    const { default: desktopMcp } = await import('../extensions/desktop-policy/mcp-bridge.mjs');
-    await desktopMcp(pi as never);
-    const deadline = Date.now() + 8000;
-    while (tools.length < 2 && Date.now() < deadline) await new Promise(r => setTimeout(r, 100));
-    const labels = tools.map(t => t.label);
-    expect(labels.some(l => l.startsWith('direct /'))).toBe(true);
-    expect(labels.some(l => l.startsWith('fromclaude'))).toBe(true);
-    expect(labels.some(l => l.startsWith('claudeoff') || l.startsWith('directoff'))).toBe(false);
-  } finally {
-    handlers['session_shutdown']?.();
-    if (prevAgent === undefined) delete process.env.PI_CODING_AGENT_DIR; else process.env.PI_CODING_AGENT_DIR = prevAgent;
-    if (prevPerm === undefined) delete process.env.PI_DESKTOP_PERMISSION; else process.env.PI_DESKTOP_PERMISSION = prevPerm;
-    if (prevTrust === undefined) delete process.env.PI_DESKTOP_TRUST_PROJECT; else process.env.PI_DESKTOP_TRUST_PROJECT = prevTrust;
-  }
-});
-
-describe('来源工具 enabled=false 的导入服务与相对路径归一化', () => {
-  it('enabledServers 显式启用覆盖来源工具的 enabled=false；禁用互斥维护', () => {
+  it('toggles write per-entry enabled flags; materialized imports accept edit and remove', () => {
     const { agent, service } = setup();
     const file = path.join(agent, 'mcp.json');
     fs.writeFileSync(file, JSON.stringify({ imports: ['claude-code'], mcpServers: {} }));
-    // 来源 enabled=false：快照禁用
-    expect(service.snapshot().mcp.find(r => r.name === 'sourceoff')!.enabled).toBe(false);
-    // 启用：写入 enabledServers 覆盖层，快照变启用，原工具文件不动
     const rev = () => service.snapshot().mcpRevisions.user;
-    service.mcpSave({ name: 'sourceoff', scope: 'user', enabled: true, source: 'claude-code', revision: rev() });
-    const raw = JSON.parse(fs.readFileSync(file, 'utf8'));
-    expect(raw.enabledServers).toEqual(['sourceoff']);
-    expect(raw.disabledServers).toBeUndefined();
-    expect(service.snapshot().mcp.find(r => r.name === 'sourceoff')!.enabled).toBe(true);
-    // 再禁用：enabledServers 移除、disabledServers 接管（不会两边同时出现）
-    service.mcpSave({ name: 'sourceoff', scope: 'user', enabled: false, source: 'claude-code', revision: rev() });
-    const raw2 = JSON.parse(fs.readFileSync(file, 'utf8'));
-    expect(raw2.enabledServers).toBeUndefined();
-    expect(raw2.disabledServers).toEqual(['sourceoff']);
-    expect(service.snapshot().mcp.find(r => r.name === 'sourceoff')!.enabled).toBe(false);
+    service.mcpSave({ name: 'fromclaude', scope: 'user', enabled: false, revision: rev() });
+    let raw = JSON.parse(fs.readFileSync(file, 'utf8'));
+    expect(raw.mcpServers.fromclaude).toMatchObject({ enabled: false });
+    expect(service.snapshot().mcp.find(r => r.name === 'fromclaude')!.enabled).toBe(false);
+    service.mcpSave({ name: 'fromclaude', scope: 'user', enabled: true, revision: rev() });
+    raw = JSON.parse(fs.readFileSync(file, 'utf8'));
+    expect(raw.mcpServers.fromclaude).toMatchObject({ enabled: true });
+    expect(service.snapshot().mcp.find(r => r.name === 'fromclaude')!.enabled).toBe(true);
+    // 物化后即普通条目：可编辑、可移除
+    service.mcpSave({ name: 'fromclaude', scope: 'user', remove: true, revision: rev() });
+    expect(JSON.parse(fs.readFileSync(file, 'utf8')).mcpServers.fromclaude).toBeUndefined();
+    // revision 过期照旧拒绝
+    expect(() => service.mcpSave({ name: 'direct', scope: 'user', enabled: false, revision: 'missing' })).toThrow();
   });
 
-  it('mcp-bridge registers a source-disabled import forced on by enabledServers', async () => {
-    const { agent } = setup();
-    fs.writeFileSync(path.join(agent, 'mcp.json'), JSON.stringify({
-      imports: ['claude-code'],
-      mcpServers: {},
-      enabledServers: ['sourceoff'],
-      disabledServers: ['claudeoff'],
-    }));
-    const prevAgent = process.env.PI_CODING_AGENT_DIR, prevPerm = process.env.PI_DESKTOP_PERMISSION, prevTrust = process.env.PI_DESKTOP_TRUST_PROJECT;
+  it('mcpTest reaches materialized import entries', async () => {
+    const { agent, service } = setup();
+    fs.writeFileSync(path.join(agent, 'mcp.json'), JSON.stringify({ imports: ['claude-code'], mcpServers: { direct: { command: node, args: [fakeMcp] } } }));
+    const row = service.snapshot().mcp.find(r => r.name === 'fromclaude')!;
+    const result = await service.mcpTest(row.id);
+    expect(result.tools).toContain('echo');
+  });
+});
+
+describe('mcp-bridge 版本门', () => {
+  it('hasNativeMcp bounds mirror piHasNativeMcp semantics', async () => {
+    const { hasNativeMcp } = await import('../extensions/desktop-policy/mcp-bridge.mjs');
+    expect(hasNativeMcp('0.99.0')).toBe(true);
+    expect(hasNativeMcp('0.99.1')).toBe(true);
+    expect(hasNativeMcp('1.0.0')).toBe(true);
+    expect(hasNativeMcp('0.98.9')).toBe(false);
+    expect(hasNativeMcp('0.87.0')).toBe(false);
+    expect(hasNativeMcp('')).toBe(false);
+    expect(hasNativeMcp(undefined)).toBe(false);
+    // 与主进程判定一致
+    expect(hasNativeMcp('0.99.1')).toBe(piHasNativeMcp('0.99.1'));
+    expect(hasNativeMcp('0.87.0')).toBe(piHasNativeMcp('0.87.0'));
+  });
+
+  async function loadBridge(agent: string, piVersion?: string) {
+    const prevAgent = process.env.PI_CODING_AGENT_DIR, prevPerm = process.env.PI_DESKTOP_PERMISSION, prevTrust = process.env.PI_DESKTOP_TRUST_PROJECT, prevVer = process.env.PI_DESKTOP_PI_VERSION;
     process.env.PI_CODING_AGENT_DIR = agent;
     process.env.PI_DESKTOP_PERMISSION = 'full';
     process.env.PI_DESKTOP_TRUST_PROJECT = '0';
+    if (piVersion === undefined) delete process.env.PI_DESKTOP_PI_VERSION; else process.env.PI_DESKTOP_PI_VERSION = piVersion;
     const tools: { label: string }[] = [];
     const handlers: Record<string, (e?: unknown, ctx?: unknown) => void> = {};
     const pi = { on: (ev: string, fn: (e?: unknown, ctx?: unknown) => void) => { handlers[ev] = fn; }, registerTool: (t: { label: string }) => tools.push(t) };
-    try {
-      const { default: desktopMcp } = await import('../extensions/desktop-policy/mcp-bridge.mjs');
-      await desktopMcp(pi as never);
-      const deadline = Date.now() + 8000;
-      while (tools.length < 1 && Date.now() < deadline) await new Promise(r => setTimeout(r, 100));
-      expect(tools.some(t => t.label.startsWith('sourceoff'))).toBe(true);
-      expect(tools.some(t => t.label.startsWith('claudeoff'))).toBe(false);
-    } finally {
+    const cleanup = () => {
       handlers['session_shutdown']?.();
       if (prevAgent === undefined) delete process.env.PI_CODING_AGENT_DIR; else process.env.PI_CODING_AGENT_DIR = prevAgent;
       if (prevPerm === undefined) delete process.env.PI_DESKTOP_PERMISSION; else process.env.PI_DESKTOP_PERMISSION = prevPerm;
       if (prevTrust === undefined) delete process.env.PI_DESKTOP_TRUST_PROJECT; else process.env.PI_DESKTOP_TRUST_PROJECT = prevTrust;
-    }
+      if (prevVer === undefined) delete process.env.PI_DESKTOP_PI_VERSION; else process.env.PI_DESKTOP_PI_VERSION = prevVer;
+    };
+    return { pi, tools, cleanup };
+  }
+
+  it('registers servers honoring per-entry enabled flags on legacy pi (<0.99)', async () => {
+    const { agent } = setup();
+    fs.writeFileSync(path.join(agent, 'mcp.json'), JSON.stringify({
+      mcpServers: {
+        direct: { command: node, args: [fakeMcp] },
+        directoff: { command: node, args: [fakeMcp], enabled: false },
+        fromclaude: { command: node, args: [fakeMcp] },
+        claudeoff: { command: node, args: [fakeMcp], enabled: false },
+      },
+    }));
+    const { pi, tools, cleanup } = await loadBridge(agent, '0.87.0');
+    try {
+      const { default: desktopMcp } = await import('../extensions/desktop-policy/mcp-bridge.mjs');
+      await desktopMcp(pi as never);
+      const deadline = Date.now() + 8000;
+      while (tools.length < 2 && Date.now() < deadline) await new Promise(r => setTimeout(r, 100));
+      const labels = tools.map(t => t.label);
+      expect(labels.some(l => l.startsWith('direct /'))).toBe(true);
+      expect(labels.some(l => l.startsWith('fromclaude /'))).toBe(true);
+      expect(labels.some(l => l.startsWith('directoff') || l.startsWith('claudeoff'))).toBe(false);
+    } finally { cleanup(); }
+  });
+
+  it('stands down entirely on pi ≥0.99 (native builtin:mcp owns connections)', async () => {
+    const { agent } = setup();
+    fs.writeFileSync(path.join(agent, 'mcp.json'), JSON.stringify({
+      mcpServers: { direct: { command: node, args: [fakeMcp] } },
+    }));
+    const { pi, tools, cleanup } = await loadBridge(agent, '0.99.1');
+    try {
+      const { default: desktopMcp } = await import('../extensions/desktop-policy/mcp-bridge.mjs');
+      await desktopMcp(pi as never);
+      await new Promise(r => setTimeout(r, 600));
+      expect(tools).toEqual([]);
+    } finally { cleanup(); }
   });
 
   it('normalizeServerPaths resolves relative command/cwd against the source config directory', async () => {

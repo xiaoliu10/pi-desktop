@@ -92,36 +92,22 @@ export function executionTurns(messages: ChatMessage[]): ChatTurn[] {
         existing.tool = toolName;
       }
     }
-    // 过程文本收进思考块：后面仍有工具/思考的文本都是过程叙述（路由把推理以普通
-    // 文本泄漏时也一样），归并进最近的前置思考块（无则新建）；只有最后一个 steps
-    // 之后的文本才是结论，保持直接可见。
+    // 过程文本保持时间线原位（ZCode 同款）：最后一个工具/思考之前的文本是过程叙述，
+    // 留在执行组内以段落（pi-execution__commentary）渲染；之后的文本才是结论，直接可见。
+    // （曾把过程文本折进思考块——流式时文字还会从答案位跳进思考行；用户要求像 ZCode 一样显示过程叙述）
     let lastStepsIndex = -1;
     for (let i = flattened.length - 1; i >= 0; i -= 1) {
       const k = flattened[i]!.kind;
       if (k === 'tool' || k === 'thinking') { lastStepsIndex = i; break; }
     }
-    const folded: MessagePart[] = [];
-    flattened.forEach((part, index) => {
-      if (part.kind === 'text' && index < lastStepsIndex) {
-        let at = -1;
-        for (let i = folded.length - 1; i >= 0; i -= 1) { if (folded[i]!.kind === 'thinking') { at = i; break; } }
-        if (at >= 0) {
-          const prev = folded[at]! as Extract<MessagePart, { kind: 'thinking' }>;
-          folded[at] = { ...prev, text: prev.text ? `${prev.text}\n\n${part.text}` : part.text };
-        } else {
-          folded.push({ kind: 'thinking', id: `${part.id}-process`, text: part.text });
-        }
-        return;
-      }
-      folded.push(part);
-    });
     const segments: ChatSegment[] = [];
-    for (const part of folded) {
-      const kind: ChatSegment['kind'] = part.kind === 'tool' || part.kind === 'thinking' ? 'steps' : 'text';
+    flattened.forEach((part, index) => {
+      // 只有过程「文本」进组内段落；error/notice/image 保持独立 text 段（重试隐藏、结论位逻辑都依赖）。
+      const kind: ChatSegment['kind'] = part.kind === 'tool' || part.kind === 'thinking' || (part.kind === 'text' && index < lastStepsIndex) ? 'steps' : 'text';
       const currentSeg = segments[segments.length - 1];
       if (currentSeg && currentSeg.kind === kind) currentSeg.parts.push(part);
       else segments.push({ kind, parts: [part] });
-    }
+    });
     turn.segments = segments;
     turn.steps = segments.flatMap((s) => (s.kind === 'steps' ? s.parts : []));
     turn.answer = segments.flatMap((s) => (s.kind === 'text' ? s.parts : []));

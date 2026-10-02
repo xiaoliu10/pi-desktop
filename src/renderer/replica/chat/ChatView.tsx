@@ -22,6 +22,7 @@ import type {
   PiImage,
   ComposerProps,
   DemoFileDiff,
+  ImageGenCardData,
   MessagePart,
   ModelGroup,
   ToolPart,
@@ -32,6 +33,9 @@ import {
   applyMenuSelection,
   filterCommands,
   filterFiles,
+  filterModelGroups,
+  groupImageModels,
+  MODEL_MENU_LIMIT,
   parseMenuState,
 } from './helpers';
 import './chat.css';
@@ -79,8 +83,10 @@ export function ToolCard({ part, labels, onOpenToolFile, live }: { part: ToolPar
   const fileName = file.split('/').pop() || file;
   const directory = file.slice(0, -fileName.length);
   const command = typeof args.command === 'string' ? args.command : undefined;
-  const icon = ['bash','run_command'].includes(part.tool) ? 'terminal' : ['grep','find','ls'].includes(part.tool) ? 'search' : ['edit','write'].includes(part.tool) ? 'pencil' : part.tool === 'read' ? 'book' : 'plug';
-  const toolLabel = zh ? ({ read: '读取', bash: '终端', run_command: '终端', edit: '编辑', write: '写入', grep: '查阅', find: '查阅', ls: '查阅' } as Record<string, string>)[part.tool] : undefined;
+  // pi ≥0.99 原生 MCP 工具名 `mcp__<server>__<tool>`：显示为「server / tool」并配插头图标。
+  const mcpName = part.tool.startsWith('mcp__') ? part.tool.split('__').slice(1).filter(Boolean) : null;
+  const icon = mcpName ? 'plug' as const : ['bash','run_command'].includes(part.tool) ? 'terminal' : ['grep','find','ls'].includes(part.tool) ? 'search' : ['edit','write'].includes(part.tool) ? 'pencil' : part.tool === 'read' ? 'book' : 'plug';
+  const toolLabel = mcpName ? mcpName.join(' / ') : zh ? ({ read: '读取', bash: '终端', run_command: '终端', edit: '编辑', write: '写入', grep: '查阅', find: '查阅', ls: '查阅' } as Record<string, string>)[part.tool] : undefined;
   const statusLabel = part.phase === 'call' ? (part.status === 'running' ? (zh ? '等待执行结果' : 'Awaiting result') : (zh ? '未记录结果' : 'No saved result')) : part.status === 'running' ? labels.toolRunning : part.status === 'error' ? labels.toolError : labels.toolDone;
   // 摘要行上的行数统计：write 用 content 行数（+N），edit 用 edits[] 的 old/new 行数（+N/−M）。
   let additions = 0, deletions = 0;
@@ -187,6 +193,46 @@ function MessageImage({ part, labels, onDownload }: { part: Extract<MessagePart,
       document.body,
     )}
   </>;
+}
+
+/** 直连生图结果卡片：图片网格 + 说明行，点击进灯箱（复用附件图片的灯箱/下载）。 */
+function ImageGenCardView({ card, labels, onDownload }: { card: ImageGenCardData; labels: ChatViewProps['labels']; onDownload?: ChatViewProps['onDownloadImage'] }) {
+  const zh = labels.you === '你';
+  const [openIdx, setOpenIdx] = useState<number | null>(null);
+  const close = () => setOpenIdx(null);
+  useEffect(() => {
+    if (openIdx === null) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') close(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [openIdx]);
+  useEffect(() => onCloseTransientPopovers(close), []);
+  const stamp = new Date(card.at).toISOString().slice(0, 19).replace(/[-:T]/g, '');
+  const dataUrl = (i: number) => `data:${card.images[i].mime};base64,${card.images[i].data}`;
+  const fileName = (i: number) => `pi-gen-${stamp}-${i + 1}.${card.images[i].mime === 'image/jpeg' ? 'jpg' : card.images[i].mime.slice('image/'.length)}`;
+  const caption = `${zh ? '生成的图像' : 'Generated image'} · ${card.model} · ${card.prompt}`;
+  return (
+    <div className="pi-imagegen">
+      <div className="pi-imagegen__images">
+        {card.images.map((img, i) => (
+          <button key={i} type="button" className="pi-msg__imagebtn" title={zh ? '点击放大' : 'Click to enlarge'} onClick={() => setOpenIdx(i)}>
+            <img className="pi-msg__image" src={dataUrl(i)} alt={card.prompt.slice(0, 80) || caption} loading="lazy" />
+          </button>
+        ))}
+      </div>
+      <div className="pi-imagegen__caption" title={caption}>{caption}</div>
+      {openIdx !== null && createPortal(
+        <div className="pi-lightbox" role="dialog" aria-modal="true" aria-label={zh ? '生成的图像' : 'Generated image'} onClick={close}>
+          <div className="pi-lightbox__bar" onClick={e => e.stopPropagation()}>
+            {onDownload && <button type="button" className="pi-lightbox__btn" title={labels.downloadImage} aria-label={labels.downloadImage} onClick={() => onDownload(dataUrl(openIdx), fileName(openIdx))}><Icon name="download-cloud" size={22} /></button>}
+            <button type="button" className="pi-lightbox__btn" title={labels.close} aria-label={labels.close} onClick={close}><Icon name="x" size={22} /></button>
+          </div>
+          <img className="pi-lightbox__img" src={dataUrl(openIdx)} alt={caption} onClick={e => e.stopPropagation()} />
+        </div>,
+        document.body,
+      )}
+    </div>
+  );
 }
 
 /** 用户消息结构（参考 ZCode）：图片先独立展示在上，文字再进气泡放在下方。 */
@@ -742,6 +788,7 @@ export const ChatView = memo(function ChatView(props: ChatViewProps) {
             const hasProcess = !props.sendingText && lastTurn?.role === 'assistant' && lastTurn.steps.length > 0;
             return hasProcess || props.compacting ? working : <WaitingProcess zh={zh} onRefresh={props.onRefreshProcess}>{working}</WaitingProcess>;
           })()}
+          {(props.imageCards ?? []).map(card => <ImageGenCardView key={card.id} card={card} labels={props.labels} onDownload={props.onDownloadImage} />)}
         </div>
       </div>
       {showJump && (
@@ -889,25 +936,58 @@ export function Composer(props: ComposerProps) {
     return () => document.removeEventListener('mousedown', onDown);
   }, [menu]);
 
+  const [imageBusy, setImageBusy] = useState(false);
   const submit = () => {
     flushDraft();
     const value = text.trim();
-    if ((!value && !props.hasAttachments) || props.preparing) return;
+    if ((!value && !props.hasAttachments) || props.preparing || imageBusy) return;
     historyIndexRef.current = null;
+    setMenu(null);
+    // 生图模式：发送 = 一次直连生图请求；失败文本保留（错误已由父层 notify），成功清空。
+    if (props.imageTarget && props.onImageGenerate) {
+      setImageBusy(true);
+      props.onImageGenerate(value)
+        .then(() => { setText(''); if (taRef.current) taRef.current.style.height = 'auto'; })
+        .catch(() => { /* 保留输入 */ })
+        .finally(() => setImageBusy(false));
+      return;
+    }
     setText('');
     props.onSend(value);
-    setMenu(null);
     if (taRef.current) taRef.current.style.height = 'auto';
   };
 
-  // Keyboard navigation for the model / reasoning popover.
-  const modelItems = props.modelGroups.flatMap((g) => g.models);
+  // Keyboard navigation for the model / reasoning popover. The model list is
+  // truncated per provider (MODEL_MENU_LIMIT) and searchable by name/id —
+  // modelItems reflects what is actually on screen. 生图模型以独立区块接在
+  // 聊天模型之后，键盘导航合并计数。
+  const [modelQuery, setModelQuery] = useState('');
+  const visibleGroups = useMemo(() => filterModelGroups(props.modelGroups, menu === 'model' ? modelQuery : ''), [props.modelGroups, modelQuery, menu]);
+  const modelItems = useMemo(() => visibleGroups.flatMap((g) => g.models), [visibleGroups]);
+  const imageGroups = useMemo(() => groupImageModels(props.imageModels ?? []), [props.imageModels]);
+  const visibleImageGroups = useMemo(() => filterModelGroups(imageGroups, menu === 'model' ? modelQuery : ''), [imageGroups, modelQuery, menu]);
+  const imageItems = useMemo(() => visibleImageGroups.flatMap((g) => g.models), [visibleImageGroups]);
+  const activeImage = useMemo(() => (props.imageModels ?? []).find((m) => m.key === props.imageTarget), [props.imageModels, props.imageTarget]);
   const reasonItems = ['off', 'low', 'medium', 'high'] as const;
   const openMenu = (kind: OpenMenu) => {
     setMenu(kind);
     if (kind === 'model') {
-      const idx = modelItems.findIndex((m) => m.id === props.modelId);
-      setMenuIndex(idx >= 0 ? idx : 0);
+      setModelQuery('');
+      if (activeImage) {
+        // 目标在截断前的组内位置 → 映射回截断后的可见行（组内最多展示前 LIMIT 个）。
+        const flat = groupImageModels(props.imageModels ?? []);
+        let before = 0;
+        let idx = 0;
+        for (const g of flat) {
+          const gi = g.models.findIndex((m) => m.id === props.imageTarget);
+          if (gi >= 0) { idx = before + Math.min(gi, MODEL_MENU_LIMIT - 1); break; }
+          before += Math.min(g.models.length, MODEL_MENU_LIMIT);
+        }
+        setMenuIndex(modelItems.length + idx);
+      } else {
+        const all = props.modelGroups.flatMap((g) => g.models);
+        setMenuIndex(Math.max(0, all.findIndex((m) => m.id === props.modelId) % Math.max(1, MODEL_MENU_LIMIT)));
+      }
     } else if (kind === 'reasoning') {
       const idx = reasonItems.indexOf(props.reasoning);
       setMenuIndex(idx >= 0 ? idx : 0);
@@ -916,8 +996,20 @@ export function Composer(props: ComposerProps) {
   useEffect(() => {
     if (menu) menuRef.current?.focus();
   }, [menu]);
+  // 高亮项跟随滚动（长列表键盘导航时保持可见）。
+  useEffect(() => {
+    menuRef.current?.querySelector<HTMLElement>(`[data-menu-idx="${menuIndex}"]`)?.scrollIntoView({ block: 'nearest' });
+  }, [menuIndex, modelQuery, menu]);
   const onMenuKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
-    const count = menu === 'model' ? modelItems.length : menu === 'reasoning' ? reasonItems.length : 0;
+    const inInput = e.target instanceof HTMLInputElement;
+    if (menu === 'model' && inInput && e.key === ' ') return; // 输入框里的空格是打字
+    const count = menu === 'model' ? modelItems.length + imageItems.length : menu === 'reasoning' ? reasonItems.length : 0;
+    if (e.key === 'Escape' && menu === 'model' && inInput && modelQuery) {
+      e.preventDefault();
+      setModelQuery('');
+      setMenuIndex(0);
+      return;
+    }
     if (!count) return;
     if (e.key === 'ArrowDown') {
       e.preventDefault();
@@ -925,11 +1017,16 @@ export function Composer(props: ComposerProps) {
     } else if (e.key === 'ArrowUp') {
       e.preventDefault();
       setMenuIndex((i) => (i - 1 + count) % count);
-    } else if (e.key === 'Enter' || e.key === ' ') {
+    } else if (e.key === 'Enter' || (e.key === ' ' && !inInput)) {
       e.preventDefault();
       if (menu === 'model') {
-        const m = modelItems[menuIndex];
-        if (m) { props.onPickModel(m.id); setMenu(null); }
+        if (menuIndex < modelItems.length) {
+          const m = modelItems[menuIndex];
+          if (m) { props.onPickModel(m.id); setMenu(null); }
+        } else {
+          const m = imageItems[menuIndex - modelItems.length];
+          if (m) { props.onPickImageModel?.(props.imageTarget === m.id ? null : m.id); setMenu(null); }
+        }
       } else if (menu === 'reasoning') {
         const lv = reasonItems[menuIndex];
         props.onPickReasoning(lv);
@@ -1066,13 +1163,25 @@ export function Composer(props: ComposerProps) {
           </button>
           {menu === 'model' && (
             <>
-              {props.modelGroups.map((g: ModelGroup) => (
+              <input
+                className="pi-composer__menuinput"
+                value={modelQuery}
+                placeholder="按名称或 ID 筛选模型…"
+                aria-label="筛选模型"
+                spellCheck={false}
+                autoFocus
+                onChange={(e) => { setModelQuery(e.target.value); setMenuIndex(0); }}
+              />
+              {visibleGroups.map((g) => (
                 <div key={g.provider}>
-                  <div className="pi-composer__menugroup">{g.provider}</div>
-                  {g.models.map((m) => (
+                  <div className="pi-composer__menugroup">{g.provider}{g.total > g.models.length ? ` · ${g.models.length}/${g.total}` : ''}</div>
+                  {g.models.map((m) => {
+                    const flatIdx = modelItems.findIndex((x) => x.id === m.id);
+                    return (
                     <button
                       key={m.id}
-                      className={`pi-composer__menurow pi-composer__menurow--sub ${m.id === props.modelId ? 'pi-composer__menurow--on' : ''} ${modelItems.findIndex((x) => x.id === m.id) === menuIndex ? 'pi-composer__menurow--active' : ''}`}
+                      data-menu-idx={flatIdx}
+                      className={`pi-composer__menurow pi-composer__menurow--sub ${m.id === props.modelId ? 'pi-composer__menurow--on' : ''} ${flatIdx === menuIndex ? 'pi-composer__menurow--active' : ''}`}
                       role="menuitemradio"
                       aria-checked={m.id === props.modelId}
                       onClick={() => {
@@ -1084,9 +1193,44 @@ export function Composer(props: ComposerProps) {
                       <span className="pi-composer__menuvalue">{m.detail}</span>
                       {m.id === props.modelId && <Icon name="check" size={13} />}
                     </button>
-                  ))}
+                    );
+                  })}
+                  {g.truncated > 0 && <div className="pi-composer__menuhint">还有 {g.truncated} 个模型，输入名称筛选</div>}
                 </div>
               ))}
+              {(props.imageModels?.length ?? 0) > 0 && (
+                <div>
+                  <div className="pi-composer__menugroup">{props.labels.imageGen ?? '图像生成'}</div>
+                  {visibleImageGroups.map((g) => (
+                    <div key={`img-${g.provider}`}>
+                      {visibleImageGroups.length > 1 && <div className="pi-composer__menugroup pi-composer__menugroup--sub">{g.provider}{g.total > g.models.length ? ` · ${g.models.length}/${g.total}` : ''}</div>}
+                      {g.models.map((m) => {
+                        const flatIdx = modelItems.length + imageItems.findIndex((x) => x.id === m.id);
+                        const on = props.imageTarget === m.id;
+                        return (
+                          <button
+                            key={m.id}
+                            data-menu-idx={flatIdx}
+                            className={`pi-composer__menurow pi-composer__menurow--sub ${on ? 'pi-composer__menurow--on' : ''} ${flatIdx === menuIndex ? 'pi-composer__menurow--active' : ''}`}
+                            role="menuitemradio"
+                            aria-checked={on}
+                            onClick={() => {
+                              props.onPickImageModel?.(on ? null : m.id);
+                              setMenu(null);
+                            }}
+                          >
+                            <Icon name="image" size={14} />
+                            <span>{m.name}</span>
+                            {on && <Icon name="check" size={13} />}
+                          </button>
+                        );
+                      })}
+                      {g.truncated > 0 && <div className="pi-composer__menuhint">还有 {g.truncated} 个模型，输入名称筛选</div>}
+                    </div>
+                  ))}
+                </div>
+              )}
+              {!visibleGroups.length && !imageItems.length && <div className="pi-composer__menuhint">没有匹配「{modelQuery}」的模型</div>}
               {!props.hideReasoning && (
                 <button
                   className="pi-composer__menurow"
@@ -1186,7 +1330,11 @@ export function Composer(props: ComposerProps) {
           className="pi-composer__input"
           rows={1}
           value={text}
-          placeholder={props.sessionActive ? props.labels.placeholderSession : props.labels.placeholderHome}
+          placeholder={imageBusy
+            ? (props.labels.imageGenBusy ?? '正在生成图像…')
+            : props.imageTarget
+              ? (props.labels.placeholderImage ?? '描述想生成的图像…')
+              : props.sessionActive ? props.labels.placeholderSession : props.labels.placeholderHome}
           aria-label={props.labels.send}
           onChange={(e) => {
             historyIndexRef.current = null; // 用户手动编辑即退出历史浏览态（历史回填不触发 onChange）
@@ -1230,14 +1378,14 @@ export function Composer(props: ComposerProps) {
             {props.statusSlot}
             <button
               disabled={props.modelDisabled}
-              className={`pi-composer__pill pi-composer__pill--model ${menu === 'model' ? 'pi-composer__pill--on' : ''}`}
+              className={`pi-composer__pill pi-composer__pill--model ${menu === 'model' ? 'pi-composer__pill--on' : ''} ${activeImage ? 'pi-composer__pill--on' : ''}`}
               onClick={() => (menu === 'model' ? setMenu(null) : openMenu('model'))}
               aria-expanded={menu === 'model'}
-              title={pendingModel ? (props.labels.pendingSwitch ? `${props.labels.pendingSwitch}：${pendingModel.name}` : pendingModel.name) : (activeModel?.name ?? props.labels.model)}
+              title={activeImage?.name ?? (pendingModel ? (props.labels.pendingSwitch ? `${props.labels.pendingSwitch}：${pendingModel.name}` : pendingModel.name) : (activeModel?.name ?? props.labels.model))}
             >
-              <Icon name="bot" size={14} />
-              <span>{pendingModel ? pendingModel.name : activeModel?.name ?? props.labels.model}</span>
-              {pendingModel && <span className="pi-composer__pending">{props.labels.pendingSwitch ?? '待生效'}</span>}
+              {activeImage ? <Icon name="image" size={14} /> : <Icon name="bot" size={14} />}
+              <span>{activeImage ? `${props.labels.imageGen ?? '生图'} · ${activeImage.name}` : pendingModel ? pendingModel.name : activeModel?.name ?? props.labels.model}</span>
+              {pendingModel && !activeImage && <span className="pi-composer__pending">{props.labels.pendingSwitch ?? '待生效'}</span>}
               <Icon name="chevron-down" size={13} />
             </button>
             {!props.hideReasoning && (
@@ -1278,11 +1426,11 @@ export function Composer(props: ComposerProps) {
               <button
                 className="pi-composer__send"
                 onClick={submit}
-                disabled={(!text.trim() && !props.hasAttachments) || props.preparing}
+                disabled={(!text.trim() && !props.hasAttachments) || props.preparing || imageBusy}
                 aria-label={props.labels.send}
-                title={props.running ? (props.labels.send === '发送' ? '发送追问（运行中排队）' : 'Send follow-up (queued)') : props.labels.send}
+                title={imageBusy ? (props.labels.imageGenBusy ?? '正在生成图像…') : props.running ? (props.labels.send === '发送' ? '发送追问（运行中排队）' : 'Send follow-up (queued)') : props.labels.send}
               >
-                <Icon name="send" size={16} />
+                <Icon name={imageBusy ? 'loader' : 'send'} size={16} />
               </button>
             )}
           </div>

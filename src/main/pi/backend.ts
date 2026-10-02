@@ -138,7 +138,7 @@ export class PiBackend {
     const modeFile = path.join(this.ownedRoot, `.mode-${key}`);
     fs.mkdirSync(this.ownedRoot, { recursive: true });
     fs.writeFileSync(modeFile, input.permission, 'utf8');
-    const env: NodeJS.ProcessEnv = { ...process.env, PI_CODING_AGENT_DIR: this.env.agentDir, PI_OFFLINE: '1', PI_SKIP_VERSION_CHECK: '1', PI_DESKTOP_PERMISSION: input.permission, PI_DESKTOP_GENERATION: generation, PI_DESKTOP_MODE_FILE: modeFile, PI_DESKTOP_TRUST_PROJECT: input.trustProject ? '1' : '0' };
+    const env: NodeJS.ProcessEnv = { ...process.env, PI_CODING_AGENT_DIR: this.env.agentDir, PI_OFFLINE: '1', PI_SKIP_VERSION_CHECK: '1', PI_DESKTOP_PERMISSION: input.permission, PI_DESKTOP_GENERATION: generation, PI_DESKTOP_MODE_FILE: modeFile, PI_DESKTOP_TRUST_PROJECT: input.trustProject ? '1' : '0', PI_DESKTOP_PI_VERSION: this.env.version ?? '' };
     delete env.ELECTRON_RUN_AS_NODE;
     // GUI applications may not inherit the same PATH as a terminal.
     env.PATH = [path.dirname(this.env.executable!), '/opt/homebrew/bin', '/usr/local/bin', env.PATH || ''].join(path.delimiter);

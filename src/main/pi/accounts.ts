@@ -2,7 +2,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { createInterface } from 'node:readline';
-import type { PiAccountLogin, PiCatalogProvider } from '../../shared/pi';
+import type { PiAccountLogin, PiCatalogProvider, PiImageGenResult } from '../../shared/pi';
 import type { PlanQuota } from '../../shared/context-details';
 import { discoverPi } from './environment';
 import { ACCOUNT_WORKER } from './account-worker';
@@ -12,11 +12,11 @@ export class PiAccounts {
   private state?: PiAccountLogin;
   private quotaCache = new Map<string, { value: PlanQuota; expires: number }>();
   constructor(private agentDir:()=>string) {}
-  private spawn(operation:string,provider='') {
+  private spawn(operation:string,provider='',payload='') {
     const env=discoverPi({runtime:'bundled',agentDir:this.agentDir()});
     if(!env.executable||!env.launchArgs?.[0])throw new Error('模型目录、账号登录和套餐额度查询需要 Desktop 内置 pi 运行时，但运行时缺失或不可用。共享 pi 配置不等于已安装内置运行时。开发环境请运行 pnpm runtime:prepare；安装版请重新安装包含内置运行时且匹配架构的安装包。');
     const sdk=path.resolve(path.dirname(env.launchArgs[0]),'../core/model-runtime.js');
-    return spawn(env.executable,['-e',ACCOUNT_WORKER,sdk,env.agentDir,operation,provider],{stdio:'pipe',env:{...process.env,PI_CODING_AGENT_DIR:env.agentDir}});
+    return spawn(env.executable,['-e',ACCOUNT_WORKER,sdk,env.agentDir,operation,provider,payload],{stdio:'pipe',env:{...process.env,PI_CODING_AGENT_DIR:env.agentDir}});
   }
   /** Whitelisted plan quota; runs in the pinned private runtime, never leaks credentials. */
   quota(provider:string):Promise<PlanQuota> {
@@ -50,6 +50,42 @@ export class PiAccounts {
       child.stderr.resume();
       child.once('error',e=>{clearTimeout(timer);reject(e);});
       child.once('close',()=>{clearTimeout(timer);lines.close();result?resolve(result):reject(new Error('无法读取内置 pi 模型目录'));});
+    });
+  }
+  private static IMAGE_MIMES = new Set(['image/png','image/jpeg','image/webp','image/gif']);
+  /** Text-to-image via the bundled ModelRuntime: runtime-resolved auth, secrets stay in the worker. */
+  generate(provider:string,model:string,prompt:string):Promise<PiImageGenResult> {
+    if(!/^[a-z0-9][a-z0-9_-]*$/i.test(provider))return Promise.reject(new Error('提供商无效'));
+    if(!/^[A-Za-z0-9._:/-]{1,200}$/.test(model))return Promise.reject(new Error('模型无效'));
+    const text=prompt.trim();
+    if(!text||text.length>4000)return Promise.reject(new Error('请输入 1–4000 字的生图描述'));
+    return new Promise((resolve,reject)=>{
+      let child:ChildProcessWithoutNullStreams;
+      try{child=this.spawn('generate',provider,JSON.stringify({model,prompt:text}));}catch(e){reject(e);return;}
+      const timer=setTimeout(()=>{child.kill();reject(new Error('图像生成超时，请稍后重试'));},185000);
+      const lines=createInterface({input:child.stdout});
+      let images:{mime?:unknown;data?:unknown}[]|undefined;
+      let failure:Error|undefined;
+      lines.on('line',line=>{
+        if(line.length>40_000_000)return; // 单行护栏：超限整行丢弃，不进 JSON.parse
+        try{
+          const m=JSON.parse(line);
+          if(m.type==='images'&&Array.isArray(m.images))images=m.images;
+          else if(m.type==='error'&&typeof m.message==='string'&&m.message.length<=300)failure=new Error(m.message);
+        }catch{}
+      });
+      child.stderr.resume(); // Credentials never cross stderr.
+      child.once('error',e=>{clearTimeout(timer);failure=e instanceof Error?e:new Error(String(e));});
+      child.once('close',code=>{clearTimeout(timer);lines.close();
+        if(images){
+          const ok=images.filter((i):i is{mime:string;data:string}=>
+            !!i&&typeof i.data==='string'&&i.data.length>0&&i.data.length<16_000_000
+            &&typeof i.mime==='string'&&PiAccounts.IMAGE_MIMES.has(i.mime)).slice(0,6);
+          if(!ok.length||ok.reduce((n,i)=>n+i.data.length,0)>48_000_000){reject(new Error('生成结果超出大小限制'));return;}
+          resolve({images:ok});return;
+        }
+        reject(failure??new Error(`图像生成失败（退出码 ${code??'未知'}）`));
+      });
     });
   }
   start(provider:string):PiAccountLogin {

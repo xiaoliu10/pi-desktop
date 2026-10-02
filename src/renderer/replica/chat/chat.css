@@ -964,6 +964,28 @@
   font-size: var(--pi-font-size-sm);
 }
 
+/* 模型菜单：顶部筛选框（openrouter 级长列表的快速定位）与截断/空态提示。 */
+.pireplica .pi-composer__menuinput {
+  display: block;
+  width: calc(100% - 16px);
+  margin: 4px 8px 8px;
+  padding: 6px 10px;
+  border: 1px solid var(--pi-border);
+  border-radius: 7px;
+  background: var(--pi-bg);
+  color: var(--pi-text);
+  font-size: 13px;
+  outline: none;
+}
+
+.pireplica .pi-composer__menuinput:focus { border-color: var(--pi-text-tertiary); }
+
+.pireplica .pi-composer__menuhint {
+  padding: 6px 14px 8px;
+  color: var(--pi-text-tertiary);
+  font-size: 11.5px;
+}
+
 .pireplica .pi-composer__menugroup {
   font-size: var(--pi-font-size-xs);
   font-weight: 600;
@@ -971,6 +993,27 @@
   text-transform: uppercase;
   color: var(--pi-text-tertiary);
   padding: 8px 11px 3px;
+}
+
+/* 「图像生成」区块里的供应商子组头：比主组头弱一级，避免双层同重。 */
+.pireplica .pi-composer__menugroup--sub {
+  font-weight: 500;
+  text-transform: none;
+  letter-spacing: 0;
+  padding-top: 5px;
+}
+
+/* 直连生图结果卡片：图片网格 + 一行说明（ZCode 式极简，无卡片边框）。 */
+.pireplica .pi-imagegen { margin: 10px 0 16px; }
+.pireplica .pi-imagegen__images { display: flex; flex-wrap: wrap; gap: 8px; }
+.pireplica .pi-imagegen__caption {
+  margin-top: 5px;
+  font-size: 12px;
+  color: var(--pi-text-tertiary);
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
 }
 
 .pireplica .pi-composer__menunote {
@@ -1211,7 +1254,7 @@
 
 .pireplica .pi-execution__summary .pi-execution__elapsed { font-size: 14px; }
 .pireplica .pi-execution__summary:hover { color: var(--pi-text); }
-.pireplica .pi-execution__commentary { margin: 18px 0; }
+.pireplica .pi-execution__commentary { margin: 18px 0; font-weight: 500; color: var(--pi-text); }
 /* 过程行图标统一左对齐（对齐组头 x=0）：工具行/思考行底样式的 -10px 反补只在
    steps 内取消，子组头也不再用 padding-left 右移——三种行图标同一竖线，仅子项列表缩进。 */
 .pireplica .pi-execution__steps .pi-tool__summary { padding: 10px 0; margin-left: 0; color: var(--pi-text-secondary); }

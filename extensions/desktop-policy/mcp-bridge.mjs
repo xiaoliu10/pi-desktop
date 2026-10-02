@@ -6,8 +6,23 @@ import { resolveImports } from './mcp-imports.cjs';
 /** 单服务器连接上限：不可达的 HTTP 端点曾把 pi 的 RPC ready 拖住 10s+
  *  （扩展 init 期间 pi 不响应 get_state）。超时即按失败处理，后台继续重试。 */
 const CONNECT_TIMEOUT_MS = 5_000;
+/** pi ≥0.99 自带原生 MCP（builtin:mcp，读同一份 mcp.json）。desktop 只在旧版 CLI 上
+ *  用本桥：双连接会让模型看到两套工具、连接数翻倍。版本由 backend 经
+ *  PI_DESKTOP_PI_VERSION 注入；与 src/main/pi/environment.ts 的 piHasNativeMcp 保持一致。 */
+export function hasNativeMcp(version) {
+  if (!version) return false;
+  const pa = String(version).split('.').map(n => Number.parseInt(n, 10));
+  const pb = [0, 99, 0];
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const x = Number.isFinite(pa[i]) ? pa[i] : -1;
+    const y = Number.isFinite(pb[i]) ? pb[i] : -1;
+    if (x !== y) return x > y;
+  }
+  return true;
+}
 export default async function desktopMcp(pi) {
   if (process.env.PI_DESKTOP_PERMISSION === 'plan') return;
+  if (hasNativeMcp(process.env.PI_DESKTOP_PI_VERSION)) return;
   const clients=[]; const failures=[];
   const roots=[process.env.PI_CODING_AGENT_DIR];if(process.env.PI_DESKTOP_TRUST_PROJECT==='1')roots.push(path.join(process.cwd(),'.pi'));
   const servers=new Map(); const source=new Map(); const scopeDisabled=new Map(); const scopeEnabled=new Map();
