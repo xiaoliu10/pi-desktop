@@ -735,3 +735,170 @@
 .pi-openwith__menu button span { flex: 1; text-align: left; }
 .pi-openwith__menu img { border-radius: 4px; }
 .pi-openwith__menu button small { display: inline-flex; color: var(--pi-text); }
+
+/* ─── Bot Channel 配置对话框（ZCode 机器人配置对齐：扫码配置 + 手动配置） ─── */
+
+.pireplica .pi-chdialog {
+  position: fixed;
+  inset: 0;
+  z-index: 230;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0,0,0,.35);
+}
+
+.pireplica .pi-chdialog__card {
+  width: min(620px, calc(100vw - 48px));
+  max-height: calc(100vh - 96px);
+  overflow: auto;
+  background: var(--pi-bg-card, var(--pi-bg));
+  border: 1px solid var(--pi-border-strong, rgba(0,0,0,.14));
+  border-radius: 14px;
+  padding: 16px 20px 12px;
+  box-shadow: var(--pi-shadow-popover);
+  outline: none;
+}
+
+.pireplica .pi-chdialog__head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.pireplica .pi-chdialog__head h2 {
+  margin: 0;
+  font-size: 16px;
+  color: var(--pi-text-secondary);
+  flex: 1;
+  min-width: 0;
+}
+
+.pireplica .pi-chdialog__hint {
+  margin: 6px 0 0;
+  font-size: var(--pi-font-size-sm);
+  color: var(--pi-muted);
+}
+
+.pireplica .pi-chdialog__tabs {
+  display: flex;
+  gap: 4px;
+  margin-top: 12px;
+  padding: 3px;
+  background: var(--pi-bg-inset, rgba(0,0,0,.04));
+  border-radius: 8px;
+}
+
+.pireplica .pi-chdialog__tab {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 0;
+  background: transparent;
+  color: var(--pi-muted);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  padding: 6px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.pireplica .pi-chdialog__tab--on {
+  background: var(--pi-bg-card, #fff);
+  color: var(--pi-text);
+  box-shadow: 0 1px 3px rgba(0,0,0,.12);
+}
+
+.pireplica .pi-chdialog__body {
+  margin-top: 12px;
+  min-height: 280px;
+}
+
+.pireplica .pi-chdialog__scan {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+}
+
+.pireplica .pi-chdialog__qr {
+  width: 220px;
+  height: 220px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px dashed var(--pi-border-strong, rgba(0,0,0,.14));
+  border-radius: 12px;
+  background: var(--pi-bg);
+}
+
+.pireplica .pi-chdialog__qr img {
+  width: 204px;
+  height: 204px;
+}
+
+.pireplica .pi-chdialog__qrhint {
+  font-size: var(--pi-font-size-sm);
+  color: var(--pi-muted);
+  padding: 0 16px;
+}
+
+.pireplica .pi-chdialog__scanhint {
+  margin: 10px 0 0;
+  font-size: 13px;
+  color: var(--pi-text-secondary);
+}
+
+.pireplica .pi-chdialog__link {
+  margin: 4px 0 0;
+  font-size: 12px;
+  word-break: break-all;
+  color: var(--pi-muted);
+}
+
+.pireplica .pi-chdialog__steps {
+  margin: 12px 0 0;
+  padding: 0 0 0 18px;
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--pi-text-secondary);
+}
+
+.pireplica .pi-chdialog__scannote {
+  margin: 12px 0 0;
+  font-size: var(--pi-font-size-sm);
+  color: var(--pi-muted);
+}
+
+.pireplica .pi-chdialog__form { margin: 0; }
+
+.pireplica .pi-chdialog__foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.pireplica .pi-chdialog__note {
+  display: block;
+  margin-top: 8px;
+  font-size: var(--pi-font-size-sm);
+  color: var(--pi-muted);
+}
+
+.pireplica .pi-chdialog__link a {
+  color: var(--pi-text-secondary);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.pireplica .pi-chdialog__link a:hover {
+  color: var(--pi-text);
+}

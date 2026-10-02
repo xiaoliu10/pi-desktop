@@ -3,10 +3,11 @@
  * 左右双栏（扫码卡 | Bot 频道卡），状态胶囊 + 虚线框居中 QR + 频道列表带图标。
  */
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { ImConfig, RemoteStatus } from '../../shared/pi';
 import { usePiStore } from './adapter';
 import { CHANNEL_ICON_URLS } from './brand-icons/channel-icons';
+import { ChannelConfigDialog, type ChannelId as DialogChannelId } from './ChannelConfigDialog';
 import { Icon } from '../replica/Icons';
 
 const api = () => window.localPi;
@@ -22,9 +23,9 @@ export function RemotePane() {
   const [qrBusy, setQrBusy] = useState(false);
   const [im, setIm] = useState<ImConfig | null>(null);
   const [channel, setChannel] = useState<ChannelId>('dingtalk');
+  const [configChannel, setConfigChannel] = useState<DialogChannelId | null>(null);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
-  const formRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     void api().remoteStatus().then(setRemote).catch(() => undefined);
@@ -230,7 +231,7 @@ export function RemotePane() {
                     if (!c.available) return;
                     setChannel(c.id);
                     if (im && im.provider !== c.id) void saveIm({ provider: c.id as ImConfig['provider'] });
-                    formRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                    setConfigChannel(c.id);
                   }}
                   disabled={!c.available}
                 >
@@ -250,65 +251,19 @@ export function RemotePane() {
         </section>
       </div>
 
-      {/* 表单区 */}
-      {im && (channel === 'dingtalk' || channel === 'feishu' || channel === 'telegram') && (
-        <div ref={formRef} className="pi-providerform pi-remote__form">
-          {channel !== 'telegram' && (
-            <>
-              <label>
-                <span>Webhook</span>
-                <input className="pi-mono" value={im.webhook} placeholder={channel === 'dingtalk' ? 'https://oapi.dingtalk.com/robot/send?access_token=…' : 'https://open.feishu.cn/open-apis/bot/v2/hook/…'} onChange={(e) => setIm({ ...im, webhook: e.target.value })} onBlur={(e) => void saveIm({ webhook: e.target.value, provider: channel })} />
-              </label>
-              <label>
-                <span>{zh ? '加签密钥（可选）' : 'Sign secret (optional)'}</span>
-                <input className="pi-mono" value={im.secret ?? ''} onChange={(e) => setIm({ ...im, secret: e.target.value })} onBlur={(e) => void saveIm({ secret: e.target.value })} />
-              </label>
-            </>
-          )}
-          {channel === 'telegram' ? (
-            <label>
-              <span>Bot Token</span>
-              <input className="pi-mono" value={im.botToken ?? ''} placeholder="123456:ABC-DEF…" onChange={(e) => setIm({ ...im, botToken: e.target.value })} onBlur={(e) => void saveIm({ botToken: e.target.value, provider: channel })} />
-            </label>
-          ) : (
-            <>
-              <label>
-                <span>{channel === 'dingtalk' ? 'AppKey' : 'App ID'}{zh ? '（双向对话）' : ' (two-way chat)'}</span>
-                <input className="pi-mono" value={im.appKey ?? ''} onChange={(e) => setIm({ ...im, appKey: e.target.value })} onBlur={(e) => void saveIm({ appKey: e.target.value, provider: channel })} />
-              </label>
-              <label>
-                <span>{channel === 'dingtalk' ? 'App Secret' : 'App Secret'}</span>
-                <input className="pi-mono" type="password" value={im.appSecret ?? ''} onChange={(e) => setIm({ ...im, appSecret: e.target.value })} onBlur={(e) => void saveIm({ appSecret: e.target.value })} />
-              </label>
-              <label className="pi-providerform__check">
-                <input type="checkbox" checked={Boolean(im.twoWay)} onChange={(e) => void saveIm({ twoWay: e.target.checked })} />
-                <span>{zh ? '开启双向对话（出站长连接，无需公网服务器）' : 'Enable two-way chat (outbound long connection)'}</span>
-              </label>
-            </>
-          )}
-          <label className="pi-providerform__check">
-            <input type="checkbox" checked={im.notifyCompleted} onChange={(e) => void saveIm({ notifyCompleted: e.target.checked })} />
-            <span>{zh ? '任务完成时通知' : 'Notify on completion'}</span>
-          </label>
-          <label className="pi-providerform__check">
-            <input type="checkbox" checked={im.notifyError} onChange={(e) => void saveIm({ notifyError: e.target.checked })} />
-            <span>{zh ? '任务出错时通知' : 'Notify on errors'}</span>
-          </label>
-          <label className="pi-providerform__check">
-            <input type="checkbox" checked={im.notifyAttention} onChange={(e) => void saveIm({ notifyAttention: e.target.checked })} />
-            <span>{zh ? '等待确认时通知' : 'Notify when awaiting confirmation'}</span>
-          </label>
-          <div className="pi-remote__formbtns">
-            <button className="pi-btn pi-btn--primary" disabled={busy} onClick={() => { void saveIm({ provider: channel }); void api().imTest().then(() => say(zh ? '测试消息已发送，请到群里查看' : 'Test sent')).catch((e) => say(String((e as Error).message || e))); }}>
-              {zh ? '发送测试消息' : 'Send test message'}
-            </button>
-          </div>
-          <em className="pi-providerform__hint">
-            {zh
-              ? '双向对话命令：/帮助 /状态 /新建 /项目 /模型 /模式 /思考 /bind；直接发文字即下达任务指令。工具确认仍会在桌面端弹出。'
-              : 'Two-way commands: /help /status /new /workspace /model /mode /thinking /bind; plain text goes to the task.'}
-          </em>
-        </div>
+      {configChannel && im && (
+        <ChannelConfigDialog
+          channel={configChannel}
+          name={(channels.find(c => c.id === configChannel)?.name) ?? configChannel}
+          hint={(channels.find(c => c.id === configChannel)?.hint) ?? ''}
+          zh={zh}
+          im={im}
+          busy={busy}
+          onClose={() => setConfigChannel(null)}
+          onSave={saveIm}
+          onImChange={setIm}
+          onTest={() => { void api().imTest().then(() => say(zh ? '测试消息已发送，请到群里查看' : 'Test sent')).catch((e) => say(String((e as Error).message || e))); }}
+        />
       )}
       {msg && <div className="pi-banner" role="status" style={{ position: 'static', marginTop: 10 }}>{msg}</div>}
     </section>
