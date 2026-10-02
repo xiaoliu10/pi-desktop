@@ -616,26 +616,26 @@
 /* ask_user_question 卡：ZCode ElicitationDialog 复刻（一次一题+翻页器、无边框选项行、键盘导航）。 */
 .pi-eli { display: flex; flex-direction: column; gap: 12px; outline: none; }
 .pi-eli__empty { margin: 0; padding: 4px; font-size: 13px; color: var(--pi-muted); }
-.pi-eli__head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.pi-eli__head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 0 12px; /* 与选项行的水平 padding 对齐：标题/标签与序号列同一起点 */ }
 .pi-eli__title { min-width: 0; flex: 1; display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
 .pi-eli__chip { flex-shrink: 0; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 2px 8px; border: 1px solid var(--pi-border); border-radius: 6px; font-size: 13px; font-weight: 500; color: var(--pi-text-secondary); }
 .pi-eli__question { min-width: 0; flex: 1; font-size: 14px; font-weight: 600; color: var(--pi-text); line-height: 1.5; overflow-wrap: anywhere; white-space: pre-wrap; }
 .pi-eli__pager { flex-shrink: 0; display: flex; align-items: center; gap: 2px; font-size: 13px; font-weight: 500; color: var(--pi-muted); }
-.pi-eli__pagebtn { border: 0; background: transparent; color: var(--pi-text-secondary); cursor: pointer; padding: 2px 6px; border-radius: 6px; font-size: 14px; line-height: 1; }
-.pi-eli__pagebtn:hover:not(:disabled) { background: var(--pi-bg-hover, rgba(0,0,0,.04)); color: var(--pi-text); }
+.pireplica .pi-eli__pagebtn { border: 0; background: transparent; color: var(--pi-text-secondary); cursor: pointer; padding: 2px 6px; border-radius: 6px; font-size: 14px; line-height: 1; }
+.pireplica .pi-eli__pagebtn:hover:not(:disabled) { background: var(--pi-bg-hover, rgba(0,0,0,.04)); color: var(--pi-text); }
 .pi-eli__pagebtn:disabled { opacity: 0.35; cursor: default; }
 .pi-eli__pager-count { min-width: 36px; text-align: center; }
 .pi-eli__options { display: flex; flex-direction: column; gap: 4px; }
-.pi-eli__opt { display: flex; align-items: flex-start; gap: 12px; width: 100%; border: 0; border-radius: 12px; padding: 8px 12px; text-align: left; background: transparent; cursor: pointer; transition: background-color .12s; }
-.pi-eli__opt:hover { background: var(--pi-bg-hover, rgba(0,0,0,.04)); }
+.pireplica .pi-eli__opt { display: flex; align-items: flex-start; gap: 12px; width: 100%; border: 0; border-radius: 8px; padding: 8px 12px; text-align: left; background: transparent; cursor: pointer; transition: background-color .12s; }
+.pireplica .pi-eli__opt:hover { background: var(--pi-bg-hover, rgba(0,0,0,.04)); }
 /* 键盘高亮（↑↓/Tab 活动项）：之前只有 4% 透明度悬停灰，浅色主题下不可感知，
    用户体感“键盘上下翻没反应”。活动项 = 选中底色 + 主色描边 + 序号加粗主色。 */
-.pi-eli__opt--active { background: var(--pi-bg-selected, rgba(0,0,0,.06)); outline: 1.5px solid var(--pi-accent, #1d1d1f); outline-offset: -1.5px; }
+.pireplica .pi-eli__opt--active { background: var(--pi-bg-selected, rgba(0,0,0,.06)); outline: 1.5px solid var(--pi-outline, rgba(0,0,0,.4)); outline-offset: -1.5px; }
 .pi-eli__opt--active .pi-eli__num { color: var(--pi-text); font-weight: 700; }
 /* 选中态（单击勾选 / 审批键盘位）：只有 6% 灰底和悬停无法区分，用户"点了没反应"——
    选中 = 主色描边 + 加粗序号，与键盘活动项同级可见；活动项描边表示"当前在哪"，
    选中描边表示"已选什么"，多选时二者并存（已选行保持描边，活动环移动）。 */
-.pi-eli__opt--on { background: var(--pi-bg-selected, rgba(0,0,0,.06)); outline: 1.5px solid var(--pi-accent, #1d1d1f); outline-offset: -1.5px; }
+.pireplica .pi-eli__opt--on { background: var(--pi-bg-selected, rgba(0,0,0,.06)); outline: 1.5px solid var(--pi-outline, rgba(0,0,0,.4)); outline-offset: -1.5px; }
 .pi-eli__opt--custom { cursor: text; }
 .pi-eli__num { flex-shrink: 0; width: 20px; font-size: 13px; font-weight: 500; color: var(--pi-muted); }
 .pi-eli__opt--on .pi-eli__num { color: var(--pi-text); font-weight: 700; }
@@ -658,7 +658,7 @@
 .pireplica .pi-ask-inline {
   margin: 0 24px 10px;
   min-width: 0; /* flex item：窄窗口下不被底部操作条的 nowrap 文本撑宽，提示语省略号收缩 */
-  border: 1px solid var(--pi-accent, #3b82f6);
+  border: 1px solid var(--pi-border-strong, rgba(0, 0, 0, 0.14)); /* 灰色描边：主色近黑过重（用户反馈） */
   border-radius: var(--pi-radius-lg, 14px);
   background: var(--pi-bg-card, var(--pi-bg));
   padding: 14px 18px 10px;
