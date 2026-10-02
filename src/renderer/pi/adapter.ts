@@ -210,14 +210,27 @@ export function historyToMessages(branch: PiEntry[]): ChatMessage[] {
       return;
     }
     if (['compaction', 'branch_summary'].includes(entry.type)) {
+      // Desktop 留痕（desktop-policy 扩展写入的 desktop-compaction）紧随其后时抑制 pi 原生
+      // 占位行：一条压缩只显示一条记录，留痕行信息更全（用时/压缩前后 tokens）。
+      const next = branch[index + 1] as { customType?: string } | undefined;
+      if (entry.type === 'compaction' && next?.customType === 'desktop-compaction') return;
+      const before = entry.type === 'compaction' ? fmtTokens((entry as { tokensBefore?: number }).tokensBefore) : '';
       push(entry, id, () => ({
         id,
         role: 'assistant',
-        parts: [{ kind: 'notice', id: `${id}-n`, text: entry.type === 'compaction' ? '上下文压缩记录' : '分支摘要' }],
+        parts: [{ kind: 'notice', id: `${id}-n`, text: entry.type === 'compaction' ? (before ? `上下文压缩记录 · 压缩前 ${before} tokens` : '上下文压缩记录') : '分支摘要' }],
       }));
       return;
     }
     if (entry.customType === 'desktop-policy-audit') return;
+    if (entry.customType === 'desktop-compaction') {
+      push(entry, id, () => ({
+        id,
+        role: 'assistant',
+        parts: [{ kind: 'notice', id: `${id}-n`, text: compactionRecordText((entry as { data?: Record<string, unknown> }).data ?? {}) }],
+      }));
+      return;
+    }
     if (['custom', 'custom_message'].includes(entry.type)) {
       push(entry, id, () => ({
         id,
@@ -227,6 +240,25 @@ export function historyToMessages(branch: PiEntry[]): ChatMessage[] {
     }
   });
   return out;
+}
+
+/** 压缩记录里的 token 数显示：1.2k / 428k / 1.3M（不足 1000 原样；非法值空串）。 */
+function fmtTokens(n: unknown): string {
+  if (typeof n !== 'number' || !Number.isFinite(n) || n < 0) return '';
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1000) return `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}k`;
+  return String(n);
+}
+
+/** desktop-compaction 留痕行文案：上下文压缩 · 用时 12.3s · 428k → 35k tokens。 */
+function compactionRecordText(data: Record<string, unknown>): string {
+  const parts = ['上下文压缩'];
+  if (typeof data.durationMs === 'number' && Number.isFinite(data.durationMs)) parts.push(`用时 ${(data.durationMs / 1000).toFixed(1)}s`);
+  const before = fmtTokens(data.tokensBefore);
+  const after = fmtTokens(data.tokensAfter);
+  if (before && after) parts.push(`${before} → ${after} tokens`);
+  else if (before) parts.push(`压缩前 ${before} tokens`);
+  return parts.join(' · ');
 }
 
 /** ToolProgress → tool 部件（尾部追加与归位拼接共用同一份映射）。 */
