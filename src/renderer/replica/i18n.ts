@@ -250,6 +250,8 @@ const en = {
     demoNote: 'Demo notifications — no real system tasks are tracked.',
     copy: 'Copy',
     copied: 'Copied',
+    dismiss: 'Dismiss',
+    clearAll: 'Clear all',
   } satisfies NotificationsLabels,
 };
 
@@ -484,6 +486,8 @@ const zh: typeof en = {
     demoNote: '演示通知——不追踪真实系统任务。',
     copy: '复制',
     copied: '已复制',
+    dismiss: '删除',
+    clearAll: '清空',
   },
 };
 

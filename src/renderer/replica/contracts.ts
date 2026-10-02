@@ -825,6 +825,10 @@ export interface NotificationsProps {
   labels: NotificationsLabels;
   onClose: () => void;
   onMarkAllRead: () => void;
+  /** 删除单条通知（行尾 × 按钮）。缺省时不展示按钮。 */
+  onDismiss?: (id: string) => void;
+  /** 清空全部通知。缺省时不展示按钮。 */
+  onClearAll?: () => void;
   onSelect: (item: NotificationItem) => void;
 }
 
@@ -837,6 +841,9 @@ export interface NotificationsLabels {
   /** 行尾 hover 复制按钮（报错等长文本一键复制）。 */
   copy: string;
   copied: string;
+  /** 行尾 hover 删除按钮。 */
+  dismiss: string;
+  clearAll: string;
 }
 
 // ---------------------------------------------------------------------------

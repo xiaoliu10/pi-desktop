@@ -106,9 +106,14 @@ export function Notifications(props: NotificationsProps) {
       <div className="pi-notif" role="dialog" aria-label={props.labels.title} onMouseDown={(e) => e.stopPropagation()}>
         <div className="pi-notif__head">
           <span className="pi-notif__title">{props.labels.title}</span>
-          <button className="pi-btn pi-btn--ghost" onClick={props.onMarkAllRead}>
-            {props.labels.markAllRead}
-          </button>
+          <div className="pi-notif__headactions">
+            {props.onClearAll && props.items.length > 0 && (
+              <button className="pi-btn pi-btn--ghost" onClick={props.onClearAll} title={props.labels.clearAll}>{props.labels.clearAll}</button>
+            )}
+            <button className="pi-btn pi-btn--ghost" onClick={props.onMarkAllRead}>
+              {props.labels.markAllRead}
+            </button>
+          </div>
         </div>
         {props.items.length === 0 && <div className="pi-notif__empty">{props.labels.empty}</div>}
         {/* 列表独立滚动：头部与底部注记钉住，长列表不再把面板撑出屏幕。 */}
@@ -128,6 +133,11 @@ export function Notifications(props: NotificationsProps) {
             <button type="button" className="pi-notif__copy" title={copiedId === n.id ? props.labels.copied : props.labels.copy} aria-label={props.labels.copy} onClick={(e) => { e.stopPropagation(); copy(n); }}>
               {copiedId === n.id ? props.labels.copied : <Icon name="copy" size={13} />}
             </button>
+            {props.onDismiss && (
+              <button type="button" className="pi-notif__copy" title={props.labels.dismiss} aria-label={props.labels.dismiss} onClick={(e) => { e.stopPropagation(); props.onDismiss?.(n.id); }}>
+                <Icon name="x" size={13} />
+              </button>
+            )}
             <span className="pi-notif__time">{n.time}</span>
           </div>
         ))}
