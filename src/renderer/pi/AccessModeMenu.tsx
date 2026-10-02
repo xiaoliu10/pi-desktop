@@ -3,8 +3,8 @@ import { ACCESS_LABELS, ACCESS_MODES, type AccessMode } from '../../shared/acces
 import { Icon, type IconName } from '../replica/Icons';
 const descriptions: Record<AccessMode, string> = { plan: '只读研究，先给出计划。', ask: '读取自动放行，修改前询问。', autoEdit: '自动编辑项目文件，命令仍需确认。', fullAccess: '允许所有工具调用，不再逐次确认。' };
 const names: Record<AccessMode, string> = { plan: 'Plan mode', ask: 'Confirm changes', autoEdit: 'Auto edit', fullAccess: 'Full access' };
-// 图标对齐 ZCode 权限菜单（lucide）：plan=灯泡、ask=手掌、autoEdit=方框笔、fullAccess=秒表。
-const icons: Record<AccessMode, IconName> = { plan: 'lightbulb', ask: 'hand', autoEdit: 'square-pen', fullAccess: 'timer' };
+// 图标对齐 ZCode 权限菜单（lucide）：plan=灯泡、ask=手掌、autoEdit=方框笔、fullAccess=盾牌+叹号（用户指定，秒表易误解为计时）。
+const icons: Record<AccessMode, IconName> = { plan: 'lightbulb', ask: 'hand', autoEdit: 'square-pen', fullAccess: 'shield-alert' };
 export function AccessModeMenu({ value, disabled, changing, zh, onChange }: { value: AccessMode; disabled: boolean; changing: boolean; zh: boolean; onChange: (mode: AccessMode) => Promise<boolean> }) {
   const [open, setOpen] = useState(false);
   const root = useRef<HTMLDivElement>(null);
