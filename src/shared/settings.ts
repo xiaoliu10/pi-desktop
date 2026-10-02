@@ -53,7 +53,7 @@ export interface ResourceDocument { id: string; text: string; revision: string }
 export interface McpServerRow { id: string; name: string; scope: 'user' | 'project'; transport: string; target: string; enabled: boolean; path: string; revision: string; /** Import source (claude-code/cursor/…) when the server came from mcp.json `imports`, not direct mcpServers. */ source?: string }
 export interface SettingsSnapshot {
   preferences: DesktopPreferences;
-  ai: { defaultProvider: string; defaultModel: string; defaultThinkingLevel: string; autoCompact: boolean; retry: boolean; revision: string };
+  ai: { defaultProvider: string; defaultModel: string; defaultThinkingLevel: string; autoCompact: boolean; retry: boolean; codemode: boolean; revision: string };
   resources: EditableResource[];
   mcp: McpServerRow[];
   mcpRevisions: Record<string, string>;
@@ -66,6 +66,8 @@ export interface SettingsApi {
   settingsSnapshot(cwd?: string): Promise<SettingsSnapshot>;
   saveDesktopSettings(patch: Partial<Pick<DesktopPreferences, 'behavior' | 'permission' | 'shortcuts' | 'sessionRenames' | 'sessionAccessModes' | 'autoArchive' | 'archiveRetentionDays' | 'autoDeleteArchived' | 'autoDeleteArchivedDays' | 'defaultThinkingLevel' | 'openWithApp' | 'memoryAssist' | 'subagentDismissed'>>): Promise<void>;
   saveAiSettings(value: SettingsSnapshot['ai']): Promise<void>;
+  /** 开关 Codemode：写 pi settings.json 的 defaultTools（+codemode），新会话生效。 */
+  setCodemode(enabled: boolean): Promise<void>;
   resourceRead(id: string, cwd?: string): Promise<ResourceDocument>;
   resourceSave(input: { id: string; text: string; revision: string; cwd?: string }): Promise<void>;
   resourceCreate(input: { kind: ResourceKind; scope: 'user' | 'project'; name: string; text: string; cwd?: string }): Promise<void>;
