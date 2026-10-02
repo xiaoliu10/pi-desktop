@@ -956,6 +956,8 @@ export default function PiReplicaApp() {
         labels={{ ...t.notifications, demoNote: s.lang === 'zh' ? '来自本地 pi 的事件通知。' : 'Events from the local pi runtime.' }}
         onClose={s.toggleNotifications}
         onMarkAllRead={s.markAllRead}
+        onDismiss={(id) => s.dismissNotification(id)}
+        onClearAll={s.clearNotifications}
         onSelect={() => s.toggleNotifications()}
       />
 

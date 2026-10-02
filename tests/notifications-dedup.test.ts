@@ -53,7 +53,7 @@ describe('通知列表：合并与滚动', () => {
   });
 
   it('渲染：列表独立滚动容器 + ×N 徽标', () => {
-    const labels: NotificationsLabels = { title: '通知', markAllRead: '全部标为已读', empty: '暂无通知', request: '请求', demoNote: '来自本地 pi 的事件通知。', copy: '复制', copied: '已复制' };
+    const labels: NotificationsLabels = { title: '通知', markAllRead: '全部标为已读', empty: '暂无通知', request: '请求', demoNote: '来自本地 pi 的事件通知。', copy: '复制', copied: '已复制', dismiss: '删除', clearAll: '清空' };
     const items: NotificationItem[] = [
       { id: 'a', kind: 'info', title: 'pi 正在压缩上下文', time: '刚刚', read: false, count: 3 },
       { id: 'b', kind: 'success', title: '已插入当前任务，将在当前步骤结束后生效', time: '刚刚', read: false },
@@ -64,5 +64,39 @@ describe('通知列表：合并与滚动', () => {
     expect(html).toContain('pi-notif__list'); // 独立滚动容器
     expect(html).toContain('×3'); // 合并计数徽标
     expect(html).not.toContain('×1'); // count=1 不显示徽标
+  });
+
+  it('删除：dismissNotification 只移除目标条，未读数随之减少', () => {
+    const s = () => usePiStore.getState();
+    s().notify({ kind: 'info', title: 'A', time: '刚刚' });
+    s().notify({ kind: 'error', title: 'B', time: '刚刚' });
+    s().notify({ kind: 'success', title: 'C', time: '刚刚' });
+    const target = s().notifications[1]!; // 中间那条
+    expect(s().notifications.filter((n) => !n.read).length).toBe(3);
+    s().dismissNotification(target.id);
+    const list = s().notifications;
+    expect(list.length).toBe(2);
+    expect(list.some((n) => n.id === target.id)).toBe(false);
+    expect(list.map((n) => n.title)).toEqual(['C', 'A']); // 其余两条保持原序
+    expect(s().notifications.filter((n) => !n.read).length).toBe(2);
+  });
+
+  it('清空：clearNotifications 一次清空全部', () => {
+    const s = () => usePiStore.getState();
+    s().notify({ kind: 'info', title: 'A', time: '刚刚' });
+    s().notify({ kind: 'error', title: 'B', time: '刚刚' });
+    s().clearNotifications();
+    expect(s().notifications.length).toBe(0);
+  });
+
+  it('渲染：提供 onDismiss/onClearAll 时展示删除与清空控件', () => {
+    const labels: NotificationsLabels = { title: '通知', markAllRead: '全部标为已读', empty: '暂无通知', request: '请求', demoNote: '', copy: '复制', copied: '已复制', dismiss: '删除', clearAll: '清空' };
+    const items: NotificationItem[] = [{ id: 'a', kind: 'info', title: 'T', time: '刚刚', read: false }];
+    const base = { open: true, items, labels, onClose: () => undefined, onMarkAllRead: () => undefined, onSelect: () => undefined };
+    const withActions = renderToStaticMarkup(createElement(Notifications, { ...base, onDismiss: () => undefined, onClearAll: () => undefined }));
+    expect(withActions).toContain('清空'); // 头部清空按钮
+    expect(withActions).toContain('删除'); // 行尾删除按钮（aria-label）
+    const without = renderToStaticMarkup(createElement(Notifications, { ...base }));
+    expect(without).not.toContain('清空'); // 缺省不渲染
   });
 });
