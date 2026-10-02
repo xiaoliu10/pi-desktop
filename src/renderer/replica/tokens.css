@@ -17,6 +17,8 @@
   --pi-bg-active: rgba(0, 0, 0, 0.075);
   --pi-border: rgba(0, 0, 0, 0.08);
   --pi-border-strong: rgba(0, 0, 0, 0.14);
+  /* 键盘/选中描边：中灰——主色（近黑）描边过重，用户指定改灰且仍需可感知 */
+  --pi-outline: rgba(0, 0, 0, 0.4);
 
   /* text */
   --pi-text: #1d1d1f;
@@ -88,6 +90,7 @@
   --pi-bg-active: rgba(255, 255, 255, 0.1);
   --pi-border: rgba(255, 255, 255, 0.1);
   --pi-border-strong: rgba(255, 255, 255, 0.18);
+  --pi-outline: rgba(255, 255, 255, 0.5);
 
   --pi-text: #ececec;
   --pi-text-secondary: #a0a0a5;
