@@ -114,3 +114,22 @@ it('persists dismissed subagent callIds, memory assist and openWithApp across re
  expect(()=>service.savePreferences({subagentDismissed:{'k':'not-an-array'} as never})).toThrow('子代理清理记录');
  expect(()=>service.savePreferences({subagentDismissed:{k:[42]} as never})).toThrow('子代理清理记录');
 });
+
+it('codemode 开关写 pi settings.json defaultTools，保留其他条目与未知字段',()=>{
+ const{agent,service}=setup();const file=path.join(agent,'settings.json');
+ fs.writeFileSync(file,JSON.stringify({theme:'my-theme',defaultTools:['+tool_search','-read']}));
+ expect(service.snapshot().ai.codemode).toBe(false);
+ service.setCodemode(true);
+ let doc=JSON.parse(fs.readFileSync(file,'utf8'));
+ expect(doc.defaultTools).toEqual(['+tool_search','-read','+codemode']);
+ expect(doc.theme).toBe('my-theme');
+ expect(service.snapshot().ai.codemode).toBe(true);
+ service.setCodemode(false);
+ doc=JSON.parse(fs.readFileSync(file,'utf8'));
+ expect(doc.defaultTools).toEqual(['+tool_search','-read']);
+ expect(service.snapshot().ai.codemode).toBe(false);
+ // 全部移除且无其他条目时删除键
+ fs.writeFileSync(file,JSON.stringify({defaultTools:['+codemode']}));
+ service.setCodemode(false);
+ expect(JSON.parse(fs.readFileSync(file,'utf8'))).toEqual({});
+});

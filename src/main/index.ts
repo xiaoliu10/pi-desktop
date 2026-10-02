@@ -125,6 +125,7 @@ function registerIpc() {
     if (patch && typeof patch === 'object' && ('autoArchive' in patch || 'archiveRetentionDays' in patch || 'autoDeleteArchived' in patch || 'autoDeleteArchivedDays' in patch)) setTimeout(archiveCleanupPass, 200);
   });
   handle('saveAiSettings', value => settings.saveAi(value));
+  handle('setCodemode', enabled => settings.setCodemode(enabled));
   handle('resourceRead', (id, cwd) => settings.readResource(id, cwd));
   handle('resourceSave', input => settings.saveResource(input));
   handle('resourceCreate', input => settings.createResource(input));

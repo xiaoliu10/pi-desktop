@@ -72,7 +72,7 @@ const localPi: LocalPiApi = {
   pickDocuments: () => invoke('pickDocuments'), projectBranch: cwd => invoke('projectBranch', cwd),
   thinking: (key, level) => invoke('thinking', key, level),
   settingsSnapshot: cwd => invoke('settingsSnapshot', cwd),
-  saveDesktopSettings: patch => invoke('saveDesktopSettings', patch), saveAiSettings: value => invoke('saveAiSettings', value),
+  saveDesktopSettings: patch => invoke('saveDesktopSettings', patch), saveAiSettings: value => invoke('saveAiSettings', value), setCodemode: enabled => invoke('setCodemode', enabled),
   resourceRead: (id, cwd) => invoke('resourceRead', id, cwd), resourceSave: input => invoke('resourceSave', input),
   resourceCreate: input => invoke('resourceCreate', input), resourceToggle: (id, enabled, cwd) => invoke('resourceToggle', id, enabled, cwd),
   revealResource: (id, cwd) => invoke('revealResource', id, cwd), mcpSave: input => invoke('mcpSave', input),
