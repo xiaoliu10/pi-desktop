@@ -233,6 +233,7 @@ export interface ComposerProps {
   /** 当前生图目标（ImageGenModelOption.key）；置位后输入框进入生图模式。 */
   imageTarget?: string | null;
   onPickImageModel?: (key: string | null) => void;
+  onRefreshModels?: () => void;
   /** 生图模式的发送：完成（卡片已入时间线）resolve；失败 reject（错误已由父层提示）。 */
   onImageGenerate?: (prompt: string) => Promise<void>;
   onStop: () => void;
@@ -250,6 +251,7 @@ export interface ComposerLabels {
   /** 生图模式占位符与菜单区块文案（缺省走中文兜底）。 */
   placeholderImage?: string;
   imageGen?: string;
+  refreshModels?: string;
   imageGenBusy?: string;
   imageGenCaption?: string;
   send: string;
