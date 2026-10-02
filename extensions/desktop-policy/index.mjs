@@ -46,6 +46,24 @@ export default function desktopPolicy(pi) {
     audit({ type: 'mode', reason: 'Desktop 启动策略；不继承历史审批' });
     ctx.ui.setStatus('desktop-policy', `工具权限：${labels[mode]}`);
   });
+  // 压缩上下文留痕（用户要求：过程记录里留一条压缩记录，含用时与压缩前后 tokens）：
+  // session_before_compact → session_compact 之间计时；tokensBefore 取 pi 原生压缩条目，
+  // tokensAfter 取压缩后的实时上下文量；以 custom entry 写入会话记录（持久化，重载后仍可见），
+  // 渲染端解析 desktop-compaction 并抑制紧邻的 pi 原生占位行，一条压缩只显示一条记录。
+  let compactingSince = 0;
+  pi.on('session_before_compact', () => { compactingSince = Date.now(); });
+  pi.on('session_compact', (event, ctx) => {
+    const usage = ctx.getContextUsage?.();
+    pi.appendEntry('desktop-compaction', {
+      at: Date.now(),
+      durationMs: compactingSince ? Date.now() - compactingSince : undefined,
+      tokensBefore: event.compactionEntry?.tokensBefore,
+      tokensAfter: usage?.tokens,
+      contextWindow: usage?.contextWindow,
+      reason: event.reason,
+    });
+    compactingSince = 0;
+  });
   pi.on('before_agent_start', event => {
     const current = readModeFile();
     return { systemPrompt: event.systemPrompt + '\nFor multi-step work use desktop_update_plan to maintain a concise checklist and update it as progress changes. Never mark unverified work completed.' + (current === 'plan'
