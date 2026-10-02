@@ -618,6 +618,7 @@ export class PiBackend {
     if (run.view.status === 'error') return run.view.models.length;
     const models = await run.client.request('get_available_models', {}, 30_000);
     const thinking = await run.client.request('get_available_thinking_levels', {}, 15_000).catch(() => ({ levels: [] }));
+    if (this.active.get(key) !== run) return (models?.models || []).length; // 刷新期间会话已关闭/重连，废弃本次结果，避免僵尸 run 事件
     const view = run.view;
     const cleanModel = (m: any) => ({ id: String(m.id), name: String(m.name || m.id), provider: String(m.provider), reasoning: !!m.reasoning, input: Array.isArray(m.input) ? m.input : undefined });
     view.models = (models?.models || []).map(cleanModel);
