@@ -29,12 +29,33 @@ const STEPS: Record<ChannelId, string[]> = {
   feishu: [
     '用飞书扫码打开飞书开放平台，创建自建应用并开启机器人能力。',
     '在凭据页复制 App ID 与 App Secret。',
+    '在任意群聊添加自定义机器人，获取 Webhook 与加签密钥（通知与测试消息走这条通道）。',
     '回到本对话框切到「手动配置」，把凭据填入并保存。',
   ],
   telegram: [
     '用 Telegram 扫码打开 @BotFather，发送 /newbot 创建机器人。',
     '复制 BotFather 返回的 HTTP API Token。',
     '回到本对话框切到「手动配置」，粘贴 Bot Token 并保存。',
+  ],
+  wechat: [],
+};
+
+const STEPS_EN: Record<ChannelId, string[]> = {
+  dingtalk: [
+    'Scan with DingTalk to open the DingTalk open platform and sign in.',
+    'Create an internal app with the robot capability; obtain the Webhook, signing secret, AppKey and AppSecret.',
+    'Back in this dialog, switch to Manual and paste the credentials.',
+  ],
+  feishu: [
+    'Scan with Feishu to open the Feishu open platform; create a custom app with bot capability.',
+    'Copy the App ID and App Secret from the credentials page.',
+    'Add a custom bot webhook in any group chat to get the Webhook URL and signing secret (notifications and test messages use it).',
+    'Back in this dialog, switch to Manual and paste the credentials.',
+  ],
+  telegram: [
+    'Scan with Telegram to open @BotFather and send /newbot to create a bot.',
+    'Copy the HTTP API token returned by BotFather.',
+    'Back in this dialog, switch to Manual and paste the Bot Token.',
   ],
   wechat: [],
 };
@@ -72,11 +93,22 @@ export function ChannelConfigDialog(props: {
     return () => { alive = false; };
   }, [channel, tab]);
 
-  // Esc 用 window 级监听：点击 card 内非可聚焦区域后焦点落回 body，card 级 onKeyDown 冒泡不到（仓库惯例，同 OpenWithMenu）。
+  // Esc + Tab 焦点圈禁用 window 级监听：点击 card 内非可聚焦区域后焦点落回 body，
+  // card 级 onKeyDown 冒泡不到（仓库惯例，同 OpenWithMenu）；卸载时归还焦点到触发元素。
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') props.onClose(); };
+    const restore = document.activeElement as HTMLElement | null;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') { props.onClose(); return; }
+      if (e.key !== 'Tab' || !cardRef.current) return;
+      const focusables = cardRef.current.querySelectorAll<HTMLElement>('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])');
+      if (!focusables.length) return;
+      const first = focusables[0];
+      const last = focusables[focusables.length - 1];
+      if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+    };
     window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    return () => { window.removeEventListener('keydown', onKey); restore?.focus?.(); };
   }, []);
 
   const scanHint: Record<ChannelId, string> = {
@@ -85,7 +117,7 @@ export function ChannelConfigDialog(props: {
     telegram: zh ? '用 Telegram 扫码打开 @BotFather。' : 'Scan with Telegram to open @BotFather.',
     wechat: zh ? '暂未支持' : 'Not yet supported',
   };
-  const guide = STEPS[channel];
+  const guide = zh ? STEPS[channel] : STEPS_EN[channel];
 
   return (
     <div className="pi-chdialog" role="dialog" aria-modal="true" aria-label={props.name} onClick={(e) => { if (e.target === e.currentTarget) props.onClose(); }}>
@@ -118,7 +150,7 @@ export function ChannelConfigDialog(props: {
                 )}
               </div>
               <p className="pi-chdialog__scanhint">{scanHint[channel]}</p>
-              {SCAN_URLS[channel] && <p className="pi-chdialog__link">{SCAN_URLS[channel]}</p>}
+              {SCAN_URLS[channel] && <p className="pi-chdialog__link"><a href={SCAN_URLS[channel]} target="_blank" rel="noopener noreferrer">{SCAN_URLS[channel]}</a></p>}
               <ol className="pi-chdialog__steps">
                 {guide.map((step, i) => <li key={i}>{step}</li>)}
               </ol>
