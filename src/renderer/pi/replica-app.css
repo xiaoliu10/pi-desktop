@@ -619,7 +619,7 @@
 .pi-eli__head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 0 12px; /* 与选项行的水平 padding 对齐：标题/标签与序号列同一起点 */ }
 .pi-eli__title { min-width: 0; flex: 1; display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
 .pi-eli__chip { flex-shrink: 0; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 2px 8px; border: 1px solid var(--pi-border); border-radius: 6px; font-size: 13px; font-weight: 500; color: var(--pi-text-secondary); }
-.pi-eli__question { min-width: 0; flex: 1; font-size: 14px; font-weight: 600; color: var(--pi-text); line-height: 1.5; overflow-wrap: anywhere; white-space: pre-wrap; }
+.pi-eli__question { min-width: 0; flex: 1; font-size: 14px; font-weight: 600; color: var(--pi-text-secondary); line-height: 1.5; overflow-wrap: anywhere; white-space: pre-wrap; }
 .pi-eli__pager { flex-shrink: 0; display: flex; align-items: center; gap: 2px; font-size: 13px; font-weight: 500; color: var(--pi-muted); }
 .pireplica .pi-eli__pagebtn { border: 0; background: transparent; color: var(--pi-text-secondary); cursor: pointer; padding: 2px 6px; border-radius: 6px; font-size: 14px; line-height: 1; }
 .pireplica .pi-eli__pagebtn:hover:not(:disabled) { background: var(--pi-bg-hover, rgba(0,0,0,.04)); color: var(--pi-text); }
@@ -631,18 +631,18 @@
 /* 键盘高亮（↑↓/Tab 活动项）：之前只有 4% 透明度悬停灰，浅色主题下不可感知，
    用户体感“键盘上下翻没反应”。活动项 = 选中底色 + 主色描边 + 序号加粗主色。 */
 .pireplica .pi-eli__opt--active { background: var(--pi-bg-selected, rgba(0,0,0,.06)); outline: 1.5px solid var(--pi-outline, rgba(0,0,0,.4)); outline-offset: -1.5px; }
-.pi-eli__opt--active .pi-eli__num { color: var(--pi-text); font-weight: 700; }
+.pi-eli__opt--active .pi-eli__num { color: var(--pi-text-secondary); font-weight: 700; }
 /* 选中态（单击勾选 / 审批键盘位）：只有 6% 灰底和悬停无法区分，用户"点了没反应"——
    选中 = 主色描边 + 加粗序号，与键盘活动项同级可见；活动项描边表示"当前在哪"，
    选中描边表示"已选什么"，多选时二者并存（已选行保持描边，活动环移动）。 */
 .pireplica .pi-eli__opt--on { background: var(--pi-bg-selected, rgba(0,0,0,.06)); outline: 1.5px solid var(--pi-outline, rgba(0,0,0,.4)); outline-offset: -1.5px; }
 .pi-eli__opt--custom { cursor: text; }
 .pi-eli__num { flex-shrink: 0; width: 20px; font-size: 13px; font-weight: 500; color: var(--pi-muted); }
-.pi-eli__opt--on .pi-eli__num { color: var(--pi-text); font-weight: 700; }
+.pi-eli__opt--on .pi-eli__num { color: var(--pi-text-secondary); font-weight: 700; }
 .pi-eli__check { flex: none; width: 16px; height: 16px; margin-top: 2px; border: 1.5px solid var(--pi-border); border-radius: 4px; display: inline-flex; align-items: center; justify-content: center; font-size: 11px; color: #fff; }
 .pi-eli__check--on { border-color: var(--pi-accent, #3b82f6); background: var(--pi-accent, #3b82f6); }
 .pi-eli__optbody { min-width: 0; flex: 1; font-size: 13px; line-height: 1.55; }
-.pi-eli__optlabel { font-weight: 600; color: var(--pi-text); overflow-wrap: anywhere; }
+.pi-eli__optlabel { font-weight: 600; color: var(--pi-text-secondary); overflow-wrap: anywhere; }
 .pi-eli__optdesc { margin-left: 8px; color: var(--pi-text-secondary); overflow-wrap: anywhere; }
 .pi-eli__input { flex: 1; min-width: 0; max-height: 110px; overflow-y: auto; border: 0; background: transparent; color: var(--pi-text); font: inherit; font-size: 13px; font-weight: 500; line-height: 1.55; resize: none; outline: none; padding: 0; }
 .pi-eli__input::placeholder { color: var(--pi-muted); font-weight: 400; }
