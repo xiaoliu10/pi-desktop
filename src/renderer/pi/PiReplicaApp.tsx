@@ -577,6 +577,7 @@ export default function PiReplicaApp() {
         { id: 'ai-thinking', title: s.lang === 'zh' ? '默认推理级别' : 'Default thinking level', description: s.lang === 'zh' ? '写入 pi 全局 settings.json，新建或重载会话后生效' : 'Saved to pi settings.json; applies to new or reloaded sessions', control: { kind: 'select', value: s.aiSettings?.defaultThinkingLevel ?? 'high', options: ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] } },
         { id: 'ai-compact', title: s.lang === 'zh' ? '自动压缩上下文' : 'Auto-compact context', control: { kind: 'select', value: s.aiSettings?.autoCompact === false ? (s.lang === 'zh' ? '关闭' : 'Off') : (s.lang === 'zh' ? '开启' : 'On'), options: s.lang === 'zh' ? ['开启', '关闭'] : ['On', 'Off'] } },
         { id: 'ai-retry', title: s.lang === 'zh' ? '自动重试可恢复错误' : 'Auto-retry recoverable errors', control: { kind: 'select', value: s.aiSettings?.retry === false ? (s.lang === 'zh' ? '关闭' : 'Off') : (s.lang === 'zh' ? '开启' : 'On'), options: s.lang === 'zh' ? ['开启', '关闭'] : ['On', 'Off'] } },
+        { id: 'codemode', title: s.lang === 'zh' ? 'Codemode（代码模式）' : 'Codemode', description: s.lang === 'zh' ? '允许模型用 JavaScript 脚本并行调用工具、过滤大输出、调分类/图像模型；写入 pi 全局 settings.json，新会话生效' : 'Let the model call tools from JavaScript — parallel calls, output filtering, classifier/image models; saved to pi settings.json, applies to new sessions', control: { kind: 'select', value: s.aiSettings?.codemode ? (s.lang === 'zh' ? '开启' : 'On') : (s.lang === 'zh' ? '关闭' : 'Off'), options: s.lang === 'zh' ? ['开启', '关闭'] : ['On', 'Off'] } },
       ],
     },
     {
@@ -716,6 +717,14 @@ export default function PiReplicaApp() {
                 usePiStore.setState({ desktopPreferences: { ...merged, permission } });
                 void window.localPi!.saveDesktopSettings({ permission }).catch(e => s.notify({ kind: 'error', title: String((e as Error).message || e), time: '刚刚' }));
               }
+            } else if (rowId === 'codemode') {
+              const enabled = value === '开启' || value === 'On';
+              const current = usePiStore.getState().aiSettings;
+              if (!current) return;
+              usePiStore.setState({ aiSettings: { ...current, codemode: enabled } });
+              void window.localPi!.setCodemode(enabled)
+                .then(() => s.notify({ kind: 'success', title: s.lang === 'zh' ? '已写入 pi settings.json；新建或重载会话生效' : 'Saved to pi settings.json', time: '刚刚' }))
+                .catch(e => { usePiStore.setState({ aiSettings: current }); s.notify({ kind: 'error', title: String((e as Error).message || e), time: '刚刚' }); });
             } else if (rowId === 'ai-thinking' || rowId === 'ai-compact' || rowId === 'ai-retry') {
               const current = usePiStore.getState().aiSettings;
               if (!current) return;
