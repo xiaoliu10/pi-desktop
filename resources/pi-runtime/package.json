@@ -4,6 +4,6 @@
   "version": "1.0.0",
   "dependencies": {
     "node": "22.23.3",
-    "@earendil-works/pi-coding-agent": "0.99.1"
+    "@earendil-works/pi-coding-agent": "1.0.0"
   }
 }
