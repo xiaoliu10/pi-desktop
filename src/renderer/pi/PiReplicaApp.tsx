@@ -263,6 +263,24 @@ export default function PiReplicaApp() {
   useEffect(()=>{ if (planApprovalActive) setPlanOpen(true); },[planApprovalActive]);
   const planChecklist=useMemo(()=>conversationPlan(messages),[messages]);
   const modelGroups = useMemo(() => run ? groupModels(run) : (s.catalog?.providers ?? []).map(p=>({provider:p.id,models:p.models.map(m=>({id:`${p.id}/${m.id}`,name:m.name || m.id}))})), [run,s.catalog]);
+  // 生图：目录里的图像模型（旧运行时目录无 imageModels → 不出生图入口）。
+  const imageModels = useMemo(() => (s.catalog?.providers ?? []).flatMap(p => (p.imageModels ?? []).map(m => ({ key: `${p.id}/${m.id}`, provider: p.id, providerName: p.name || p.id, name: m.name || m.id }))), [s.catalog]);
+  const [imageTarget, setImageTarget] = useState<string | null>(null);
+  const [imageCards, setImageCards] = useState<import('../replica/contracts').ImageGenCardData[]>([]);
+  const onImageGenerate = useCallback(async (prompt: string) => {
+    const target = imageModels.find(m => m.key === imageTarget);
+    if (!target) throw new Error('请先在模型菜单选择图像模型');
+    if (!window.localPi) throw new Error('应用未就绪');
+    try {
+      const result = await window.localPi.imageGenerate(target.provider, target.key.slice(target.provider.length + 1), prompt);
+      setImageCards(list => [...list.slice(-7), { id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, prompt, model: target.name, images: result.images, at: Date.now() }]);
+      // 首页发起的生图也切到会话视图展示结果卡片。
+      if (usePiStore.getState().view !== 'chat') usePiStore.setState({ view: 'chat' });
+    } catch (e) {
+      s.notify({ kind: 'error', title: e instanceof Error ? e.message : String(e), time: '刚刚' });
+      throw e;
+    }
+  }, [imageTarget, imageModels, s.notify]);
   const composerCwd = run?.cwd ?? s.sessions.find(session=>session.key===s.selectedKey)?.cwd ?? s.draftCwd;
   // ↑/↓ 发送历史：按 workspace 隔离、localStorage 持久化（ZCode 同款，最多 30 条）。
   const [promptHistory, setPromptHistory] = useState<string[]>(() => readPromptHistory(composerCwd ?? ''));
@@ -281,11 +299,11 @@ export default function PiReplicaApp() {
   const [filePreview, setFilePreview] = useState<ReturnType<typeof toolFilePreview>>(null);
   const [pluginTab, setPluginTab] = useState<'installed' | 'marketplace'>('installed');
   const [pluginTag, setPluginTag] = useState('all');
-  // 扩展统一管理：源码编辑器/新建对话框（入口收拢在插件市场页）
+  // 扩展统一管理：源码编辑器/新建对话框（入口收拢在设置→插件市场）
   const [extDialog, setExtDialog] = useState<ExtensionDialogInit | null>(null);
   // 插件市场管理页（同一份元素：设置→插件市场 内嵌；view==='plugins' 独立路由保留兼容）
   const pluginsContent = (
-                <>
+    <>
                 <PluginsPage
                   tab={pluginTab}
                   installed={[
@@ -367,7 +385,7 @@ export default function PiReplicaApp() {
                   onSaved={(msg) => { setExtDialog(null); s.scanResources(); s.notify({ kind: 'info', title: msg, time: '刚刚' }); }}
                   onError={(msg) => s.notify({ kind: 'error', title: msg, time: '刚刚' })}
                 />}
-                </>
+    </>
   );
   const [, setFilePreviewVersion] = useState(0);
   const [sidebarWidth, setSidebarWidth, resetSidebarWidth] = usePanelWidth('pi.sidebarWidth', 366, 220, 520);
@@ -475,8 +493,12 @@ export default function PiReplicaApp() {
       statusSlot={run ? <ContextUsageChip key={`${run.key}:${run.generation}`} usage={run.contextUsage} model={run.model ? `${run.model.provider} / ${run.model.name || run.model.id}` : undefined} zh={s.lang === 'zh'} compact /> : undefined}
       onSend={onComposerSend}
       promptHistory={promptHistory}
+      imageModels={imageModels}
+      imageTarget={imageTarget}
+      onPickImageModel={setImageTarget}
+      onImageGenerate={onImageGenerate}
       onStop={s.stop}
-      onPickModel={s.pickModel}
+      onPickModel={id => { setImageTarget(null); s.pickModel(id); }}
       onPickReasoning={() => undefined}
       onPickAgentMode={() => undefined}
       onPickPermission={() => undefined}
@@ -847,16 +869,18 @@ export default function PiReplicaApp() {
                     onDownloadImage={downloadImage}
                     onRefreshProcess={s.refreshConversation}
                     compacting={run?.compacting}
+                    imageCards={imageCards}
                   />
-                  {/* ask_user_question：ZCode 式覆盖输入框位置（卡片显示时替换 composer，草稿存 store 不丢）；
-                      命令/工具权限审批内联在对话流 composer 上方，非全局弹窗 */}
-                  {approvalDialog && <InlineApprovalCard key={`${approvalDialog.generation}:${approvalDialog.request.id}`} dialog={approvalDialog} />}
+                  {/* ask_user_question / 权限审批：ZCode 式覆盖输入框位置（卡片显示时替换 composer，
+                      草稿存 store 不丢）；其余扩展交互保持居中弹窗 */}
                   <div style={{ padding: '0 24px 20px' }}>
                     {askDialog
                       ? <InlineAskCard key={`${askDialog.generation}:${askDialog.request.id}`} dialog={askDialog} />
-                      : modalDialog
-                        ? <ExtensionDialog key={`${modalDialog.generation}:${modalDialog.request.id}`} dialog={modalDialog} />
-                        : composer}
+                      : approvalDialog
+                        ? <InlineApprovalCard key={`${approvalDialog.generation}:${approvalDialog.request.id}`} dialog={approvalDialog} />
+                        : modalDialog
+                          ? <ExtensionDialog key={`${modalDialog.generation}:${modalDialog.request.id}`} dialog={modalDialog} />
+                          : composer}
                   </div>
                 </div>
               )}
@@ -1372,6 +1396,16 @@ export function AskQuestionCard({ payload, zh, onAnswer, onCancel, stopTask, sto
   // 失效（用户从 composer 或别处按 ↑↓ 毫无反应）。卡片显示时 composer 已被替换，这里
   // 抢焦点没有副作用；用户点进自定义输入框后焦点自然移交。
   useEffect(() => { containerRef.current?.focus(); }, [questionIndex]);
+  // 窗口重聚焦兑底：对话框可能在窗口失焦时挂载（focus() 静默失败），或焦点被点到卡外；
+  // 回窗时若焦点已不在卡内则收回，否则 ↑↓ 毫无反应。
+  useEffect(() => {
+    const onWinFocus = () => {
+      const el = containerRef.current;
+      if (el && !el.contains(document.activeElement)) el.focus();
+    };
+    window.addEventListener('focus', onWinFocus);
+    return () => window.removeEventListener('focus', onWinFocus);
+  }, []);
   const [drafts, setDrafts] = useState<Record<number, { selected: string[]; custom: string }>>(
     () => Object.fromEntries(questions.map((_, i) => [i, { selected: [], custom: '' }])) as Record<number, { selected: string[]; custom: string }>,
   );
@@ -1612,11 +1646,11 @@ export function InlineAskCard({ dialog }: { dialog: Dialog }) {
 }
 
 /**
- * 命令/工具权限审批内联卡（ZCode 权限交互复刻，上浮在对话框上方）：
+ * 命令/工具权限审批内联卡（ZCode 权限交互复刻，替换输入框位置——审批期间 composer 不可见）：
  * 头部「需要权限」+ 工具行（图标+等待确认+文件名+目录+增删行数+展开箭头）；
  * 五选项单选：允许(仅本次)/始终允许本项目/完全访问/拒绝/告诉模型接下来应该怎么做(文字)；
  * 底部 ⓘ「使用 Tab / 上下键选择，回车确认」+ 确认按钮。默认选中「允许」；
- * ↑↓/Tab 移动选择，Enter 确认，Esc 无动作（拒绝请选第 4 项）。
+ * 挂载即抢焦点：↑↓/Tab 移动选择，Enter 确认，单击选项改选、双击直接提交，Esc 无动作（拒绝请选第 4 项）。
  * 扩展经 RPC select 发起（响应任意值直传）：响应值 = 选项文字或自定义指引文字。
  */
 export function parseApprovalRequest(rawTitle: string): { title: string; meta: { name: string; dir: string; add?: number; del?: number; cmd: string } | null; message: string } {
@@ -1653,6 +1687,19 @@ export function InlineApprovalCard({ dialog }: { dialog: Dialog }) {
   const [choice, setChoice] = useState(0); // 0..3 选项行；4 = 自定义指引行
   const [customText, setCustomText] = useState('');
   const [docOpen, setDocOpen] = useState(false);
+  // 卡片替换 composer 显示时抢键盘焦点：↑↓/Tab/Enter 不需要先点一下才生效
+  // （与 AskQuestionCard/ExtensionDialog 同款；后续点击选项按钮，keydown 仍冒泡到这里）。
+  const containerRef = useRef<HTMLElement>(null);
+  useEffect(() => { containerRef.current?.focus(); }, []);
+  // 窗口重聚焦兑底（同 AskQuestionCard）：焦点不在卡内则收回，否则 ↑↓/Tab 无反应。
+  useEffect(() => {
+    const onWinFocus = () => {
+      const el = containerRef.current;
+      if (el && !el.contains(document.activeElement)) el.focus();
+    };
+    window.addEventListener('focus', onWinFocus);
+    return () => window.removeEventListener('focus', onWinFocus);
+  }, []);
   const parsed = parseApprovalRequest(r.title ?? '');
   const toolKey = parsed.title.replace(/^Desktop 审批 · /, '').trim();
   const toolMeta = APPROVAL_TOOL_META[toolKey] ?? { label: toolKey, icon: 'file' as const };
@@ -1693,7 +1740,7 @@ export function InlineApprovalCard({ dialog }: { dialog: Dialog }) {
   };
 
   return (
-    <section className="pi-approval-inline" role="dialog" aria-label={zh ? '需要权限' : 'Permission required'} tabIndex={0} onKeyDown={onKeyDown}>
+    <section ref={containerRef} className="pi-approval-inline" role="dialog" aria-label={zh ? '需要权限' : 'Permission required'} tabIndex={0} onKeyDown={onKeyDown}>
       <div className="pi-approval-inline__title">{zh ? '需要权限' : 'Permission required'}</div>
       <button type="button" className="pi-approval-inline__tool" onClick={() => setDocOpen(open => !open)} aria-expanded={docOpen}>
         <Icon name={toolMeta.icon} size={14} />
@@ -1728,6 +1775,7 @@ export function InlineApprovalCard({ dialog }: { dialog: Dialog }) {
               tabIndex={-1}
               className={`pi-eli__opt${choice === index ? ' pi-eli__opt--on' : ''}`}
               onClick={() => setChoice(index)}
+              onDoubleClick={() => { setChoice(index); confirm(); }}
             >
               <span className="pi-eli__num">{index + 1}.</span>
               <span className="pi-eli__optbody">
@@ -1794,6 +1842,15 @@ export function ExtensionDialog({ dialog }: { dialog: Dialog }) {
   const containerRef = useRef<HTMLElement>(null);
   useEffect(() => {
     if (r.method === 'select') containerRef.current?.focus(); // input/editor 由输入框 autoFocus，不抢焦点
+  }, [r.id, r.method]);
+  // 窗口重聚焦兑底（同 AskQuestionCard）：select 卡焦点不在卡内则收回。
+  useEffect(() => {
+    const onWinFocus = () => {
+      const el = containerRef.current;
+      if (r.method === 'select' && el && !el.contains(document.activeElement)) el.focus();
+    };
+    window.addEventListener('focus', onWinFocus);
+    return () => window.removeEventListener('focus', onWinFocus);
   }, [r.id, r.method]);
   const submitActive = () => {
     if (r.method === 'select') { const option = r.options?.[activeOption]; if (option) answer({ id: r.id, value: option }); }

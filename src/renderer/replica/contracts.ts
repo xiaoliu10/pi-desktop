@@ -151,6 +151,23 @@ export interface ModelOption {
   detail?: string;
 }
 
+/** 目录里的图像（文生图）模型，provider/model 联合键定位。 */
+export interface ImageGenModelOption {
+  key: string;
+  provider: string;
+  providerName: string;
+  name: string;
+}
+
+/** 一次直连生图的结果卡片（本地产物，不入会话历史）。 */
+export interface ImageGenCardData {
+  id: string;
+  prompt: string;
+  model: string;
+  images: { mime: string; data: string }[];
+  at: number;
+}
+
 export interface SlashCommand {
   name: string;
   description: string;
@@ -211,6 +228,13 @@ export interface ComposerProps {
   onSend: (text: string) => void;
   /** 已发送消息历史（↑/↓ recall，ZCode 同款）；空数组时方向键不接管。 */
   promptHistory?: readonly string[];
+  /** 图像模型目录（空 = 运行时不支持，菜单不出「图像生成」区块）。 */
+  imageModels?: ImageGenModelOption[];
+  /** 当前生图目标（ImageGenModelOption.key）；置位后输入框进入生图模式。 */
+  imageTarget?: string | null;
+  onPickImageModel?: (key: string | null) => void;
+  /** 生图模式的发送：完成（卡片已入时间线）resolve；失败 reject（错误已由父层提示）。 */
+  onImageGenerate?: (prompt: string) => Promise<void>;
   onStop: () => void;
   onPickModel: (id: string) => void;
   onPickReasoning: (level: ReasoningLevel) => void;
@@ -223,6 +247,11 @@ export interface ComposerProps {
 export interface ComposerLabels {
   placeholderSession: string;
   placeholderHome: string;
+  /** 生图模式占位符与菜单区块文案（缺省走中文兜底）。 */
+  placeholderImage?: string;
+  imageGen?: string;
+  imageGenBusy?: string;
+  imageGenCaption?: string;
   send: string;
   stop: string;
   queued: string;
@@ -372,6 +401,8 @@ export interface ChatViewProps {
   onDownloadImage?: (dataUrl: string, name: string) => void;
   /** pi 正在压缩上下文（compaction_start…end）：工作条显示「正在压缩上下文」。 */
   compacting?: boolean;
+  /** 直连生图结果卡片：追加在时间线末尾（本地产物，不入会话历史）。 */
+  imageCards?: ImageGenCardData[];
 }
 
 export interface ChatLabels {

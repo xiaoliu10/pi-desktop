@@ -8,8 +8,17 @@ export function expand(value: string): string { return path.resolve(value.starts
 /** Lowest pi version whose RPC protocol desktop understands. */
 const PI_MIN_VERSION = '0.85.1';
 /** Exclusive upper bound for external CLI compatibility. Versions at or above this
- *  are rejected and fall back to bundled when available. Review per release. */
-const PI_MAX_TESTED = '0.90.0';
+ *  are rejected and fall back to bundled when available. Review per release.
+ *  0.99.x/1.0.0 已核对 RPC 命令/事件面全兼容（docs/pi-0.99-adaptation.md，1.0.0 bundle 拆 chunks 无碍）；
+ *  上界让位给下一个大版本。 */
+const PI_MAX_TESTED = '1.1.0';
+
+/** pi ≥0.99 内置原生 MCP（builtin:mcp，读同一份 mcp.json）：desktop 的 mcp-bridge 必须
+ *  让位，否则同一服务器双连接、工具双注册。backend 以 PI_DESKTOP_PI_VERSION 注入运行时版本。 */
+export function piHasNativeMcp(version: string | null | undefined): boolean {
+  if (!version) return false;
+  return compareVersion(version, '0.99.0') >= 0;
+}
 
 /** 0 if equal, -1 if a<b, 1 if a>b. Blank/invalid sorts below everything. */
 export function compareVersion(a?: string | null, b?: string | null): number {

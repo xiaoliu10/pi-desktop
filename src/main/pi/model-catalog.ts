@@ -170,6 +170,7 @@ export function mergeModelCatalog(catalog: PiModelCatalog, native: PiCatalogProv
     existing.loginAvailable = provider.loginAvailable;
     if (existing.auth === 'none') existing.auth = provider.auth;
     existing.name ??= provider.name;
+    existing.imageModels = provider.imageModels; // 生图模型只来自运行时目录，本地 models.json 不参与
     const local = new Map(existing.models.map(m => [m.id, m]));
     existing.models = provider.models.map(m => {
       const configured = local.get(m.id);

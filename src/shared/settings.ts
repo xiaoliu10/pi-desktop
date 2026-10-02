@@ -73,6 +73,7 @@ export interface SettingsApi {
   revealResource(id: string, cwd?: string): Promise<void>;
   mcpSave(input: { name: string; scope: 'user' | 'project'; config?: string; enabled?: boolean; remove?: boolean; revision: string; cwd?: string; /** 导入服务传 source：启停写入本作用域 mcp.json 的 disabledServers 覆盖层，不改原工具文件。 */ source?: string }): Promise<void>;
   mcpTest(id: string, cwd?: string): Promise<{ tools: string[] }>;
+  mcpConfig(id: string, cwd?: string): Promise<string>;
   projectSave(value: ProjectUpdate): Promise<void>;
   projectReveal(cwd: string): Promise<void>;
   projectWorktree(value: WorktreeInput): Promise<DesktopProject>;

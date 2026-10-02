@@ -159,6 +159,8 @@ export interface LocalPiApi extends importSettingsApi {
   cleanupSubagents(sessionKey: string): Promise<void>;
   modelCatalog(): Promise<PiModelCatalog>;
   planQuota(provider: string): Promise<import('./context-details').PlanQuota>;
+  /** 直连生图：provider/model 来自目录（imageModels），走内置 ModelRuntime 凭证。 */
+  imageGenerate(provider: string, model: string, prompt: string): Promise<PiImageGenResult>;
   accountLogin(provider:string): Promise<PiAccountLogin>;
   accountStatus(id:string): Promise<PiAccountLogin>;
   accountAnswer(id:string,promptId:string,value:string): Promise<void>;
@@ -199,6 +201,7 @@ export interface LocalPiApi extends importSettingsApi {
 
 export type PiModelEditableField = 'name' | 'contextWindow' | 'maxTokens' | 'reasoning' | 'input' | 'thinkingLevelMap';
 export interface PiCatalogModel { definition?: 'custom' | 'override'; thinkingLevelMap?: Partial<Record<'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max', string | null>>; id: string; name?: string; contextWindow?: number; maxTokens?: number; reasoning?: boolean; input?: string[] }
+export interface PiCatalogImageModel { id: string; name?: string }
 export interface PiCatalogProvider {
   loginAvailable?: boolean;
   id: string;
@@ -210,7 +213,11 @@ export interface PiCatalogProvider {
   /** Where the provider definition comes from. */
   source: 'models.json' | 'auth';
   models: PiCatalogModel[];
+  /** Image (text-to-image) models; absent when the runtime predates pi 0.99. */
+  imageModels?: PiCatalogImageModel[];
 }
+/** Result of a direct text-to-image generation via the bundled ModelRuntime. */
+export interface PiImageGenResult { images: { mime: string; data: string }[] }
 export interface PiAccountLogin {
   id:string; provider:string; status:'waiting'|'done'|'error'|'cancelled'; message:string;
   url?:string; deviceCode?:string;

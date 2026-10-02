@@ -16,7 +16,7 @@ export type IconName =
   | 'file' | 'code' | 'globe' | 'diff' | 'check' | 'check-circle' | 'x' | 'warning'
   | 'refresh' | 'download-cloud' | 'link' | 'trash' | 'pencil' | 'circle' | 'more' | 'copy'
   | 'globe-scope' | 'edit-files' | 'read-files' | 'network' | 'terminal' | 'switch' | 'grip' | 'arrow-up' | 'panel-right'
-  | 'smartphone' | 'loader' | 'notepad' | 'arrow-right' | 'arrow-left' | 'mic';
+  | 'smartphone' | 'loader' | 'notepad' | 'arrow-right' | 'arrow-left' | 'mic' | 'image';
 
 const paths: Record<IconName, ReactNode> = {
   'expand-diagonal': <><path d="M14 3h7v7M21 3l-7 7M10 21H3v-7M3 21l7-7"/></>,
@@ -265,6 +265,13 @@ const paths: Record<IconName, ReactNode> = {
     <>
       <path d="M7 18.5a4.5 4.5 0 0 1-.4-9A5.5 5.5 0 0 1 17.3 8a4 4 0 0 1-.3 8H7Z" transform="translate(0 -1.5) scale(0.98)" />
       <path d="M12 11.5V20M9 17.2l3 3 3-3" />
+    </>
+  ),
+  image: (
+    <>
+      <rect x="3.5" y="4.5" width="17" height="15" rx="2.5" />
+      <circle cx="9" cy="9.8" r="1.6" />
+      <path d="M4.5 17.5 9.8 12.6a1.4 1.4 0 0 1 1.9 0l3 2.8m0 0 1.6-1.4a1.4 1.4 0 0 1 1.9 0l1.7 1.5" />
     </>
   ),
   link: (
