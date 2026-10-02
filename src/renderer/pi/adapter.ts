@@ -813,6 +813,10 @@ export interface PiReplicaActions {
   setSearchQuery: (q: string) => void;
   toggleNotifications: () => void;
   markAllRead: () => void;
+  /** 删除单条通知（通知面板行尾 ×）。未读数随之减少。 */
+  dismissNotification: (id: string) => void;
+  /** 清空全部通知。 */
+  clearNotifications: () => void;
   dismissError: () => void;
   dismissNotice: () => void;
   answerDialog: (response: { id: string; value?: string; confirmed?: boolean; cancelled?: boolean }) => void;
@@ -2000,6 +2004,8 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
     setSearchQuery: (searchQuery) => set({ searchQuery }),
     toggleNotifications: () => set({ notificationsOpen: !get().notificationsOpen }),
     markAllRead: () => set({ notifications: get().notifications.map((n) => ({ ...n, read: true })) }),
+    dismissNotification: (id) => set({ notifications: get().notifications.filter((n) => n.id !== id) }),
+    clearNotifications: () => set({ notifications: [] }),
     dismissError: () => set({ error: undefined, errorKey: undefined }),
     dismissNotice: () => set({ notice: undefined }),
 

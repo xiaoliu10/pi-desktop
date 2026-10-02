@@ -130,6 +130,12 @@
   padding: 4px 8px 8px;
 }
 
+.pireplica .pi-notif__headactions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
 .pireplica .pi-notif__title {
   font-weight: 600;
   font-size: var(--pi-font-size-md);
