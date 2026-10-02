@@ -91,6 +91,7 @@ const localPi: LocalPiApi = {
   model: (key, provider, id) => invoke('model', key, provider, id),
   compact: (key, customInstructions) => invoke('compact', key, customInstructions),
   refreshCommands: key => invoke('refreshCommands', key),
+  refreshModels: key => invoke('refreshModels', key),
   respond: (key, gen, response) => invoke('respond', key, gen, response), forkMessage: (key, entryId) => invoke('forkMessage', key, entryId), review: cwd => invoke('review', cwd), gitStatus: cwd => invoke('gitStatus', cwd), filePreview: (cwd, file) => invoke('filePreview', cwd, file),
   officialSubagentStatus: () => invoke('officialSubagentStatus'),
   enableOfficialSubagent: () => invoke('enableOfficialSubagent'),

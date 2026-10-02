@@ -452,6 +452,7 @@ export default function PiReplicaApp() {
         ...(run?.commands ?? []).map((c) => ({ name: `/${c.name}`, description: c.description ?? '' })),
       ]}
       onSlashCommandsEmpty={run ? () => { void window.localPi!.refreshCommands(run.key).catch(() => { /* 会话可能已关闭 */ }); } : undefined}
+      onRefreshModels={run ? () => { void window.localPi!.refreshModels(run.key).then(n => { s.notify({ kind: 'info', title: s.lang === 'zh' ? `已刷新，会话内可用模型 ${n} 个` : `Refreshed: ${n} models available`, time: '刚刚' }); }).catch((e) => s.notify({ kind: 'error', title: String(e), time: '刚刚' })); } : undefined}
       files={[]}
       running={Boolean(run && ['running', 'starting', 'stopping'].includes(run.status)) || Boolean(s.selectedKey && s.retrying[s.selectedKey])}
       sending={(s.sends ?? []).some(send => send.key === s.selectedKey && isAwaitingSend(send)) || Boolean(launchPrompt)}
@@ -462,7 +463,7 @@ export default function PiReplicaApp() {
       onQueueRecall={(index) => s.queueRecall(index)}
       onQueueRemove={(index) => s.queueEdit({ type: 'remove', index })}
       demo={false}
-      labels={t.composer}
+      labels={{ ...t.composer, refreshModels: s.lang === 'zh' ? '刷新模型列表' : 'Refresh model list' }}
       modelDisabled={s.connecting}
       pendingModelId={run?.pendingModel ? `${run.pendingModel.provider}/${run.pendingModel.id}` : undefined}
       headerSlot={<ProjectHeader cwd={composerCwd} locked={!!s.selectedKey || s.connecting} onChoose={s.chooseWorkspace} projects={sidebar.projects.map(p=>({path:p.path,name:p.name}))} onSelect={path=>usePiStore.setState({draftCwd:path})} />}

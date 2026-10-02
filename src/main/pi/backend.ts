@@ -612,6 +612,26 @@ export class PiBackend {
    * 压缩只发 compaction_start/end、不发 agent_settled，完成后需在此复位状态。
    */
   /** 按需重拉斜杠命令列表：补全面板发现列表为空时可调用；有新增则更新并广播。 */
+  /** 重新拉取可用模型/思考等级：供应商列表更新后，无需断开重连即可刷新会话内模型菜单。 */
+  async refreshModels(key: string): Promise<number> {
+    const run = this.get(key);
+    if (run.view.status === 'error') return run.view.models.length;
+    const models = await run.client.request('get_available_models', {}, 30_000);
+    const thinking = await run.client.request('get_available_thinking_levels', {}, 15_000).catch(() => ({ levels: [] }));
+    if (this.active.get(key) !== run) return (models?.models || []).length; // 刷新期间会话已关闭/重连，废弃本次结果，避免僵尸 run 事件
+    const view = run.view;
+    const cleanModel = (m: any) => ({ id: String(m.id), name: String(m.name || m.id), provider: String(m.provider), reasoning: !!m.reasoning, input: Array.isArray(m.input) ? m.input : undefined });
+    view.models = (models?.models || []).map(cleanModel);
+    view.thinkingLevels = thinking?.levels ?? view.thinkingLevels;
+    const current = view.model;
+    if (current && !view.models.some(m => m.provider === current.provider && m.id === current.id)) {
+      // 当前选中的模型已从目录移除：清掉选择，避免发送时命中不存在的模型。
+      view.model = undefined;
+    }
+    this.emit({ type: 'run', run: { ...view } });
+    return view.models.length;
+  }
+
   async refreshCommands(key: string): Promise<number> {
     const run = this.get(key);
     if (run.view.status === 'error') return run.view.commands.length;
