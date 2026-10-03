@@ -335,6 +335,8 @@ export interface NoticePart {
   kind: 'notice';
   id: string;
   text: string;
+  /** 压缩等里程碑记录：加黑加图标，按时间线位置醒目展示（用户实测反馈）。 */
+  strong?: boolean;
 }
 
 export type MessagePart =
