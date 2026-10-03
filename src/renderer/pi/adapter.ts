@@ -853,7 +853,8 @@ export interface PiReplicaActions {
   dismissNotice: () => void;
   answerDialog: (response: { id: string; value?: string; confirmed?: boolean; cancelled?: boolean }) => void;
   scanResources: () => void;
-  rescanAndReload: () => void;
+  reloadingResources: boolean;
+    rescanAndReload: () => Promise<'reloaded' | 'no-session' | 'failed'>;
   loadCatalog: () => Promise<void>;
   loadPackages: () => void;
   searchMarketplace: (query: string) => void;
@@ -1345,6 +1346,7 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
     covers: {},
     catalog: undefined,
     catalogLoading: false,
+    reloadingResources: false,
 
     selectedKey: null,
     history: undefined,
@@ -2061,16 +2063,28 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
         return resources;
       });
     },
-    rescanAndReload: () => {
-      get().scanResources();
-      const run = currentRun(get());
-      if (run && run.status === 'idle') {
-        void attempt(async () => {
-          await window.localPi!.refresh(run.key);
-          pushNotification({ kind: 'success', title: '已在空闲会话中重载扩展', time: '刚刚' });
-        });
-      } else {
-        pushNotification({ kind: 'info', title: '资源已重新扫描', body: '没有空闲的桌面会话可重载扩展。', time: '刚刚' });
+    rescanAndReload: async () => {
+      if (get().reloadingResources) return 'reloaded';
+      set({ reloadingResources: true });
+      try {
+        const run = currentRun(get());
+        const canReload = Boolean(run && run.status === 'idle');
+        get().scanResources();
+        get().loadPackages();
+        if (canReload) {
+          try {
+            await window.localPi!.refresh(run!.key);
+            pushNotification({ kind: 'success', title: '已重载当前会话', body: '扩展与资源已对新会话进程生效。', time: '刚刚' });
+            return 'reloaded';
+          } catch (e) {
+            pushNotification({ kind: 'error', title: '重载会话失败', body: String((e as Error).message ?? e), time: '刚刚' });
+            return 'failed';
+          }
+        }
+        pushNotification({ kind: 'info', title: run ? '资源已重新扫描' : '已刷新扩展与资源列表', body: run ? '会话正在运行或等待交互，空闲后才能重载。' : '当前没有已连接的会话；重载将在下次连接时生效。', time: '刚刚' });
+        return 'no-session';
+      } finally {
+        set({ reloadingResources: false });
       }
     },
 
