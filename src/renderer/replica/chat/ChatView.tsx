@@ -517,9 +517,10 @@ export function MessageNav({ turns, listRef, onJump }: { turns: ChatTurn[]; list
 // own props changed.
 /** 单轮消息：memo 化 + turn/消息身份稳定（adapter 缓存 + executionTurns 缓存），
  *  千条级会话流式时每次事件只重渲染活动轮，而不是全量 600+ 行。 */
-export const TurnArticle = memo(function TurnArticle({ m, liveTurn, retrying, suppressModelErrors, retryingError, labels, onOpenToolFile, onEditUser, onDownloadImage }: { m: ChatTurn; liveTurn: boolean; retrying?: boolean; suppressModelErrors?: boolean; /** 本次重试的错误首行：只藏末尾同类的失败，异类错误保持可见。 */ retryingError?: string; labels: ChatViewProps['labels']; onOpenToolFile?: ChatViewProps['onOpenToolFile']; /** 提供时用户消息可「编辑并重发」（先 fork 截断再发送，等价 ZCode 编辑语义）。 */ onEditUser?: (entryId: string, text: string) => void; onDownloadImage?: ChatViewProps['onDownloadImage'] }) {
+export const TurnArticle = memo(function TurnArticle({ m, liveTurn, retrying, suppressModelErrors, retryingError, labels, onOpenToolFile, onEditUser, editCorrection, onDownloadImage }: { m: ChatTurn; liveTurn: boolean; retrying?: boolean; suppressModelErrors?: boolean; /** 本次重试的错误首行：只藏末尾同类的失败，异类错误保持可见。 */ retryingError?: string; labels: ChatViewProps['labels']; onOpenToolFile?: ChatViewProps['onOpenToolFile']; /** 提供时用户消息可「编辑并重发」（先 fork 截断再发送，等价 ZCode 编辑语义）。 */ onEditUser?: (entryId: string, text: string) => void; /** 任务运行中：提交不再是 fork 重发而是作为更正发送（fork 会截断在跑 agent 的上下文）。 */ editCorrection?: boolean; onDownloadImage?: ChatViewProps['onDownloadImage'] }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
+  const zh = labels.you === '你';
   const [copied, setCopied] = useState(false);
   const copiedTimer = useRef<number>(0);
   useEffect(() => () => window.clearTimeout(copiedTimer.current), []);
@@ -561,7 +562,7 @@ export const TurnArticle = memo(function TurnArticle({ m, liveTurn, retrying, su
                 autoFocus
               />
               <div className="pi-msg__editbtns">
-                <button className="pi-btn pi-btn--primary" onClick={submit} disabled={!draft.trim()}>{labels.resend}</button>
+                <button className="pi-btn pi-btn--primary" onClick={submit} disabled={!draft.trim()}>{editCorrection ? (zh ? '发送更正' : 'Send correction') : labels.resend}</button>
                 <button className="pi-btn pi-btn--ghost" onClick={() => setEditing(false)}>{labels.cancel}</button>
               </div>
             </div>
@@ -569,7 +570,7 @@ export const TurnArticle = memo(function TurnArticle({ m, liveTurn, retrying, su
           {!editing && (userText || onEditUser) && (
             <div className="pi-msg__actions">
               {userText && <button type="button" className="pi-msg__action" title={copied ? labels.copied : labels.copyMessage} aria-label={labels.copyMessage} onClick={() => void copy()}>{copied ? <><Icon name="check" size={13} /><span>{labels.copied}</span></> : <Icon name="copy" size={13} />}</button>}
-              {onEditUser && userText && <button type="button" className="pi-msg__action" title={labels.editMessage} aria-label={labels.editMessage} onClick={() => { setDraft(userText); setEditing(true); }}><Icon name="pencil" size={13} /></button>}
+              {onEditUser && userText && <button type="button" className="pi-msg__action" title={editCorrection ? (zh ? '编辑并发送更正' : 'Edit and send correction') : labels.editMessage} aria-label={editCorrection ? (zh ? '编辑并发送更正' : 'Edit and send correction') : labels.editMessage} onClick={() => { setDraft(userText); setEditing(true); }}><Icon name="pencil" size={13} /></button>}
             </div>
           )}
         </>
@@ -761,7 +762,7 @@ export const ChatView = memo(function ChatView(props: ChatViewProps) {
             </button>
           )}
           {visibleTurns.map((m) => (
-            <TurnArticle key={m.id} m={m} liveTurn={Boolean(props.running || retryUI.recovering) && !props.sendingText && m === turns[turns.length - 1]} retrying={retryUI.visible && retryUI.recovering && m === turns[turns.length - 1]} suppressModelErrors={retryUI.recovering && m === turns[turns.length - 1]} retryingError={retryUI.retry?.error} labels={props.labels} onOpenToolFile={props.onOpenToolFile} onEditUser={props.onEditUserMessage} onDownloadImage={props.onDownloadImage} />
+            <TurnArticle key={m.id} m={m} liveTurn={Boolean(props.running || retryUI.recovering) && !props.sendingText && m === turns[turns.length - 1]} retrying={retryUI.visible && retryUI.recovering && m === turns[turns.length - 1]} suppressModelErrors={retryUI.recovering && m === turns[turns.length - 1]} retryingError={retryUI.retry?.error} labels={props.labels} onOpenToolFile={props.onOpenToolFile} onEditUser={props.onEditUserMessage} editCorrection={Boolean(props.running)} onDownloadImage={props.onDownloadImage} />
           ))}
           {props.sending && props.sendingText && (
             <article className="pi-msg pi-msg--user pi-msg--pending">
