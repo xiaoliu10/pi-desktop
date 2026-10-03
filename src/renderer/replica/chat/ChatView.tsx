@@ -83,10 +83,14 @@ export function ToolCard({ part, labels, onOpenToolFile, live }: { part: ToolPar
   const fileName = file.split('/').pop() || file;
   const directory = file.slice(0, -fileName.length);
   const command = typeof args.command === 'string' ? args.command : undefined;
+  // codemode（JS 脚本调工具）：摘要显示脚本首条有效语句而非原始 JSON。
+  const isCodeMode = part.tool === 'codemode';
+  const code = isCodeMode && typeof args.code === 'string' ? args.code : undefined;
+  const codeSummary = code ? code.split('\n').map(l => l.trim()).find(l => l && !l.startsWith('//'))?.slice(0, 90) : undefined;
   // pi ≥0.99 原生 MCP 工具名 `mcp__<server>__<tool>`：显示为「server / tool」并配插头图标。
   const mcpName = part.tool.startsWith('mcp__') ? part.tool.split('__').slice(1).filter(Boolean) : null;
-  const icon = mcpName ? 'plug' as const : ['bash','run_command'].includes(part.tool) ? 'terminal' : ['grep','find','ls'].includes(part.tool) ? 'search' : ['edit','write'].includes(part.tool) ? 'pencil' : part.tool === 'read' ? 'book' : 'plug';
-  const toolLabel = mcpName ? mcpName.join(' / ') : zh ? ({ read: '读取', bash: '终端', run_command: '终端', edit: '编辑', write: '写入', grep: '查阅', find: '查阅', ls: '查阅' } as Record<string, string>)[part.tool] : undefined;
+  const icon = isCodeMode ? 'code' as const : mcpName ? 'plug' as const : ['bash','run_command'].includes(part.tool) ? 'terminal' : ['grep','find','ls'].includes(part.tool) ? 'search' : ['edit','write'].includes(part.tool) ? 'pencil' : part.tool === 'read' ? 'book' : 'plug';
+  const toolLabel = mcpName ? mcpName.join(' / ') : zh ? ({ read: '读取', bash: '终端', run_command: '终端', edit: '编辑', write: '写入', grep: '查阅', find: '查阅', ls: '查阅', codemode: 'JS 脚本' } as Record<string, string>)[part.tool] : undefined;
   const statusLabel = part.phase === 'call' ? (part.status === 'running' ? (zh ? '等待执行结果' : 'Awaiting result') : (zh ? '未记录结果' : 'No saved result')) : part.status === 'running' ? labels.toolRunning : part.status === 'error' ? labels.toolError : labels.toolDone;
   // 摘要行上的行数统计：write 用 content 行数（+N），edit 用 edits[] 的 old/new 行数（+N/−M）。
   let additions = 0, deletions = 0;
@@ -105,7 +109,7 @@ export function ToolCard({ part, labels, onOpenToolFile, live }: { part: ToolPar
           {live && part.status === 'running' && <strong className="pi-execution__thinking">{zh ? '正在执行' : 'Executing'}</strong>}
           <span className="pi-tool__name">{toolLabel || part.tool}</span>
           {file && <span className="pi-tool__file-icon" aria-hidden="true"><FileIcon path={file} size={17} /></span>}
-          <span className="pi-tool__arg" title={file || command || part.summary}>{file ? <>{onOpenToolFile && toolFilePreview(part) ? <button type="button" className="pi-tool__file-link" title={toolFilePreview(part)?.current ? '在右侧查看文件及变更' : '在右侧查看本次文件修改'} onClick={event=>{event.preventDefault();event.stopPropagation();onOpenToolFile(part);}}>{fileName}</button> : fileName}<span className="pi-tool__directory">{directory}</span></> : command || part.summary}</span>
+          <span className="pi-tool__arg" title={file || codeSummary || command || part.summary}>{file ? <>{onOpenToolFile && toolFilePreview(part) ? <button type="button" className="pi-tool__file-link" title={toolFilePreview(part)?.current ? '在右侧查看文件及变更' : '在右侧查看本次文件修改'} onClick={event=>{event.preventDefault();event.stopPropagation();onOpenToolFile(part);}}>{fileName}</button> : fileName}<span className="pi-tool__directory">{directory}</span></> : codeSummary || command || part.summary}</span>
           {(additions > 0 || deletions > 0) && <span className="pi-tool__stat">{additions > 0 && <span className="pi-tool__stat--add">+{additions}</span>}{deletions > 0 && <span className="pi-tool__stat--del">−{deletions}</span>}</span>}
           <span className={`pi-tool__status pi-tool__status--${part.status}`}>
             {statusLabel}
@@ -114,7 +118,9 @@ export function ToolCard({ part, labels, onOpenToolFile, live }: { part: ToolPar
         </summary>
         {officialSubagentDetails(part)&&openSubagents&&<button type="button" className="pi-btn pi-btn--ghost" onClick={()=>openSubagents(part.callId||part.id)}>查看子代理任务与过程</button>}
         <div className="pi-tool__detail">
-          {part.argumentsText && !['bash','run_command'].includes(part.tool) && <><h4>{zh ? '调用参数' : 'Input'}</h4><pre className="pi-tool__output">{part.argumentsText}</pre></>}
+          {isCodeMode && code
+            ? <><h4>{zh ? '脚本' : 'Script'}</h4><pre className="pi-tool__output">{code}</pre></>
+            : part.argumentsText && !['bash','run_command'].includes(part.tool) && <><h4>{zh ? '调用参数' : 'Input'}</h4><pre className="pi-tool__output">{part.argumentsText}</pre></>}
           {(() => {
             // pi 的 bash/run_command 结果把命令以 `$ <命令>` 回显在首行，真实 stdout 跟在后面。
             // 命令已在上方摘要行展示，输出区剥掉这行回显只留 stdout；干净通过则提示无输出。
