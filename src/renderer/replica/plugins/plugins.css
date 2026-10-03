@@ -513,3 +513,11 @@
   gap: 8px;
   margin-top: 12px;
 }
+
+/* 重载按钮反馈态：转圈 + 失败红 */
+.pireplica .pi-spin--active { animation: pi-spin 0.9s linear infinite; }
+@keyframes pi-spin { to { transform: rotate(360deg); } }
+.pireplica .pi-reload--failed {
+  border-color: var(--pi-danger, #c0392b);
+  color: var(--pi-danger, #c0392b);
+}

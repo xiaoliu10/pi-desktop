@@ -574,6 +574,8 @@ export interface PluginsPageProps {
   updatesReady: number;
   demo: boolean;
   labels: PluginsLabels;
+  /** 界面语言；重载按钮的过程文案用它。 */
+  lang?: 'zh' | 'en';
   onSelectTab: (tab: 'installed' | 'marketplace') => void;
   onSearch: (query: string) => void;
   onSelectTag: (tag: string) => void;
@@ -593,7 +595,8 @@ export interface PluginsPageProps {
   /** 在访达中定位扩展文件。 */
   onRevealExtension?: (id: string) => void;
   /** 重扫 npm 包与 pi 资源。 */
-  onReloadResources?: () => void;
+  /** 返回 'failed' 时按钮显示失败态；其余完成态显示已重载。 */
+  onReloadResources?: () => unknown;
 }
 
 export interface PluginsLabels {

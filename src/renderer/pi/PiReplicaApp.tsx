@@ -375,7 +375,8 @@ export default function PiReplicaApp() {
                   onCreateExtension={() => setExtDialog({ mode: 'create' })}
                   onEditExtension={(id) => setExtDialog({ mode: 'edit', id })}
                   onRevealExtension={(id) => { void window.localPi.revealResource(id).catch((e) => s.notify({ kind: 'error', title: String(e), time: '刚刚' })); }}
-                  onReloadResources={() => { s.loadPackages(); s.scanResources(); s.notify({ kind: 'info', title: '已刷新扩展与资源列表', time: '刚刚' }); }}
+                  lang={s.lang}
+                  onReloadResources={() => s.rescanAndReload()}
                 />
                 {extDialog && <ExtensionSourceDialog
                   init={extDialog}
