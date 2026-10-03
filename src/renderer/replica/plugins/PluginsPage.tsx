@@ -11,9 +11,9 @@ import { Icon, type IconName } from '../Icons';
 
 /** 重载按钮：进行中转圈禁用，完成短暂显示结果，失败红色提示——不必猜有没有成功。 */
 function ReloadResourcesButton({ onReload, label, zh }: { onReload: () => unknown; label: string; zh: boolean }) {
-  const [state, setState] = useState<'idle' | 'busy' | 'done' | 'failed'>('idle');
+  const [state, setState] = useState<'idle' | 'busy' | 'done' | 'refreshed' | 'failed'>('idle');
   useEffect(() => {
-    if (state !== 'done' && state !== 'failed') return;
+    if (state !== 'done' && state !== 'refreshed' && state !== 'failed') return;
     const t = setTimeout(() => setState('idle'), 2600);
     return () => clearTimeout(t);
   }, [state]);
@@ -25,14 +25,15 @@ function ReloadResourcesButton({ onReload, label, zh }: { onReload: () => unknow
       onClick={() => {
         if (state === 'busy') return;
         setState('busy');
-        void Promise.resolve(onReload()).then((result) => {
-          setState(result === 'failed' ? 'failed' : 'done');
+        void Promise.resolve().then(() => onReload()).then((result) => {
+          setState(result === 'failed' ? 'failed' : result === 'no-session' ? 'refreshed' : 'done');
         }).catch(() => setState('failed'));
       }}
     >
       <Icon name="refresh" size={14} className={`pi-spin ${state === 'busy' ? 'pi-spin--active' : ''}`} />
       {state === 'busy' ? (zh ? '重载中…' : 'Reloading…')
         : state === 'done' ? (zh ? '已重载 ✓' : 'Reloaded ✓')
+        : state === 'refreshed' ? (zh ? '已刷新 ✓' : 'Refreshed ✓')
         : state === 'failed' ? (zh ? '重载失败' : 'Reload failed')
         : label}
     </button>
