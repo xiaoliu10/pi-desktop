@@ -157,7 +157,12 @@ function MessageParts({ parts, labels, onOpenToolFile, live, hiddenErrors }: { p
           case 'tool':
             return <ToolCard key={p.id} part={p} labels={labels} onOpenToolFile={onOpenToolFile} live={live} />;
           case 'notice':
-            return (
+            return p.strong ? (
+              <div key={p.id} className="pi-notice pi-notice--strong" role="note">
+                <Icon name="archive" size={15} />
+                <span>{p.text}</span>
+              </div>
+            ) : (
               <div key={p.id} className="pi-notice">
                 {p.text}
               </div>
