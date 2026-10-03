@@ -1849,7 +1849,8 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
           });
           return;
         }
-        if (op.type === 'now') get().notify({ kind: 'success', title: '已插入当前任务，将在当前步骤结束后生效', time: '刚刚' });
+        // 插入成功不再发通知：气泡上的「✓ 已插入当前任务」标记即反馈（用户反馈：这类
+        // 操作型通知是噪音，效果本身可见）。
       })();
     },
     // ZCode 风格：点编辑把队列项（文字 + 图片附件）载回输入框，改完重发即按新内容重新排队。
@@ -1867,7 +1868,7 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
       get().setDraftText(head);
       if (recalled.length) get().addContext(recalled);
       get().queueEdit({ type: 'remove', index });
-      get().notify({ kind: 'info', title: state.lang === 'zh' ? '已载入输入框，可修改后重新发送' : 'Loaded into the input box; edit and re-send', time: '刚刚' });
+      // 载入输入框不再发通知：草稿已直接出现在输入框，效果可见。
     },
     pickModel: (combinedId) => {
       const state = get();
