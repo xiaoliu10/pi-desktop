@@ -423,9 +423,19 @@ export default function PiReplicaApp() {
     }
     usePiStore.setState({workbenchOpen:true,workbenchTab:preview.diff ? 'review' : 'files'});
   }, [cwd]);
-  // 编辑并重发已发送消息（fork 截断回该条目 → 普通发送）。稳定回调避免击穿 TurnArticle 的 memo。
+  // 编辑已发送消息。空闲：fork 截断回该条目后重发（等价 ZCode 编辑语义）；
+  // 运行中：fork 会截断在跑 agent 的上下文（后端拒绝），改为把修改后的文本
+  // 走既有 队列/steer 链路作为更正发送，原消息保留。稳定回调避免击穿 TurnArticle 的 memo。
   const editUserMessage = useCallback((entryId: string, text: string) => {
-    void usePiStore.getState().resendEdited(entryId, text);
+    const st = usePiStore.getState();
+    const running = Boolean(st.runs.find(r => r.key === st.selectedKey && ['starting', 'running', 'stopping'].includes(r.status)));
+    if (running) {
+      // 运行中无法 fork（会截断在跑 agent 的上下文）：修改后的文本走既有
+      // 队列/steer 链路作为更正送达，气泡保留原文，通知由 send 链路自己发。
+      st.send(text.trim());
+      return;
+    }
+    void st.resendEdited(entryId, text);
   }, []);
   // 图片灯箱下载：主进程弹保存对话框写盘。
   const downloadImage = useCallback((dataUrl: string, name: string) => {
@@ -876,7 +886,7 @@ export default function PiReplicaApp() {
                     labels={t.chat}
                     onOpenToolFile={openToolFile}
                     onJumpToMessage={noop}
-                    onEditUserMessage={parentRunning ? undefined : editUserMessage}
+                    onEditUserMessage={editUserMessage}
                     onDownloadImage={downloadImage}
                     onRefreshProcess={s.refreshConversation}
                     compacting={run?.compacting}
