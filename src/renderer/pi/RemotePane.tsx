@@ -56,24 +56,28 @@ export function RemotePane() {
     error: { label: zh ? '连接失败' : 'Connection failed', detail: zh ? '无法启动移动端远程控制。' : 'Could not start mobile remote control.', dot: 'var(--pi-red)' },
   }[state];
 
-  const showQr = async (status: RemoteStatus) => {
-    setRemote(status);
-    if (status.running && status.urls[0]) {
-      try {
-        setQrBusy(true);
-        const QR = await import('qrcode');
-        setQr(await QR.toDataURL(status.urls[0], { width: 256, margin: 1 }));
-      } catch { setQr(null); }
-      finally { setQrBusy(false); }
-    } else {
-      setQr(null);
-    }
-  };
+  // 远程服务器常驻主进程：页面每次挂载时 status() 都会报告 running，但此前只有
+  // 开启/刷新按钮才生成二维码——挂载路径永远停「正在准备二维码」。改为统一由
+  // effect 生成：running 且有链接时自动出码（覆盖挂载、开启、刷新），停止或无
+  // 链接时清空。依赖用 url 字符串值，3s 轮询的新数组引用不会重复触发；失败时
+  // 清掉 qrBusy，交给渲染层失败分支提示，不停留在「正在准备」。
+  const qrUrl = remote.running ? remote.urls[0] : undefined;
+  useEffect(() => {
+    if (!qrUrl) { setQr(null); setQrBusy(false); return; }
+    let cancelled = false;
+    setQrBusy(true);
+    void import('qrcode')
+      .then(QR => QR.toDataURL(qrUrl, { width: 256, margin: 1 }))
+      .then(url => { if (!cancelled) setQr(url); })
+      .catch(() => { if (!cancelled) setQr(null); })
+      .finally(() => { if (!cancelled) setQrBusy(false); });
+    return () => { cancelled = true; };
+  }, [qrUrl]);
 
   const toggle = async () => {
     setBusy(true);
     try {
-      await showQr(remote.running ? await api().remoteStop() : await api().remoteStart());
+      setRemote(remote.running ? await api().remoteStop() : await api().remoteStart());
     } catch (e) {
       say(String((e as Error).message || e));
     } finally {
@@ -85,7 +89,7 @@ export function RemotePane() {
     setBusy(true);
     try {
       await api().remoteStop();
-      await showQr(await api().remoteStart());
+      setRemote(await api().remoteStart());
       say(zh ? '已刷新远程控制二维码' : 'Remote control QR refreshed');
     } catch (e) {
       say(String((e as Error).message || e));
@@ -196,10 +200,14 @@ export function RemotePane() {
           <div className="pi-remote__qrarea">
             {qr ? (
               <img className="pi-remote__qrimg" src={qr} alt={zh ? 'Web 远程控制二维码' : 'Web remote control QR code'} />
-            ) : remote.running ? (
+            ) : qrBusy && remote.running ? (
               <div className="pi-remote__qrgenerating">
                 <Icon name="loader" size={20} />
                 <span>{zh ? '正在准备二维码...' : 'Preparing QR code...'}</span>
+              </div>
+            ) : remote.running ? (
+              <div className="pi-remote__qrgenerating">
+                <span>{zh ? '二维码生成失败，请点「刷新二维码」重试。' : 'QR generation failed. Click "Refresh QR" to retry.'}</span>
               </div>
             ) : (
               <div className="pi-remote__qridle">
