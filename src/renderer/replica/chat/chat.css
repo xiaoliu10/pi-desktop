@@ -393,6 +393,17 @@
   margin: 8px 0;
 }
 
+/* 压缩等里程碑记录：加黑（特异性压过基础灰），配 archive 图标按时间线位置展示 */
+.pireplica .pi-notice.pi-notice--strong {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--pi-text);
+  font-weight: 600;
+}
+
+.pireplica .pi-notice.pi-notice--strong svg { flex-shrink: 0; }
+
 .pireplica .pi-error {
   background: var(--pi-red-bg);
   color: var(--pi-red);

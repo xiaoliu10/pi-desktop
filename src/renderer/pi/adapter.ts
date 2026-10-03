@@ -218,7 +218,7 @@ export function historyToMessages(branch: PiEntry[]): ChatMessage[] {
       push(entry, id, () => ({
         id,
         role: 'assistant',
-        parts: [{ kind: 'notice', id: `${id}-n`, text: entry.type === 'compaction' ? (before ? `上下文压缩记录 · 压缩前 ${before} tokens` : '上下文压缩记录') : '分支摘要' }],
+        parts: [{ kind: 'notice', id: `${id}-n`, text: entry.type === 'compaction' ? (before ? `上下文压缩记录 · 压缩前 ${before} tokens` : '上下文压缩记录') : '分支摘要', strong: entry.type === 'compaction' }],
       }));
       return;
     }
@@ -227,7 +227,7 @@ export function historyToMessages(branch: PiEntry[]): ChatMessage[] {
       push(entry, id, () => ({
         id,
         role: 'assistant',
-        parts: [{ kind: 'notice', id: `${id}-n`, text: compactionRecordText((entry as { data?: Record<string, unknown> }).data ?? {}) }],
+        parts: [{ kind: 'notice', id: `${id}-n`, text: compactionRecordText((entry as { data?: Record<string, unknown> }).data ?? {}), strong: true }],
       }));
       return;
     }
