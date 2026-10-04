@@ -54,7 +54,8 @@ function extractText(node: ReactNode): string {
 }
 
 /** markdown 围栏代码块外壳：右上角悬浮复制按钮，成功后 1.6s 打勾自复位。 */
-function CodeBlockPre({ children, zh, ...rest }: React.ComponentProps<'pre'> & { zh?: boolean }) {
+// node 由 react-markdown (passNode) 注入，不能透传到 DOM——解构剔除。
+function CodeBlockPre({ children, zh, node: _node, ...rest }: React.ComponentProps<'pre'> & { zh?: boolean; node?: unknown }) {
   const [copied, setCopied] = useState(false);
   const timer = useRef(0);
   useEffect(() => () => window.clearTimeout(timer.current), []);
@@ -65,7 +66,7 @@ function CodeBlockPre({ children, zh, ...rest }: React.ComponentProps<'pre'> & {
       setCopied(true);
       window.clearTimeout(timer.current);
       timer.current = window.setTimeout(() => setCopied(false), 1600);
-    } catch { /* 剪贴板不可用（非安全上下文等）时静默复位，不打断阅读。 */ }
+    } catch (e) { console.warn('[CodeBlockPre] clipboard write failed', e); /* 复位不打断阅读，但留痕便于诊断 */ }
   };
   const label = copied ? (zh ? '已复制' : 'Copied') : (zh ? '复制代码' : 'Copy code');
   return (
