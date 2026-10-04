@@ -119,7 +119,7 @@ function Row({ row, labels, onControl }: { row: SettingRowData; labels: Settings
         <div className="pi-settingrow__title">{row.title}</div>
         {row.description && <div className="pi-settingrow__desc">{row.description}</div>}
       </div>
-      <div className="pi-settingrow__control">
+      <div className={`pi-settingrow__control${ctrl.kind === 'select' ? ' pi-settingrow__control--select' : ''}`}>
         {ctrl.kind === 'select' && (
           <select
             className="pi-settingrow__select"
