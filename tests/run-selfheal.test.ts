@@ -131,3 +131,59 @@ it('watchdog 只启动一次、dispose 时清除', async () => {
   backend.dispose();
   expect((backend as any).watchdog).toBeUndefined();
 });
+
+/** 把结算确认 RPC 打桩：settle 调用按脚本回放，其余走真 client。 */
+const stubSettle = (run: any, script: Array<'reject' | 'resolve'>) => {
+  const original = run.client.request.bind(run.client);
+  let i = 0;
+  run.client.request = async (method: string, params: any, timeout: number) => {
+    if (String(params?.message ?? '').includes('-settle')) {
+      const step = script[Math.min(i++, script.length - 1)];
+      if (step === 'reject') { await new Promise(r => setTimeout(r, 30)); throw new Error('simulated settle timeout'); }
+      await new Promise(r => setTimeout(r, 30));
+      return {};
+    }
+    return original(method, params, timeout);
+  };
+};
+/** 注入扩展的安全空闲回执（真实链路：setStatus desktop-retry-settled）。 */
+const injectSettled = (backend: PiBackend, run: any) => {
+  (backend as any).onEvent(run, { type: 'extension_ui_request', id: `t-${Math.random()}`, method: 'setStatus', statusKey: 'desktop-retry-settled', statusText: JSON.stringify({ generation: run.view.generation, token: run.settlement?.token }) });
+};
+
+it('结算确认回执丢失：自动重发确认命令（同 token 幂等），第二次回执到达即正常续接不降级', async () => {
+  const { backend } = setup();
+  const view = await backend.connect({ cwd: process.cwd(), trustProject: false, permission: 'ask' });
+  await backend.prompt(view.key, '/stuck', 'followUp');
+  const run = await waitStatus(backend, view.key, 'running');
+  run.retryReady = true;
+  (run.retry as any).begin();
+  (run.retry as any).lastOutcome = 'stop'; // 真实链路：结算发生在任务自然完成后
+  stubSettle(run, ['reject', 'resolve']);
+  (backend as any).ensureSettlement(run);
+  // 第一次探测失败（打桩 reject）→ 5s 后第二次探测 → 回执到达 → 清结算，不进 failed。
+  await new Promise(r => setTimeout(r, 5_600));
+  injectSettled(backend, run);
+  await new Promise(r => setTimeout(r, 200));
+  expect(run.settlement).toBeUndefined();
+  expect(run.retryUncertain).toBe(false);
+  expect((run.retry as any).state?.phase).not.toBe('failed');
+  expect(run.view.error).toBeUndefined();
+}, 20_000);
+
+it('结算确认三次仍无回执：约 45s 窗口后降级手动恢复，错误文案可执行', async () => {
+  const { backend } = setup();
+  const view = await backend.connect({ cwd: process.cwd(), trustProject: false, permission: 'ask' });
+  await backend.prompt(view.key, '/stuck', 'followUp');
+  const run = await waitStatus(backend, view.key, 'running');
+  run.retryReady = true;
+  (run.retry as any).begin();
+  stubSettle(run, ['reject', 'reject', 'reject']);
+  (backend as any).ensureSettlement(run);
+  await vi.waitFor(() => {
+    expect((run.retry as any).state?.phase).toBe('failed');
+  }, { timeout: 15_000, interval: 200 });
+  expect(run.retryUncertain).toBe(true);
+  expect(String(run.view.error)).toContain('多次确认运行时空闲失败');
+  expect(String(run.view.error)).toContain('重新发送');
+}, 20_000);
