@@ -318,7 +318,7 @@ export class PiBackend {
     if (event.type === 'extension_error' && run.settlement && event.extensionPath === `command:desktop-retry-${generation}-settle`) {
       this.clearSettlement(run);
       run.retryUncertain = true;
-      run.retry.fail(event.error || '当前运行时无法确认安全空闲，已停止自动续接；请停止后手动恢复。');
+      run.retry.fail(event.error || '运行时确认空闲失败（扩展报错），已暂停自动续接；请重新发送任务以恢复。');
     }
     if (event.type === 'extension_error' && run.retry.recovering &&
       (event.extensionPath === `command:desktop-retry-${generation}` || event.event === 'send_message')) {
@@ -424,10 +424,26 @@ export class PiBackend {
     // command bridge if it did not; never infer settlement from agent_end/state.
     const timer = setTimeout(() => {
       if (!current()) return;
-      if (!run.retryReady) { fail(new Error('运行时缺少安全空闲确认扩展，无法自动续接；请停止后手动恢复。')); return; }
-      run.settlement!.timer = setTimeout(() => fail(new Error('运行时未确认安全空闲，无法自动续接；请停止后手动恢复。')), 10_000);
-      run.settlement!.timer.unref?.();
-      void run.client.request('prompt', { message: `/desktop-retry-${run.view.generation}-settle ${JSON.stringify({ generation: run.view.generation, sessionFile: run.input.file, token })}` }, 10_000).catch(fail);
+      if (!run.retryReady) { fail(new Error('运行时缺少安全空闲确认扩展，无法自动续接；请重新发送任务以恢复。')); return; }
+      // 一次回执丢失不等于运行时异常：token 幂等（回执按 token 匹配），同一确认命令
+      // 最多探测 3 次（10s RPC 超时 + 5s 间隔，总窗口约 45s），期间运行时恢复空闲即
+      // 正常续接；仍无回执才降级为手动恢复。进程死亡由 current() 收敛。
+      let attempts = 0;
+      const probe = () => {
+        if (!current() || run.view.status === 'stopping') return;
+        attempts++;
+        const next = () => {
+          if (!current()) return;
+          if (attempts >= 3) { fail(new Error('多次确认运行时空闲失败，已暂停自动续接；请重新发送任务以恢复。')); return; }
+          run.settlement!.timer = setTimeout(probe, 5_000);
+          run.settlement!.timer.unref?.();
+        };
+        void run.client.request('prompt', { message: `/desktop-retry-${run.view.generation}-settle ${JSON.stringify({ generation: run.view.generation, sessionFile: run.input.file, token })}` }, 10_000).then(() => {
+          // RPC 完成但尚未见到 desktop-retry-settled 回执：确认可能仍在路上，间隔复查。
+          if (current()) next();
+        }).catch(next);
+      };
+      probe();
     }, 250);
     timer.unref?.();
     run.settlement = { token, timer };
