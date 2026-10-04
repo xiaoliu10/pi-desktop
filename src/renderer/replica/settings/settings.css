@@ -178,6 +178,13 @@
   gap: 4px;
 }
 
+/* select 行的对齐列：所有下拉框左缘对齐（宽度随选项文字自适应）；
+   选项非常长时撑满列宽贴到右缘（等效右对齐），不再受固定宽度截断。 */
+.pireplica .pi-settingrow__control--select {
+  width: 158px;
+  justify-content: flex-start;
+}
+
 .pireplica .pi-settingrow__select {
   border: 1px solid var(--pi-border);
   background: var(--pi-bg);
@@ -186,11 +193,13 @@
   font: inherit;
   font-size: var(--pi-font-size-sm);
   color: var(--pi-text);
-  /* 固定宽：原生 select 闭合宽度随最长 option 撑开，同一区块相邻两行
-     （如「运行中输入」最长 6 字 vs「访问模式」最长 5 字）会差一个字宽，
-     右缘对不齐。统一 158px 容纳中文 6 字与最长英文选项；下拉展开列表
-     不受闭合宽度限制，超宽选项在列表里仍完整可见。 */
-  width: 158px;
+  /* 宽度随当前选中文字自适应（field-sizing 需 Chromium 123+，Electron 33=130 ✓；
+     左缘由 control--select 列对齐）；超长选项撑满列宽（158px）后省略号兜底，
+     下拉展开列表不受闭合宽度限制。旧内核自动回退为按最长 option 撑宽。 */
+  field-sizing: content;
+  width: auto;
+  min-width: 96px;
+  max-width: 100%;
   text-overflow: ellipsis;
 }
 
