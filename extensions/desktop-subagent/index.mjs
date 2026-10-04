@@ -33,6 +33,7 @@ export default function(pi) {
       // tool_execution_end(isError)，前端卡片与子代理面板恢复一致。
       let stallReject;
       let settled = false;
+      let latestResults;
       const watchdog = createStallWatchdog({
         graceMs: STALL_GRACE_MS,
         onStall() {
@@ -41,13 +42,17 @@ export default function(pi) {
           stallReject(new Error(`子代理已失败但未正常返回（收尾静默超过 ${STALL_GRACE_MS / 1000} 秒），已由桌面端终止等待。失败详情：${summarizeFailures(latestResults)}`));
         },
       });
-      let latestResults;
       if (typeof args[3] === 'function') {
         const original = args[3];
         args[3] = (u) => {
           try {
-            latestResults = u?.details?.results ?? latestResults;
-            watchdog.observe(latestResults);
+            const results = u?.details?.results;
+            // 只在快照实际携带 results 时观察；否则不重喂陈旧停滞快照（避免
+            // 不带 results 的 update 把已布防的计时器重置，让看门狗静默失效）。
+            if (Array.isArray(results)) {
+              latestResults = results;
+              watchdog.observe(results);
+            }
             if (watchdog.triggered || settled) return undefined; // 终止等待后掐断透传
           } catch { /* 看门狗自身的解析失败不影响原始 update 透传 */ }
           return original(u);

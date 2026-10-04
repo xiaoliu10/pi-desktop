@@ -8,6 +8,12 @@
 // further progress observation that still matches resets it, so a healthy
 // sibling that merely updates slowly never gets killed. If the timer ever
 // fires (no progress for the whole grace window), onStall() runs.
+//
+// 隐含不变量（reset-on-match 语义成立的前提）：pi 在全部子代理终态后不再发
+// 带 results 的 update（emitUpdate 由 agent loop stdout 驱动，终态后 loop
+// 立即返回、不再吐 stdout）。若未来 pi 加终态后遥测，需重新评估 reset 语义。
+// 另一边角：全部子代理命中 length（截断，无 error/aborted）时不算失败、不
+// 布防——此时虽收尾挂住也无失败可报，作非目标，必要时再扩 FAILED 集合。
 
 // pi-ai StopReason: "pending" | "stop" | "length" | "toolUse" | "error" | "aborted" | "deferred".
 // Terminal = the agent loop for that subagent has ended (result is final).
@@ -47,8 +53,8 @@ export function createStallWatchdog({ graceMs, onStall }) {
 export function summarizeFailures(results) {
   const list = (Array.isArray(results) ? results : []).filter(isFailed);
   return list.map(r => {
-    const stderrLine = String(r.stderr ?? '').trim().split('\n')[0] ?? '';
-    const detail = stderrLine || `stopReason=${r.stopReason}`;
+    const stderr = String(r.stderr ?? '').trim().split('\n')[0];
+    const detail = stderr || `stopReason=${r.stopReason}`;
     return `${r.agent ?? 'subagent'}: ${detail.slice(0, 160)}`;
   }).join('；');
 }
