@@ -164,6 +164,10 @@ export class PiBackend {
     migrateOldSubagentExtension(this.env.agentDir);
     const subagentPath = path.join(path.dirname(this.policyPath), '..', 'desktop-subagent', 'index.mjs');
     const subagentArgs = fs.existsSync(subagentPath) && !detectThirdPartySubagent(this.env.agentDir).detected ? ['-e', subagentPath] : [];
+    // codemode 采用率引导：非 GPT 系模型对弱 guideline 不敏感，随会话注入
+    // 可判定规则 + 运行中提醒（缺失不阻塞会话）。
+    const nudgePath = path.join(path.dirname(this.policyPath), '..', 'desktop-codemode-nudge', 'index.mjs');
+    const nudgeArgs = fs.existsSync(nudgePath) ? ['-e', nudgePath] : [];
     const args = [
       ...(this.env.launchArgs || []),
       '--mode', 'rpc',
@@ -176,6 +180,7 @@ export class PiBackend {
       ...askArgs,
       ...memoryArgs,
       ...subagentArgs,
+      ...nudgeArgs,
       ...(input.systemPrompt ? ['--append-system-prompt', input.systemPrompt] : []),
       ...(input.permission === 'plan'
         // 计划模式：只读工具 + ask_user_question（提问无副作用，正好用于澄清需求）+ 任务清单。
