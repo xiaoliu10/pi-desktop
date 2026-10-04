@@ -1488,10 +1488,10 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
               if (get().sentAt?.key === event.run.key) set({ sentAt: undefined });
               handleRpcEvent(event.run.key, { type: 'agent_settled' });
             }
-            // 重试组的失败/耗尽由会话内 RetryStatus（ChatError）渲染；不再拉全局横幅——
-            // 横幅不随后续状态清除，任务停止后仍会挂着「请停止后手动恢复」的过期提示。
-            const retryPhase = event.run.retryGroup?.phase;
-            if (event.run.error && retryPhase !== 'failed' && retryPhase !== 'exhausted') set({ error: event.run.error, errorKey: event.run.key });
+            // 重试组的组错误由会话内 RetryStatus（ChatError）渲染，不拉全局横幅——横幅
+            // 不随后续状态清除，任务停止后仍会挂着过期提示。按错误串判别而非 phase：
+            // failed 组之后 pi 退出时 view.error 会被覆写为退出原因，必须照常横幅。
+            if (event.run.error && event.run.error !== event.run.retryGroup?.error) set({ error: event.run.error, errorKey: event.run.key });
             break; }
           case 'closed':
             if (state.runs.some(r => r.key === event.key && r.generation !== event.generation)) break;
