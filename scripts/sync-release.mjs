@@ -32,7 +32,8 @@ if (!process.argv.includes('--force')) {
     console.error(
       `检测到目标 app 正在运行，同步会删除其磁盘文件，导致运行中实例 connect 报` +
       `「Desktop 工具权限扩展缺失」。运行中的相关进程：\n${running}\n` +
-      `请先让用户 ⌘Q 退出 PI Desktop 再构建；确要覆盖请加 --force。`
+      `请先让用户 ⌘Q 退出 PI Desktop 再构建；若本次构建正由 PI Desktop 内的 agent 发起，` +
+      `⌘Q 会连构建一起终止，请直接加 --force（用户随后 ⌘Q 重启加载新版）。`
     );
     process.exit(1);
   }
