@@ -4,6 +4,10 @@
  */
 
 import { useEffect, useState } from 'react';
+// 静态导入（勿改回 import()）：qrcode 的 browser build 被 rollup 判为与主 bundle
+// 互相依赖时会拆成独立 chunk 并静态 import 主 chunk，动态加载时形成循环依赖、
+// 打包 app 里 import() 直接 reject（PR #34 失败分支首次让该错误可见）。
+import { toDataURL as qrToDataURL } from 'qrcode';
 import type { ImConfig, RemoteStatus } from '../../shared/pi';
 import { usePiStore } from './adapter';
 import { CHANNEL_ICON_URLS } from './brand-icons/channel-icons';
@@ -65,12 +69,14 @@ export function RemotePane() {
   useEffect(() => {
     if (!qrUrl) { setQr(null); setQrBusy(false); return; }
     let cancelled = false;
-    setQrBusy(true);
-    void import('qrcode')
-      .then(QR => QR.toDataURL(qrUrl, { width: 256, margin: 1 }))
-      .then(url => { if (!cancelled) setQr(url); })
-      .catch(() => { if (!cancelled) setQr(null); })
-      .finally(() => { if (!cancelled) setQrBusy(false); });
+    void (async () => {
+      setQrBusy(true);
+      try {
+        const url = await qrToDataURL(qrUrl, { width: 256, margin: 1 });
+        if (!cancelled) setQr(url);
+      } catch { if (!cancelled) setQr(null); }
+      finally { if (!cancelled) setQrBusy(false); }
+    })();
     return () => { cancelled = true; };
   }, [qrUrl]);
 
