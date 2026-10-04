@@ -34,6 +34,41 @@ describe('状态面板终端/子代理区（ZCode 智能体/终端区同位复�
     expect(css).toMatch(/\.pi-status-card \.pi-status-heading\s*\{\s*font-weight:\s*600;\s*color:\s*var\(--pi-text\)\s*\}/);
   });
 
+  it('收起态渲染 ZCode 式胶囊（图标+标题，点击展开），不渲染卡片内容', () => {
+    const store = { 'pi-status-collapsed': 'true' };
+    const prev = (globalThis as Record<string, unknown>).localStorage;
+    (globalThis as Record<string, unknown>).localStorage = { getItem: (k: string) => store[k] ?? null, setItem: () => undefined };
+    try {
+      const html = renderToStaticMarkup(createElement(ConversationStatusPanel, { ...base, stats: { tokens: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, total: 2 } } }));
+      expect(html).toContain('pi-status-pill');
+      expect(html).toContain('M14 3h7v7M21 3l-7 7M10 21H3v-7M3 21l7-7'); // expand-diagonal
+      expect(html).toContain('任务状态');
+      expect(html).toContain('aria-expanded="false"');
+      expect(html).toContain('展开状态面板');
+      // 胶囊态不渲染卡片内容与 header
+      for (const text of ['会话统计', '进程', 'pi-status-card', '状态面板菜单', '收起状态面板']) expect(html).not.toContain(text);
+    } finally { (globalThis as Record<string, unknown>).localStorage = prev; }
+  });
+
+  it('展开态 header 提供收起按钮（collapse-diagonal），收起后回到胶囊', () => {
+    const html = renderToStaticMarkup(createElement(ConversationStatusPanel, base));
+    expect(html).toContain('M10 14H3m7 0v7m0-7-7 7M14 10h7m-7 0V3m0 7 7-7'); // collapse-diagonal
+    expect(html).toContain('收起状态面板');
+    expect(html).not.toContain('pi-status-pill');
+  });
+
+  it('事件链路：胶囊与收起按钮共用 toggle（写同一 localStorage 键），渲染→收起→展开全链单点持久化', () => {
+    const source = new URL('../src/renderer/pi/ConversationStatusPanel.tsx', import.meta.url).pathname;
+    const code = readFileSync(source, 'utf8');
+    // 胶囊 onClick={toggle}：点击写 'false' 并展开（真实事件路径的源码级接线断言）
+    expect(code).toContain('className="pi-status-pill" onClick={toggle}');
+    // 收起按钮与标题按钮同样走 toggle（单点持久化，无第二份 localStorage 写入实现）
+    expect(code).toContain('aria-label="收起状态面板" onClick={toggle}');
+    expect(code.match(/pi-status-collapsed/g)).toHaveLength(2); // 初始化读取 + toggle 写入，单点持久化
+    // 折叠/展开交换时焦点转移到接班控件（收起→胶囊，展开→标题按钮）
+    expect(code).toContain("(collapsed?pill:titleButton).current?.focus()");
+  });
+
   it('终端行显示运行中命令数并提供打开入口', () => {
     const html = renderToStaticMarkup(createElement(ConversationStatusPanel, { ...base, messages: [shellTool('running'), shellTool('running'), shellTool('done')], onOpenTerminal: () => {} }));
     expect(html).toContain('>终端</span>');
