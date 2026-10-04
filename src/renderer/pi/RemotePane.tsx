@@ -74,7 +74,7 @@ export function RemotePane() {
       try {
         const url = await qrToDataURL(qrUrl, { width: 256, margin: 1 });
         if (!cancelled) setQr(url);
-      } catch { if (!cancelled) setQr(null); }
+      } catch (e) { console.warn('[RemotePane] QR generation failed', e); if (!cancelled) setQr(null); }
       finally { if (!cancelled) setQrBusy(false); }
     })();
     return () => { cancelled = true; };
