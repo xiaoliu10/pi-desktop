@@ -35,7 +35,7 @@ export function PlanCard({ doc, lang, onViewPlan }: {
         </button>
       </header>
       <div className="pi-plan-card__body">
-        <div className="pi-plan-card__markdown"><ChatMarkdown text={doc.markdown} /></div>
+        <div className="pi-plan-card__markdown"><ChatMarkdown text={doc.markdown} zh={zh} /></div>
         <button type="button" className="pi-plan-card__viewfull" onClick={(e) => { e.stopPropagation(); onViewPlan(); }}>
           {zh ? '查看全文' : 'View full plan'}
           <Icon name="arrow-right" size={14} />
