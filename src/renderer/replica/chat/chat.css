@@ -361,6 +361,48 @@
   padding: 0;
 }
 
+/* markdown 代码块外壳：右上角悬浮复制按钮（默认半透明，hover 显现；复制成功 1.6s 打勾自复位）。 */
+.pireplica .pi-codeblock {
+  position: relative;
+}
+.pireplica .pi-codeblock pre {
+  margin: 0;
+}
+.pireplica .pi-codeblock__copy {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 6px;
+  border: 1px solid var(--pi-outline);
+  border-radius: 6px;
+  background: var(--pi-surface);
+  color: var(--pi-text-secondary);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+.pireplica .pi-codeblock:hover .pi-codeblock__copy,
+.pireplica .pi-codeblock__copy:focus-visible,
+.pireplica .pi-codeblock__copy--done {
+  opacity: 1;
+}
+.pireplica .pi-codeblock__copy:hover {
+  color: var(--pi-text);
+}
+.pireplica .pi-codeblock__copy--done {
+  color: var(--pi-green, #0a7d33);
+  border-color: var(--pi-green, #0a7d33);
+}
+.pireplica .pi-md pre {
+  margin: 10px 0;
+}
+.pireplica .pi-codeblock pre {
+  margin: 10px 0;
+}
+
 .pireplica .pi-md img,
 .pireplica .pi-message-image {
   max-width: 100%;

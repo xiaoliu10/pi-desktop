@@ -44,9 +44,45 @@ import { executionTurns, formatElapsed, type ChatTurn } from './execution';
 
 const remarkGfmPlugins = [remarkGfm];
 
+/** 从 ReactNode 树里递归抽取纯文本（代码块复制用；react-markdown 的 code 子节点是语法高亮前的纯文本）。 */
+function extractText(node: ReactNode): string {
+  if (node == null || typeof node === 'boolean') return '';
+  if (typeof node === 'string' || typeof node === 'number') return String(node);
+  if (Array.isArray(node)) return node.map(extractText).join('');
+  const el = node as { props?: { children?: ReactNode } };
+  return el.props ? extractText(el.props.children) : '';
+}
+
+/** markdown 围栏代码块外壳：右上角悬浮复制按钮，成功后 1.6s 打勾自复位。 */
+function CodeBlockPre({ children, zh, ...rest }: React.ComponentProps<'pre'> & { zh?: boolean }) {
+  const [copied, setCopied] = useState(false);
+  const timer = useRef(0);
+  useEffect(() => () => window.clearTimeout(timer.current), []);
+  const text = useMemo(() => extractText(children), [children]);
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      window.clearTimeout(timer.current);
+      timer.current = window.setTimeout(() => setCopied(false), 1600);
+    } catch { /* 剪贴板不可用（非安全上下文等）时静默复位，不打断阅读。 */ }
+  };
+  const label = copied ? (zh ? '已复制' : 'Copied') : (zh ? '复制代码' : 'Copy code');
+  return (
+    <div className="pi-codeblock">
+      <pre {...rest}>{children}</pre>
+      <button type="button" className={`pi-codeblock__copy${copied ? ' pi-codeblock__copy--done' : ''}`} title={label} aria-label={label} onClick={() => void copy()}>
+        <Icon name={copied ? 'check' : 'copy'} size={13} />
+      </button>
+    </div>
+  );
+}
+
 /** 记忆化：文本不变时不重新解析 markdown（避免每次按键/流式更新都重解析全部消息）。 */
-export const ChatMarkdown = memo(function ChatMarkdown({ text }: { text: string }) {
-  const content = useMemo(() => <ReactMarkdown remarkPlugins={remarkGfmPlugins}>{text}</ReactMarkdown>, [text]);
+export const ChatMarkdown = memo(function ChatMarkdown({ text, zh }: { text: string; zh?: boolean }) {
+  // pre 覆写在每次渲染按当前 zh 重建 components：语言切换时按钮文案随之变化。
+  const components = useMemo(() => ({ pre: (props: React.ComponentProps<'pre'> & { zh?: boolean }) => <CodeBlockPre {...props} zh={zh} /> }), [zh]);
+  const content = useMemo(() => <ReactMarkdown remarkPlugins={remarkGfmPlugins} components={components}>{text}</ReactMarkdown>, [text, components]);
   return <div className="pi-md">{content}</div>;
 });
 
@@ -151,9 +187,9 @@ function MessageParts({ parts, labels, onOpenToolFile, live, hiddenErrors }: { p
           case 'image':
             return <img key={p.id} className="pi-message-image" src={`data:${p.mimeType};base64,${p.data}`} alt="附件图片" />;
           case 'text':
-            return <ChatMarkdown key={p.id} text={p.text} />;
+            return <ChatMarkdown key={p.id} text={p.text} zh={labels.you === '你'} />;
           case 'thinking':
-            return <ExecutionNote key={p.id} title={`${labels.you === '你' ? '思考' : 'Thought'}${p.durationMs !== undefined ? ` · ${labels.you === '你' ? `用时 ${Math.max(1, Math.ceil(p.durationMs / 1000))} 秒` : `took ${Math.max(1, Math.ceil(p.durationMs / 1000))}s`}` : ''}`} text={p.text} active={live} />;
+            return <ExecutionNote key={p.id} zh={labels.you === '你'} title={`${labels.you === '你' ? '思考' : 'Thought'}${p.durationMs !== undefined ? ` · ${labels.you === '你' ? `用时 ${Math.max(1, Math.ceil(p.durationMs / 1000))} 秒` : `took ${Math.max(1, Math.ceil(p.durationMs / 1000))}s`}` : ''}`} text={p.text} active={live} />;
           case 'tool':
             return <ToolCard key={p.id} part={p} labels={labels} onOpenToolFile={onOpenToolFile} live={live} />;
           case 'notice':
@@ -258,7 +294,7 @@ function UserMessageParts({ parts, labels, onOpenToolFile, onDownloadImage }: { 
   );
 }
 
-function ExecutionNote({ title, text, active }: { title: string; text: string; /** 这条思考正在流式输出：行内滚动展示内容尾部，完成后恢复计时标题 */ active?: boolean }) {
+function ExecutionNote({ title, text, active, zh }: { title: string; text: string; /** 这条思考正在流式输出：行内滚动展示内容尾部，完成后恢复计时标题 */ active?: boolean; zh?: boolean }) {
   // 受控开合：流式渲染每 ~150ms 重渲染，非受控 details 的 open 会被 React 重置，
   // 用户点开后立即被关上 → 看不到正文。用 state 跟随 toggle。
   const [open, setOpen] = useState(false);
@@ -272,7 +308,7 @@ function ExecutionNote({ title, text, active }: { title: string; text: string; /
         ? <><strong className="pi-execution__thinking">正在思考</strong><span className="pi-execution__ticker"><span className="pi-execution__ticker-inner">{tail}</span></span></>
         : <span>{title}</span>}
       <Icon name="chevron-right" size={12} className="pi-execution__chevron" /></summary>
-    <div className="pi-execution__note-body"><ChatMarkdown text={text} /></div>
+    <div className="pi-execution__note-body"><ChatMarkdown text={text} zh={zh} /></div>
   </details>;
 }
 
@@ -364,7 +400,7 @@ function renderSteps(parts: MessagePart[], live: boolean, zh: boolean, labels: C
     const p = parts[i]!;
     if (p.kind !== 'tool') {
       out.push(p.kind === 'text'
-        ? <div key={p.id} className="pi-execution__commentary"><ChatMarkdown text={p.text} /></div>
+        ? <div key={p.id} className="pi-execution__commentary"><ChatMarkdown text={p.text} zh={labels.you === '你'} /></div>
         : <MessageParts key={p.id} parts={[p]} labels={labels} onOpenToolFile={onOpenToolFile} live={partLive(p, i, live, last)} />);
       i += 1;
       continue;
