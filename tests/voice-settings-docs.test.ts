@@ -6,8 +6,8 @@ import { VoicePane } from '../src/renderer/pi/VoicePane';
 import { VOICE_MAX_BYTES, VOICE_MAX_RECORD_MS } from '../src/shared/voice';
 
 const paneSource = fs.readFileSync(new URL('../src/renderer/pi/VoicePane.tsx', import.meta.url), 'utf8');
-const readme = fs.readFileSync(new URL('../README.md', import.meta.url), 'utf8');
-const voiceDocs = readme.split('## 语音输入\n')[1]?.split('\n## ')[0] ?? '';
+// 语音输入详细配置在 PR #41 起独立成文（README 只保留入口链接）。
+const voiceDocs = fs.readFileSync(new URL('../docs/voice-input.md', import.meta.url), 'utf8');
 
 function renderPane(busy = false) {
   return renderToStaticMarkup(createElement(VoicePane, {
@@ -24,7 +24,7 @@ describe('voice settings keep configuration in UI and compatibility in README', 
     expect(html).toContain('追加到输入框，不会自动发送');
     expect(html).toContain('录音会上传到生效模型的接口地址');
     expect(html).toContain('已保存的密钥不回显');
-    expect(html).toContain('兼容性与配置示例见 README「语音输入」');
+    expect(html).toContain('兼容性与配置示例见 docs/voice-input.md。');
     expect(html).not.toContain('<a');
     expect(html.match(/<section\b/g)).toHaveLength(1);
     for (const prose of ['兼容性说明', 'multipart', 'input_audio', 'asr_options', '404', '16kHz']) {

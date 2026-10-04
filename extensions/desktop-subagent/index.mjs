@@ -4,6 +4,11 @@
 // Progress persistence is handled at the main-process RPC event layer (not here).
 import official from "/Users/jason/projects/opensource/pi-desktop/resources/pi-runtime/node_modules/@earendil-works/pi-coding-agent/examples/extensions/subagent/index.ts";
 import fs from 'node:fs';
+import { createStallWatchdog, summarizeFailures } from './stall-watchdog.mjs';
+
+// 失败停滞宽限：子代理 details 已全部终态且存在失败，但工具迟迟不返回时，
+// 静默这么久就主动终止等待（结果已定，剩余的只是挂住的收尾）。
+const STALL_GRACE_MS = 10_000;
 
 export default function(pi) {
   official({...pi, registerTool(tool) {
@@ -18,11 +23,48 @@ export default function(pi) {
       const controller = new AbortController();
       const parent = args[2];
       args[2] = parent ? AbortSignal.any([parent, controller.signal]) : controller.signal;
+      // 失败停滞看门狗：官方扩展的子 pi 进程以 "close" 事件收尾，若子进程启动的
+      // 孙进程继承了 stdio 管道，close 可能长期不触发——工具不返回、end 事件不发，
+      // 对话流的工具卡片永挂「运行中」，主 agent 也被卡死。而子代理的失败状态
+      // 早已经由 onUpdate 的 details 实时可见（stopReason=error/aborted）。
+      // timer 驱动 + 每次进度重置：失败终态可见后静默满宽限期才终止等待，
+      // 健康但更新慢的 sibling（长命令/慢模型/退避重试）不会误杀。
+      // 触发后 abort 残留子进程并从包装层抛出，让 pi 正常发出
+      // tool_execution_end(isError)，前端卡片与子代理面板恢复一致。
+      let stallReject;
+      let settled = false;
+      let latestResults;
+      const watchdog = createStallWatchdog({
+        graceMs: STALL_GRACE_MS,
+        onStall() {
+          settled = true;
+          controller.abort(); // 杀掉残留子进程，防止后台继续消耗
+          stallReject(new Error(`子代理已失败但未正常返回（收尾静默超过 ${STALL_GRACE_MS / 1000} 秒），已由桌面端终止等待。失败详情：${summarizeFailures(latestResults)}`));
+        },
+      });
+      if (typeof args[3] === 'function') {
+        const original = args[3];
+        args[3] = (u) => {
+          try {
+            const results = u?.details?.results;
+            // 只在快照实际携带 results 时观察；否则不重喂陈旧停滞快照（避免
+            // 不带 results 的 update 把已布防的计时器重置，让看门狗静默失效）。
+            if (Array.isArray(results)) {
+              latestResults = results;
+              watchdog.observe(results);
+            }
+            if (watchdog.triggered || settled) return undefined; // 终止等待后掐断透传
+          } catch { /* 看门狗自身的解析失败不影响原始 update 透传 */ }
+          return original(u);
+        };
+      }
+      const stallPromise = new Promise((_, reject) => { stallReject = reject; });
+      stallPromise.catch(() => {}); // 无 race 时避免 unhandled rejection
       const timer = setInterval(() => {
         try { if (process.env.PI_DESKTOP_MODE_FILE && fs.readFileSync(process.env.PI_DESKTOP_MODE_FILE, 'utf8').trim() !== 'fullAccess') controller.abort(); } catch { controller.abort(); }
       }, 250);
-      try { return await tool.execute(...args); }
-      finally { clearInterval(timer); }
+      try { return await Promise.race([tool.execute(...args), stallPromise]); }
+      finally { clearInterval(timer); watchdog.dispose(); }
     }});
   }});
 }
