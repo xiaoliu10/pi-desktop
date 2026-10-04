@@ -6,8 +6,8 @@ import { VoicePane } from '../src/renderer/pi/VoicePane';
 import { VOICE_MAX_BYTES, VOICE_MAX_RECORD_MS } from '../src/shared/voice';
 
 const paneSource = fs.readFileSync(new URL('../src/renderer/pi/VoicePane.tsx', import.meta.url), 'utf8');
-const readme = fs.readFileSync(new URL('../README.md', import.meta.url), 'utf8');
-const voiceDocs = readme.split('## 语音输入\n')[1]?.split('\n## ')[0] ?? '';
+// 语音输入详细配置在 PR #41 起独立成文（README 只保留入口链接）。
+const voiceDocs = fs.readFileSync(new URL('../docs/voice-input.md', import.meta.url), 'utf8');
 
 function renderPane(busy = false) {
   return renderToStaticMarkup(createElement(VoicePane, {
