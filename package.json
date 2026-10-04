@@ -107,6 +107,10 @@
       {
         "from": "extensions/desktop-memory",
         "to": "desktop-memory"
+      },
+      {
+        "from": "extensions/desktop-codemode-nudge",
+        "to": "desktop-codemode-nudge"
       }
     ],
     "mac": {
