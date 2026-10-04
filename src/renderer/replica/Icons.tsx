@@ -8,7 +8,7 @@
 import type { CSSProperties, ReactNode } from 'react';
 
 export type IconName =
-  | 'expand-diagonal' | 'git-commit' | 'file-plus' | 'pin' | 'git-branch' | 'calendar-clock' | 'grid' | 'plus-circle' | 'sidebar' | 'plus' | 'plus-square' | 'search' | 'panel' | 'settings' | 'plug'
+  | 'expand-diagonal' | 'collapse-diagonal' | 'git-commit' | 'file-plus' | 'pin' | 'git-branch' | 'calendar-clock' | 'grid' | 'plus-circle' | 'sidebar' | 'plus' | 'plus-square' | 'search' | 'panel' | 'settings' | 'plug'
   | 'bell' | 'chevron-down' | 'chevron-right' | 'chevron-left' | 'folder' | 'chat'
   | 'send' | 'stop' | 'shield' | 'shield-alert' | 'attach' | 'bot' | 'sparkle' | 'brain' | 'sliders' | 'keyboard'
   | 'lightbulb' | 'hand' | 'square-pen' | 'timer'
@@ -20,6 +20,7 @@ export type IconName =
 
 const paths: Record<IconName, ReactNode> = {
   'expand-diagonal': <><path d="M14 3h7v7M21 3l-7 7M10 21H3v-7M3 21l7-7"/></>,
+  'collapse-diagonal': <><path d="M10 14H3m7 0v7m0-7-7 7M14 10h7m-7 0V3m0 7 7-7"/></>,
   grip: <><circle cx="9" cy="6" r="1.2"/><circle cx="15" cy="6" r="1.2"/><circle cx="9" cy="12" r="1.2"/><circle cx="15" cy="12" r="1.2"/><circle cx="9" cy="18" r="1.2"/><circle cx="15" cy="18" r="1.2"/></>,
   'arrow-up': <><path d="M12 19V5M5 12l7-7 7 7"/></>,
   'git-commit': <><circle cx="12" cy="12" r="3"/><path d="M3 12h6m6 0h6"/></>,

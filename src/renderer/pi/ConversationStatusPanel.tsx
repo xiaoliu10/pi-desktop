@@ -41,9 +41,7 @@ export function ConversationStatusPanel({cwd,messages,running,stats,onReview,onR
   const [error,setError]=useState('');
   const [revision,setRevision]=useState(0);
   const [collapsed,setCollapsed]=useState(()=>localStorage.getItem('pi-status-collapsed')==='true' || window.innerWidth<760);
-  const [expanded,setExpanded]=useState(false);
-  const [menu,setMenu]=useState(false);
-  const plan=useMemo(()=>conversationPlan(messages),[messages]);
+  const [menu,setMenu]=useState(false);  const plan=useMemo(()=>conversationPlan(messages),[messages]);
   // ZCode 终端区的可观测口径：正在执行的 shell 命令数（来自对话流中的运行中 bash 工具步骤）。
   const runningCommands=useMemo(()=>messages.reduce((n,m)=>n+m.parts.filter(p=>p.kind==='tool'&&p.status==='running'&&['bash','run_command'].includes(p.tool)).length,0),[messages]);
   const runningAgents=(subagents??[]).filter(child=>child.status==='running'||child.status==='queued').length;
@@ -68,16 +66,26 @@ export function ConversationStatusPanel({cwd,messages,running,stats,onReview,onR
     void refresh();
     return ()=>{cancelled=true;clearTimeout(timer);};
   },[cwd,running,revision]);
-  const toggle=()=>setCollapsed(value=>{localStorage.setItem('pi-status-collapsed',String(!value));return !value;});
-  return <aside ref={rail} className={`pi-status-rail ${collapsed?'is-collapsed':''} ${expanded?'is-expanded':''}`} aria-label="会话状态面板">
-    <section className="pi-status-card">
+  const toggle=()=>{setMenu(false);setCollapsed(value=>{localStorage.setItem('pi-status-collapsed',String(!value));return !value;});};
+  // 收起态 = ZCode 式胶囊（图标 + 标题，点击展开），不再是窄栏标题条。
+  // 收起/展开交换时按钮互相 unmount，焦点先转移到接班的控件上（同 focusAfterDismiss 先例）。
+  const pill=useRef<HTMLButtonElement>(null);
+  const titleButton=useRef<HTMLButtonElement>(null);
+  const mounted=useRef(false);
+  useEffect(()=>{
+    if(!mounted.current){mounted.current=true;return;}
+    (collapsed?pill:titleButton).current?.focus();
+  },[collapsed]);
+  return <aside ref={rail} className={`pi-status-rail ${collapsed?'is-collapsed':''}`} aria-label="会话状态面板">
+    {collapsed?<button ref={pill} className="pi-status-pill" onClick={toggle} title="展开状态面板" aria-expanded={false}><Icon name="expand-diagonal" size={13}/><span>{git?.repository?'Git 工具':'任务状态'}</span></button>
+    :<section className="pi-status-card">
       <header>
-        <button onClick={toggle} aria-expanded={!collapsed}><span className="pi-status-heading">{git?.repository?'Git 工具':'任务状态'}</span><Icon name={collapsed?'chevron-right':'chevron-down'} size={12}/></button>
+        <button ref={titleButton} onClick={toggle} aria-expanded={true}><span className="pi-status-heading">{git?.repository?'Git 工具':'任务状态'}</span><Icon name="chevron-down" size={12}/></button>
         <button aria-label="状态面板菜单" aria-expanded={menu} onClick={()=>setMenu(!menu)}><Icon name="more" size={16}/></button>
-        <button aria-label={expanded?'缩小状态面板':'展开状态面板'} onClick={()=>{setExpanded(!expanded);setCollapsed(false);}}><Icon name="expand-diagonal" size={14}/></button>
+        <button aria-label="收起状态面板" onClick={toggle}><Icon name="collapse-diagonal" size={14}/></button>
       </header>
-      {menu&&<div className="pi-status-menu"><button onClick={()=>{setRevision(r=>r+1);setMenu(false);}}><Icon name="refresh" size={13}/>刷新状态</button><button onClick={()=>{toggle();setMenu(false);}}>折叠 / 展开</button></div>}
-      {!collapsed&&<>
+      {menu&&<div className="pi-status-menu"><button onClick={()=>{setRevision(r=>r+1);setMenu(false);}}><Icon name="refresh" size={13}/>刷新状态</button></div>}
+      <>
         {git?.repository&&<div className="pi-status-git">
           <button className="pi-status-row" onClick={onReview} title="查看相对 HEAD 的项目变更；行数不含未跟踪文件和二进制文件">
             <Icon name="file-plus" size={15}/><span>更改</span><span className="pi-status-count"><b>+{git.added}</b><em>−{git.removed}</em></span>
@@ -136,7 +144,7 @@ export function ConversationStatusPanel({cwd,messages,running,stats,onReview,onR
           {!plan.length&&<p className="pi-status-hint">Agent 创建任务清单后，进度会显示在这里。</p>}
           <ol>{plan.map((item,index)=><li key={index} className={`is-${item.status}`}><Icon name={item.status==='completed'?'check-circle':item.status==='in_progress'?'refresh':'circle'} size={13}/><span>{item.step}</span><span className="pi-status-sr">{item.status==='completed'?'已完成':item.status==='in_progress'?'进行中':'待处理'}</span></li>)}</ol>
         </div>
-      </>}
-    </section>
+      </>
+    </section>}
   </aside>;
 }
