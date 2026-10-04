@@ -7,6 +7,9 @@
  */
 
 import { useEffect, useRef, useState } from 'react';
+// 与 RemotePane 同口径：静态导入避免 qrcode 被拆成动态 chunk（其 browser build 与主
+// bundle 循环依赖，打包 app 里 import() 会 reject——见 RemotePane.tsx 顶部注释）。
+import { toDataURL as qrToDataURL } from 'qrcode';
 import type { ImConfig } from '../../shared/pi';
 import { CHANNEL_ICON_URLS } from './brand-icons/channel-icons';
 import { Icon } from '../replica/Icons';
@@ -85,8 +88,7 @@ export function ChannelConfigDialog(props: {
     let alive = true;
     const url = SCAN_URLS[channel];
     if (tab === 'scan' && url) {
-      import('qrcode')
-        .then(QR => QR.toDataURL(url, { width: 220, margin: 1 }))
+      qrToDataURL(url, { width: 220, margin: 1 })
         .then(data => { if (alive) setQr(data); })
         .catch(() => { if (alive) setQrErr(true); });
     }
