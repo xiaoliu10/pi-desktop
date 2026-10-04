@@ -54,7 +54,7 @@ export function VoicePane(props: { busy: boolean; act: (fn: () => Promise<unknow
       <section className="pi-features__card">
         <h2>ASR 模型</h2>
         <p>配置就绪的 ASR 模型并设为「生效中」后，点击输入框的麦克风录音；转写文字追加到输入框，不会自动发送。</p>
-        <p>录音会上传到生效模型的接口地址；API key 由主进程保存，已保存的密钥不回显。兼容性与配置示例见 README「语音输入」。</p>
+        <p>录音会上传到生效模型的接口地址；API key 由主进程保存，已保存的密钥不回显。兼容性与配置示例见 docs/voice-input.md。</p>
         <p role="status">{enabled
           ? `✓ 语音输入已开启 · ${readyCount} 个就绪模型${config?.activeId ? ` · 生效：${config.models.find(m => m.id === config.activeId)?.name ?? ''}` : ''}`
           : '○ 语音输入未开启 · 至少配置一个就绪的 ASR 模型'}</p>

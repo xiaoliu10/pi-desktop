@@ -24,7 +24,7 @@ describe('voice settings keep configuration in UI and compatibility in README', 
     expect(html).toContain('追加到输入框，不会自动发送');
     expect(html).toContain('录音会上传到生效模型的接口地址');
     expect(html).toContain('已保存的密钥不回显');
-    expect(html).toContain('兼容性与配置示例见 README「语音输入」');
+    expect(html).toContain('兼容性与配置示例见 docs/voice-input.md。');
     expect(html).not.toContain('<a');
     expect(html.match(/<section\b/g)).toHaveLength(1);
     for (const prose of ['兼容性说明', 'multipart', 'input_audio', 'asr_options', '404', '16kHz']) {
