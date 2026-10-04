@@ -186,7 +186,12 @@
   font: inherit;
   font-size: var(--pi-font-size-sm);
   color: var(--pi-text);
-  min-width: 110px;
+  /* 固定宽：原生 select 闭合宽度随最长 option 撑开，同一区块相邻两行
+     （如「运行中输入」最长 6 字 vs「访问模式」最长 5 字）会差一个字宽，
+     右缘对不齐。统一 150px 容纳中文 6 字与常用英文选项；下拉展开列表
+     不受闭合宽度限制，超宽选项在列表里仍完整可见。 */
+  width: 150px;
+  text-overflow: ellipsis;
 }
 
 .pireplica .pi-settingrow__segmented {
