@@ -130,7 +130,7 @@ export function RemotePane() {
     { id: 'dingtalk', name: '钉钉', hint: zh ? '双向对话（Stream）+ 群通知' : 'Two-way (Stream) + notifications', available: true },
     { id: 'feishu', name: zh ? '飞书' : 'Feishu / Lark', hint: zh ? '双向对话（长连接·实验）+ 群通知' : 'Two-way (experimental) + notifications', available: true },
     { id: 'telegram', name: 'Telegram', hint: zh ? '双向对话（长轮询）· 需可访问 Telegram' : 'Two-way (long-polling)', available: true },
-    { id: 'wechat', name: zh ? '微信' : 'WeChat', hint: zh ? '暂未支持' : 'Not yet supported', available: false },
+    { id: 'wechat', name: zh ? '微信' : 'WeChat', hint: zh ? '任务通知推送（单向）· 微信扫码绑定' : 'Task notifications via scan-bind', available: true },
   ];
 
   const channelIcon = (id: ChannelId) => id === 'telegram' ? 'globe' : 'terminal';

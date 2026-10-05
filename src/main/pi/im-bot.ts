@@ -1,6 +1,7 @@
 /**
  * IM notification bot: pushes task lifecycle messages to a DingTalk or
- * Feishu group via their custom-bot webhooks. Outbound HTTP only — the
+ * Feishu group via their custom-bot webhooks, or to WeChat via the
+ * Serverchan/PushPlus relay (WeChat has no outbound bot API). Outbound HTTP only — the
  * desktop never needs a public endpoint. Two-way chat control (reply from
  * IM to drive pi) requires DingTalk Stream / Feishu long-connection apps
  * and is intentionally not part of this module yet.
@@ -57,6 +58,15 @@ export function buildPayload(config: ImConfig, text: string): { url: string; bod
     }
     return { url: config.webhook, body };
   }
+  if (config.provider === 'wechat') {
+    // Server酱³: POST {key}.send {title, desp}；PushPlus: POST /send {token, title, content, template}。
+    // title 取首行并截断（Server酱限 32 字），全文进正文，markdown 直出。
+    const title = text.split('\n')[0].slice(0, 30);
+    if ((config.pushProvider ?? 'serverchan') === 'pushplus') {
+      return { url: 'https://www.pushplus.plus/send', body: { token: config.botToken ?? '', title, content: text, template: 'markdown' } };
+    }
+    return { url: `https://sctapi.ftqq.com/${encodeURIComponent(config.botToken ?? '')}.send`, body: { title, desp: text } };
+  }
   return { url: '', body: {} };
 }
 
@@ -89,7 +99,7 @@ export class ImBot {
     this.config = {
       ...this.config,
       ...patch,
-      provider: patch.provider && ['off', 'dingtalk', 'feishu', 'telegram'].includes(patch.provider) ? patch.provider : this.config.provider,
+      provider: patch.provider && ['off', 'dingtalk', 'feishu', 'telegram', 'wechat'].includes(patch.provider) ? patch.provider : this.config.provider,
     };
     fs.mkdirSync(path.dirname(this.configPath), { recursive: true });
     fs.writeFileSync(this.configPath, JSON.stringify(this.config, null, 2));
@@ -136,7 +146,11 @@ export class ImBot {
   }
 
   async send(text: string): Promise<void> {
-    if (this.config.provider === 'off' || !/^https:\/\//.test(this.config.webhook)) throw new Error('请先选择平台并填写 https 开头的 webhook 地址');
+    if (this.config.provider === 'wechat') {
+      if (!this.config.botToken) throw new Error('请先填写推送 Token（Server酱 SendKey 或 PushPlus token）');
+    } else if (this.config.provider === 'off' || !/^https:\/\//.test(this.config.webhook)) {
+      throw new Error('请先选择平台并填写 https 开头的 webhook 地址');
+    }
     const { url, body } = buildPayload(this.config, text);
     await this.post(url, body);
   }
@@ -165,7 +179,8 @@ export class ImBot {
     if (this.lastNotifiedGeneration.has(key)) return;
     this.lastNotifiedGeneration.add(key);
     if (this.lastNotifiedGeneration.size > 500) this.lastNotifiedGeneration.clear();
-    if (this.config.provider === 'off' || !/^https:\/\//.test(this.config.webhook)) return; // notifications are best-effort
+    if (this.config.provider === 'off') return; // notifications are best-effort
+    if (this.config.provider === 'wechat' ? !this.config.botToken : !/^https:\/\//.test(this.config.webhook)) return;
     try {
       const { url, body } = buildPayload(this.config, text);
       await this.post(url, body);
@@ -175,9 +190,15 @@ export class ImBot {
   }
 }
 
-async function defaultPost(url: string, body: Record<string, unknown>): Promise<void> {
+export async function defaultPost(url: string, body: Record<string, unknown>): Promise<void> {
   const res = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
   if (!res.ok) throw new Error(`webhook 返回 ${res.status}`);
+  const data = await res.json().catch(() => null) as null | { code?: number; errcode?: number; message?: string; errmsg?: string; msg?: string };
+  if (!data) return; // 空体/非 JSON：HTTP ok 即视为成功
+  const code = data.errcode ?? data.code;
+  if (code !== undefined && code !== 0 && code !== 200) {
+    throw new Error(data.errmsg || data.message || data.msg || `推送失败（code ${code}）`);
+  }
 }
 
 function readJson(file: string): Partial<ImConfig> {

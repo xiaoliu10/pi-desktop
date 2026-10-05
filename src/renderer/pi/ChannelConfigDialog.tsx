@@ -21,7 +21,7 @@ const SCAN_URLS: Record<ChannelId, string> = {
   dingtalk: 'https://open-dev.dingtalk.com/fe/app?opType=create',
   feishu: 'https://open.feishu.cn/app',
   telegram: 'https://t.me/BotFather',
-  wechat: '',
+  wechat: 'https://sct.ftqq.com/',
 };
 
 const STEPS: Record<ChannelId, string[]> = {
@@ -41,7 +41,12 @@ const STEPS: Record<ChannelId, string[]> = {
     '复制 BotFather 返回的 HTTP API Token。',
     '回到本对话框切到「手动配置」，粘贴 Bot Token 并保存。',
   ],
-  wechat: [],
+  wechat: [
+    '用微信扫描二维码（或在电脑浏览器打开 sct.ftqq.com），微信登录后复制页面上的 SendKey。',
+    '回到本对话框，在「手动配置」里粘贴 SendKey 并保存。',
+    '想用 PushPlus：登录 pushplus.plus 关注公众号并复制 token，推送服务选 PushPlus。',
+    '点「发送测试消息」，微信里收到即配置成功。',
+  ],
 };
 
 const STEPS_EN: Record<ChannelId, string[]> = {
@@ -61,7 +66,12 @@ const STEPS_EN: Record<ChannelId, string[]> = {
     'Copy the HTTP API token returned by BotFather.',
     'Back in this dialog, switch to Manual and paste the Bot Token.',
   ],
-  wechat: [],
+  wechat: [
+    'Scan the QR with WeChat (or open sct.ftqq.com in a browser), log in and copy the SendKey.',
+    'Back in this dialog, paste the SendKey under Manual and save.',
+    'Prefer PushPlus: log in at pushplus.plus, follow the account, copy the token and pick PushPlus as the service.',
+    'Tap "Send test message" — receiving it in WeChat means you are done.',
+  ],
 };
 
 export function ChannelConfigDialog(props: {
@@ -192,7 +202,7 @@ export function ChannelConfigDialog(props: {
     dingtalk: zh ? '用钉钉扫码，确认后自动创建应用并填入凭据。' : 'Scan with DingTalk — approve and credentials auto-fill.',
     feishu: zh ? '用飞书扫码打开飞书开放平台。' : 'Scan with Feishu to open the open platform.',
     telegram: zh ? '用 Telegram 扫码打开 @BotFather。' : 'Scan with Telegram to open @BotFather.',
-    wechat: zh ? '暂未支持' : 'Not yet supported',
+    wechat: zh ? '微信扫码登录 Server酱，复制 SendKey 粘贴到「手动配置」。' : 'Scan to log in to ServerChan, paste the SendKey under Manual.',
   };
   const guide = zh ? STEPS[channel] : STEPS_EN[channel];
 
@@ -274,7 +284,7 @@ export function ChannelConfigDialog(props: {
 
           {tab === 'manual' && (
             <div className="pi-providerform pi-chdialog__form">
-              {channel !== 'telegram' && (
+              {channel !== 'telegram' && channel !== 'wechat' && (
                 <>
                   <label>
                     <span>Webhook</span>
@@ -291,6 +301,21 @@ export function ChannelConfigDialog(props: {
                   <span>Bot Token</span>
                   <input className="pi-mono" value={im.botToken ?? ''} placeholder="123456:ABC-DEF…" onChange={(e) => props.onImChange({ ...im, botToken: e.target.value })} onBlur={(e) => void props.onSave({ botToken: e.target.value, provider: channel as ImConfig['provider'] })} />
                 </label>
+              ) : channel === 'wechat' ? (
+                <>
+                  <label>
+                    <span>{zh ? '推送服务' : 'Push service'}</span>
+                    <select className="pi-mono" value={im.pushProvider ?? 'serverchan'} onChange={(e) => void props.onSave({ pushProvider: e.target.value as ImConfig['pushProvider'], provider: channel as ImConfig['provider'] })}>
+                      <option value="serverchan">Server酱（sct.ftqq.com）</option>
+                      <option value="pushplus">PushPlus（pushplus.plus）</option>
+                    </select>
+                  </label>
+                  <label>
+                    <span>{(im.pushProvider ?? 'serverchan') === 'pushplus' ? 'Token' : 'SendKey'}{zh ? '（任务通知）' : ' (task notifications)'}</span>
+                    <input className="pi-mono" type="password" value={im.botToken ?? ''} placeholder={(im.pushProvider ?? 'serverchan') === 'pushplus' ? 'PushPlus token…' : 'SCT…'} onChange={(e) => props.onImChange({ ...im, botToken: e.target.value })} onBlur={(e) => void props.onSave({ botToken: e.target.value, provider: channel as ImConfig['provider'] })} />
+                  </label>
+                  <p className="pi-chdialog__scanhint">{zh ? '微信渠道为单向任务通知（完成/出错/等待确认）；双向对话需要微信出站接口，平台暂未提供——钉钉、飞书、Telegram 支持双向。' : 'WeChat is notification-only (done/error/attention); two-way chat needs an outbound API WeChat does not offer — DingTalk, Feishu and Telegram support it.'}</p>
+                </>
               ) : (
                 <>
                   <label>

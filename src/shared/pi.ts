@@ -48,7 +48,9 @@ export interface PiMarketPackage { name: string; version: string; description: s
 // ---------------------------------------------------------------------------
 
 export interface RemoteStatus { running: boolean; port?: number; token?: string; urls: string[]; viewers?: number }
-export type ImProviderId = 'off' | 'dingtalk' | 'feishu' | 'telegram';
+export type ImProviderId = 'off' | 'dingtalk' | 'feishu' | 'telegram' | 'wechat';
+/** 微信渠道的推送后端（微信无出站 bot API，走第三方服务号通道推送通知）。 */
+export type ImPushProvider = 'serverchan' | 'pushplus';
 export interface ImConfig {
   provider: ImProviderId;
   /** Push webhook (dingtalk/feishu custom bot) for one-way lifecycle notices. */
@@ -61,7 +63,10 @@ export interface ImConfig {
    */
   appKey?: string;
   appSecret?: string;
+  /** Telegram: bot token from @BotFather; wechat: Server酱 SendKey / PushPlus token. */
   botToken?: string;
+  /** 微信渠道推送后端，默认 serverchan。 */
+  pushProvider?: ImPushProvider;
   /** DingTalk Stream / Feishu long-connection switch (two-way chat). */
   twoWay?: boolean;
   /** Per-chat bindings (chatId → bound workspace), persisted by the desktop. */
