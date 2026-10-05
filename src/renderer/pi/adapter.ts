@@ -113,14 +113,16 @@ function modelOutcome(m: Record<string, unknown>): ChatMessage['modelOutcome'] {
   return 'streaming';
 }
 
-export function historyToMessages(branch: PiEntry[]): ChatMessage[] {
+/** 压缩后回填：主进程在压缩结束后的首个有效 stats 到达时发出（key + 留痕 at 匹配）。 */
+export type CompactionAfter = { at: number; tokensAfter: number; contextWindow: number };
+export function historyToMessages(branch: PiEntry[], compactionAfter?: CompactionAfter): ChatMessage[] {
   const out: ChatMessage[] = [];
   // thunk 形式：缓存命中时连构造都跳过（工具参数 JSON.stringify、工具结果全文 clean 是主要开销）。
   // 仅 entry.id（稳定 uuid）可作缓存键；无 id 的条目走 index 兜底，切分支会串位，不缓存。
   const push = (entry: PiEntry, id: string, build: () => ChatMessage | undefined) => {
     // id + 落盘时间做键：entry append-only 内容不可变；合成/测试数据可能复用 id，
     // 带上 timestamp 指纹避免跨分支误命中。
-    const stable = entry.id ? `${entry.id}:${(entry.timestamp as string | number | undefined) ?? ''}` : undefined;
+    const stable = entry.id && entry.customType !== 'desktop-compaction' ? `${entry.id}:${(entry.timestamp as string | number | undefined) ?? ''}` : undefined;
     if (stable) {
       const hit = messageCache.get(stable);
       if (hit) { out.push(hit); return; }
@@ -224,11 +226,17 @@ export function historyToMessages(branch: PiEntry[]): ChatMessage[] {
     }
     if (entry.customType === 'desktop-policy-audit') return;
     if (entry.customType === 'desktop-compaction') {
-      push(entry, id, () => ({
+      // after 回填来自主进程 compaction-record（留痕时 pi 的 getContextUsage 为 null）。
+      // 该条目跳过 messageCache：回填到达后重装配要拿到新文案。
+      const data = (entry as { data?: Record<string, unknown> }).data ?? {};
+      const at = Number(data.at) || 0;
+      const matched = compactionAfter && at && Math.abs(at - compactionAfter.at) <= 15000 ? compactionAfter : undefined;
+      const built: ChatMessage = {
         id,
         role: 'assistant',
-        parts: [{ kind: 'notice', id: `${id}-n`, text: compactionRecordText((entry as { data?: Record<string, unknown> }).data ?? {}), strong: true }],
-      }));
+        parts: [{ kind: 'notice', id: `${id}-n`, text: compactionRecordText(data, matched), strong: true }],
+      };
+      out.push(built);
       return;
     }
     if (['custom', 'custom_message'].includes(entry.type)) {
@@ -250,14 +258,23 @@ function fmtTokens(n: unknown): string {
   return String(n);
 }
 
-/** desktop-compaction 留痕行文案：上下文压缩 · 用时 12.3s · 428k → 35k tokens。 */
-function compactionRecordText(data: Record<string, unknown>): string {
+/** desktop-compaction 留痕行文案：上下文压缩 · 用时 12.3s · 428k → 35k tokens。
+ *  after 取主进程 compaction-record 回填（留痕时 pi 的 getContextUsage 为 null）。
+ *  at 不匹配（陈旧回填）时退化为「压缩前 X tokens」。 */
+function compactionRecordText(data: Record<string, unknown>, after?: { at: number; tokensAfter: number; contextWindow: number }): string {
   const parts = ['上下文压缩'];
   if (typeof data.durationMs === 'number' && Number.isFinite(data.durationMs)) parts.push(`用时 ${(data.durationMs / 1000).toFixed(1)}s`);
   const before = fmtTokens(data.tokensBefore);
-  const after = fmtTokens(data.tokensAfter);
-  if (before && after) parts.push(`${before} → ${after} tokens`);
-  else if (before) parts.push(`压缩前 ${before} tokens`);
+  const window = fmtTokens(data.contextWindow ?? after?.contextWindow);
+  if (after && typeof data.at === 'number' && Math.abs(data.at - after.at) <= 15000) {
+    const afterTokens = fmtTokens(after.tokensAfter);
+    if (before && afterTokens) parts.push(`${before} → ${afterTokens} tokens${window && before !== window ? ` · 窗口 ${window}` : ''}`);
+    else if (afterTokens) parts.push(`压缩后 ${afterTokens} tokens`);
+    return parts.join(' · ');
+  }
+  const legacyAfter = fmtTokens(data.tokensAfter); // 旧版留痕（data 自带 after，兼容历史会话）
+  if (before && legacyAfter) parts.push(`${before} → ${legacyAfter} tokens${window ? ` · 窗口 ${window}` : ''}`);
+  else if (before) parts.push(`压缩前 ${before} tokens${window ? ` · 窗口 ${window}` : ''}`);
   return parts.join(' · ');
 }
 
@@ -313,10 +330,10 @@ export function liveToMessages(
 }
 
 
-export function conversationMessages(branch: PiEntry[], live: Record<string, Record<string, unknown>> | undefined, tools: ToolProgress[] | undefined): ChatMessage[] {
+export function conversationMessages(branch: PiEntry[], live: Record<string, Record<string, unknown>> | undefined, tools: ToolProgress[] | undefined, compactionAfter?: CompactionAfter): ChatMessage[] {
   const saved = new Set(branch.filter(e => e.message?.role === 'assistant').map(e => String(e.message?.timestamp)));
   const pending = Object.fromEntries(Object.entries(live || {}).filter(([id]) => !saved.has(id)));
-  const history = historyToMessages(branch);
+  const history = historyToMessages(branch, compactionAfter);
   const liveMessages = liveToMessages(pending, undefined);
   // 上一轮答案还在 live（agent_settled 的防抖刷新未落地）而新用户消息已落盘时，
   // 按数组拼接会把旧答案排到新消息之后。把带时间戳的 live 消息插入到历史中比它
@@ -598,7 +615,7 @@ export function confirmSends(sends: OptimisticSend[], history: PiHistory, key: s
 }
 
 /** Split at explicit send boundaries, not wall-clock guesses. Old live stays before the new user. */
-export function sentConversationMessages(branch: PiEntry[], live: Record<string, Record<string, unknown>> | undefined, tools: ToolProgress[] | undefined, sends: OptimisticSend[]): ChatMessage[] {
+export function sentConversationMessages(branch: PiEntry[], live: Record<string, Record<string, unknown>> | undefined, tools: ToolProgress[] | undefined, sends: OptimisticSend[], compactionAfter?: CompactionAfter): ChatMessage[] {
   // Every persisted user is a boundary, including consumed follow-up/steer
   // items (which intentionally have no optimistic send). Missing confirmed
   // boundaries remain absent: their transient work is quarantined in state,
@@ -650,7 +667,7 @@ export function sentConversationMessages(branch: PiEntry[], live: Record<string,
   const savedMessages = new Set(branch.filter(e => e.message?.role === 'assistant').map(e => String(e.message?.timestamp ?? e.message?.id)));
   const segment = (entries: PiEntry[], owner?: string) => conversationMessages(entries,
     Object.fromEntries(Object.entries(live ?? {}).filter(([id, m]) => !savedMessages.has(id) && m._turnId === owner)),
-    (tools ?? []).filter(t => (toolOwners.has(t.toolCallId) ? toolOwners.get(t.toolCallId) : t.turnId) === owner)).map(m => m.id === 'live-tools' ? { ...m, id: `live-tools:${owner ?? 'initial'}` } : m);
+    (tools ?? []).filter(t => (toolOwners.has(t.toolCallId) ? toolOwners.get(t.toolCallId) : t.turnId) === owner), compactionAfter).map(m => m.id === 'live-tools' ? { ...m, id: `live-tools:${owner ?? 'initial'}` } : m);
   for (let i = 0; i < sends.length; i++) {
     const send = sends[i];
     const at = send.confirmedId ? branch.findIndex(e => e.id === send.confirmedId) : -1;
@@ -784,6 +801,8 @@ export interface PiReplicaState {
   dialogs: Dialog[];
   live: Record<string, Record<string, Record<string, unknown>>>;
   toolProgress: Record<string, ToolProgress[]>;
+  /** 压缩后回填的 after tokens（主进程 compaction-record 事件，按会话 + 留痕时间戳匹配）。 */
+  compactionAfter: Record<string, { at: number; tokensAfter: number; contextWindow: number }>;
   /** Per-run retry state (auto_retry_start…auto_retry_end): drives the working-bar
    *  "正在重试请求" label so a silent timeout-retry window doesn't look frozen. */
   retrying: Record<string, ModelRetryState | null>;
@@ -1391,6 +1410,7 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
     dialogs: [],
     live: {},
     toolProgress: {},
+    compactionAfter: {},
     retrying: {},
     widgets: {},
 
@@ -1547,6 +1567,10 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
             }
             break;
           }
+          case 'compaction-record':
+            // 压缩后首个有效 stats：回填 after tokens（渲染层按留痕时间戳匹配 notice）。
+            set({ compactionAfter: { ...get().compactionAfter, [event.key]: { at: event.at, tokensAfter: event.tokensAfter, contextWindow: event.contextWindow } } });
+            break;
           case 'rpc':
             if (event.event.type === 'ui-expired') {
               set({dialogs: state.dialogs.filter(d => !(d.key === event.key && d.generation === event.generation && d.request.id === event.event.id))});
@@ -1644,7 +1668,7 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
       const s = get();
       const key = s.selectedKey;
       if (!key || !callIds.length) return;
-      const messages = sentConversationMessages(s.history?.branch ?? [], s.live[key], s.toolProgress[key], (s.sends ?? []).filter(send => send.key === key));
+      const messages = sentConversationMessages(s.history?.branch ?? [], s.live[key], s.toolProgress[key], (s.sends ?? []).filter(send => send.key === key), s.compactionAfter[key]);
       const run = currentRun(s);
       const parentRunning = Boolean(run && ['starting', 'running', 'stopping'].includes(run.status));
       const children = projectSubagents(messages, parentRunning, s.recoveredSubagents);

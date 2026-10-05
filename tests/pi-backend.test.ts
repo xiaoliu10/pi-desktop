@@ -321,3 +321,23 @@ it('slash commands: refreshCommands re-pulls on demand, never shrinks, and dedup
  expect(backend.runs()[0].commands.map(c => c.name)).toEqual(['hello', 'goal', 'goal-resume']);
  void run;
 });
+it('compaction_end with result emits compaction-record (after tokens backfill anchor)',async()=>{
+ const {backend,events}=setup();
+ const run=await backend.connect({cwd:process.cwd(),trustProject:false,permission:'ask'});
+ await backend.prompt(run.key,'/compact-end-result','followUp');
+ await vi.waitFor(()=>expect(events.some(e=>e.type==='compaction-record')).toBe(true));
+ const record=events.find(e=>e.type==='compaction-record') as Extract<PiEvent,{type:'compaction-record'}>;
+ expect(record.tokensAfter).toBe(35000);
+ expect(record.contextWindow).toBe(400000);
+ // 渲染层契约：at 必须等于留痕 entry 的 data.at（不是 fallback 的 Date.now()）——±15s 匹配窗口靠它。
+ const line=fs.readFileSync(run.file,'utf8').split('\n').find(l=>l.includes('desktop-compaction'));
+ expect(record.at).toBe(Number(JSON.parse(line!).data.at));
+});
+it('compaction_end without result (aborted) does NOT emit compaction-record',async()=>{
+ const {backend,events}=setup();
+ const run=await backend.connect({cwd:process.cwd(),trustProject:false,permission:'ask'});
+ await backend.prompt(run.key,'/compact-end','followUp');
+ await vi.waitFor(()=>expect(backend.runs()[0]?.compacting).toBe(false));
+ await new Promise(r=>setTimeout(r,300));
+ expect(events.some(e=>e.type==='compaction-record')).toBe(false);
+});
