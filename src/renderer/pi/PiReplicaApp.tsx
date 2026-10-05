@@ -221,8 +221,8 @@ export default function PiReplicaApp() {
   const approvalDialog = sessionDialogs.find((d) => d !== askDialog && isApprovalDialog(d) && (d.request.method === 'confirm' || d.request.method === 'select')) ?? null;
   const modalDialog = sessionDialogs.find((d) => d !== askDialog && d !== approvalDialog) ?? null;
   const messages = useMemo(
-    () => sentConversationMessages(s.history?.branch ?? [], s.live[s.selectedKey ?? ''], s.toolProgress[s.selectedKey ?? ''], (s.sends ?? []).filter(send => send.key === s.selectedKey)),
-    [s.history, s.live, s.toolProgress, s.selectedKey, s.sends],
+    () => sentConversationMessages(s.history?.branch ?? [], s.live[s.selectedKey ?? ''], s.toolProgress[s.selectedKey ?? ''], (s.sends ?? []).filter(send => send.key === s.selectedKey), s.selectedKey ? s.compactionAfter[s.selectedKey] : undefined),
+    [s.history, s.live, s.toolProgress, s.selectedKey, s.sends, s.compactionAfter],
   );
   // 自动化“立即运行”的乐观气泡：点击瞬间进对话，真实消息回显后自动让位。
   const launchPrompt = automationLaunchPrompt(s, messages.some(m => m.role === 'user'));
