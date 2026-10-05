@@ -326,6 +326,7 @@
 }
 
 .pireplica .pi-providerform input,
+.pireplica .pi-providerform select,
 .pireplica .pi-providerform textarea {
   border: 1px solid var(--pi-border);
   background: var(--pi-bg);
