@@ -343,7 +343,26 @@ export class PiBackend {
     }
     // 压缩状态贯通到渲染层：过程列表据此显示「正在压缩上下文」。
     if (event.type === 'compaction_start') run.view.compacting = true;
-    if (event.type === 'compaction_end') run.view.compacting = false;
+    if (event.type === 'compaction_end') {
+      run.view.compacting = false;
+      // 压缩后 tokens 直接取 result.estimatedTokensAfter（与 tokensBefore 同一投影估算口径；
+      // 留痕时 getContextUsage 为 null，stats 轮询拿不到）。失败/中止压缩 result 为 undefined，
+      // 不发记录（desktop-policy 也没写留痕，无锚点可匹配）。at/contextWindow 取刚落盘的
+      // 留痕 entry（session_compact 扩展先于 compaction_end await 完成落盘）。
+      if (event.result) {
+        try {
+          const entry = [...this.index.history(key).branch].reverse().find((e: any) => e.customType === 'desktop-compaction');
+          const tokensAfter = Number(event.result.estimatedTokensAfter);
+          if (!(tokensAfter > 0)) return; // 字段缺失/非法时 fail closed：留痕退化为「压缩前」口径
+          this.emit({
+            type: 'compaction-record', key, generation,
+            at: Number((entry as any)?.data?.at) || Date.now(),
+            tokensAfter,
+            contextWindow: Number((entry as any)?.data?.contextWindow) || 0,
+          });
+        } catch { /* 会话文件不可读时放弃回填，留痕退化为「压缩前」口径（fail closed） */ }
+      }
+    }
     if (event.type === 'agent_settled') {
       this.clearDialogs(run);
       if (!run.stopUnconfirmed) {
