@@ -17,7 +17,9 @@ import { Icon } from '../replica/Icons';
 export type ChannelId = 'dingtalk' | 'feishu' | 'wechat' | 'telegram';
 
 const SCAN_URLS: Record<ChannelId, string> = {
-  dingtalk: 'https://open.dingtalk.com/',
+  // 钉钉直达开发者后台「创建应用」表单（扫码登录后免导航）；AppSecret 为机密，
+  // 平台不允许第三方代读，复制凭据仍需手动。
+  dingtalk: 'https://open-dev.dingtalk.com/fe/app?opType=create',
   feishu: 'https://open.feishu.cn/app',
   telegram: 'https://t.me/BotFather',
   wechat: '',
@@ -25,9 +27,10 @@ const SCAN_URLS: Record<ChannelId, string> = {
 
 const STEPS: Record<ChannelId, string[]> = {
   dingtalk: [
-    '用钉钉扫码打开钉钉开放平台，登录后进入应用开发。',
-    '创建企业内部应用并添加机器人能力，获取 Webhook、加签密钥、AppKey 与 AppSecret。',
-    '回到本对话框切到「手动配置」，把凭据填入并保存。',
+    '用钉钉扫码登录，直接落在「创建企业内部应用」表单，填个应用名即可创建。',
+    '左侧「添加应用能力」勾选「机器人」；「机器人配置」里消息接收模式选「Stream 模式」。',
+    '左侧「凭据与基础信息」复制 AppKey 与 AppSecret。',
+    '回到本对话框切到「手动配置」，把 AppKey/AppSecret 填入并保存。',
   ],
   feishu: [
     '用飞书扫码打开飞书开放平台，创建自建应用并开启机器人能力。',
@@ -45,8 +48,9 @@ const STEPS: Record<ChannelId, string[]> = {
 
 const STEPS_EN: Record<ChannelId, string[]> = {
   dingtalk: [
-    'Scan with DingTalk to open the DingTalk open platform and sign in.',
-    'Create an internal app with the robot capability; obtain the Webhook, signing secret, AppKey and AppSecret.',
+    'Scan with DingTalk to sign in — you land directly on the "Create internal app" form; just name it.',
+    'Add the "Robot" capability under the app; set the message receiving mode to "Stream mode".',
+    'Copy the AppKey and AppSecret from "Credentials & Basic Info".',
     'Back in this dialog, switch to Manual and paste the credentials.',
   ],
   feishu: [
@@ -114,7 +118,7 @@ export function ChannelConfigDialog(props: {
   }, []);
 
   const scanHint: Record<ChannelId, string> = {
-    dingtalk: zh ? '用钉钉扫码打开钉钉开放平台。' : 'Scan with DingTalk to open the open platform.',
+    dingtalk: zh ? '用钉钉扫码登录，直达「创建应用」页。' : 'Scan with DingTalk to land on the app creation page.',
     feishu: zh ? '用飞书扫码打开飞书开放平台。' : 'Scan with Feishu to open the open platform.',
     telegram: zh ? '用 Telegram 扫码打开 @BotFather。' : 'Scan with Telegram to open @BotFather.',
     wechat: zh ? '暂未支持' : 'Not yet supported',
