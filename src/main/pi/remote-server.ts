@@ -287,19 +287,46 @@ export function viewerPage(): string {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>PI Desktop · 工作区</title>
+<title>PI Desktop · 远程控制</title>
 <style>
-  :root { color-scheme: light dark; --bg:#f7f7f8; --card:#fff; --line:#e5e5e7; --text:#1c1c1e; --sub:#7c7c82; --accent:#1d1d1f; --user:#e8f0fe; --danger:#ba4236; }
-  @media (prefers-color-scheme: dark) { :root { --bg:#111214; --card:#1c1d20; --line:#2c2d31; --text:#e8e8ea; --sub:#9a9aa1; --accent:#f2f2f3; --user:#1f2a3d; --danger:#ff6b61; } }
-  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  :root { color-scheme: light dark; --bg:#f4f4f6; --card:#fff; --line:#e3e3e6; --text:#1c1c1e; --sub:#8a8a90; --accent:#1d1d1f; --user:#e8f0fe; --danger:#ba4236; --chip:#eeeef0; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#121316; --card:#212226; --line:#323338; --text:#ececef; --sub:#9a9aa2; --accent:#f2f2f3; --user:#1f2a3d; --danger:#ff6b61; --chip:#2c2d31; } }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  [hidden] { display:none !important; }
   body { margin:0; background:var(--bg); color:var(--text); font:15px/1.55 -apple-system,"PingFang SC",system-ui,sans-serif; }
-  header { position:sticky; top:0; z-index:2; background:var(--card); border-bottom:1px solid var(--line); padding:10px 14px; display:flex; align-items:center; gap:8px; }
-  header h1 { font-size:15px; margin:0; flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .pill { font-size:11px; padding:3px 9px; border-radius:99px; border:1px solid var(--line); color:var(--sub); flex-shrink:0; }
+  header { position:sticky; top:0; z-index:5; background:var(--card); border-bottom:1px solid var(--line); padding:14px 16px 10px; }
+  .head-row { display:flex; align-items:center; gap:10px; }
+  .head-row h1 { font-size:19px; margin:0; flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .head-sub { font-size:13px; color:var(--sub); margin:2px 0 0; }
+  .backbtn { border:0; background:none; color:var(--text); font-size:22px; line-height:1; padding:2px 8px 2px 0; display:none; }
+  .pill { font-size:11px; padding:3px 10px; border-radius:99px; border:1px solid var(--line); color:var(--sub); flex-shrink:0; }
   .pill.live { color:#0a7d33; border-color:#0a7d3355; }
   .pill.err { color:var(--danger); border-color:var(--danger); }
-  select { appearance:none; background:var(--card); color:var(--text); border:1px solid var(--line); border-radius:8px; padding:6px 8px; max-width:42vw; font-size:13px; }
-  main { padding:12px 12px 132px; }
+  .stopbtn { flex-shrink:0; border:1px solid var(--danger); color:var(--danger); background:none; border-radius:8px; font-size:12px; padding:5px 10px; display:none; }
+  main { padding:14px 14px 120px; }
+  .notice { background:var(--chip); border-radius:12px; padding:12px 14px; font-size:13px; color:var(--sub); margin-bottom:18px; }
+  .sect-head { display:flex; align-items:center; gap:10px; margin:2px 2px 2px; }
+  .sect-head h2 { font-size:17px; margin:0; flex:1; }
+  .refreshbtn { border:1px solid var(--line); background:none; color:var(--text); border-radius:10px; padding:6px 12px; font-size:13px; }
+  .sect-sub { color:var(--sub); font-size:13px; margin:2px 2px 12px; }
+  .proj-search { width:100%; border:1px solid var(--line); background:var(--card); color:var(--text); border-radius:10px; padding:9px 12px; font:inherit; font-size:14px; margin-bottom:12px; }
+  .proj { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:12px; margin-bottom:12px; display:flex; align-items:center; gap:12px; }
+  .proj-icon { flex:0 0 42px; height:42px; border-radius:10px; background:var(--chip); display:flex; align-items:center; justify-content:center; font-size:19px; }
+  .proj-main { flex:1; min-width:0; cursor:pointer; }
+  .proj-name { font-size:15px; font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .proj-tag { font-size:10px; padding:1px 8px; border:1px solid var(--line); border-radius:99px; color:var(--sub); margin-left:8px; vertical-align:2px; }
+  .proj-path { font-size:12px; color:var(--sub); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-family:ui-monospace,Menlo,monospace; }
+  .proj-meta { display:flex; gap:10px; font-size:12px; color:var(--sub); margin-top:3px; }
+  .proj-meta .go { margin-left:auto; }
+  .proj-add { flex:0 0 38px; height:38px; border:1px solid var(--line); background:none; color:var(--text); border-radius:10px; font-size:19px; line-height:1; }
+  .proj.go-live { border-color:#0a7d3355; }
+  .proj.go-live .proj-meta { color:#0a7d33; }
+  .pending-badge { color:#c47f17; }
+  .footnote { text-align:center; color:var(--sub); font-size:11px; margin:26px 0 0; }
+  .empty { text-align:center; color:var(--sub); padding:48px 0; font-size:13px; }
+  .conn { text-align:center; color:var(--sub); font-size:11px; padding:6px 0 14px; }
+  select { appearance:none; background:var(--card); color:var(--text); border:1px solid var(--line); border-radius:8px; padding:6px 8px; max-width:52vw; font-size:13px; }
+  .chat-bar { display:flex; gap:8px; align-items:center; margin-bottom:6px; }
   .msg { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:10px 12px; margin:8px 0; overflow-wrap:anywhere; white-space:pre-wrap; }
   .msg.user { background:var(--user); }
   .msg.pending { opacity:.6; }
@@ -307,15 +334,12 @@ export function viewerPage(): string {
   .msg.tool { color:var(--sub); font-size:13px; }
   .msg.think { color:var(--sub); font-size:13px; font-style:italic; }
   .msg.err { color:var(--danger); border-color:var(--danger); }
-  .empty { text-align:center; color:var(--sub); padding:48px 0; font-size:13px; }
-  .conn { text-align:center; color:var(--sub); font-size:11px; padding:6px 0 14px; }
-  .stopbtn { flex-shrink:0; border:1px solid var(--danger); color:var(--danger); background:none; border-radius:8px; font-size:12px; padding:5px 10px; display:none; }
   .composer { position:fixed; left:0; right:0; bottom:0; z-index:3; background:var(--card); border-top:1px solid var(--line); padding:8px 10px calc(8px + env(safe-area-inset-bottom)); display:flex; gap:8px; align-items:flex-end; }
   .composer textarea { flex:1; resize:none; border:1px solid var(--line); background:var(--bg); color:var(--text); border-radius:10px; padding:9px 10px; font:inherit; font-size:14px; max-height:120px; min-height:38px; }
   .composer textarea:disabled { opacity:.5; }
   .sendbtn { flex-shrink:0; border:0; background:var(--accent); color:var(--bg); border-radius:10px; font-size:14px; padding:9px 16px; }
   .sendbtn:disabled { opacity:.4; }
-  .dialogs { position:fixed; left:10px; right:10px; bottom:calc(64px + env(safe-area-inset-bottom)); z-index:4; display:none; }
+  .dialogs { position:fixed; left:10px; right:10px; bottom:calc(64px + env(safe-area-inset-bottom)); z-index:4; }
   .dialog-card { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:14px; box-shadow:0 8px 30px rgba(0,0,0,.18); }
   .dialog-card .dlg-title { font-size:13px; color:var(--sub); margin-bottom:4px; }
   .dialog-card .dlg-msg { font-size:14px; margin-bottom:10px; overflow-wrap:anywhere; white-space:pre-wrap; max-height:30vh; overflow:auto; }
@@ -332,14 +356,30 @@ export function viewerPage(): string {
 </head>
 <body>
 <header>
-  <select id="session"></select>
-  <h1 id="title">工作区</h1>
-  <button class="stopbtn" id="stopbtn">停止</button>
-  <span class="pill" id="status">离线</span>
+  <div class="head-row">
+    <button class="backbtn" id="back" aria-label="返回">&#8249;</button>
+    <h1 id="title">PI Desktop 远程控制</h1>
+    <span class="pill" id="status">离线</span>
+    <button class="stopbtn" id="stopbtn">停止</button>
+  </div>
+  <p class="head-sub" id="subtitle">已连接到当前桌面窗口</p>
 </header>
-<main id="feed"><div class="empty">正在连接桌面端…</div></main>
-<div class="dialogs" id="dialogs"></div>
-<form class="composer" id="composer">
+<main id="projects">
+  <div class="notice">本次连接可以查看当前设备上已打开的项目、任务和会话；二维码失效后需要回到桌面端重新连接。</div>
+  <div class="sect-head"><h2>当前设备上的工作区和任务</h2><button class="refreshbtn" id="refresh">&#8635; 刷新</button></div>
+  <div class="sect-sub" id="projStat">读取中…</div>
+  <input class="proj-search" id="projSearch" placeholder="搜索项目或任务…" disabled>
+  <div id="projList"></div>
+  <div class="footnote">本地执行 · 数据不会离开你的电脑</div>
+</main>
+<main id="chat" hidden>
+  <div class="chat-bar">
+    <select id="session"></select>
+  </div>
+  <div id="feed"><div class="empty">正在连接桌面端…</div></div>
+</main>
+<div class="dialogs" id="dialogs" hidden></div>
+<form class="composer" id="composer" hidden>
   <textarea id="input" rows="1" placeholder="连接桌面端后可发送…" disabled></textarea>
   <button class="sendbtn" id="send" type="submit" disabled>发送</button>
 </form>
@@ -353,30 +393,115 @@ function post(p, body) {
     .then(async r => { const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status)); return j; });
 }
 let sessions = [], runs = new Map(), current = null, reconnectTimer = null;
+let chatView = false;
 // id → { key, generation, request }；页面刷新后由 /api/state 的 runs[].dialogs 恢复。
 let dialogs = new Map();
 // 流式打字机：当前会话正在拼装的助手消息块（等价桌面 stream-delta）。
 let liveBlocks = null;
 // 乐观发送：POST 成功但历史尚未回显的用户消息。
 let optimistic = [];
+let lastEntries = [];
 
-function pickSession() {
+function escapeHtml(s) { return String(s).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
+
+// ---- 项目视图（ZCode 同款：扫码进来是工作区卡片列表） ----
+function projects() {
+  const map = new Map();
+  for (const s of sessions) {
+    const cwd = s.cwd || '其他';
+    if (!map.has(cwd)) map.set(cwd, { cwd, name: (cwd.split(/[\\\\/]/).filter(Boolean).pop() || cwd), sessions: [], latest: 0 });
+    const g = map.get(cwd);
+    g.sessions.push(s);
+    g.latest = Math.max(g.latest, s.updatedAt || 0);
+  }
+  return [...map.values()].sort((a, b) => b.latest - a.latest);
+}
+let stateLoaded = false;
+function renderProjects() {
+  const q = (document.getElementById('projSearch').value || '').toLowerCase();
+  if (!stateLoaded) {
+    document.getElementById('projStat').textContent = '读取中…';
+    document.getElementById('projList').innerHTML = '<div class="empty">正在连接桌面端…</div>';
+    return;
+  }
+  const groups = projects();
+  document.getElementById('projStat').textContent = groups.length + ' 个工作区 · ' + sessions.length + ' 个任务';
+  const list = document.getElementById('projList');
+  const visible = groups.filter(g => !q || g.name.toLowerCase().includes(q) || g.cwd.toLowerCase().includes(q) || g.sessions.some(s => (s.name || '').toLowerCase().includes(q)));
+  if (!visible.length) { list.innerHTML = '<div class="empty">没有匹配的项目</div>'; return; }
+  list.innerHTML = visible.map(g => {
+    const live = g.sessions.some(s => { const r = runs.get(s.key); return r && (r.status === 'running' || r.status === 'starting'); });
+    const keys = new Set(g.sessions.map(x => x.key));
+    const pending = [...dialogs.values()].filter(d => keys.has(d.key)).length;
+    return '<div class="proj' + (live ? ' go-live' : '') + '" data-open="' + encodeURIComponent(g.cwd) + '">'
+      + '<div class="proj-icon">&#128193;</div>'
+      + '<div class="proj-main">'
+      + '<div class="proj-name">' + escapeHtml(g.name) + '<span class="proj-tag">本地</span></div>'
+      + '<div class="proj-path">' + escapeHtml(g.cwd) + '</div>'
+      + '<div class="proj-meta"><span>' + g.sessions.length + ' 个任务</span>' + (live ? '<span>运行中</span>' : '') + (pending ? '<span class="pending-badge">' + pending + ' 待审批</span>' : '') + '<span class="go">&#8250;</span></div>'
+      + '</div>'
+      + '<button class="proj-add" aria-label="新建任务">+</button>'
+      + '</div>';
+  }).join('');
+}
+document.getElementById('projList').addEventListener('click', e => {
+  const target = e.target.closest('[data-open]');
+  if (!target) return;
+  const cwd = decodeURIComponent(target.getAttribute('data-open'));
+  const group = projects().find(g => g.cwd === cwd);
+  const latest = group && group.sessions.slice().sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))[0];
+  if (latest) showChat(latest.key, true);
+});
+document.getElementById('projSearch').addEventListener('input', renderProjects);
+document.getElementById('refresh').addEventListener('click', () => loadState());
+
+// ---- 视图切换 ----
+function showProjects() {
+  chatView = false;
+  document.getElementById('projects').hidden = false;
+  document.getElementById('chat').hidden = true;
+  document.getElementById('composer').hidden = true;
+  document.getElementById('back').style.display = 'none';
+  document.getElementById('title').textContent = 'PI Desktop 远程控制';
+  document.getElementById('subtitle').textContent = '已连接到当前桌面窗口';
+  document.getElementById('stopbtn').style.display = 'none';
+  projectsPill();
+  renderDialog(); // 清掉对话视图残留的审批 overlay
+  renderProjects();
+}
+// 项目视图的聚合状态 pill：按 runs 统计运行数（不从界面文案反推）。
+function projectsPill() {
+  const el = document.getElementById('status');
+  const running = [...runs.values()].filter(r => r.status === 'running' || r.status === 'starting').length;
+  el.className = 'pill' + (running ? ' live' : '');
+  el.textContent = running ? running + ' 个运行中' : '空闲';
+}
+function showChat(key, focusInput) {
+  chatView = true;
+  current = key; liveBlocks = null; optimistic = []; lastEntries = [];
+  document.getElementById('projects').hidden = true;
+  document.getElementById('chat').hidden = false;
+  document.getElementById('composer').hidden = false;
+  document.getElementById('back').style.display = 'inline-block'; // CSS 默认 none，需显式显示
+  // 会话选择器只列同项目（cwd）的会话，避免长下拉找不到项目（ZCode 项目→任务两级结构）。
+  const mine = sessions.find(s => s.key === key);
+  const cwd = mine ? mine.cwd : null;
   const sel = document.getElementById('session');
-  const active = [...runs.values()].find(r => r.status === 'running' || r.status === 'starting');
-  current = current || (active && active.key) || (sessions[0] && sessions[0].key) || null;
   sel.innerHTML = '';
-  for (const s of sessions.slice(0, 200)) {
+  for (const s of sessions.filter(x => !cwd || x.cwd === cwd)) {
     const o = document.createElement('option');
-    o.value = s.key; o.textContent = s.name;
+    o.value = s.key; o.textContent = s.name || s.key;
     if (s.key === current) o.selected = true;
     sel.appendChild(o);
   }
+  loadHistory(); renderDialog(); renderComposer(); statusPill();
+  if (focusInput) setTimeout(() => { const ta = document.getElementById('input'); ta.focus(); }, 60);
 }
+document.getElementById('back').addEventListener('click', showProjects);
 document.getElementById('session').addEventListener('change', e => {
   current = e.target.value; liveBlocks = null; optimistic = []; lastEntries = [];
-  loadHistory(); renderDialog(); renderComposer();
+  loadHistory(); renderDialog(); renderComposer(); statusPill();
 });
-
 function statusPill() {
   const el = document.getElementById('status');
   const mine = current && runs.get(current);
@@ -386,8 +511,13 @@ function statusPill() {
   let label = active ? '运行中' : st === 'error' ? '出错' : st === 'stopping' ? '停止中' : '空闲';
   if (active && mine && mine.pending > 0) label += ' · 排队 ' + mine.pending;
   el.textContent = label;
-  document.getElementById('title').textContent = mine ? (mine.cwd.split(/[\\\\/]/).pop() || '工作区') : '工作区';
-  document.getElementById('stopbtn').style.display = mine && ['running', 'starting', 'stopping'].includes(st) ? '' : 'none';
+  if (chatView) {
+    const s = sessions.find(x => x.key === current);
+    const group = s && projects().find(g => g.cwd === s.cwd);
+    document.getElementById('title').textContent = (group && group.name) || '工作区';
+    document.getElementById('subtitle').textContent = s ? (s.name || s.key) : '';
+    document.getElementById('stopbtn').style.display = mine && ['running', 'starting', 'stopping'].includes(st) ? '' : 'none';
+  }
 }
 
 function renderComposer() {
@@ -399,7 +529,6 @@ function renderComposer() {
 }
 
 // ---- 历史渲染 + 乐观气泡 ----
-let lastEntries = [];
 function render(entries) {
   if (Array.isArray(entries)) lastEntries = entries;
   const feed = document.getElementById('feed');
@@ -427,9 +556,8 @@ function render(entries) {
   window.scrollTo(0, document.body.scrollHeight);
 }
 function bubble(who, text, cls) {
-  return '<div class="msg ' + cls + '"><div class="who">' + who + '</div>' + escapeHtml(String(text ?? '')).slice(0, 8000) + '</div>';
+  return '<div class="msg ' + cls + '"><div class="who">' + escapeHtml(who) + '</div>' + escapeHtml(String(text ?? '')).slice(0, 8000) + '</div>';
 }
-function escapeHtml(s) { return s.replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
 function textOf(content) {
   if (typeof content === 'string') return content;
   if (Array.isArray(content)) return content.filter(b => b && b.type === 'text').map(b => b.text).join('');
@@ -483,18 +611,19 @@ function renderLive() {
   document.getElementById('feed').appendChild(div);
   window.scrollTo(0, document.body.scrollHeight);
 }
-
 // ---- 审批卡片 ----
 function renderDialog() {
   const box = document.getElementById('dialogs');
-  const mine = [...dialogs.values()].filter(d => d.key === current);
-  const d = mine[0];
-  if (!d) { box.style.display = 'none'; box.innerHTML = ''; return; }
+  // 审批卡只在对话视图显示（项目视图一律隐藏，避免悬浮在列表上）；项目卡片上以
+  // 「N 待审批」徽标引导用户进入对应会话处理。
+  const d = !chatView ? null : [...dialogs.values()].find(x => x.key === current);
+  if (!d) { box.hidden = true; box.innerHTML = ''; return; }
   const r = d.request;
   const isAsk = r.method === 'input' && r.title === 'desktop-ask';
   let html = '<div class="dialog-card"><div class="dlg-title">' + escapeHtml((r.title === 'desktop-ask' ? '需要你的选择' : r.title) || '需要你的确认') + '</div>';
   html += '<div id="dlg-body"></div></div>';
   box.innerHTML = html;
+  box.hidden = false;
   const holder = box.querySelector('#dlg-body');
   if (isAsk) { renderAsk(holder, d); return; }
   if (r.message) { const p = document.createElement('div'); p.className = 'dlg-msg'; p.textContent = r.message; holder.appendChild(p); }
@@ -574,8 +703,8 @@ function renderAsk(holder, d) {
     });
     const row = document.createElement('div'); row.className = 'dlg-row';
     row.appendChild(dlgBtn('取消', 'dlg-ghost', () => respondDialog(d, { id: d.request.id, cancelled: true })));
-    const complete = picked.every((labels, qi) => labels.length > 0);
-    const submitBtn = dlgBtn('提交', complete ? 'dlg-primary' : 'dlg-primary', () => {
+    const complete = picked.every(labels => labels.length > 0);
+    const submitBtn = dlgBtn('提交', 'dlg-primary', () => {
       if (!complete) return;
       const answers = payload.questions.map((q, qi) => ({
         header: q.header || String(q.question || '').slice(0, 12),
@@ -608,9 +737,31 @@ async function loadState() {
     sessions = s.sessions || [];
     runs = new Map((s.runs || []).map(r => [r.key, r]));
     dialogs = new Map();
-    pickSession(); seedDialogs(s); statusPill(); renderComposer(); await loadHistory();
+    stateLoaded = true;
+    seedDialogs(s);
+    document.getElementById('projSearch').disabled = false;
     document.getElementById('conn').textContent = '已连接 · pi ' + (s.version || '');
-  } catch (e) { document.getElementById('conn').textContent = String(e.message || e); }
+    if (chatView) { // 对话视图：刷当前项目 select 选择器 + 历史
+      const sel = document.getElementById('session');
+      const cur = current;
+      const cwd = (sessions.find(x => x.key === cur) || {}).cwd || null;
+      sel.innerHTML = '';
+      for (const x of sessions.filter(x2 => !cwd || x2.cwd === cwd)) {
+        const o = document.createElement('option');
+        o.value = x.key; o.textContent = x.name || x.key;
+        if (x.key === cur) o.selected = true;
+        sel.appendChild(o);
+      }
+      statusPill(); renderComposer(); await loadHistory();
+    } else {
+      projectsPill();
+      renderProjects();
+    }
+  } catch (e) {
+    document.getElementById('conn').textContent = String(e.message || e);
+    document.getElementById('projStat').textContent = '连接失败';
+    document.getElementById('projList').innerHTML = '<div class="empty">无法连接桌面端（二维码可能已失效，请回桌面端重新扫码）</div>';
+  }
 }
 async function loadHistory() {
   if (!current) { document.getElementById('feed').innerHTML = '<div class="empty">还没有会话</div>'; return; }
@@ -621,24 +772,23 @@ async function loadHistory() {
 // ---- SSE：run 状态 / 审批 / 流式增量 ----
 function listen() {
   const es = new EventSource('/api/events?token=' + TOKEN);
-  es.onopen = () => { document.getElementById('conn').textContent = '实时同步中'; };
+  es.onopen = () => { document.getElementById('conn').textContent = '实时同步中'; if (!chatView) projectsPill(); };
   es.onerror = () => { es.close(); document.getElementById('conn').textContent = '连接断开，重试中…'; clearTimeout(reconnectTimer); reconnectTimer = setTimeout(listen, 3000); };
   es.onmessage = (ev) => {
     let msg; try { msg = JSON.parse(ev.data); } catch { return; }
     if (msg.type === 'run') {
-      const prev = runs.get(msg.run.key);
-      runs.set(msg.run.key, Object.assign({}, prev, lite(msg.run)));
-      statusPill(); renderComposer();
+      runs.set(msg.run.key, Object.assign({}, runs.get(msg.run.key), lite(msg.run)));
+      if (chatView) { statusPill(); renderComposer(); } else { renderProjects(); }
     }
     else if (msg.type === 'sessions-changed') loadState();
     else if (msg.type === 'ui') {
       dialogs.set(msg.request.id, { key: msg.key, generation: msg.generation, request: msg.request });
-      if (msg.key === current) renderDialog();
+      if (msg.key === current && chatView) renderDialog();
     }
     else if (msg.type === 'rpc' && (msg.event.type === 'ui-expired' || msg.event.type === 'ui-resolved')) {
       if (dialogs.delete(msg.event.id)) renderDialog();
     }
-    else if (msg.type === 'rpc' && msg.key === current) {
+    else if (msg.type === 'rpc' && msg.key === current && chatView) {
       const t = msg.event && msg.event.type;
       if (t === 'message_update' && msg.event.assistantMessageEvent) {
         const ended = applyDelta(msg.event.assistantMessageEvent);
@@ -675,8 +825,9 @@ document.getElementById('stopbtn').addEventListener('click', () => {
     .catch(err => { document.getElementById('conn').textContent = '停止失败：' + String(err.message || err); });
 });
 
+showProjects();
 loadState(); listen();
-</script>
+<\/script>
 </body>
 </html>`;
 }
