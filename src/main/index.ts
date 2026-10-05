@@ -1,4 +1,5 @@
 import { enableOfficialSubagent, officialSubagentStatus, recoverSubagents, cleanupSubagents } from './pi/official-subagent';
+import { startDingTalkRegistration, pollDingTalkRegistration } from './pi/dingtalk-registration';
 import { listMemoryFiles, migrateLegacyMemoryFile, moveMemoryFileToProject, memoryAssistStatus, readMemoryFileContent, detectMemoryPlugin, builtinMemoryDir, DEFAULT_MEMORY_SOURCE } from './pi/memory-bridge';
 import { TerminalService } from './pi/terminal-service';
 import { filePreview } from './pi/file-preview';
@@ -288,6 +289,9 @@ function registerIpc() {
   handle('remoteStop', () => remote.stop());
   handle('remoteStatus', () => remote.status());
   handle('imConfig', () => imBot.current);
+  // 钉钉扫码一键配置：应用注册 device flow（init→begin 出二维码，poll 出凭据）。
+  handle('dingtalkRegister:start', () => startDingTalkRegistration());
+  handle('dingtalkRegister:poll', deviceCode => pollDingTalkRegistration(String(deviceCode)));
   handle('imSave', patch => imBot.save(patch));
   handle('imTest', () => imBot.send('PI Desktop 通知测试：配置成功 ✅'));
   handle('composerSkills', cwd => skillChoices(settings.resources(cwd)));

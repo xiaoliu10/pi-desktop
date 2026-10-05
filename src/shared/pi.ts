@@ -173,6 +173,11 @@ export interface LocalPiApi extends importSettingsApi {
   imConfig(): Promise<ImConfig>;
   imSave(patch: Partial<ImConfig>): Promise<ImConfig>;
   imTest(): Promise<void>;
+  /** 钉钉扫码一键配置：应用注册 device flow。 */
+  dingtalkRegister: {
+    start: () => Promise<{ url: string; deviceCode: string; userCode: string; intervalMs: number; expireInMs: number }>;
+    poll: (deviceCode: string) => Promise<{ done: boolean; status: 'waiting' | 'success' | 'fail' | 'expired'; clientId?: string; clientSecret?: string; error?: string }>;
+  };
   pickDirectory(): Promise<string | null>;
   /** Show a local file/folder in the OS file manager (session context menu). */
   revealPath(path: string): Promise<void>;

@@ -871,6 +871,11 @@
   color: var(--pi-text-secondary);
 }
 
+.pireplica .pi-chdialog__stepsbox { margin-top: 8px; }
+.pireplica .pi-chdialog__stepsbox summary { cursor: pointer; list-style: none; }
+.pireplica .pi-chdialog__stepsbox summary::-webkit-details-marker { display: none; }
+.pireplica .pi-chdialog__stepsbox summary:hover { color: var(--pi-text); }
+.pireplica .pi-chdialog__stepsbox .pi-chdialog__steps { margin: 8px 0 0; }
 .pireplica .pi-chdialog__scannote {
   margin: 12px 0 0;
   font-size: var(--pi-font-size-sm);
