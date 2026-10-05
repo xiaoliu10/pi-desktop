@@ -17,8 +17,7 @@ import { Icon } from '../replica/Icons';
 export type ChannelId = 'dingtalk' | 'feishu' | 'wechat' | 'telegram';
 
 const SCAN_URLS: Record<ChannelId, string> = {
-  // 钉钉直达开发者后台「创建应用」表单（扫码登录后免导航）；AppSecret 为机密，
-  // 平台不允许第三方代读，复制凭据仍需手动。
+  // 一键配置（应用注册 device flow）失败时的兜底：直达创建页手动建应用。
   dingtalk: 'https://open-dev.dingtalk.com/fe/app?opType=create',
   feishu: 'https://open.feishu.cn/app',
   telegram: 'https://t.me/BotFather',
@@ -27,10 +26,9 @@ const SCAN_URLS: Record<ChannelId, string> = {
 
 const STEPS: Record<ChannelId, string[]> = {
   dingtalk: [
-    '用钉钉扫码登录，直接落在「创建企业内部应用」表单，填个应用名即可创建。',
-    '左侧「添加应用能力」勾选「机器人」；「机器人配置」里消息接收模式选「Stream 模式」。',
-    '左侧「凭据与基础信息」复制 AppKey 与 AppSecret。',
-    '回到本对话框切到「手动配置」，把 AppKey/AppSecret 填入并保存。',
+    '扫码后在钉钉里选择企业并确认授权——应用由钉钉自动创建，凭据自动回填本窗口。',
+    '若一键流程失败，按手动步骤：在钉钉开放平台创建企业内部应用，添加「机器人」能力并选「Stream 模式」。',
+    '在「凭据与基础信息」复制 AppKey 与 AppSecret，切到「手动配置」填入保存。',
   ],
   feishu: [
     '用飞书扫码打开飞书开放平台，创建自建应用并开启机器人能力。',
@@ -48,10 +46,9 @@ const STEPS: Record<ChannelId, string[]> = {
 
 const STEPS_EN: Record<ChannelId, string[]> = {
   dingtalk: [
-    'Scan with DingTalk to sign in — you land directly on the "Create internal app" form; just name it.',
-    'Add the "Robot" capability under the app; set the message receiving mode to "Stream mode".',
-    'Copy the AppKey and AppSecret from "Credentials & Basic Info".',
-    'Back in this dialog, switch to Manual and paste the credentials.',
+    'Scan, pick your org and approve inside DingTalk — the app is created for you and credentials auto-fill.',
+    'If one-click fails, manual path: create an internal app on the open platform, add the "Robot" capability and choose "Stream mode".',
+    'Copy AppKey/AppSecret from "Credentials & Basic Info", then paste under Manual.',
   ],
   feishu: [
     'Scan with Feishu to open the Feishu open platform; create a custom app with bot capability.',
@@ -84,13 +81,28 @@ export function ChannelConfigDialog(props: {
   const [qr, setQr] = useState<string | null>(null);
   const [qrErr, setQrErr] = useState(false);
   const cardRef = useRef<HTMLDivElement>(null);
+  // 钉钉一键配置（应用注册 device flow）：扫码 → 钉钉内选企业并确认 → 自动创建应用 →
+  // 轮询拿到 AppKey/AppSecret 自动填入。失败/过期降级为静态直达页 + 手动配置。
+  const [reg, setReg] = useState<{ url: string; deviceCode: string; userCode: string; expireInMs: number } | null>(null);
+  const [regStatus, setRegStatus] = useState<'starting' | 'showing' | 'success' | 'fail' | 'expired' | 'error'>('starting');
+  const [regError, setRegError] = useState('');
+  const [regQr, setRegQr] = useState<string | null>(null);
+  const [regSeconds, setRegSeconds] = useState(0);
+  const [regNonce, setRegNonce] = useState(0);
+  const pollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+  const tickTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const stopRegTimers = () => {
+    if (pollTimer.current) { clearInterval(pollTimer.current); pollTimer.current = null; }
+    if (tickTimer.current) { clearInterval(tickTimer.current); tickTimer.current = null; }
+  };
 
   useEffect(() => {
     cardRef.current?.focus();
     setQr(null);
     setQrErr(false);
     let alive = true;
-    const url = SCAN_URLS[channel];
+    const url = channel === 'dingtalk' ? null : SCAN_URLS[channel];
     if (tab === 'scan' && url) {
       qrToDataURL(url, { width: 220, margin: 1 })
         .then(data => { if (alive) setQr(data); })
@@ -98,6 +110,65 @@ export function ChannelConfigDialog(props: {
     }
     return () => { alive = false; };
   }, [channel, tab]);
+
+  // 钉钉一键流程：进入扫码 tab 即启动，success 自动填入并保存；卸载/切 tab 清理定时器。
+  useEffect(() => {
+    // 每轮 effect 用闭包内局部 alive（同文件首个 effect 模式）：dep 变化时先 cleanup
+    // （alive=false）再 setup，上一轮 boot 的 continuation 恢复时读到 false 直接 bail，
+    // 不会用陈旧 deviceCode 再建定时器（共享 ref 会在新一轮 setup 被重置为 true）。
+    let alive = true;
+    let consecutiveErrors = 0;
+    if (channel !== 'dingtalk' || tab !== 'scan') { stopRegTimers(); return; }
+    let deviceCode = '';
+    setRegStatus('starting'); setRegError(''); setReg(null); setRegQr(null);
+    const boot = async () => {
+      try {
+        const session = await window.localPi.dingtalkRegister.start();
+        if (!alive) return;
+        deviceCode = session.deviceCode;
+        setReg(session); setRegSeconds(Math.ceil(session.expireInMs / 1000)); setRegStatus('showing');
+        qrToDataURL(session.url, { width: 220, margin: 1 })
+          .then(data => { if (alive) setRegQr(data); })
+          .catch(() => { if (alive) setRegQr(null); });
+        tickTimer.current = setInterval(() => setRegSeconds(prev => (prev <= 1 ? 0 : prev - 1)), 1000);
+        pollTimer.current = setInterval(async () => {
+          try {
+            const result = await window.localPi.dingtalkRegister.poll(deviceCode);
+            if (!alive) return;
+            if (!result.done) {
+              // 连续失败上限：非公开 API 被限流/下线时降级到 error UI + 重试，而非无限轮询。
+              // 成功轮询归零计数，语义为「连续失败」而非「累计失败」。
+              if (!result.error) { consecutiveErrors = 0; return; }
+              if (++consecutiveErrors >= 3) { stopRegTimers(); setRegStatus('fail'); setRegError(result.error); }
+              return;
+            }
+            stopRegTimers();
+            if (result.status === 'success' && result.clientId && result.clientSecret) {
+              // 不落 onImChange：onSave（saveIm）内部用服务端权威合并结果整体刷新父状态，
+              // 且避免轮询期间 props.im 陈旧 spread 回写旧值。
+              void props.onSave({ appKey: result.clientId, appSecret: result.clientSecret, provider: 'dingtalk', twoWay: true });
+              setRegStatus('success');
+            } else if (result.status === 'expired') { setRegStatus('expired'); }
+            else { setRegStatus('fail'); setRegError(result.error || ''); }
+          } catch { if (alive && ++consecutiveErrors >= 3) { stopRegTimers(); setRegStatus('fail'); setRegError(zh ? '网络异常，请重试' : 'Network error, please retry'); } }
+        }, session.intervalMs);
+      } catch (e) {
+        if (!alive) return;
+        setRegStatus('error'); setRegError(String((e as Error).message || e));
+      }
+    };
+    void boot();
+    return () => { alive = false; stopRegTimers(); };
+  }, [channel, tab, regNonce]);
+
+  // 派生：倒计时归零 → 本地先停双 timer 并落过期态（服务端 EXPIRED 仍是权威，本地先停避免无谓请求）。
+  // 副作用放在派生 effect 而非 setRegSeconds updater 内（updater 需纯函数，render 阶段不可有副作用）。
+  useEffect(() => {
+    if (regStatus === 'showing' && regSeconds <= 0) {
+      stopRegTimers();
+      setRegStatus('expired');
+    }
+  }, [regSeconds, regStatus]);
 
   // Esc + Tab 焦点圈禁用 window 级监听：点击 card 内非可聚焦区域后焦点落回 body，
   // card 级 onKeyDown 冒泡不到（仓库惯例，同 OpenWithMenu）；卸载时归还焦点到触发元素。
@@ -118,7 +189,7 @@ export function ChannelConfigDialog(props: {
   }, []);
 
   const scanHint: Record<ChannelId, string> = {
-    dingtalk: zh ? '用钉钉扫码登录，直达「创建应用」页。' : 'Scan with DingTalk to land on the app creation page.',
+    dingtalk: zh ? '用钉钉扫码，确认后自动创建应用并填入凭据。' : 'Scan with DingTalk — approve and credentials auto-fill.',
     feishu: zh ? '用飞书扫码打开飞书开放平台。' : 'Scan with Feishu to open the open platform.',
     telegram: zh ? '用 Telegram 扫码打开 @BotFather。' : 'Scan with Telegram to open @BotFather.',
     wechat: zh ? '暂未支持' : 'Not yet supported',
@@ -146,7 +217,44 @@ export function ChannelConfigDialog(props: {
         </div>
 
         <div className="pi-chdialog__body">
-          {tab === 'scan' && (
+          {tab === 'scan' && channel === 'dingtalk' && (
+            <div className="pi-chdialog__scan">
+              {regStatus === 'starting' && <div className="pi-chdialog__qr"><span className="pi-chdialog__qrhint">{zh ? '正在创建配置会话…' : 'Starting…'}</span></div>}
+              {regStatus === 'showing' && (
+                <>
+                  <div className="pi-chdialog__qr">
+                    {regQr ? <img src={regQr} alt={zh ? '一键配置二维码' : 'One-click QR'} /> : <span className="pi-chdialog__qrhint">{zh ? '正在生成二维码...' : 'Generating QR…'}</span>}
+                  </div>
+                  <p className="pi-chdialog__scanhint">{zh ? '用钉钉扫码，在钉钉里选择企业并确认授权——应用会自动创建，凭据自动填入。' : 'Scan with DingTalk, pick your org and approve — the app is created and credentials fill in automatically.'}</p>
+                  {reg?.userCode && <p className="pi-chdialog__link">{zh ? '确认码' : 'Code'}: <b className="pi-mono">{reg.userCode}</b></p>}
+                  <p className="pi-chdialog__scanhint" aria-live="polite">{zh ? `有效期 ${Math.floor(regSeconds / 60)} 分 ${regSeconds % 60} 秒，过期后点「重新开始」` : `Expires in ${Math.floor(regSeconds / 60)}m ${regSeconds % 60}s — tap "Retry" after it expires`}</p>
+                </>
+              )}
+              {regStatus === 'success' && (
+                <div className="pi-chdialog__qr">
+                  <span className="pi-chdialog__qrhint">{zh ? '✅ 应用已创建，AppKey/AppSecret 已自动填入并保存。可直接「发送测试消息」验证。' : '✅ App created — credentials filled in and saved.'}</span>
+                </div>
+              )}
+              {(regStatus === 'fail' || regStatus === 'expired' || regStatus === 'error') && (
+                <div className="pi-chdialog__qr">
+                  <span className="pi-chdialog__qrhint">{zh ? `一键配置未完成${regError ? '：' + regError : ''}。可重试，或用下方直达链接手动创建。` : `One-click failed${regError ? ': ' + regError : ''}.`}</span>
+                  <button type="button" className="pi-btn pi-btn--outline" style={{ margin: '10px auto 0', display: 'block' }} onClick={() => setRegNonce(n => n + 1)}>
+                    {zh ? '重新开始' : 'Retry'}
+                  </button>
+                </div>
+              )}
+              {SCAN_URLS[channel] && <p className="pi-chdialog__link"><a href={SCAN_URLS[channel]} target="_blank" rel="noopener noreferrer">{zh ? '改为手动创建（开发者后台）' : 'Manual creation (dev console)'}</a></p>}
+              <details className="pi-chdialog__stepsbox">
+                <summary className="pi-chdialog__scanhint">{zh ? '流程说明 / 手动步骤' : 'Flow details / manual steps'}</summary>
+                <ol className="pi-chdialog__steps">
+                  {guide.map((step, i) => <li key={i}>{step}</li>)}
+                </ol>
+              </details>
+              <p className="pi-chdialog__scannote">{zh ? '一键配置由钉钉应用注册流程完成（应用创建在你自己的企业下）；失败时可用「手动配置」兜底。' : 'One-click uses DingTalk\'s app registration flow; Manual is the fallback.'}</p>
+            </div>
+          )}
+
+          {tab === 'scan' && channel !== 'dingtalk' && (
             <div className="pi-chdialog__scan">
               <div className="pi-chdialog__qr">
                 {qr ? <img src={qr} alt={zh ? '配置二维码' : 'Setup QR code'} /> : qrErr ? (

@@ -119,6 +119,10 @@ const localPi: LocalPiApi = {
   usageStats: () => invoke('usageStats'),
   remoteStart: () => invoke('remoteStart'), remoteStop: () => invoke('remoteStop'), remoteStatus: () => invoke('remoteStatus'),
   imConfig: () => invoke('imConfig'), imSave: patch => invoke('imSave', patch), imTest: () => invoke('imTest'),
+  dingtalkRegister: {
+    start: () => ipcRenderer.invoke('dingtalkRegister:start') as Promise<{ url: string; deviceCode: string; userCode: string; intervalMs: number; expireInMs: number }>,
+    poll: (deviceCode: string) => ipcRenderer.invoke('dingtalkRegister:poll', deviceCode) as Promise<{ done: boolean; status: 'waiting' | 'success' | 'fail' | 'expired'; clientId?: string; clientSecret?: string; error?: string }>,
+  },
   pickDirectory: () => invoke('pickDirectory'),
   revealPath: p => invoke('revealPath', p),
   externalApps: () => invoke('externalApps'), openWith: (cwd, appId) => invoke('openWith', cwd, appId),
