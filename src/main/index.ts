@@ -453,9 +453,10 @@ function createWindow(): void {
   // 偏离 app 入口的顶层导航全部写入 ~/Library/Logs/PI Desktop/renderer.log：
   // 再发生时日志直接给出根因；跑飞的顶层导航立即拉回入口，用户无需手动 Cmd+R。
   const rendererLog = path.join(app.getPath('logs'), 'renderer.log');
+  try { fsSync.mkdirSync(path.dirname(rendererLog), { recursive: true }); } catch { /* 忽略 */ }
   const logLine = (msg: string) => { try { fsSync.appendFileSync(rendererLog, `${new Date().toISOString()} ${msg}\n`); } catch { /* 日志失败不影响运行 */ } };
   logLine(`--- launch pid=${process.pid} dev=${Boolean(devUrl)} ---`);
-  const isAppEntry = (url: string) => (devUrl ? url.startsWith(devUrl) : url.includes('renderer/index.html'));
+  const isAppEntry = (url: string) => (devUrl ? url.startsWith(devUrl) : url.startsWith('file://') && url.includes('renderer/index.html'));
 
   mainWindow.webContents.on('will-navigate', (event, url) => {
     event.preventDefault();
@@ -467,15 +468,15 @@ function createWindow(): void {
       void mainWindow?.loadFile(entryPath).catch((e) => logLine(`[entry reload failed] ${String(e)}`));
     }
   });
-  mainWindow.webContents.on('did-fail-load', (_event, code, desc, url) => {
-    // ERR_ABORTED(-3) 是被 will-navigate 拦截的正常回声，忽略
-    if (code === -3) return;
+  mainWindow.webContents.on('did-fail-load', (_event, code, desc, url, isMainFrame) => {
+    // ERR_ABORTED(-3) 是被 will-navigate 拦截的正常回声；子 frame/资源失败与取证无关，均忽略
+    if (code === -3 || !isMainFrame) return;
     logLine(`[did-fail-load] ${code} ${desc} ${url}`);
   });
   mainWindow.webContents.on('render-process-gone', (_event, details) => {
     logLine(`[render-process-gone] ${JSON.stringify(details)}`);
   });
-  mainWindow.webContents.on('console-message', (event, level, message, line, sourceId) => {
+  mainWindow.webContents.on('console-message', (_event, level, message, line, sourceId) => {
     if (level >= 3) logLine(`[console:${level}] ${sourceId}:${line} ${message.slice(0, 500)}`);
   });
 
