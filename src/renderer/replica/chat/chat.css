@@ -133,6 +133,16 @@
   max-width: 68%;
   width: fit-content;
   overflow-wrap: anywhere;
+  min-width: 0;
+  /* 兜底裁剪：markdown 内容（.pi-md）断行规则异常时文字不得画出气泡（2026-10 用户消息
+     粘贴 minified 代码，.pi-md 的 break-word 断点不计入 fit-content 测量 → 行尾溢出气泡） */
+  overflow: hidden;
+}
+
+/* 用户气泡内的 markdown 断行升级为 anywhere：break-word 的断点不参与容器宽度测量，
+   fit-content 气泡里超长无空格 token（minified 代码）会在行尾多排出几个字符。 */
+.pireplica .pi-msg--user .pi-msg__bubble .pi-md {
+  overflow-wrap: anywhere;
 }
 
 /* 已发送消息的动作行在正常流中靠右，和气泡底边留出间距。
