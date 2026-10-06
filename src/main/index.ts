@@ -436,10 +436,11 @@ function createWindow(): void {
   );
 
   const devUrl = process.env.PI_VITE_URL;
+  const entryPath = path.join(__dirname, '../renderer/index.html');
   if (devUrl) {
     void mainWindow.loadURL(devUrl);
   } else {
-    void mainWindow.loadFile(path.join(__dirname, '../renderer/index.html'));
+    void mainWindow.loadFile(entryPath);
   }
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
@@ -447,7 +448,36 @@ function createWindow(): void {
     return { action: 'deny' };
   });
 
-  mainWindow.webContents.on('will-navigate', event => event.preventDefault());
+  // 黑屏防护 + 留痕：2026-10-05 用户偶发「启动窗口显示 bundle 源码文本页」（黑底代码，
+  // 复现=Electron 把 .js 资源当纯文本渲染），随后自愈无法取证。将渲染层异常与任何
+  // 偏离 app 入口的顶层导航全部写入 ~/Library/Logs/PI Desktop/renderer.log：
+  // 再发生时日志直接给出根因；跑飞的顶层导航立即拉回入口，用户无需手动 Cmd+R。
+  const rendererLog = path.join(app.getPath('logs'), 'renderer.log');
+  const logLine = (msg: string) => { try { fsSync.appendFileSync(rendererLog, `${new Date().toISOString()} ${msg}\n`); } catch { /* 日志失败不影响运行 */ } };
+  logLine(`--- launch pid=${process.pid} dev=${Boolean(devUrl)} ---`);
+  const isAppEntry = (url: string) => (devUrl ? url.startsWith(devUrl) : url.includes('renderer/index.html'));
+
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    event.preventDefault();
+    logLine(`[will-navigate blocked] ${url}`);
+  });
+  mainWindow.webContents.on('did-navigate', (_event, url) => {
+    if (!isAppEntry(url)) {
+      logLine(`[did-navigate off-entry] ${url} -> reloading entry`);
+      void mainWindow?.loadFile(entryPath).catch((e) => logLine(`[entry reload failed] ${String(e)}`));
+    }
+  });
+  mainWindow.webContents.on('did-fail-load', (_event, code, desc, url) => {
+    // ERR_ABORTED(-3) 是被 will-navigate 拦截的正常回声，忽略
+    if (code === -3) return;
+    logLine(`[did-fail-load] ${code} ${desc} ${url}`);
+  });
+  mainWindow.webContents.on('render-process-gone', (_event, details) => {
+    logLine(`[render-process-gone] ${JSON.stringify(details)}`);
+  });
+  mainWindow.webContents.on('console-message', (event, level, message, line, sourceId) => {
+    if (level >= 3) logLine(`[console:${level}] ${sourceId}:${line} ${message.slice(0, 500)}`);
+  });
 
   mainWindow.on('closed', () => {
     mainWindow = null;
