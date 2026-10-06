@@ -2,6 +2,7 @@ import { useEffect, useId, useRef, useState } from 'react';
 import type { PiCatalogModel, PiModelEditableField } from '../../../shared/pi';
 import { Icon } from '../Icons';
 import { commitModelDraft, createModelDraft, type ModelDraft } from './model-draft';
+import { parseLevelMap, ThinkingLevelChips } from './thinking-level-chips';
 
 /** Interaction adapted from ZCode ProviderModelMetadataDialog / ModelEditorAdvanced.
  * pi owns runtime defaults and capability semantics; this dialog edits a disposable draft. */
@@ -53,7 +54,15 @@ export function ModelMetadataDialog({model, others, adding, onClose, onSave}: {
         <div id={advancedId} hidden={!advanced} className="pi-model-advanced">
           <section><h3>输入类型</h3><div className="pi-model-options"><button type="button" role="checkbox" aria-checked="true" aria-disabled="true"><span className="pi-model-checkbox" aria-hidden="true"><Icon name="check" size={11}/></span>文本</button><button type="button" role="checkbox" aria-checked={draft.image} onClick={()=>patch({image:!draft.image})}><span className="pi-model-checkbox" aria-hidden="true">{draft.image&&<Icon name="check" size={11}/>}</span>图片</button></div></section>
           <section><h3>模型能力</h3><div className="pi-model-options"><button type="button" role="checkbox" aria-checked={draft.reasoning} onClick={()=>patch({reasoning:!draft.reasoning})}><span className="pi-model-checkbox" aria-hidden="true">{draft.reasoning&&<Icon name="check" size={11}/>}</span>推理 / 思考</button></div></section>
-          <label><span>推理等级映射</span><textarea name="thinkingLevelMap" rows={5} spellCheck={false} value={draft.thinkingLevelMap} aria-invalid={error?.field==='thinkingLevelMap'} placeholder={'{\n  "high": "high",\n  "xhigh": null\n}'} onChange={e=>patch({thinkingLevelMap:e.target.value})}/><small>支持 off、minimal、low、medium、high、xhigh、max。字符串指定服务商参数，null 禁用该等级；留空使用 pi 默认映射。</small></label>
+          <section><h3>推理等级（从低到高）</h3>
+            {parseLevelMap(draft.thinkingLevelMap) === null ? (
+              <label><span>推理等级映射（JSON 无法解析，请修复或清空后使用图形编辑）</span><textarea name="thinkingLevelMap" rows={5} spellCheck={false} value={draft.thinkingLevelMap} aria-invalid={error?.field==='thinkingLevelMap'} placeholder={'{\n  "high": "high",\n  "xhigh": null\n}'} onChange={e=>patch({thinkingLevelMap:e.target.value})}/><small>合法键：off、minimal、low、medium、high、xhigh、max；值为发送给服务商的字符串或 null（禁用）。</small></label>
+            ) : (
+              <ThinkingLevelChips value={draft.thinkingLevelMap} onChange={json=>patch({thinkingLevelMap:json})}/>
+            )}
+            {parseLevelMap(draft.thinkingLevelMap) !== null && !draft.reasoning && <small>提示：未勾选「推理 / 思考」时 pi 仅允许 off 等级，此映射不会生效。</small>}
+            {parseLevelMap(draft.thinkingLevelMap) !== null && <small>off–high 默认可用；xhigh/max 需点「+」添加。等级可映射为自定义值（发给服务商的推理参数），勾选「禁用」或点 × 移除。留空条目即使用 pi 默认映射。</small>}
+          </section>
         </div>
         <p className="pi-providerform__hint">留空的参数使用 pi 默认值。能力声明应与服务商提供的模型一致。</p>
       </fieldset>
