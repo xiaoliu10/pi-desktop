@@ -28,21 +28,10 @@ export function Sidebar(props: SidebarProps) {
     {/* 插件市场入口已移至设置菜单（SettingsPage → 插件市场）；侧边栏不再重复展示 */}
   </nav>;
 
-  if (props.collapsed) {
-    return (
-      <aside className="pi-sidebar pi-sidebar--collapsed">
-        <button
-          className="pi-iconbtn"
-          onClick={props.onToggleCollapse}
-          aria-label={zh ? '展开侧边栏' : 'Expand sidebar'}
-          title={zh ? '展开侧边栏' : 'Expand sidebar'}
-          aria-expanded={false}
-        >
-          <Icon name="sidebar" />
-        </button>
-      </aside>
-    );
-  }
+  // 折叠态不渲染浮动窄条：它的展开按钮（absolute + z-index）会被 .pi-topbar 的
+  // app-region:drag 原生层吞掉点击（原生命中无视 CSS z-index，见 sidebar.css 顶部
+  // 注释），用户只能靠快捷键切回。展开入口收敛到 TopBar 内的 no-drag 按钮
+  //（TopBarProps.onExpandSidebar）。
 
   return (
     <aside className="pi-sidebar">

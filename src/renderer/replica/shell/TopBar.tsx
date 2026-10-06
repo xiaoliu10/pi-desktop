@@ -10,6 +10,11 @@ import './topbar.css';
 export function TopBar(props: TopBarProps) {
   return (
     <header className="pi-topbar">
+      {props.onExpandSidebar && (
+        <button className="pi-iconbtn pi-topbar__expand" onClick={props.onExpandSidebar} aria-label="展开侧边栏" title="展开侧边栏 (⌘B)" aria-expanded={false}>
+          <Icon name="sidebar" />
+        </button>
+      )}
       <h1 className="pi-topbar__title" title={props.title}>
         {props.title}
       </h1>

@@ -328,10 +328,16 @@
 .pireplica .pi-sidebar__action--active { background: var(--pi-bg-active); }
 
 /* The collapsed sidebar is a title-bar toggle, not a vertical icon rail. */
-.pireplica:has(.pi-sidebar--collapsed) .pi-topbar { padding-left: 64px; }
-.pireplica--mac .pi-sidebar--collapsed { left: 96px; }
-.pireplica--mac:has(.pi-sidebar--collapsed) .pi-topbar { padding-left: 144px; }
-.pireplica:has(.pi-sidebar--collapsed) .pi-plugins { padding-top: 64px; }
+/* 折叠态样式改挂 root class（--sidebar-collapsed）：折叠窄条已不渲染，
+   :has(.pi-sidebar--collapsed) 永远不命中。展开按钮由 TopBar 渲染（no-drag 豁免）。 */
+.pireplica--sidebar-collapsed .pi-topbar { padding-left: 64px; }
+.pireplica--sidebar-collapsed .pi-plugins { padding-top: 64px; }
+.pireplica--mac.pireplica--sidebar-collapsed .pi-topbar { padding-left: 144px; }
+/* 展开按钮定位：对齐原浮动窄条位置（用户肌肉记忆），且在 .pi-topbar button 的
+   no-drag 豁免名单内。 */
+.pireplica .pi-topbar { position: relative; }
+.pireplica--sidebar-collapsed .pi-topbar__expand { position: absolute; left: 16px; top: 50%; transform: translateY(-50%); }
+.pireplica--mac.pireplica--sidebar-collapsed .pi-topbar__expand { left: 96px; }
 
 .pireplica .pi-sidebar__projectheading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .pireplica .pi-sidebar__projectheading .pi-iconbtn { width: 24px; height: 24px; color: var(--pi-text-secondary); }
