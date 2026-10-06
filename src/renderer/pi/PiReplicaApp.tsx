@@ -820,6 +820,7 @@ export default function PiReplicaApp() {
               <TopBar
                 title={title || 'PI Desktop'}
                 labels={t.topbar}
+                onExpandSidebar={s.sidebarCollapsed ? s.toggleSidebar : undefined}
                 onNewSession={s.startNewSession}
                 onOpenSearch={() => s.setSearchOpen(true)}
                 onToggleWorkbench={s.toggleWorkbench}

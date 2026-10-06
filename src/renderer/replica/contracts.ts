@@ -114,6 +114,10 @@ export interface SidebarLabels {
 export interface TopBarProps {
   title: string;
   labels: TopBarLabels;
+  /** 侧栏折叠时渲染左上「展开侧边栏」按钮。放在 TopBar 内是因为按钮天然命中
+   * .pi-topbar button 的 no-drag 豁免——折叠态浮动窄条（absolute+z-index）会被
+   * TopBar 的 app-region:drag 原生层吞掉点击（macOS 无视 CSS z-index）。 */
+  onExpandSidebar?: () => void;
   onNewSession: () => void;
   onOpenSearch: () => void;
   onToggleWorkbench: () => void;
