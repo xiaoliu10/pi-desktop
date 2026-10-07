@@ -1,7 +1,7 @@
 {
   "name": "pi-desktop",
   "productName": "PI Desktop",
-  "version": "0.1.12",
+  "version": "0.1.13",
   "description": "Local-first AI coding agent desktop: Electron host core + agent runtime + multi-provider models",
   "license": "Apache-2.0",
   "author": "xiaoliu10",
