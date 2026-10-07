@@ -324,10 +324,10 @@ function ModelsPane(props: SettingsProps) {
               <input type="password" value={form.apiKey} onChange={(e) => setForm({ apiKey: e.target.value })} aria-label={L.providerApiKey} autoComplete="new-password" placeholder={form.editingId ? '留空保留现有 API Key' : 'sk-…'} />
             </label>
             <div className="pi-model-editor">
-              <div className="pi-model-editor__head"><strong>{L.providerModels}</strong><button type="button" className="pi-btn pi-btn--outline" onClick={()=>setModelEditor({model:{id:''}})}><Icon name="plus" size={14}/>添加模型</button></div>
+              <div className="pi-model-editor__head"><strong>{L.providerModels}</strong><button type="button" className="pi-btn pi-btn--outline" onClick={()=>setModelEditor({model:{id:''},...(form.editingId?{providerId:form.editingId}:{})})}><Icon name="plus" size={14}/>添加模型</button></div>
               {(form.models??[]).map((model,index)=><div className="pi-model-summary" key={index}>
                 <div><strong>{model.name||model.id}</strong><small>{model.id} · {model.contextWindow?.toLocaleString()??'默认'} 上下文 · {model.input?.includes('image')?'图片':'文本'}{model.reasoning?' · 推理':''}</small></div>
-                <button type="button" className="pi-iconbtn" aria-label={`编辑模型 ${model.id}`} onClick={()=>setModelEditor({model,index,originalId:model.id})}><Icon name="pencil" size={14}/></button>
+                <button type="button" className="pi-iconbtn" aria-label={`编辑模型 ${model.id}`} onClick={()=>setModelEditor({model,index,originalId:model.id,...(form.editingId?{providerId:form.editingId}:{})})}><Icon name="pencil" size={14}/></button>
                 <button type="button" className="pi-iconbtn" aria-label={`移除模型 ${model.id}`} onClick={()=>setForm({models:form.models!.filter((_,i)=>i!==index)})}><Icon name="trash" size={14}/></button>
               </div>)}
               {!form.models?.length&&<p className="pi-providerform__hint">添加模型，配置上下文窗口和模型能力。</p>}
@@ -352,7 +352,16 @@ function ModelsPane(props: SettingsProps) {
           if(modelEditor.providerId) {
             if(!props.onSaveProviderModel)throw new Error('模型保存不可用');
             await props.onSaveProviderModel(modelEditor.providerId,model,modelEditor.originalId,fields);
+            // 即时持久化后同步表单草稿：否则「保存提供商」用陈旧 draft.models 覆盖磁盘，
+            // 回退刚保存的编辑、丢掉刚添加的模型；表单模型行也会显示旧值。
+            if(form.open && modelEditor.providerId===form.editingId){
+              const models=[...(form.models??[])];
+              if(modelEditor.index===undefined)models.push(model);else models[modelEditor.index]=model;
+              setForm({models});
+            }
           } else {
+            // 无 providerId = 新建供应商流程：模型只进表单草稿，点「保存提供商」时整体写入 models.json。
+            // 已有 provider 的编辑入口（上方的铅笔/添加按钮）已带 providerId 走即时持久化。
             const models=[...(form.models??[])];
             if(modelEditor.index===undefined)models.push(model);else models[modelEditor.index]=model;
             setForm({models});
