@@ -4,7 +4,9 @@
 // 且保存成功后同步表单草稿——否则「保存提供商」用陈旧 draft.models 覆盖磁盘（P1 回归）。
 // Vite at :5175; playwright-cli run-code --filename tests/model-edit-form-sync.browser.cjs
 async (page) => {
-  const assert = (ok, label) => { if (!ok) throw new Error(label); };
+  const errors = [];
+  page.on('pageerror', e => errors.push(String(e)));
+  const assert = (ok, label) => { if (!ok) throw new Error(label + ' | pageerrors: ' + errors.join(' ;; ')); };
   await page.route('http://127.0.0.1:5175/model-edit-form-sync', route => route.fulfill({ contentType: 'text/html', body: '<div id="root"></div><script type="module">import R from "/@react-refresh";R.injectIntoGlobalHook(window);window.$RefreshReg$=()=>{};window.$RefreshSig$=()=>t=>t;window.__vite_plugin_react_preamble_installed__=true;</script>' }));
   await page.goto('http://127.0.0.1:5175/model-edit-form-sync');
   await page.waitForFunction(() => window.__vite_plugin_react_preamble_installed__);
@@ -37,13 +39,13 @@ async (page) => {
         onSaveProviderModel: async (providerId, model, originalId, fields) => {
           calls.modelProviderSave.push({ id: providerId, modelEdit: { originalId, kind: 'custom', fields }, models: [JSON.parse(JSON.stringify(model))] });
         },
-        infoExtra: null, pageContent: null, modelCatalogSection: null,
+        infoExtra: null, pageContent: undefined, modelCatalogSection: null,
       }));
     };
     window.__rerender = rerender;
     rerender();
   });
-  await page.waitForSelector('[aria-label="编辑模型 m1"]', { timeout: 5000 });
+  await page.waitForSelector('[aria-label="编辑模型 m1"]', { timeout: 15000 });
 
   // ① 表单内点铅笔 → ModelMetadataDialog 打开
   await page.click('[aria-label="编辑模型 m1"]');

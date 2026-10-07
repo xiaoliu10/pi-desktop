@@ -95,7 +95,8 @@
   --pi-text: #ececec;
   --pi-text-secondary: #a0a0a5;
   --pi-text-tertiary: #6c6c71;
-  --pi-text-on-accent: #ffffff;
+  /* accent 在暗色下是白底（--pi-accent:#ececec），字必须是黑才可读 */
+  --pi-text-on-accent: #101010;
 
   --pi-accent: #ececec;
   --pi-green: #4cd964;

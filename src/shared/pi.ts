@@ -210,8 +210,10 @@ export interface LocalPiApi extends importSettingsApi {
 // Read-only model catalog (pi configuration, secrets stripped server-side).
 // ---------------------------------------------------------------------------
 
-export type PiModelEditableField = 'name' | 'contextWindow' | 'maxTokens' | 'reasoning' | 'input' | 'thinkingLevelMap';
-export interface PiCatalogModel { definition?: 'custom' | 'override'; thinkingLevelMap?: Partial<Record<'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max', string | null>>; id: string; name?: string; contextWindow?: number; maxTokens?: number; reasoning?: boolean; input?: string[] }
+export type PiModelEditableField = 'name' | 'contextWindow' | 'maxTokens' | 'reasoning' | 'input' | 'thinkingLevelMap' | 'samplingParamsByThinkingLevel';
+export interface PiCatalogModel { definition?: 'custom' | 'override'; thinkingLevelMap?: Partial<Record<'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max', string | null>>;
+  /** Per-level sampling params (pi 1.0.2+), e.g. {"temperature":0.7}; mirrors models-config schema. */
+  samplingParamsByThinkingLevel?: Partial<Record<'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max', Record<string, unknown>>>; id: string; name?: string; contextWindow?: number; maxTokens?: number; reasoning?: boolean; input?: string[] }
 export interface PiCatalogImageModel { id: string; name?: string }
 export interface PiCatalogProvider {
   loginAvailable?: boolean;

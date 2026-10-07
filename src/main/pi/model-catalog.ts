@@ -57,6 +57,7 @@ export function readModelCatalog(agentDir: string): PiModelCatalog {
           maxTokens: typeof m.maxTokens === 'number' ? m.maxTokens : undefined,
           reasoning: typeof m.reasoning === 'boolean' ? m.reasoning : undefined,
           thinkingLevelMap: m.thinkingLevelMap && typeof m.thinkingLevelMap === 'object' ? m.thinkingLevelMap as PiCatalogModel['thinkingLevelMap'] : undefined,
+          samplingParamsByThinkingLevel: m.samplingParamsByThinkingLevel && typeof m.samplingParamsByThinkingLevel === 'object' && !Array.isArray(m.samplingParamsByThinkingLevel) ? m.samplingParamsByThinkingLevel as PiCatalogModel['samplingParamsByThinkingLevel'] : undefined,
           input: Array.isArray(m.input) ? m.input.filter((v): v is string => v === 'text' || v === 'image') : undefined,
         })).filter((m) => m.id);
     providers.push({
@@ -130,7 +131,7 @@ export function writeProviderApiKey(agentDir: string, input: { id: string; apiKe
   return readModelCatalog(agentDir);
 }
 
-const editableFields: PiModelEditableField[] = ['name', 'contextWindow', 'maxTokens', 'reasoning', 'input', 'thinkingLevelMap'];
+const editableFields: PiModelEditableField[] = ['name', 'contextWindow', 'maxTokens', 'reasoning', 'input', 'thinkingLevelMap', 'samplingParamsByThinkingLevel'];
 
 /** Missing/unreadable/malformed are not equivalent when saving a secret-bearing file. */
 function readModelsForWrite(file: string): Record<string, unknown> {
@@ -203,6 +204,10 @@ export function writeModelProvider(agentDir: string, draft: PiModelProviderDraft
       const map = model.thinkingLevelMap;
       if (!map || Array.isArray(map) || typeof map !== 'object' || Object.entries(map).some(([k,v]) => !['off','minimal','low','medium','high','xhigh','max'].includes(k) || (v !== null && (typeof v !== 'string' || !v.trim())))) throw new Error('推理等级映射无效');
     }
+    if (model.samplingParamsByThinkingLevel !== undefined) {
+      const params = model.samplingParamsByThinkingLevel;
+      if (!params || Array.isArray(params) || typeof params !== 'object' || Object.entries(params).some(([k,v]) => !['off','minimal','low','medium','high','xhigh','max'].includes(k) || !v || Array.isArray(v) || typeof v !== 'object')) throw new Error('推理参数映射无效：键为 pi 思考等级，值为参数对象');
+    }
     return model;
   });
   if (!models.length) throw new Error('至少需要一个模型');
@@ -274,8 +279,10 @@ export function writeModelProvider(agentDir: string, draft: PiModelProviderDraft
       if (m.input !== undefined) entry.input = [...new Set(m.input)];
       if (m.thinkingLevelMap !== undefined) entry.thinkingLevelMap = m.thinkingLevelMap;
       else if (Object.hasOwn(m, 'thinkingLevelMap')) delete entry.thinkingLevelMap;
+      if (m.samplingParamsByThinkingLevel !== undefined) entry.samplingParamsByThinkingLevel = m.samplingParamsByThinkingLevel;
+      else if (Object.hasOwn(m, 'samplingParamsByThinkingLevel')) delete entry.samplingParamsByThinkingLevel;
       // Explicit Desktop edits must also update the runtime's topmost config layer.
-      const fields = editableFields.filter(key => m[key] !== undefined || key === 'thinkingLevelMap' && Object.hasOwn(m, key));
+      const fields = editableFields.filter(key => m[key] !== undefined || (key === 'thinkingLevelMap' || key === 'samplingParamsByThinkingLevel') && Object.hasOwn(m, key));
       const override = patchModel(overrides[m.id] ?? {}, m, fields);
       validateLimits({ ...entry, ...override });
       if (Object.keys(override).length) overrides[m.id] = override; else delete overrides[m.id];

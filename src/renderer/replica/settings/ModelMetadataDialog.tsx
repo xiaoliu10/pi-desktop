@@ -2,7 +2,7 @@ import { useEffect, useId, useRef, useState } from 'react';
 import type { PiCatalogModel, PiModelEditableField } from '../../../shared/pi';
 import { Icon } from '../Icons';
 import { commitModelDraft, createModelDraft, type ModelDraft } from './model-draft';
-import { parseLevelMap, ThinkingLevelChips } from './thinking-level-chips';
+import { availableLevelsOf, parseLevelMap, SamplingParamsEditor, ThinkingLevelChips } from './thinking-level-chips';
 
 /** Interaction adapted from ZCode ProviderModelMetadataDialog / ModelEditorAdvanced.
  * pi owns runtime defaults and capability semantics; this dialog edits a disposable draft. */
@@ -30,18 +30,19 @@ export function ModelMetadataDialog({model, others, adding, onClose, onSave}: {
   const save=async()=>{
     if(savingRef.current || composing.current)return;
     const result=commitModelDraft(draft,others);
-    if('field' in result){setError(result);if(result.field==='thinkingLevelMap')setAdvanced(true);return;}
+    if('field' in result){setError(result);if(result.field==='thinkingLevelMap'||result.field==='samplingParams')setAdvanced(true);return;}
     savingRef.current=true;setSaving(true);setError(null);
     // Only changed fields are sent for an existing model. In particular, a name edit
     // cannot replay stale discovery metadata over a concurrently edited context limit.
     const initial = commitModelDraft(createModelDraft(model), []);
-    const keys: PiModelEditableField[] = ['name','contextWindow','maxTokens','reasoning','input','thinkingLevelMap'];
+    const keys: PiModelEditableField[] = ['name','contextWindow','maxTokens','reasoning','input','thinkingLevelMap','samplingParamsByThinkingLevel'];
     const fields = adding || 'field' in initial ? keys : keys.filter(key => JSON.stringify(result.model[key]) !== JSON.stringify(initial.model[key]));
     try{await onSave(result.model,fields);onClose();}
     catch(e){setError({message:e instanceof Error?e.message:String(e)});}
     finally{savingRef.current=false;setSaving(false);}
   };
   const input=(field:'id'|'name'|'contextWindow'|'maxTokens',label:string,placeholder?:string)=><label><span>{label}</span><input name={field} readOnly={field==='id'&&!adding} value={draft[field]} placeholder={placeholder} inputMode={field==='contextWindow'||field==='maxTokens'?'numeric':undefined} autoComplete="off" spellCheck={false} aria-invalid={error?.field===field} onChange={e=>patch({[field]:e.target.value})} onFocus={e=>{if(field==='contextWindow'||field==='maxTokens')e.target.select();}}/></label>;
+  const levelsForSampling = availableLevelsOf(draft.thinkingLevelMap);
   return <dialog ref={ref} className="pi-provider-dialog pi-model-dialog" aria-labelledby={titleId} onCancel={e=>{e.preventDefault();close();}} onClick={e=>{if(e.target===e.currentTarget){const r=e.currentTarget.getBoundingClientRect();if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)close();}}}>
     <header className="pi-provider-dialog__header"><h2 id={titleId}>{adding?'添加模型':'编辑模型'}</h2><button type="button" className="pi-iconbtn" disabled={saving} aria-label="关闭模型编辑" onClick={close}><Icon name="x" size={18}/></button></header>
     <form className="pi-providerform" noValidate onCompositionStart={()=>{composing.current=true;}} onCompositionEnd={()=>{composing.current=false;}} onKeyDown={e=>{if(e.key==='Enter'&&(composing.current||e.nativeEvent.isComposing||e.nativeEvent.keyCode===229))e.preventDefault();}} onSubmit={e=>{e.preventDefault();void save();}}>
@@ -61,7 +62,10 @@ export function ModelMetadataDialog({model, others, adding, onClose, onSave}: {
               <ThinkingLevelChips value={draft.thinkingLevelMap} onChange={json=>patch({thinkingLevelMap:json})}/>
             )}
             {parseLevelMap(draft.thinkingLevelMap) !== null && !draft.reasoning && <small>提示：未勾选「推理 / 思考」时 pi 仅允许 off 等级，此映射不会生效。</small>}
-            {parseLevelMap(draft.thinkingLevelMap) !== null && <small>勾选即启用该等级（off–high 默认启用；xhigh/max 需勾选添加），文本框填写发送给服务商的自定义值，留空使用 pi 默认映射。取消勾选 = 停用该等级。</small>}
+          </section>
+          <section><h3>推理参数映射</h3>
+            <SamplingParamsEditor value={draft.samplingParams} error={error?.field==='samplingParams'} availableLevels={levelsForSampling}
+              onChange={json=>patch({samplingParams:json})}/>
           </section>
         </div>
         <p className="pi-providerform__hint">留空的参数使用 pi 默认值。能力声明应与服务商提供的模型一致。</p>

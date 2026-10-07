@@ -630,34 +630,43 @@
 .pi-model-advanced { display: grid; gap: 20px; }
 .pi-model-advanced[hidden] { display: none; }
 .pi-model-advanced h3 { font-size: 13px; font-weight: 500; margin: 0 0 10px; }
-.pi-model-advanced small { color: var(--pi-muted); line-height: 1.6; }
+.pi-model-advanced small { color: var(--pi-text-secondary); line-height: 1.6; }
 .pi-model-advanced textarea { font-family: ui-monospace, monospace; }
 .pi-model-advanced-trigger { border: 0; background: transparent; color: var(--pi-text); display: flex; gap: 8px; align-items: center; align-self: flex-start; cursor: pointer; padding: 6px 0; }
 .pi-model-options { display: flex; gap: 16px; flex-wrap: wrap; }
-/* 推理等级 chips（ZCode ProviderModelMetadataDialog 同款交互）：点 chip 编辑映射值，
-   × 移除条目，+ 添加未启用等级；null 禁用态删除线置灰。 */
-/* 推理等级：ZCode 式行编辑（勾选启用 + 自定义映射文本框），低→高固定顺序 */
-.pi-levels { display: flex; flex-direction: column; gap: 6px; }
-.pi-level-row { display: flex; align-items: center; gap: 10px; padding: 4px 10px; border: 1px solid var(--pi-border); border-radius: 8px; background: var(--pi-bg); }
-.pi-level-row[data-state="off"] { opacity: .55; }
-.pi-level-row[data-state="disabled"] .pi-level-rowname { text-decoration: line-through; }
-.pi-level-row[data-state="custom"] { border-color: var(--pi-accent); }
-.pi-level-row--dropped { border-style: dashed; opacity: .7; justify-content: space-between; }
-.pi-level-rowname { font-family: var(--pi-font-mono); font-size: 12px; color: var(--pi-text); min-width: 58px; }
-.pi-level-rowname em { font-style: normal; color: var(--pi-text-secondary); font-family: var(--pi-font-family, inherit); }
-.pi-level-row input[type="text"] { flex: 1; max-width: 280px; padding: 3px 8px; border: 1px solid var(--pi-border); border-radius: 6px; background: var(--pi-bg); color: var(--pi-text); font-family: var(--pi-font-mono); font-size: 12px; line-height: 1.5; }
-.pi-level-row input[type="text"]:disabled { opacity: .5; }
-.pi-level-x { border: 0; background: transparent; color: var(--pi-text-secondary); cursor: pointer; padding: 2px 6px; font-size: 14px; line-height: 1; }
-.pi-level-x:hover { color: var(--pi-text); }
-.pi-level-none { color: var(--pi-text-secondary); font-size: var(--pi-font-size-sm, 12px); }
+/* 推理等级：ZCode 式胶囊 chips（可用等级横排，点选展开映射值编辑，＋添加未启用等级） */
+.pi-levels { display: flex; flex-direction: column; gap: 10px; }
+.pi-level-chips { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.pi-level-chip { border: 1px solid var(--pi-border-strong); background: var(--pi-bg); color: var(--pi-text); font-family: var(--pi-font-mono); font-size: 12.5px; line-height: 1; padding: 8px 16px; border-radius: 999px; cursor: pointer; }
+.pi-level-chip:hover { border-color: var(--pi-text); }
+.pi-level-chip[aria-pressed="true"] { background: var(--pi-accent); border-color: var(--pi-accent); color: var(--pi-text-on-accent); }
+.pi-level-chip[data-custom] { border-style: solid; box-shadow: inset 0 0 0 1px var(--pi-border-strong); }
+.pi-level-chip--ghost { border-style: dashed; color: var(--pi-text-secondary); }
+.pi-level-add { width: 30px; height: 30px; border-radius: 50%; border: 1px solid var(--pi-border-strong); background: var(--pi-bg); color: var(--pi-text); display: inline-flex; align-items: center; justify-content: center; cursor: pointer; flex: none; }
+.pi-level-add:hover { border-color: var(--pi-text); }
+.pi-level-add[aria-expanded="true"] { background: var(--pi-accent); border-color: var(--pi-accent); color: var(--pi-text-on-accent); }
+.pi-level-detail { display: flex; gap: 12px; align-items: end; flex-wrap: wrap; padding: 10px 12px; border: 1px solid var(--pi-border); border-radius: 10px; background: var(--pi-bg); }
+.pi-level-detail label { flex: 1; min-width: 220px; display: grid; gap: 6px; }
+.pi-level-detail label span { font-size: var(--pi-font-size-sm, 12px); color: var(--pi-text-secondary); }
+.pi-level-detail code { font-family: var(--pi-font-mono); font-size: 12px; color: var(--pi-text); }
+.pi-level-detail input[type="text"] { padding: 6px 10px; border: 1px solid var(--pi-border); border-radius: 8px; background: var(--pi-bg); color: var(--pi-text); font-family: var(--pi-font-mono); font-size: 12.5px; line-height: 1.5; }
+.pi-level-off { border: 0; background: transparent; color: var(--pi-text-secondary); cursor: pointer; font-size: var(--pi-font-size-sm, 12px); padding: 8px 4px; text-decoration: underline; text-underline-offset: 3px; }
+.pi-level-off:hover { color: var(--pi-text); }
+.pi-level-detail--dropped { border-style: dashed; align-items: center; justify-content: space-between; }
+.pi-level-detail--dropped em { font-style: normal; color: var(--pi-text-secondary); }
+/* 推理参数映射：等宽代码块（ZCode「推理参数映射」观感） */
+.pi-sampling { display: grid; gap: 6px; }
+.pi-sampling__code { font-family: var(--pi-font-mono); font-size: 12.5px; line-height: 1.6; padding: 10px 12px; border: 1px solid var(--pi-border); border-radius: 10px; background: var(--pi-bg); color: var(--pi-text); resize: vertical; }
+.pi-sampling__code[aria-invalid="true"] { border-color: var(--pi-danger, #c0392b); }
+.pi-sampling small { color: var(--pi-text-secondary); line-height: 1.6; }
 /* 勾选项：真实复选框——15px 方框，选中深底白勾（用户明确要求可见的多选框，不走纯 ✓ 文本） */
 .pi-model-options button { border: 0; background: transparent; color: var(--pi-text); display: inline-flex; align-items: center; gap: 8px; border-radius: 6px; padding: 4px 0; cursor: pointer; font-size: var(--pi-font-size-md); }
 .pi-model-checkbox { width: 15px; height: 15px; border-radius: 4px; border: 1px solid var(--pi-border-strong); background: var(--pi-bg); display: inline-flex; align-items: center; justify-content: center; flex: none; color: transparent; }
-.pi-model-options button[aria-checked=true] .pi-model-checkbox { background: var(--pi-text); border-color: var(--pi-text); color: var(--pi-text-on-accent); }
-.pi-model-options button[aria-disabled=true] { cursor: default; color: var(--pi-muted); }
+.pi-model-options button[aria-checked=true] .pi-model-checkbox { background: var(--pi-accent); border-color: var(--pi-accent); color: var(--pi-text-on-accent); }
+.pi-model-options button[aria-disabled=true] { cursor: default; color: var(--pi-text-secondary); }
 .pi-model-options button[aria-disabled=true] .pi-model-checkbox { opacity: .45; }
 .pi-model-summary { display: flex; align-items: center; gap: 8px; padding: 12px; border: 1px solid var(--pi-border); border-radius: 10px; }
 .pi-model-summary>div { flex: 1; min-width: 0; }
-.pi-model-summary small { display: block; color: var(--pi-muted); margin-top: 6px; overflow-wrap: anywhere; }
+.pi-model-summary small { display: block; color: var(--pi-text-secondary); margin-top: 6px; overflow-wrap: anywhere; }
 .pi-model-restore { margin-right: auto; }
 .pi-model-dialog input[aria-invalid=true], .pi-model-dialog textarea[aria-invalid=true] { border-color: #c93c37; }
