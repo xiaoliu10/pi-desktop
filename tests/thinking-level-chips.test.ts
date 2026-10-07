@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isAvailable, parseLevelMap, renamedEntry, serializeLevelMap, toggledEntry } from '../src/renderer/replica/settings/thinking-level-chips';
+import { availableLevelsOf, isAvailable, parseLevelMap, parseSamplingParams, renamedEntry, serializeLevelMap, serializeSamplingParams, toggledEntry } from '../src/renderer/replica/settings/thinking-level-chips';
 
 // ZCode 式推理等级 chips 的数据层：draft JSON 字符串 ↔ 结构化条目。
 // pi 语义（getSupportedThinkingLevels）：off–high 默认可用（null 才禁用），
@@ -58,6 +58,34 @@ describe('serializeLevelMap', () => {
 
   it('空条目 → 空串（draft 留空 = 使用 pi 默认映射）', () => {
     expect(serializeLevelMap({})).toBe('');
+  });
+});
+
+describe('parseSamplingParams / serializeSamplingParams', () => {
+  it('空串 → 空条目；合法对象按键收条目', () => {
+    expect(parseSamplingParams('')).toEqual({ entries: {}, dropped: [] });
+    expect(parseSamplingParams('{"high":{"temperature":0.7},"max":{"temperature":1}}')?.entries).toEqual({ high: { temperature: 0.7 }, max: { temperature: 1 } });
+  });
+  it('未知键 / 非对象值进 dropped', () => {
+    expect(parseSamplingParams('{"nope":{"a":1},"high":"str","low":null}')?.dropped.map(d => d.key)).toEqual(['nope', 'high', 'low']);
+  });
+  it('坏 JSON / 数组 → null', () => {
+    expect(parseSamplingParams('{')).toBeNull();
+    expect(parseSamplingParams('[]')).toBeNull();
+  });
+  it('serialize 固定 low→high 顺序；空 → 空串；roundtrip 稳定', () => {
+    expect(serializeSamplingParams({ max: { temperature: 1 }, high: { temperature: 0.7 } })).toBe(JSON.stringify({ high: { temperature: 0.7 }, max: { temperature: 1 } }, null, 2));
+    expect(serializeSamplingParams({})).toBe('');
+    const json = serializeSamplingParams({ high: { temperature: 0.7 } });
+    expect(serializeSamplingParams(parseSamplingParams(json)!.entries)).toBe(json);
+  });
+});
+
+describe('availableLevelsOf', () => {
+  it('默认五级可用；xhigh/max 配置后进入列表', () => {
+    expect(availableLevelsOf('')).toEqual(['off', 'minimal', 'low', 'medium', 'high']);
+    expect(availableLevelsOf('{"max":"max"}')).toEqual(['off', 'minimal', 'low', 'medium', 'high', 'max']);
+    expect(availableLevelsOf('{"low":null}')).toEqual(['off', 'minimal', 'medium', 'high']);
   });
 });
 

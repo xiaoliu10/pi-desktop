@@ -165,6 +165,25 @@ it('rejects invalid token limits and duplicate models atomically',()=>{
   } finally {fs.rmSync(dir,{recursive:true,force:true});}
 });
 
+it('persists per-level sampling params and clears them when removed',()=>{
+  const dir=makeAgentDir();
+  try {
+    const provider=readModelCatalog(dir).providers[0];
+    const model={...provider.models[0],samplingParamsByThinkingLevel:{high:{temperature:0.7},max:{temperature:1,top_p:0.95}}};
+    const draft={...provider,baseUrl:provider.baseUrl!,models:[model]};
+    writeModelProvider(dir,draft);
+    expect(readModelCatalog(dir).providers[0].models[0].samplingParamsByThinkingLevel).toEqual(model.samplingParamsByThinkingLevel);
+    // modelEdit 链路同样可达（editableFields 含 samplingParamsByThinkingLevel）
+    writeModelProvider(dir,{id:provider.id,baseUrl:provider.baseUrl!,models:[{...model,samplingParamsByThinkingLevel:{high:{temperature:0.9}}}],modelEdit:{originalId:model.id,kind:'custom',fields:['samplingParamsByThinkingLevel']}});
+    expect(readModelCatalog(dir).providers[0].models[0].samplingParamsByThinkingLevel).toEqual({high:{temperature:0.9}});
+    const file=path.join(dir,'models.json'),before=fs.readFileSync(file,'utf8');
+    expect(()=>writeModelProvider(dir,{...draft,models:[{...model,samplingParamsByThinkingLevel:{high:'oops'} as never}]})).toThrow('参数映射');
+    expect(fs.readFileSync(file,'utf8')).toBe(before);
+    writeModelProvider(dir,{...draft,models:[{...model,samplingParamsByThinkingLevel:undefined}]});
+    expect(JSON.parse(fs.readFileSync(file,'utf8')).providers[provider.id].models[0]).not.toHaveProperty('samplingParamsByThinkingLevel');
+  } finally {fs.rmSync(dir,{recursive:true,force:true});}
+});
+
 it('persists thinking maps and clears them when restoring pi defaults',()=>{
   const dir=makeAgentDir();
   try {

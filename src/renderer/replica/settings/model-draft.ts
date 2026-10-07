@@ -3,10 +3,10 @@ import type { PiCatalogModel } from '../../../shared/pi';
 export const THINKING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const;
 export interface ModelDraft {
   id: string; name: string; contextWindow: string; maxTokens: string;
-  image: boolean; reasoning: boolean; thinkingLevelMap: string;
+  image: boolean; reasoning: boolean; thinkingLevelMap: string; samplingParams: string;
 }
 export function createModelDraft(model: PiCatalogModel): ModelDraft {
-  return { id: model.id, name: model.name ?? '', contextWindow: String(model.contextWindow ?? ''), maxTokens: String(model.maxTokens ?? ''), image: model.input?.includes('image') ?? false, reasoning: model.reasoning ?? false, thinkingLevelMap: model.thinkingLevelMap ? JSON.stringify(model.thinkingLevelMap, null, 2) : '' };
+  return { id: model.id, name: model.name ?? '', contextWindow: String(model.contextWindow ?? ''), maxTokens: String(model.maxTokens ?? ''), image: model.input?.includes('image') ?? false, reasoning: model.reasoning ?? false, thinkingLevelMap: model.thinkingLevelMap ? JSON.stringify(model.thinkingLevelMap, null, 2) : '', samplingParams: model.samplingParamsByThinkingLevel ? JSON.stringify(model.samplingParamsByThinkingLevel, null, 2) : '' };
 }
 export type ModelDraftResult = { model: PiCatalogModel } | { field: keyof ModelDraft; message: string };
 export function commitModelDraft(draft: ModelDraft, others: PiCatalogModel[]): ModelDraftResult {
@@ -28,5 +28,13 @@ export function commitModelDraft(draft: ModelDraft, others: PiCatalogModel[]): M
       thinkingLevelMap = map;
     } catch { return { field:'thinkingLevelMap', message:'推理映射必须为 JSON 对象；键为 pi 思考等级，值为非空字符串或 null。' }; }
   }
-  return { model:{id, name:draft.name.trim() || undefined, ...numbers, input: draft.image ? ['text','image'] : ['text'], reasoning:draft.reasoning, thinkingLevelMap} };
+  let samplingParamsByThinkingLevel: PiCatalogModel['samplingParamsByThinkingLevel'];
+  if (draft.samplingParams.trim()) {
+    try {
+      const params = JSON.parse(draft.samplingParams);
+      if (!params || Array.isArray(params) || typeof params !== 'object' || Object.entries(params).some(([k,v]) => !THINKING_LEVELS.includes(k as typeof THINKING_LEVELS[number]) || !v || Array.isArray(v) || typeof v !== 'object')) throw new Error();
+      samplingParamsByThinkingLevel = params;
+    } catch { return { field:'samplingParams', message:'推理参数映射必须为 JSON 对象；键为 pi 思考等级，值为参数对象（如 {"temperature": 0.7}）。' }; }
+  }
+  return { model:{id, name:draft.name.trim() || undefined, ...numbers, input: draft.image ? ['text','image'] : ['text'], reasoning:draft.reasoning, thinkingLevelMap, samplingParamsByThinkingLevel} };
 }
