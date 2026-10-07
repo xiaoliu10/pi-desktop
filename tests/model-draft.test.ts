@@ -20,5 +20,7 @@ describe('model metadata draft transactions',()=>{
     const draft=createModelDraft({id:'new'});
     expect(commitModelDraft(draft,[])).toEqual({model:{id:'new',name:undefined,contextWindow:undefined,maxTokens:undefined,input:['text'],reasoning:false,thinkingLevelMap:undefined}});
     expect(commitModelDraft({...draft,thinkingLevelMap:'{"low":null,"high":"high"}'},[])).toMatchObject({model:{thinkingLevelMap:{low:null,high:'high'}}});
+    for(const text of ['{','[]','{"bad":{}}','{"high":"str"}','{"high":null}','{"high":[]}'])expect(commitModelDraft({...draft,samplingParams:text},[])).toMatchObject({field:'samplingParams'});
+    expect(commitModelDraft({...draft,samplingParams:'{"high":{"temperature":0.7}}'},[])).toMatchObject({model:{samplingParamsByThinkingLevel:{high:{temperature:0.7}}}});
   });
 });
