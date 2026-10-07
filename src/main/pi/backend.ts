@@ -6,6 +6,7 @@ import { randomUUID } from 'node:crypto';
 import type { PiEnvironment, PiEvent, PiRun, PiUiRequest } from '../../shared/pi';
 import { PiRpcClient } from './rpc-client';
 import { SessionIndex, fileKey } from './session-index';
+import { runAutomationBridge, SCHEDULE_GUIDANCE } from './automation-bridge';
 import { summarizeContext } from './context-details';
 import { detectThirdPartySubagent, migrateOldSubagentExtension, persistSubagentEvent } from './official-subagent';
 import { clearMemoryEnv, memorySessionEnv } from './memory-bridge';
@@ -33,6 +34,8 @@ export class PiBackend {
   private watchdog: ReturnType<typeof setInterval> | undefined;
   /** 记忆衔接：main 在 SettingsService 就绪后注入；每次 launch 现取最新开关与目录。 */
   memoryOptions: (() => { enabled: boolean; dir: string }) | undefined;
+  /** main 在 AutomationService 就绪后注入；desktop_schedule 工具经 automation-bridge 读写定时任务。 */
+  automations: import('./automation-bridge').AutomationBridgeService | undefined;
   constructor(private env: PiEnvironment, private index: SessionIndex, private ownedRoot: string, private policyPath: string, private emit: (e: PiEvent) => void, private dataDir?: string) {}
   hasPendingDialogs(key: string) { return (this.active.get(key)?.dialogs.size ?? 0) > 0; }
   /** 待处理的 UI 审批快照（远控页刷新后据此恢复审批卡片）。 */
@@ -148,6 +151,9 @@ export class PiBackend {
     // Desktop 自带的 ask_user_question 扩展（随 Desktop 默认加载；缺失不阻塞会话）。
     const askPath = path.join(path.dirname(this.policyPath), '..', 'desktop-ask', 'index.mjs');
     const askArgs = fs.existsSync(askPath) ? ['-e', askPath] : [];
+    // Desktop 定时任务工具：会话内可创建/管理 automations.json 调度任务（缺失不阻塞会话）。
+    const schedulePath = path.join(path.dirname(this.policyPath), '..', 'desktop-schedule', 'index.mjs');
+    const scheduleArgs = fs.existsSync(schedulePath) ? ['-e', schedulePath] : [];
     // 记忆衔接扩展：memoryAssist 开启时随会话装载，agent_end 后自动整理记忆。
     const memory = this.memoryOptions?.() ?? { enabled: false, dir: '' };
     const memoryPath = path.join(path.dirname(this.policyPath), '..', 'desktop-memory', 'index.mjs');
@@ -178,10 +184,15 @@ export class PiBackend {
       '-e', path.join(path.dirname(this.policyPath), 'mcp-bridge.mjs'),
       '-e', path.join(path.dirname(this.policyPath), 'retry-continuation.mjs'),
       ...askArgs,
+      ...scheduleArgs,
       ...memoryArgs,
       ...subagentArgs,
       ...nudgeArgs,
-      ...(input.systemPrompt ? ['--append-system-prompt', input.systemPrompt] : []),
+      // 调度守则随 desktop-schedule 扩展注入：用户要「定时干活」时引导模型用 desktop_schedule，
+      // 而不是在会话里 sleep 等待（会话退出即丢失；与扩展共存亡，缺失时不注入）。
+      ...(scheduleArgs.length
+        ? ['--append-system-prompt', [input.systemPrompt, SCHEDULE_GUIDANCE].filter(Boolean).join('\n')]
+        : input.systemPrompt ? ['--append-system-prompt', input.systemPrompt] : []),
       ...(input.permission === 'plan'
         // 计划模式：只读工具 + ask_user_question（提问无副作用，正好用于澄清需求）+ 任务清单。
         ? ['--tools', [...(input.tools ?? ['read', 'grep', 'find', 'ls']).filter(t => ['read', 'grep', 'find', 'ls'].includes(t)), 'ask_user_question', 'desktop_update_plan'].join(',')]
@@ -301,6 +312,13 @@ export class PiBackend {
     const { key, generation } = run.view;
     if (event.type === 'extension_ui_request') {
       const req = event as unknown as PiUiRequest;
+      if (req.method === 'input' && req.title === 'desktop-automation') {
+        // desktop_schedule 工具的调度请求：主进程程序化应答，不进对话框 UI。
+        if (run.view.status === 'stopping') { run.client.send({ type: 'extension_ui_response', id: req.id, cancelled: true }); return; }
+        const result = runAutomationBridge(this.automations, { cwd: run.input.cwd, permission: run.input.permission }, String(req.placeholder ?? ''));
+        run.client.send({ type: 'extension_ui_response', id: req.id, value: JSON.stringify(result) });
+        return;
+      }
       if (req.method === 'setStatus' && req.statusKey === 'desktop-policy' && req.statusText) run.policyReady = true;
       if (req.method === 'setStatus' && req.statusKey === 'desktop-retry-ready' && req.statusText === generation) { run.retryReady = true; return; }
       if (req.method === 'setStatus' && req.statusKey === 'desktop-retry-settled') {

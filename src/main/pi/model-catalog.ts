@@ -214,15 +214,27 @@ export function writeModelProvider(agentDir: string, draft: PiModelProviderDraft
   if (draft.modelEdit) {
     if (models.length !== 1) throw new Error('每次只能编辑一个模型');
     const model = models[0], edit = draft.modelEdit;
-    if (edit.kind !== 'custom' && edit.kind !== 'override') throw new Error('无效的模型编辑类型');
+    if (edit.kind !== 'custom' && edit.kind !== 'override' && edit.kind !== 'delete') throw new Error('无效的模型编辑类型');
     if (edit.fields !== undefined && !Array.isArray(edit.fields)) throw new Error('无效的模型编辑字段');
     if (edit.originalId && edit.originalId !== model.id) throw new Error('不能修改已有模型 ID');
     const definitions = Array.isArray(existing.models) ? existing.models as Record<string, unknown>[] : [];
     const index = definitions.findIndex(m => m.id === model.id);
+    const overrides = { ...(existing.modelOverrides as Record<string, Record<string, unknown>> ?? {}) };
+    if (edit.kind === 'delete') {
+      // 删除模型：定义与覆盖一并移除；供应商至少保留一个模型。
+      if (index < 0) throw new Error('模型已被移除，请刷新后重试。');
+      if (definitions.length <= 1) throw new Error('供应商至少需要一个模型，不能删除最后一项。');
+      existing.models = definitions.filter((_, i) => i !== index);
+      if (overrides[model.id]) delete overrides[model.id];
+      if (Object.keys(overrides).length) existing.modelOverrides = overrides; else delete existing.modelOverrides;
+      providers[id] = existing;
+      doc.providers = providers;
+      writeJson(file, doc, true);
+      return readModelCatalog(agentDir);
+    }
     if (edit.kind === 'custom' && edit.originalId && index < 0) throw new Error('模型已被移除，请刷新后重试。');
     if (!edit.originalId && index >= 0) throw new Error('该模型 ID 已存在。');
     const fields = edit.fields ?? editableFields.filter(key => model[key] !== undefined);
-    const overrides = { ...(existing.modelOverrides as Record<string, Record<string, unknown>> ?? {}) };
     const priorOverride = overrides[model.id] ?? {};
     const override = patchModel(priorOverride, model, fields);
     const custom = index >= 0 || (edit.kind === 'custom' && !edit.originalId);

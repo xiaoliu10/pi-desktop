@@ -61,7 +61,7 @@ export function ModelMetadataDialog({model, others, adding, onClose, onSave}: {
               <ThinkingLevelChips value={draft.thinkingLevelMap} onChange={json=>patch({thinkingLevelMap:json})}/>
             )}
             {parseLevelMap(draft.thinkingLevelMap) !== null && !draft.reasoning && <small>提示：未勾选「推理 / 思考」时 pi 仅允许 off 等级，此映射不会生效。</small>}
-            {parseLevelMap(draft.thinkingLevelMap) !== null && <small>off–high 默认可用；xhigh/max 需点「+」添加。等级可映射为自定义值（发给服务商的推理参数），勾选「禁用」或点 × 移除。留空条目即使用 pi 默认映射。</small>}
+            {parseLevelMap(draft.thinkingLevelMap) !== null && <small>勾选即启用该等级（off–high 默认启用；xhigh/max 需勾选添加），文本框填写发送给服务商的自定义值，留空使用 pi 默认映射。取消勾选 = 停用该等级。</small>}
           </section>
         </div>
         <p className="pi-providerform__hint">留空的参数使用 pi 默认值。能力声明应与服务商提供的模型一致。</p>

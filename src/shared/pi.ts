@@ -249,8 +249,8 @@ export interface PiModelProviderDraft {
   /** New key to store; omit/empty on update to keep the existing one. */
   apiKey?: string;
   models: PiCatalogModel[];
-  /** Single-model patch: never replace a provider or replay other models from the renderer. */
-  modelEdit?: { originalId?: string; kind: 'custom' | 'override'; fields?: PiModelEditableField[] };
+  /** Single-model patch (or delete): never replace a provider or replay other models from the renderer. */
+  modelEdit?: { originalId?: string; kind: 'custom' | 'override' | 'delete'; fields?: PiModelEditableField[] };
 }
 /** Aggregated usage statistics computed from local pi session files. */
 export interface PiUsageStats {

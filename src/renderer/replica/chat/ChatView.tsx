@@ -126,8 +126,8 @@ export function ToolCard({ part, labels, onOpenToolFile, live }: { part: ToolPar
   const codeSummary = code ? code.split('\n').map(l => l.trim()).find(l => l && !l.startsWith('//'))?.slice(0, 90) : undefined;
   // pi ≥0.99 原生 MCP 工具名 `mcp__<server>__<tool>`：显示为「server / tool」并配插头图标。
   const mcpName = part.tool.startsWith('mcp__') ? part.tool.split('__').slice(1).filter(Boolean) : null;
-  const icon = isCodeMode ? 'code' as const : mcpName ? 'plug' as const : ['bash','run_command'].includes(part.tool) ? 'terminal' : ['grep','find','ls'].includes(part.tool) ? 'search' : ['edit','write'].includes(part.tool) ? 'pencil' : part.tool === 'read' ? 'book' : 'plug';
-  const toolLabel = mcpName ? mcpName.join(' / ') : zh ? ({ read: '读取', bash: '终端', run_command: '终端', edit: '编辑', write: '写入', grep: '查阅', find: '查阅', ls: '查阅', codemode: 'JS 脚本' } as Record<string, string>)[part.tool] : undefined;
+  const icon = isCodeMode ? 'code' as const : mcpName ? 'plug' as const : ['bash','run_command'].includes(part.tool) ? 'terminal' : ['grep','find','ls'].includes(part.tool) ? 'search' : ['edit','write'].includes(part.tool) ? 'pencil' : part.tool === 'read' ? 'book' : part.tool === 'desktop_schedule' ? 'timer' : 'plug';
+  const toolLabel = mcpName ? mcpName.join(' / ') : zh ? ({ read: '读取', bash: '终端', run_command: '终端', edit: '编辑', write: '写入', grep: '查阅', find: '查阅', ls: '查阅', codemode: 'JS 脚本', desktop_schedule: '定时任务' } as Record<string, string>)[part.tool] : undefined;
   const statusLabel = part.phase === 'call' ? (part.status === 'running' ? (zh ? '等待执行结果' : 'Awaiting result') : (zh ? '未记录结果' : 'No saved result')) : part.status === 'running' ? labels.toolRunning : part.status === 'error' ? labels.toolError : labels.toolDone;
   // 摘要行上的行数统计：write 用 content 行数（+N），edit 用 edits[] 的 old/new 行数（+N/−M）。
   let additions = 0, deletions = 0;
