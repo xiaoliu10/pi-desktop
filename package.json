@@ -111,6 +111,10 @@
       {
         "from": "extensions/desktop-codemode-nudge",
         "to": "desktop-codemode-nudge"
+      },
+      {
+        "from": "extensions/desktop-schedule",
+        "to": "desktop-schedule"
       }
     ],
     "mac": {

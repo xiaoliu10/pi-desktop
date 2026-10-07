@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isAvailable, parseLevelMap, serializeLevelMap } from '../src/renderer/replica/settings/thinking-level-chips';
+import { isAvailable, parseLevelMap, renamedEntry, serializeLevelMap, toggledEntry } from '../src/renderer/replica/settings/thinking-level-chips';
 
 // ZCode 式推理等级 chips 的数据层：draft JSON 字符串 ↔ 结构化条目。
 // pi 语义（getSupportedThinkingLevels）：off–high 默认可用（null 才禁用），
@@ -73,5 +73,28 @@ describe('roundtrip 与 pi 可用性语义对齐', () => {
     const src = { off: null, low: 'enabled', xhigh: 'deep' } as const;
     const { entries } = parseLevelMap(serializeLevelMap(src));
     expect(entries).toEqual(src);
+  });
+});
+
+describe('toggledEntry / renamedEntry（行式编辑语义）', () => {
+  it('取消勾选：基础等级显式禁用（null），xhigh/max 移除条目', () => {
+    expect(toggledEntry({}, 'low', false)).toEqual({ low: null });
+    expect(toggledEntry({ xhigh: 'max' }, 'xhigh', false)).toEqual({});
+  });
+
+  it('勾选：基础等级空值回默认（移除条目），xhigh/max 空值映射为等级名', () => {
+    expect(toggledEntry({ low: null }, 'low', true)).toEqual({});
+    expect(toggledEntry({}, 'xhigh', true)).toEqual({ xhigh: 'xhigh' });
+  });
+
+  it('勾选保留已有自定义文本；改名写入并 trim', () => {
+    expect(toggledEntry({ high: 'high_effort' }, 'high', true)).toEqual({ high: 'high_effort' });
+    expect(renamedEntry({}, 'low', '  effort-low  ')).toEqual({ low: 'effort-low' });
+  });
+
+  it('清空文本：基础等级移除条目（回默认可用），xhigh/max 回退等级名（保持可用）', () => {
+    expect(renamedEntry({ low: 'custom' }, 'low', '')).toEqual({});
+    expect(renamedEntry({ xhigh: 'deep' }, 'xhigh', '   ')).toEqual({ xhigh: 'xhigh' });
+    expect(isAvailable(renamedEntry({ xhigh: 'deep' }, 'xhigh', ''), 'xhigh')).toBe(true);
   });
 });

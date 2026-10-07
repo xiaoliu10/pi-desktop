@@ -521,6 +521,7 @@ void app.whenReady().then(() => {
   automations = new AutomationService(path.join(app.getPath('userData'),'automations.json'),()=>host.backend,()=>{
     if(mainWindow&&!mainWindow.isDestroyed())mainWindow.webContents.send('local-pi:automations-changed');
   });
+  host.backend.automations = automations; // desktop_schedule 工具的调度通道
   registerIpc();
   if(!process.env.PI_SMOKE)automations.start();
   setTimeout(archiveCleanupPass, 15_000).unref(); // 启动后先扫一次

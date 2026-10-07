@@ -773,6 +773,15 @@ export default function PiReplicaApp() {
             await s.loadCatalog();
             s.notify({kind:'success',title:'模型配置已保存',body:'已写入 pi 的 models.json；新建或重载会话生效，正在运行的会话仍使用原配置。',time:'刚刚'});
           }}
+          onDeleteProviderModel={async (providerId, modelId) => {
+            const catalog = await window.localPi!.modelCatalog();
+            const provider = catalog.providers.find(p => p.id === providerId);
+            if (!provider) throw new Error('提供商不存在，请刷新后重试。');
+            if (!provider.models.some(m => m.id === modelId)) throw new Error('模型已被移除，请刷新后重试。');
+            await window.localPi!.modelProviderSave({ id: providerId, baseUrl: '', models: [{ id: modelId }], modelEdit: { originalId: modelId, kind: 'delete' } });
+            await s.loadCatalog();
+            s.notify({ kind: 'success', title: '模型已删除', body: '已从 pi 的 models.json 移除；新建或重载会话生效。', time: '刚刚' });
+          }}
           onEditProvider={editProvider}
           onDeleteProvider={deleteProvider}
           onToggleProvider={() => s.notify({ kind: 'info', title: s.lang === 'zh' ? 'pi 提供商默认启用' : 'pi providers are always enabled', time: '刚刚' })}

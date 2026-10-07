@@ -636,24 +636,19 @@
 .pi-model-options { display: flex; gap: 16px; flex-wrap: wrap; }
 /* 推理等级 chips（ZCode ProviderModelMetadataDialog 同款交互）：点 chip 编辑映射值，
    × 移除条目，+ 添加未启用等级；null 禁用态删除线置灰。 */
-.pi-levels { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
-.pi-level-chip { display: inline-flex; align-items: center; border: 1px solid var(--pi-border); border-radius: 8px; background: var(--pi-bg); padding: 2px 4px 2px 10px; }
-.pi-level-chip[data-state="disabled"] { opacity: .55; }
-.pi-level-chip[data-state="disabled"] .pi-level-name { text-decoration: line-through; }
-.pi-level-chip[data-state="custom"] { border-color: var(--pi-accent); }
-.pi-level-chip[data-state="dropped"] { border-style: dashed; opacity: .7; }
-.pi-level-name { border: 0; background: transparent; color: var(--pi-text); font-family: var(--pi-font-mono); font-size: 12px; line-height: 1.6; cursor: pointer; padding: 3px 4px; display: inline-flex; gap: 6px; align-items: center; }
-.pi-level-name em { font-style: normal; color: var(--pi-text-secondary); font-family: var(--pi-font-family, inherit); }
+/* 推理等级：ZCode 式行编辑（勾选启用 + 自定义映射文本框），低→高固定顺序 */
+.pi-levels { display: flex; flex-direction: column; gap: 6px; }
+.pi-level-row { display: flex; align-items: center; gap: 10px; padding: 4px 10px; border: 1px solid var(--pi-border); border-radius: 8px; background: var(--pi-bg); }
+.pi-level-row[data-state="off"] { opacity: .55; }
+.pi-level-row[data-state="disabled"] .pi-level-rowname { text-decoration: line-through; }
+.pi-level-row[data-state="custom"] { border-color: var(--pi-accent); }
+.pi-level-row--dropped { border-style: dashed; opacity: .7; justify-content: space-between; }
+.pi-level-rowname { font-family: var(--pi-font-mono); font-size: 12px; color: var(--pi-text); min-width: 58px; }
+.pi-level-rowname em { font-style: normal; color: var(--pi-text-secondary); font-family: var(--pi-font-family, inherit); }
+.pi-level-row input[type="text"] { flex: 1; max-width: 280px; padding: 3px 8px; border: 1px solid var(--pi-border); border-radius: 6px; background: var(--pi-bg); color: var(--pi-text); font-family: var(--pi-font-mono); font-size: 12px; line-height: 1.5; }
+.pi-level-row input[type="text"]:disabled { opacity: .5; }
 .pi-level-x { border: 0; background: transparent; color: var(--pi-text-secondary); cursor: pointer; padding: 2px 6px; font-size: 14px; line-height: 1; }
 .pi-level-x:hover { color: var(--pi-text); }
-.pi-level-addbtn { border: 1px dashed var(--pi-border); background: transparent; color: var(--pi-text-secondary); border-radius: 8px; padding: 3px 11px; font-size: 14px; cursor: pointer; }
-.pi-level-addbtn:hover { color: var(--pi-text); border-color: var(--pi-text); }
-.pi-level-edit { display: inline-flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-.pi-level-edit b { font-family: var(--pi-font-mono); font-size: 12px; }
-.pi-level-edit input[type="text"], .pi-level-edit input:not([type]) { width: 160px; padding: 3px 8px; border: 1px solid var(--pi-border); border-radius: 6px; background: var(--pi-bg); color: var(--pi-text); font-family: var(--pi-font-mono); font-size: 12px; line-height: 1.5; }
-.pi-level-disable { display: inline-flex; gap: 4px; align-items: center; color: var(--pi-text-secondary); font-size: var(--pi-font-size-sm, 12px); cursor: pointer; }
-.pi-level-ok { border: 1px solid var(--pi-border); background: transparent; color: var(--pi-text); border-radius: 6px; padding: 3px 10px; cursor: pointer; font-size: var(--pi-font-size-sm, 12px); }
-.pi-level-ok:hover { border-color: var(--pi-text); }
 .pi-level-none { color: var(--pi-text-secondary); font-size: var(--pi-font-size-sm, 12px); }
 /* 勾选项：真实复选框——15px 方框，选中深底白勾（用户明确要求可见的多选框，不走纯 ✓ 文本） */
 .pi-model-options button { border: 0; background: transparent; color: var(--pi-text); display: inline-flex; align-items: center; gap: 8px; border-radius: 6px; padding: 4px 0; cursor: pointer; font-size: var(--pi-font-size-md); }

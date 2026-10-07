@@ -732,6 +732,8 @@ export interface SettingsProps {
   catalogWarning?: string;
   onSaveProvider: () => void;
   onSaveProviderModel?: (providerId: string, model: import("../../shared/pi").PiCatalogModel, originalId?: string, fields?: import("../../shared/pi").PiModelEditableField[]) => Promise<void>;
+  /** 从供应商删除一个模型（models.json 可编辑的供应商才出现入口）。 */
+  onDeleteProviderModel?: (providerId: string, modelId: string) => Promise<void>;
   /** Built-in (auth-source) providers: set/clear the shared auth.json API key. */
   onSaveProviderAuth?: (id: string, input: { apiKey?: string; clear?: boolean }) => Promise<void>;
   onEditProvider: (id: string) => void;

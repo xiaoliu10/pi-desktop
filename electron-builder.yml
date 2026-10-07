@@ -16,6 +16,8 @@ extraResources:
     to: desktop-policy
   - from: extensions/desktop-ask
     to: desktop-ask
+  - from: extensions/desktop-schedule
+    to: desktop-schedule
 mac:
   category: public.app-category.developer-tools
   extendInfo:

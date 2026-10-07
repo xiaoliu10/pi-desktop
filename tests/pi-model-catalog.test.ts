@@ -111,6 +111,21 @@ describe('P08 model catalog writes (shared pi config)', () => {
     fs.rmSync(dir, { recursive: true, force: true });
   });
 
+  it('deletes a single model via modelEdit and refuses the last remaining one', () => {
+    const dir = makeAgentDir();
+    writeModelProvider(dir, { id: 'del-relay', baseUrl: 'https://relay.example.com/v1', models: [{ id: 'm1', contextWindow: 128000 }, { id: 'm2' }] });
+    const after = writeModelProvider(dir, { id: 'del-relay', baseUrl: '', models: [{ id: 'm1' }], modelEdit: { originalId: 'm1', kind: 'delete' } });
+    expect(after.providers.find(p => p.id === 'del-relay')?.models.map(m => m.id)).toEqual(['m2']);
+    // 删除不存在的模型 → 提示刷新而非静默
+    expect(() => writeModelProvider(dir, { id: 'del-relay', baseUrl: '', models: [{ id: 'gone' }], modelEdit: { originalId: 'gone', kind: 'delete' } })).toThrow('已被移除');
+    // 供应商至少保留一个模型
+    expect(() => writeModelProvider(dir, { id: 'del-relay', baseUrl: '', models: [{ id: 'm2' }], modelEdit: { originalId: 'm2', kind: 'delete' } })).toThrow('至少需要一个模型');
+    // 删除后 models.json 与目录保持一致
+    const stored = JSON.parse(fs.readFileSync(path.join(dir, 'models.json'), 'utf8'));
+    expect(stored.providers['del-relay'].models.map((m: { id: string }) => m.id)).toEqual(['m2']);
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
   it('removes only models.json providers and leaves auth entries alone', () => {
     const dir = makeAgentDir();
     const catalog = removeModelProvider(dir, 'qwen38-gpu');
