@@ -1,6 +1,7 @@
 import { enableOfficialSubagent, officialSubagentStatus, recoverSubagents, cleanupSubagents } from './pi/official-subagent';
 import { startDingTalkRegistration, pollDingTalkRegistration } from './pi/dingtalk-registration';
 import { syncBuiltinSkills, syncBuiltinPrompts } from './pi/builtin-skills';
+import { applyContinuations, loadContinuations } from './pi/session-continuations';
 import { listMemoryFiles, migrateLegacyMemoryFile, moveMemoryFileToProject, memoryAssistStatus, readMemoryFileContent, detectMemoryPlugin, builtinMemoryDir, DEFAULT_MEMORY_SOURCE } from './pi/memory-bridge';
 import { TerminalService } from './pi/terminal-service';
 import { filePreview } from './pi/file-preview';
@@ -185,7 +186,15 @@ function registerIpc() {
     broadcast({ type: 'sessions-changed' });
     return result;
   });
-  handle('sessions', () => host.index.scan());
+  handle('sessions', () => {
+    const sessions = host.index.scan();
+    // 延续合并：被「编辑重发」fork 的旧快照不进列表；延续条目顶层化并继承链头名字
+    // （用户 rename 优先）。subagent 内部会话仍由渲染层按 parentSession 过滤。
+    try {
+      const renames = settings.preferences().sessionRenames ?? {};
+      return applyContinuations(sessions, loadContinuations(host.dataDir), renames, s => s.key, '未命名 pi 会话');
+    } catch { return sessions; }
+  });
   handle('history', (key, leaf) => host.index.history(key, leaf));
   handle('resources', cwd => host.resources(cwd));
   handle('connect', input => {
@@ -535,6 +544,12 @@ void app.whenReady().then(() => {
     if(mainWindow&&!mainWindow.isDestroyed())mainWindow.webContents.send('local-pi:automations-changed');
   });
   host.backend.automations = automations; // desktop_schedule 工具的调度通道
+  // 编辑重发 fork 后把用户对原条目的改名迁移到延续条目（复制不删：renderer 内存副本会整体回写）。
+  host.backend.onContinuation = (fromKey, toKey) => {
+    const prefs = settings.preferences();
+    const renamed = prefs.sessionRenames?.[fromKey];
+    if (renamed && !prefs.sessionRenames?.[toKey]) settings.savePreferences({ sessionRenames: { ...prefs.sessionRenames, [toKey]: renamed } });
+  };
   registerIpc();
   if(!process.env.PI_SMOKE)automations.start();
   setTimeout(archiveCleanupPass, 15_000).unref(); // 启动后先扫一次
