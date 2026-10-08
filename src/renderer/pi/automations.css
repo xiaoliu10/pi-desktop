@@ -57,3 +57,9 @@
 .pi-auto__modal { background:var(--pi-bg);border:1px solid var(--pi-border);border-radius:18px;padding:26px;box-shadow:var(--pi-shadow-popover);width:min(560px,90vw);max-height:85vh;overflow:auto;display:flex;flex-direction:column;gap:16px; }.pi-auto__modal h2 { margin:0;font-size:19px; }
 .pi-auto__history { display:flex;flex-direction:column;gap:16px; }.pi-auto__history article { padding:20px;border:1px solid var(--pi-border);border-radius:12px; }.pi-auto__history header { display:flex;gap:16px;align-items:center;font-size:12px;color:var(--pi-text-secondary); }.pi-auto__history ol { padding-left:20px;font-size:12px; }.pi-auto__history li { padding:7px 0; }.pi-auto__history li small { margin-left:12px;color:var(--pi-text-tertiary); }
 .pi-auto__status { border:1px solid var(--pi-border);border-radius:20px;padding:3px 9px; }.pi-auto__status--succeeded { color:var(--pi-green); }.pi-auto__status--failed,.pi-auto__status--interrupted { color:var(--pi-red); }.pi-auto__status--waiting { color:var(--pi-orange-text); }
+/* 已结束任务（once 已触发 / 达到上限 / 过截止）：ZCode 同款灰色完成态，开关替换为「已结束」徽标。 */
+.pi-auto__card--done { border-color:var(--pi-border); }
+.pi-auto__card--done .pi-auto__card-title, .pi-auto__card--done>p, .pi-auto__card--done>small { color:var(--pi-text-tertiary); }
+.pi-auto__card--done .pi-auto__schedule { color:var(--pi-text-tertiary); }
+.pi-auto__card--done button.pi-auto__last { color:var(--pi-text-tertiary); }
+.pi-auto__done { display:inline-flex;align-items:center;gap:5px;font-size:12px;color:var(--pi-text-tertiary); }

@@ -8,6 +8,15 @@ export interface AutomationTask { id:string; name:string; cwd:string; prompt:str
 export type AutomationStatus = 'running'|'waiting'|'succeeded'|'failed'|'stopped'|'interrupted'|'skipped';
 export interface AutomationRun { id:string; taskId?:string; workflowId?:string; name:string; cwd:string; trigger:'manual'|'schedule'; status:AutomationStatus; startedAt:number; endedAt?:number; scheduledAt?:number; sessionKey?:string; error?:string; stepIndex:number; steps:{name:string;status:'pending'|'running'|'succeeded'|'failed'|'stopped'}[] }
 export interface AutomationSnapshot { tasks:AutomationTask[]; workflows:SavedWorkflow[]; runs:AutomationRun[] }
+
+/** 任务是否已结束（再无下次执行）：once 已触发、达到执行次数上限或过截止时间。
+ *  手动暂停（enabled=false 但仍有下次执行时间）不算结束。UI 据此展示完成态
+ *  （灰色卡片 + 「已结束」徽标替换开关，同 ZCode）；服务端在触发后已把这类任务 enabled=false。 */
+export function taskFinished(task: Pick<AutomationTask, 'nextRunAt' | 'maxRuns' | 'runCount' | 'endAt'>, now: number = Date.now()): boolean {
+  return task.nextRunAt === undefined || task.nextRunAt === null
+    || (task.maxRuns !== undefined && task.runCount >= task.maxRuns)
+    || (task.endAt !== undefined && task.endAt <= now);
+}
 export interface WorkflowLaunch { id:string; cwd:string; args:Record<string,string>; permission:AccessMode; model?:string; thinking?:ThinkingLevel }
 
 /** 工作流步骤 prompt 的参数替换。主进程执行与 UI 乐观预览共用同一份逻辑。 */
