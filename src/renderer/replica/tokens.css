@@ -159,6 +159,14 @@
   user-select: text;
 }
 
+/* 路径/配置/代码/日志要能选中复制（用户排查问题）：code/pre 全局恢复文本选择，
+   控件与标题仍保持 UI 惯例的禁选。 */
+.pireplica code,
+.pireplica pre {
+  user-select: text;
+  cursor: text;
+}
+
 .pireplica ::-webkit-scrollbar {
   width: 8px;
   height: 8px;
