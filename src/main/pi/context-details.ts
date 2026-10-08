@@ -1,4 +1,5 @@
-import { CONTEXT_CATEGORIES, type ContextCategory, type ContextDetails } from '../../shared/context-details';
+import { CONTEXT_CATEGORIES, cacheHitRateFromTotals, type ContextCategory, type ContextDetails } from '../../shared/context-details';
+export { cacheHitRateFromTotals };
 
 /** Character proportions of the active RPC transcript. Never persists prompt text. */
 export function summarizeContext(messages: unknown, totals: unknown): ContextDetails {
@@ -38,14 +39,11 @@ export function summarizeContext(messages: unknown, totals: unknown): ContextDet
     const kind = name.startsWith('mcp_') ? 'mcpTools' : builtin.has(name) ? 'systemTools' : 'other';
     chars[kind] += JSON.stringify({name, description:tool.description, parameters:tool.parameters}).length;
   }
-  const t = totals as Record<string, unknown> | undefined;
-  const valid = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n) && n >= 0;
-  const denominator = valid(t?.input) && valid(t?.cacheRead) && valid(t?.cacheWrite) ? t.input + t.cacheRead + t.cacheWrite : 0;
   return {
     // Older RPC versions omit system messages; incomplete proportions would mislead.
     breakdown: systemObserved ? CONTEXT_CATEGORIES.map(category => ({category, chars:chars[category]})) : [],
     method: 'active-transcript-chars',
-    cacheHitRate: denominator > 0 ? (t!.cacheRead as number) / denominator * 100 : null,
+    cacheHitRate: cacheHitRateFromTotals(totals),
     fetchedAt: Date.now(),
   };
 }
