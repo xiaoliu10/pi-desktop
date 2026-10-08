@@ -101,9 +101,15 @@ export function executionTurns(messages: ChatMessage[]): ChatTurn[] {
       if (k === 'tool' || k === 'thinking') { lastStepsIndex = i; break; }
     }
     const segments: ChatSegment[] = [];
+    const isStepLike = (p?: MessagePart) => !!p && (p.kind === 'tool' || p.kind === 'thinking');
     flattened.forEach((part, index) => {
-      // 只有过程「文本」进组内段落；error/notice/image 保持独立 text 段（重试隐藏、结论位逻辑都依赖）。
-      const kind: ChatSegment['kind'] = part.kind === 'tool' || part.kind === 'thinking' || (part.kind === 'text' && index < lastStepsIndex) ? 'steps' : 'text';
+      // 只有过程「文本」进组内段落；error/普通 notice/image 保持独立 text 段（重试隐藏、结论位逻辑都依赖）。
+      // 例外：压缩记录（strong notice）是时序事件，紧邻工具/思考步骤时在触发点原位落入过程列表
+      // （组内步骤行，用户要求：压缩在哪个时序触发就显示在哪个时序，同 ZCode 过程列表）。
+      // 孤立压缩（如手动 /compact 落在末轮结论文本之后、前后都没有步骤）不入组：
+      // 否则它会折进一个只显示计时的空组里反而不可见，保持直接可见的 text 段。
+      const adjacentToSteps = isStepLike(flattened[index - 1]) || isStepLike(flattened[index + 1]);
+      const kind: ChatSegment['kind'] = isStepLike(part) || (part.kind === 'notice' && part.strong && adjacentToSteps) || (part.kind === 'text' && index < lastStepsIndex) ? 'steps' : 'text';
       const currentSeg = segments[segments.length - 1];
       if (currentSeg && currentSeg.kind === kind) currentSeg.parts.push(part);
       else segments.push({ kind, parts: [part] });
