@@ -7,7 +7,7 @@ import { PiBackend } from '../src/main/pi/backend';
 import { SessionIndex } from '../src/main/pi/session-index';
 import type { PiEvent } from '../src/shared/pi';
 
-vi.mock('../src/main/pi/rpc-client', () => ({ PiRpcClient: class extends EventEmitter {
+vi.mock('../src/main/pi/rpc-client', () => ({ piLogDir: path.join(os.tmpdir(), 'pi-retry-rpc-log'), PiRpcClient: class extends EventEmitter {
   calls: Array<{ type: string; data: any; timeout?: number }> = [];
   requestHook?: (type: string, data: any, timeout?: number) => Promise<any> | undefined;
   constructor(_command: string, _args: string[], _cwd: string, private env: any) { super(); }

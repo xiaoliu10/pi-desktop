@@ -4,10 +4,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { PiEnvironment, PiEvent, PiRun, PiUiRequest } from '../../shared/pi';
-import { PiRpcClient } from './rpc-client';
+import { PiRpcClient, piLogDir } from './rpc-client';
 import { SessionIndex, canonical, fileKey } from './session-index';
 import { runAutomationBridge, SCHEDULE_GUIDANCE } from './automation-bridge';
-import { summarizeContext } from './context-details';
+import { cacheHitRateFromTotals, summarizeContext } from './context-details';
 import { detectThirdPartySubagent, migrateOldSubagentExtension, persistSubagentEvent } from './official-subagent';
 import { clearMemoryEnv, memorySessionEnv } from './memory-bridge';
 import { repairPackages } from './packages-repair';
@@ -27,6 +27,10 @@ const STUCK_SILENCE_MS = 120_000;
 /** 重试链持有期（holding：组>1 或已排队续接）的静默阈值更宽：组间退避最长 20 分钟、
  *  续接后的模型响应也可能持续数分钟，100% 无事件满 10 分钟才值得核实。 */
 const RETRY_HOLDING_SILENCE_MS = 600_000;
+/** 大会话明细阈值：会话文件 ≥8MiB 时跳过 get_messages——它会把全量历史（含图片 base64）
+ *  序列化成单帧 RPC 响应，逼近 16MiB 帧上限；留一半裕量给系统上下文增长。
+ *  上下文占比是非核心的悬浮统计，不能为它冒断会话的风险。 */
+const CONTEXT_BREAKDOWN_MAX_SESSION_BYTES = 8 * 1024 * 1024;
 const STUCK_WATCHDOG_INTERVAL_MS = 30_000;
 type QueuedInput = NonNullable<PiRun['queue']>[number];
 interface Running { recheckTimer?: ReturnType<typeof setTimeout>; stopQueueSnapshot?: QueuedInput[]; settlement?: { token: string; timer: ReturnType<typeof setTimeout> }; activity: number; /** 假 running 自愈用：全部 pi 事件计数与最近事件时刻 */ eventCount: number; lastEventAt: number; verifying?: boolean; promptSequence: number; retryUncertain: boolean; stopUnconfirmed: boolean; retry: RetryGroups; retryReady: boolean; retryEntryId?: string; deferredQueue: QueuedInput[]; stopEpoch: number; policyReady: boolean; client: PiRpcClient; view: PiRun; input: { cwd: string; trustProject: boolean; permission: AccessMode; executionMode?: Exclude<AccessMode, 'plan'>; file: string; origin: string; systemPrompt?: string; tools?: string[]; model?: string }; dialogs: Map<string, { timer?: ReturnType<typeof setTimeout>; method: string; request: PiUiRequest }>; queueImages: StagedQueueImage[] }
@@ -139,6 +143,16 @@ export class PiBackend {
       const busy = active.view.status === 'running' || active.view.status === 'starting';
       if (busy && now - (this.lastBreakdownAt.get(run) ?? 0) < 15_000) return;
       this.lastBreakdownAt.set(run, now);
+      // 大会话跳过全量历史明细（计时上限维持 10s 超时不变）：不伪造 breakdown，
+      // 旧 breakdown 也已不可信（会话早已增长），替换为明确的空明细。
+      // cacheHitRate 只依赖 stats 的 token 分布，仍可如实计算。
+      let sessionBytes = Number.MAX_SAFE_INTEGER; // 无法确知大小时按大会话处理（fail closed）
+      try { sessionBytes = fs.statSync(run.input.file).size; } catch { /* 文件不可读时同上 */ }
+      if (sessionBytes >= CONTEXT_BREAKDOWN_MAX_SESSION_BYTES) {
+        active.view.contextDetails = { breakdown: [], method: 'skipped-large-session', cacheHitRate: cacheHitRateFromTotals(data?.tokens), fetchedAt: Date.now() };
+        this.emit({ type: 'run', run: { ...active.view } });
+        return;
+      }
       try {
         const { messages } = await run.client.request('get_messages', {}, 10_000);
         if (this.active.get(key) !== active || this.contextRequests.get(run) !== sequence) return;
@@ -216,6 +230,16 @@ export class PiBackend {
       ...(input.model ? ['--model', input.model] : []),
     ];
     const client = (this.clientFactory ?? ((cmd: string, a: string[], cwd: string, e: NodeJS.ProcessEnv) => new PiRpcClient(cmd, a, cwd, e)))(this.env.executable!, args, input.cwd, env);
+    // 8–16MiB 盲区取证：会话 ≥8MiB 跳过明细、单帧 ≥16MiB 被丢弃，这个区间里的卡顿/丢帧
+    // 只在 client diagnostic 事件里留痕（内存只保留最后一条，close 后即失）——带时间戳
+    // 落盘到与 pi-stderr.log 同目录的 pi-rpc.log，供事后排查大会话断连。事件稀少，
+    // 不做轮转；目录只建一次；落盘失败静默，绝不能影响会话主流程。
+    let rpcLogReady = false;
+    const rpcLogPath = path.join(piLogDir, 'pi-rpc.log');
+    client.on('diagnostic', message => {
+      if (!rpcLogReady) { try { fs.mkdirSync(piLogDir, { recursive: true }); rpcLogReady = true; } catch { return; } }
+      fs.appendFile(rpcLogPath, `[${new Date().toISOString()}] ${String(message)}\n`, () => { /* 落盘失败不影响主流程 */ });
+    });
     const view: PiRun = { accessMode: input.permission, executionMode: input.permission === 'plan' ? input.executionMode ?? 'ask' : input.permission, key, generation, cwd: input.cwd, file: input.file, status: 'starting', models: [], commands: [], pending: 0 };
     const run: Running = { activity: 0, eventCount: 0, lastEventAt: Date.now(), promptSequence: 0, retryUncertain: false, stopUnconfirmed: false, retry: undefined!, retryReady: false, deferredQueue: [], stopEpoch: 0, policyReady: false, client, view, input, dialogs: new Map(), queueImages: [] };
     run.retry = new RetryGroups(state => {
@@ -239,8 +263,16 @@ export class PiBackend {
       if (view.timing && view.timing.endedAt === undefined) view.timing = { ...view.timing, endedAt: Date.now() };
       view.status = 'error';
       const stderr = client.stderrDetail();
-      const exit = client.exitDetail();
-      view.error = `pi 进程已退出${exit ? `（${exit}）` : ''}，请断开后重连。任务未自动重放。${stderr ? `\npi stderr：${stderr}` : ''}`;
+      // 红条归因：generic「已退出」只作兑底，已知因果故障优先展示；close() 自身也发
+      // SIGTERM，本机主动断开不得表述成系统/外部杀进程。只含故障类别，不泄露 prompt/env。
+      const suffix = stderr ? `\npi stderr：${stderr}` : '';
+      const cause = client.failureReason?.().trim() ?? '';
+      const causal = cause !== '' && cause !== 'pi 连接已关闭' && !cause.startsWith('pi 已退出');
+      const exit = client.exitDetail?.() ?? '';
+      const how = causal ? cause
+        : client.closedLocally?.() ? 'Desktop 已主动断开该会话'
+        : `pi 进程已退出${exit ? `（${exit}）` : ''}`;
+      view.error = `${how}，请断开后重连。任务未自动重放。${suffix}`;
       this.clearDialogs(run); this.emit({ type: 'run', run: { ...view } }); this.emit({ type: 'closed', key, generation });
     });
     let firstFrameScope = true; // get_state 阶段标记：超时 append 只贴在首帧阶段
