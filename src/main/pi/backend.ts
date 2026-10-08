@@ -223,7 +223,8 @@ export class PiBackend {
       if (view.timing && view.timing.endedAt === undefined) view.timing = { ...view.timing, endedAt: Date.now() };
       view.status = 'error';
       const stderr = client.stderrDetail();
-      view.error = `pi 进程已退出，请断开后重连。任务未自动重放。${stderr ? `\npi stderr：${stderr}` : ''}`;
+      const exit = client.exitDetail();
+      view.error = `pi 进程已退出${exit ? `（${exit}）` : ''}，请断开后重连。任务未自动重放。${stderr ? `\npi stderr：${stderr}` : ''}`;
       this.clearDialogs(run); this.emit({ type: 'run', run: { ...view } }); this.emit({ type: 'closed', key, generation });
     });
     try {
