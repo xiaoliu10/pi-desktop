@@ -18,6 +18,8 @@ extraResources:
     to: desktop-ask
   - from: extensions/desktop-schedule
     to: desktop-schedule
+  - from: resources/builtin-skills
+    to: builtin-skills
 mac:
   category: public.app-category.developer-tools
   extendInfo:

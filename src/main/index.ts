@@ -1,5 +1,6 @@
 import { enableOfficialSubagent, officialSubagentStatus, recoverSubagents, cleanupSubagents } from './pi/official-subagent';
 import { startDingTalkRegistration, pollDingTalkRegistration } from './pi/dingtalk-registration';
+import { syncBuiltinSkills } from './pi/builtin-skills';
 import { listMemoryFiles, migrateLegacyMemoryFile, moveMemoryFileToProject, memoryAssistStatus, readMemoryFileContent, detectMemoryPlugin, builtinMemoryDir, DEFAULT_MEMORY_SOURCE } from './pi/memory-bridge';
 import { TerminalService } from './pi/terminal-service';
 import { filePreview } from './pi/file-preview';
@@ -512,6 +513,14 @@ void app.whenReady().then(() => {
   if(!primaryInstance)return;
   const policy = app.isPackaged ? path.join(process.resourcesPath, 'desktop-policy/index.mjs') : path.join(app.getAppPath(), 'extensions/desktop-policy/index.mjs');
   host = new PiHost(app.getPath('userData'), policy, broadcast, process.env.PI_SMOKE_SETTINGS ? path.join(app.getPath('userData'), 'shared-skills') : undefined);
+  // 内置办公技能（pptx/docx/xlsx/pdf）：打包取 extraResources，dev 取仓库 resources。
+  // 必须在 PiHost 构造之后：environment（含 agentDir 偏好覆盖）在构造期急切解析。
+  const builtinSkillsSource = app.isPackaged ? path.join(process.resourcesPath, 'builtin-skills') : path.join(app.getAppPath(), 'resources/builtin-skills');
+  try {
+    const synced = syncBuiltinSkills(host.environment.agentDir, builtinSkillsSource);
+    if (synced.synced.length) console.log('[builtin-skills] synced:', synced.synced.join(', '));
+    if (synced.removed.length) console.log('[builtin-skills] removed:', synced.removed.join(', '));
+  } catch (e) { console.warn('[builtin-skills] sync failed:', e); }
   settings = new SettingsService(host, app.getPath('userData'), path.dirname(policy));
   // 记忆衔接：launch 时现取 memoryAssist 开关与生效记忆插件目录（desktop-memory 扩展由此注入）。
   host.backend.memoryOptions = () => ({
