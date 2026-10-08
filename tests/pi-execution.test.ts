@@ -115,3 +115,22 @@ it('marks a running group as bold thinking while the model streams reasoning', (
  expect(render(true)).toContain('正在思考');
  expect(render(false)).not.toContain('正在思考');
 });
+
+describe('final answer stays visible after trailing tools', () => {
+  it('keeps the last text as the visible answer even when tools run after it', () => {
+    // agent 常在总结后又跑收尾工具：严格按「最后一个工具之后的文本才算结论」会把总结折进
+    // 过程折叠块（用户要点开才能看结果）。最后一个 text 恒为结论直接可见。
+    const branch: PiEntry[] = [
+      { id:'dep-u1',type:'message',message:{role:'user',content:'部署并总结'} },
+      { id:'dep-a1',type:'message',message:{role:'assistant',timestamp:10,content:[{type:'toolCall',id:'call-1',name:'bash',arguments:{command:'deploy'}}]} },
+      { id:'dep-r1',type:'message',message:{role:'toolResult',toolCallId:'call-1',toolName:'bash',content:'deployed'} },
+      { id:'dep-a2',type:'message',message:{role:'assistant',timestamp:20,content:[{type:'text',text:'部署完成，最终结果如下。'}]} },
+      { id:'dep-a3',type:'message',message:{role:'assistant',timestamp:30,content:[{type:'toolCall',id:'call-2',name:'bash',arguments:{command:'verify'}}]} },
+      { id:'dep-r2',type:'message',message:{role:'toolResult',toolCallId:'call-2',toolName:'bash',content:'verified'} },
+    ];
+    const turn = executionTurns(historyToMessages(branch))[1];
+    expect(turn.answer.map(p => (p as {text?:string}).text)).toEqual(['部署完成，最终结果如下。']);
+    // 尾随工具仍在过程组内
+    expect(turn.steps.filter(p => p.kind === 'tool')).toHaveLength(2);
+  });
+});
