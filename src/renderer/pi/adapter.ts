@@ -1722,6 +1722,7 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
       if (trimmedCommand === '/reload') {
         const run = currentRun(state);
         if (!run) { set({ error: '没有运行中的任务；先发起对话后再重载。', errorKey: state.selectedKey ?? undefined }); return; }
+        if (run.status !== 'idle') { set({ error: '任务运行中，请等空闲后再重载。', errorKey: state.selectedKey ?? undefined }); return; }
         set({ draftText: '' });
         pushNotification({ kind: 'info', title: '正在重载扩展、skills 与提示词模板…', time: '刚刚' });
         window.localPi!.sessionReload(run.key)
