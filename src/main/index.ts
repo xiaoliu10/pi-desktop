@@ -207,6 +207,7 @@ function registerIpc() {
   handle('refreshCommands', key => { if (typeof key !== 'string' || !key) throw new Error('输入无效'); return host.backend.refreshCommands(key); });
   handle('refreshModels', key => { if (typeof key !== 'string' || !key) throw new Error('输入无效'); return host.backend.refreshModels(key); });
   handle('compact', (key, customInstructions) => { if (customInstructions !== undefined && typeof customInstructions !== 'string') throw new Error('输入无效'); return host.backend.compact(key, customInstructions || undefined); });
+  handle('sessionReload', key => host.backend.reloadSession(key));
   handle('stop', key => host.backend.stop(key));
   handle('queueEdit', (key, op) => {
     if (!op || typeof op !== 'object' || !['remove', 'edit', 'now'].includes((op as { type?: string }).type ?? '')) throw new Error('队列操作无效');

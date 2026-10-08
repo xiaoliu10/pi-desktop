@@ -1717,6 +1717,18 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
       // 内置 /compact：TUI 专用命令，RPC prompt 不会解析（会被当普通消息发给模型），
       // 这里拦截并路由到 pi RPC 的专用 compact 命令。
       const trimmedCommand = text.trim();
+      // 内置 /reload（pi CLI 同款）：RPC 协议无 reload，Desktop 等价实现 = 重启 pi 重连同一会话
+      // （资源全量重载，历史完整保留）。不产生消息气泡。
+      if (trimmedCommand === '/reload') {
+        const run = currentRun(state);
+        if (!run) { set({ error: '没有运行中的任务；先发起对话后再重载。', errorKey: state.selectedKey ?? undefined }); return; }
+        set({ draftText: '' });
+        pushNotification({ kind: 'info', title: '正在重载扩展、skills 与提示词模板…', time: '刚刚' });
+        window.localPi!.sessionReload(run.key)
+          .then(() => pushNotification({ kind: 'success', title: '已重载扩展、skills 与提示词模板', time: '刚刚' }))
+          .catch((e) => { pushNotification({ kind: 'error', title: String((e as Error).message || e), time: '刚刚' }); set({ error: String((e as Error).message || e), errorKey: state.selectedKey ?? undefined }); });
+        return;
+      }
       if (trimmedCommand === '/compact' || trimmedCommand.startsWith('/compact ')) {
         const run = currentRun(state);
         if (!run) { set({ error: '没有运行中的任务；先发起对话后再压缩上下文。', errorKey: state.selectedKey ?? undefined }); return; }

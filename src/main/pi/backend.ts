@@ -802,6 +802,18 @@ export class PiBackend {
     return view.commands.length;
   }
 
+  /** 内置 /reload（pi CLI interactive-mode 同款）：RPC 协议没有 reload 命令，Desktop 等价实现 =
+   *  重启 pi 并重连同一会话。资源（扩展/skills/prompts/主题/上下文文件）全量重载，
+   *  历史经 session 文件完整保留。仅 idle 允许；旧进程的 closed 事件因 active 已换新 run 而静默。 */
+  async reloadSession(key: string) {
+    const run = this.active.get(key);
+    if (!run) throw new Error('会话未连接；请从侧栏重新打开后再重载。');
+    if (run.view.status !== 'idle') throw new Error('请等待当前任务完成后再重载会话。');
+    const input = { ...run.input };
+    this.close(key);
+    return this.launch(input);
+  }
+
   async compact(key: string, customInstructions?: string) {
     const run = this.get(key);
     if (run.view.status !== 'idle') throw new Error('请在任务空闲时压缩上下文');

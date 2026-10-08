@@ -122,6 +122,8 @@ export interface LocalPiApi extends importSettingsApi {
   prompt(key: string, text: string, behavior: 'steer' | 'followUp', images?: PiImage[]): Promise<void>;
   /** 手动压缩会话上下文（内置 /compact：pi RPC 专用 compact 命令，get_commands 不含内置命令）。 */
   compact(key: string, customInstructions?: string): Promise<{ summary: string; tokensBefore?: number }>;
+  /** 内置 /reload：重启 pi 并重连同一会话（历史完整保留），等效热重载扩展/skills/prompts/主题。 */
+  sessionReload(key: string): Promise<PiRun>;
   /** 按需重拉斜杠命令列表（补全面板为空时自愈）；返回最新命令数。 */
   refreshCommands(key: string): Promise<number>;
   refreshModels(key: string): Promise<number>;
