@@ -37,10 +37,29 @@ describe('compaction record renders inline in the process list', () => {
     expect(answerTexts.some(t => t?.startsWith('上下文压缩'))).toBe(false);
   });
 
-  it('keeps plain extension notices outside the process list', () => {
+  it('keeps plain extension notices and branch summaries outside the process list', () => {
     const turn = executionTurns(historyToMessages(compactionBranch))[1]!;
     const plain = turn.answer.filter(p => p.kind === 'notice');
     expect(plain.map(p => (p as { text: string }).text)).toEqual(['扩展记录 · my-extension']);
+  });
+
+  it('keeps an isolated manual compaction (no adjacent steps) directly visible in the answer area', () => {
+    // 手动 /compact：压缩条目落在末轮结论文本之后，前后都没有工具/思考步骤——
+    // 入组会折进只显示计时的空组，必须保持直接可见的 text 段。
+    // 注意：adapter 的 messageCache 按 entry.id 缓存，两套 fixture 不能共用 id（真实会话是 uuid）。
+    const manual: PiEntry[] = [
+      { id: 'mu1', type: 'message', message: { role: 'user', content: '压缩一下上下文' } },
+      { id: 'ma1', type: 'message', message: { role: 'assistant', timestamp: 10, content: [{ type: 'text', text: '好的，开始压缩。' }] } },
+      { id: 'mc1', type: 'compaction', timestamp: 20, tokensBefore: 300000, summary: 's' } as never,
+      { id: 'md1', type: 'custom', customType: 'desktop-compaction', timestamp: 20, data: { at: 20, durationMs: 5000, tokensBefore: 300000, tokensAfter: 40000, contextWindow: 400000, reason: 'manual' } } as never,
+    ];
+    const turn = executionTurns(historyToMessages(manual))[1]!;
+    expect(turn.steps.map(p => p.kind)).not.toContain('notice');
+    expect(turn.answer.some(p => p.kind === 'notice' && p.strong && (p as { text: string }).text.includes('上下文压缩'))).toBe(true);
+    // 分支摘要（无 strong）同理不入组——钉住 adapter 侧「strong 才是压缩」的约定
+    const withBranch: PiEntry[] = [...manual, { id: 'b1', type: 'branch_summary', timestamp: 25, summary: 'b' } as never];
+    const turn2 = executionTurns(historyToMessages(withBranch))[1]!;
+    expect(turn2.steps.some(p => p.kind === 'notice' && (p as { text: string }).text.includes('分支摘要'))).toBe(false);
   });
 
   it('renders the compaction row inside the execution group at its chronological spot', () => {
