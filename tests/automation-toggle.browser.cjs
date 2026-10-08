@@ -29,12 +29,14 @@ async (page) => {
   });
   await page.locator('[role="switch"]').first().waitFor({ timeout: 15000 });
 
-  // 1. 两张卡片各有一个 role=switch，aria-checked 与 enabled 一致，aria-label 语义「暂停/启用」
+  // 1. 开关只出现在未结束的卡片：t1 启用、t2 停用；t3 跑满 3/3 已结束 →「已结束」徽标替换开关（ZCode 同款完成态）
   const switches = await page.$$eval('[role="switch"]', els => els.map(e => ({ checked: e.getAttribute('aria-checked'), label: e.getAttribute('aria-label'), on: e.classList.contains('is-on') })));
-  if (switches.length !== 3) throw new Error('期望 3 个任务开关，实际 ' + switches.length);
-  if (switches[0].checked !== 'true' || switches[1].checked !== 'false' || switches[2].checked !== 'false') throw new Error('aria-checked 未反映 enabled: ' + JSON.stringify(switches));
+  if (switches.length !== 2) throw new Error('期望 2 个任务开关（t3 已结束用徽标替代），实际 ' + switches.length);
+  if (switches[0].checked !== 'true' || switches[1].checked !== 'false') throw new Error('aria-checked 未反映 enabled: ' + JSON.stringify(switches));
   if (!switches[0].label.includes('暂停') || !switches[1].label.includes('启用')) throw new Error('aria-label 语义错误: ' + JSON.stringify(switches));
   if (switches[0].on !== true || switches[1].on !== false) throw new Error('is-on class 未反映 enabled: ' + JSON.stringify(switches));
+  const t3Badge = await page.$$eval('.pi-auto__card--done .pi-auto__done', els => els.map(e => e.textContent.trim()));
+  if (t3Badge.length !== 1 || !t3Badge[0].includes('已结束')) throw new Error('达上限卡片应显示已结束徽标: ' + JSON.stringify(t3Badge));
 
   // 2. 状态文案三态：启用→下次运行，停用→已暂停，达上限自动收尾→已结束（优先于已暂停）
   const scheduleText = await page.$$eval('.pi-auto__schedule', els => els.map(e => e.textContent.replace(/\s+/g, ' ')));
@@ -48,7 +50,7 @@ async (page) => {
   await t2switch.click();
   await page.waitForFunction(() => document.querySelectorAll('[role="switch"]')[1]?.getAttribute('aria-checked') === 'true', { timeout: 5000 });
   const after = await page.$$eval('[role="switch"]', els => els.map(e => e.getAttribute('aria-checked')));
-  if (JSON.stringify(after) !== JSON.stringify(['true', 'true', 'false'])) throw new Error('点击未翻转开关: ' + JSON.stringify(after));
+  if (JSON.stringify(after) !== JSON.stringify(['true', 'true'])) throw new Error('点击未翻转开关: ' + JSON.stringify(after));
 
   // 4. toggle 被服务拒绝（如达上限再启用）→ 错误条 role=alert + 开关保持停用
   await page.evaluate(() => { window.__toggleShouldThrow = true; });
