@@ -78,6 +78,10 @@ export { usePiStore };
 import type { PiCatalogProvider } from '../../shared/pi';
 import './replica-app.css';
 import '../replica/tokens.css';
+// automations.css 必须在 tokens.css 之后加载：它的裸按钮规则（.pi-auto button 等）与
+// tokens 的 .pireplica button reset 同特异性 (0,1,1)，靠源顺序胜出拿回 padding/border/background。
+// 放在 AutomationsPage 模块里会在 tokens 之前注入，「保存任务」等按钮文字贴边（实测坐实）。
+import './automations.css';
 
 function labelsFor(lang: 'en' | 'zh') {
   const t = replicaLabels(lang);
