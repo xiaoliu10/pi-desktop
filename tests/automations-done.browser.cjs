@@ -11,6 +11,7 @@ async (page) => {
   // 达上限但仍启用（reviewer P3-1）：仍在调度（下次触发后自愈禁用），不提前进完成态，保留开关
   const cappedActive = { id: 'capped-1', name: '还剩一次的限量任务', cwd: '/tmp/proj', prompt: '已跑满上限但未停用', args: {}, permission: 'ask', schedule: { kind: 'cron', expression: '0 10 * * *' }, enabled: true, runCount: 5, maxRuns: 5, nextRunAt: Date.now() + 7200 * 1000, lastRunAt: Date.now() - DAY, updatedAt: Date.now() - DAY };
   await page.route('http://127.0.0.1:5175/automations', route => route.fulfill({ contentType: 'text/html', body: '<div id="root"></div><script type="module">import R from "/@react-refresh";R.injectIntoGlobalHook(window);window.$RefreshReg$=()=>{};window.$RefreshSig$=()=>t=>t;window.__vite_plugin_react_preamble_installed__=true;</script>' }));
+  await page.addInitScript(() => { try { localStorage.setItem('pi-automation-tab', 'tasks'); } catch { /* 新 context */ } });
   await page.goto('http://127.0.0.1:5175/automations');
   await page.waitForFunction(() => window.__vite_plugin_react_preamble_installed__);
   await page.evaluate(async ({ doneTask, activeTask, cappedActive }) => {
@@ -18,9 +19,9 @@ async (page) => {
     const React = (await import(entry.match(/"([^"\n]*\/react\.js\?[^"\n]*)"/)[1])).default;
     const { createRoot } = (await import(entry.match(/"([^"\n]*\/react-dom_client\.js\?[^"\n]*)"/)[1])).default;
     const { AutomationsPage } = await import('/pi/AutomationsPage.tsx');
-    await import('/pi/automations.css');
     await import('/pi/replica-app.css');
     await import('/replica/tokens.css');
+    await import('/pi/automations.css');
     window.localPi = {
       automationSnapshot: async () => ({ tasks: [doneTask, activeTask, cappedActive], workflows: [], runs: [{ id: 'r1', taskId: 'done-1', name: '已触发的一次任务', cwd: '/tmp/proj', trigger: 'schedule', status: 'succeeded', startedAt: Date.now() - 86400000, endedAt: Date.now() - 86400000, stepIndex: 0, steps: [] }] }),
       automationToggle: async () => {}, automationStop: async () => {}, automationRunTask: async () => ({}),

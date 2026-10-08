@@ -8,9 +8,10 @@ async (page) => {
     const React = (await import(entry.match(/"([^"\n]*\/react\.js\?[^"\n]*)"/)[1])).default;
     const { createRoot } = (await import(entry.match(/"([^"\n]*\/react-dom_client\.js\?[^"\n]*)"/)[1])).default;
     const { AutomationsPage } = await import('/pi/AutomationsPage.tsx');
-    await import('/pi/automations.css');   // 真实顺序：AutomationsPage(line 11) → replica-app(79) → tokens(80)
+    // 真实注入顺序（PiReplicaApp）：replica-app → tokens → automations（同特异性 tie 由源顺序裁决）
     await import('/pi/replica-app.css');
     await import('/replica/tokens.css');
+    await import('/pi/automations.css');
     window.localPi = {
       automationSnapshot: async () => ({ tasks: [], workflows: [], runs: [] }),
       automationToggle: async () => {}, automationStop: async () => {}, automationRunTask: async () => ({}),
