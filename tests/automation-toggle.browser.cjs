@@ -6,6 +6,7 @@ async (page) => {
   page.on('pageerror', e => errors.push(String(e)));
   const url = 'http://127.0.0.1:5175/automations';
   await page.route(url, route => route.fulfill({ contentType: 'text/html', body: '<div id="root"></div><script type="module">import R from "/@react-refresh";R.injectIntoGlobalHook(window);window.$RefreshReg$=()=>{};window.$RefreshSig$=()=>t=>t;window.__vite_plugin_react_preamble_installed__=true;</script>' }));
+  await page.addInitScript(() => { try { localStorage.setItem('pi-automation-tab', 'tasks'); } catch { /* 新 context */ } });
   await page.goto(url);
   await page.waitForFunction(() => window.__vite_plugin_react_preamble_installed__);
   await page.evaluate(async () => {
@@ -27,7 +28,10 @@ async (page) => {
     };
     createRoot(document.getElementById('root')).render(React.createElement('main', { className: 'pireplica' }, React.createElement(AutomationsPage, { projects: [], models: [], onOpenSession: () => {}, onRunTask: () => {} })));
   });
-  await page.locator('[role="switch"]').first().waitFor({ timeout: 15000 });
+  await page.locator('[role="switch"]').first().waitFor({ timeout: 15000 }).catch(async e => {
+    const dump = await page.evaluate(() => ({ err: document.querySelector('.pi-auto__error')?.textContent?.slice(0, 120) ?? '', text: document.body.textContent.slice(0, 250) })).catch((x) => 'dump-failed ' + x);
+    throw new Error('switch never rendered: ' + JSON.stringify(dump).slice(0, 400));
+  });
 
   // 1. 开关只出现在未结束的卡片：t1 启用、t2 停用；t3 跑满 3/3 已结束 →「已结束」徽标替换开关（ZCode 同款完成态）
   const switches = await page.$$eval('[role="switch"]', els => els.map(e => ({ checked: e.getAttribute('aria-checked'), label: e.getAttribute('aria-label'), on: e.classList.contains('is-on') })));
