@@ -802,6 +802,15 @@ export class PiBackend {
     return view.commands.length;
   }
 
+  /** 内置 /reload（pi CLI interactive-mode 同款）：RPC 协议没有 reload 命令，Desktop 等价实现 =
+   *  重启 pi 重连同一会话，资源（扩展/skills/prompts/主题/上下文文件）全量重载、历史完整保留。
+   *  委托 refresh（资源页「重载会话」同一条路径）：guard（idle/pending/dialogs）与
+   *  executionMode/计时保留全部继承，避免双轨语义分叉。 */
+  async reloadSession(key: string) {
+    if (!this.active.has(key)) throw new Error('会话未连接；请从侧栏重新打开后再重载。');
+    return this.refresh(key);
+  }
+
   async compact(key: string, customInstructions?: string) {
     const run = this.get(key);
     if (run.view.status !== 'idle') throw new Error('请在任务空闲时压缩上下文');
@@ -973,7 +982,8 @@ export class PiBackend {
     }
     run.dialogs.clear();
   }
-  close(key: string) { const run = this.active.get(key); if (!run) return; this.active.delete(key); ++run.stopEpoch; if (run.recheckTimer) { clearTimeout(run.recheckTimer); run.recheckTimer = undefined; } this.clearSettlement(run); run.retry.dispose(); run.deferredQueue = []; this.clearDialogs(run); run.client.close(); fs.rm(path.join(this.ownedRoot, `.mode-${key}`), () => undefined); this.emit({ type: 'closed', key, generation: run.view.generation }); }
+  close(key: string) { const run = this.active.get(key); if (!run) return; this.active.delete(key); ++run.stopEpoch; if (run.recheckTimer) { clearTimeout(run.recheckTimer); run.recheckTimer = undefined; } this.clearSettlement(run); run.retry.dispose(); run.deferredQueue = []; this.clearDialogs(run); run.client.close(); // 同步删 mode 文件：close 后立即 launch（/reload、资源页刷新）时异步 rm 会晚于重写到达，把新写的文件删掉
+  fs.rmSync(path.join(this.ownedRoot, `.mode-${key}`), { force: true }); this.emit({ type: 'closed', key, generation: run.view.generation }); }
   async refresh(key: string) { const run = this.get(key); if (run.view.status !== 'idle' || run.view.pending || run.dialogs.size) throw new Error('会话仍在运行或等待交互，请完成或停止后刷新。'); const input = run.input; const executionMode = run.view.executionMode; const timing = run.view.timing; this.close(key); await this.launch(input); const active = this.get(key); active.view.executionMode = executionMode; active.view.timing = timing; this.emit({ type: 'run', run: { ...active.view } }); return { ...active.view }; }
   /** connect 首帧预算：会话文件越大加载越久（实测 40MB/700 条含截图会话 >60s）。
    *  小会话保持 60s，大会话按 5s/MB 放宽（40MB→210s，上限 5 分钟）。 */

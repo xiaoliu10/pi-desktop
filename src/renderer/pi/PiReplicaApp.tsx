@@ -464,6 +464,7 @@ export default function PiReplicaApp() {
       slashCommands={[
         // 内置命令：get_commands 只回扩展命令/模板/skills，手动补上 Desktop 已拦截路由的内置项。
         ...(run ? [{ name: '/compact', description: s.lang === 'zh' ? '手动压缩会话上下文' : 'Manually compact the session context' }] : []),
+        ...(run ? [{ name: '/reload', description: s.lang === 'zh' ? '重载扩展/skills/prompts 等资源（重启 pi，历史保留）' : 'Reload extensions/skills/prompts (restarts pi, keeps history)' }] : []),
         ...(run?.commands ?? []).map((c) => ({ name: `/${c.name}`, description: c.description ?? '' })),
       ]}
       onSlashCommandsEmpty={run ? () => { void window.localPi!.refreshCommands(run.key).catch(() => { /* 会话可能已关闭 */ }); } : undefined}
