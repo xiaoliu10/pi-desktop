@@ -115,6 +115,14 @@
       {
         "from": "extensions/desktop-schedule",
         "to": "desktop-schedule"
+      },
+      {
+        "from": "resources/builtin-skills",
+        "to": "builtin-skills"
+      },
+      {
+        "from": "resources/builtin-prompts",
+        "to": "builtin-prompts"
       }
     ],
     "mac": {
