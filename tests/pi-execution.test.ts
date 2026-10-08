@@ -115,3 +115,48 @@ it('marks a running group as bold thinking while the model streams reasoning', (
  expect(render(true)).toContain('正在思考');
  expect(render(false)).not.toContain('正在思考');
 });
+
+describe('final answer stays visible after trailing tools', () => {
+  it('keeps the last text as the visible answer even when tools run after it', () => {
+    // agent 常在总结后又跑收尾工具：严格按「最后一个工具之后的文本才算结论」会把总结折进
+    // 过程折叠块（用户要点开才能看结果）。最后一个 text 恒为结论直接可见。
+    const branch: PiEntry[] = [
+      { id:'dep-u1',type:'message',message:{role:'user',content:'部署并总结'} },
+      { id:'dep-a1',type:'message',message:{role:'assistant',timestamp:10,content:[{type:'toolCall',id:'call-1',name:'bash',arguments:{command:'deploy'}}]} },
+      { id:'dep-r1',type:'message',message:{role:'toolResult',toolCallId:'call-1',toolName:'bash',content:'deployed'} },
+      { id:'dep-a2',type:'message',message:{role:'assistant',timestamp:20,content:[{type:'text',text:'部署完成，最终结果如下。'}]} },
+      { id:'dep-a3',type:'message',message:{role:'assistant',timestamp:30,content:[{type:'toolCall',id:'call-2',name:'bash',arguments:{command:'verify'}}]} },
+      { id:'dep-r2',type:'message',message:{role:'toolResult',toolCallId:'call-2',toolName:'bash',content:'verified'} },
+    ];
+    const turn = executionTurns(historyToMessages(branch))[1];
+    expect(turn.answer.map(p => (p as {text?:string}).text)).toEqual(['部署完成，最终结果如下。']);
+    // 尾随工具仍在过程组内
+    expect(turn.steps.filter(p => p.kind === 'tool')).toHaveLength(2);
+  });
+
+  it('blank trailing text does not steal the conclusion slot; pure-tool turn has empty answer', () => {
+    const branch: PiEntry[] = [
+      { id:'bt-u1',type:'message',message:{role:'user',content:'总结'} },
+      { id:'bt-a1',type:'message',message:{role:'assistant',timestamp:10,content:[{type:'toolCall',id:'bt-c1',name:'bash',arguments:{command:'x'}}]} },
+      { id:'bt-r1',type:'message',message:{role:'toolResult',toolCallId:'bt-c1',toolName:'bash',content:'ok'} },
+      { id:'bt-a2',type:'message',message:{role:'assistant',timestamp:20,content:[{type:'text',text:'真结论。'}]} },
+      { id:'bt-a3',type:'message',message:{role:'assistant',timestamp:30,content:[{type:'toolCall',id:'bt-c2',name:'bash',arguments:{command:'y'}}]} },
+      { id:'bt-r2',type:'message',message:{role:'toolResult',toolCallId:'bt-c2',toolName:'bash',content:'ok'} },
+      { id:'bt-a4',type:'message',message:{role:'assistant',timestamp:40,content:[{type:'text',text:''}]} },
+    ];
+    const turn = executionTurns(historyToMessages(branch))[1];
+    expect(turn.answer.map(p => (p as {text?:string}).text)).toEqual(['真结论。']);
+    // 纯工具 turn：无结论文本，answer 为空（折叠块照旧）
+    const toolOnly = executionTurns(historyToMessages([branch[0]!, { id:'bt-a5',type:'message',message:{role:'assistant',timestamp:50,content:[{type:'toolCall',id:'bt-c3',name:'bash',arguments:{command:'z'}}]} }, { id:'bt-r3',type:'message',message:{role:'toolResult',toolCallId:'bt-c3',toolName:'bash',content:'ok'} }]))[1];
+    expect(toolOnly.answer).toEqual([]);
+  });
+
+  it('renders the visible conclusion after the collapsed group in completed mode', () => {
+    const labels={you:'你',assistant:'pi',simulatedRun:'演示',toolRunning:'运行中',toolDone:'完成',toolError:'失败',details:'详情',queued:'排队',working:'执行中'};
+    const markup = renderToStaticMarkup(createElement(ChatView,{messages: historyToMessages(branch), running:false, queued:0, demo:false, labels, onJumpToMessage:()=>{}}));
+    const group = markup.indexOf('pi-execution');
+    const conclusion = markup.indexOf('最终回复保持直接可见。');
+    expect(group).toBeGreaterThanOrEqual(0);
+    expect(conclusion).toBeGreaterThan(group); // 结论在过程组之后直接可见（完成态合并渲染）
+  });
+});

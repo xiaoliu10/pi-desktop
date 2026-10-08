@@ -95,10 +95,16 @@ export function executionTurns(messages: ChatMessage[]): ChatTurn[] {
     // 过程文本保持时间线原位（ZCode 同款）：最后一个工具/思考之前的文本是过程叙述，
     // 留在执行组内以段落（pi-execution__commentary）渲染；之后的文本才是结论，直接可见。
     // （曾把过程文本折进思考块——流式时文字还会从答案位跳进思考行；用户要求像 ZCode 一样显示过程叙述）
+    // 例外：最后一个 text 恒为结论（用户要求：任务结束后结果直接可见，不折进过程块）——
+    // agent 常在总结后又跑收尾工具，若严格按「最后一个工具之后」判定，总结会被折进组里。
     let lastStepsIndex = -1;
+    let lastTextIndex = -1;
     for (let i = flattened.length - 1; i >= 0; i -= 1) {
       const k = flattened[i]!.kind;
-      if (k === 'tool' || k === 'thinking') { lastStepsIndex = i; break; }
+      if (lastStepsIndex === -1 && (k === 'tool' || k === 'thinking')) lastStepsIndex = i;
+      // 空白 text（stream-delta 的 text_start 空块）不占结论位：否则真实结论会被折回组内
+      if (lastTextIndex === -1 && k === 'text' && (flattened[i] as { text?: string }).text?.trim()) lastTextIndex = i;
+      if (lastStepsIndex !== -1 && lastTextIndex !== -1) break;
     }
     const segments: ChatSegment[] = [];
     const isStepLike = (p?: MessagePart) => !!p && (p.kind === 'tool' || p.kind === 'thinking');
@@ -109,7 +115,7 @@ export function executionTurns(messages: ChatMessage[]): ChatTurn[] {
       // 孤立压缩（如手动 /compact 落在末轮结论文本之后、前后都没有步骤）不入组：
       // 否则它会折进一个只显示计时的空组里反而不可见，保持直接可见的 text 段。
       const adjacentToSteps = isStepLike(flattened[index - 1]) || isStepLike(flattened[index + 1]);
-      const kind: ChatSegment['kind'] = isStepLike(part) || (part.kind === 'notice' && part.strong && adjacentToSteps) || (part.kind === 'text' && index < lastStepsIndex) ? 'steps' : 'text';
+      const kind: ChatSegment['kind'] = isStepLike(part) || (part.kind === 'notice' && part.strong && adjacentToSteps) || (part.kind === 'text' && index < lastStepsIndex && index !== lastTextIndex) ? 'steps' : 'text';
       const currentSeg = segments[segments.length - 1];
       if (currentSeg && currentSeg.kind === kind) currentSeg.parts.push(part);
       else segments.push({ kind, parts: [part] });
