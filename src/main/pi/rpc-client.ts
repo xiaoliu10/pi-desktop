@@ -7,6 +7,7 @@ export class PiRpcClient extends EventEmitter {
   private pending = new Map<string, { resolve: (x: any) => void; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout> }>();
   private stopped = false;
   private diagnostic = '';
+  private exitInfo: { code: number | null; signal: NodeJS.Signals | null } | null = null;
   private stderrTail = '';
   constructor(command: string, args: string[], cwd: string, env: NodeJS.ProcessEnv) {
     super();
@@ -37,7 +38,7 @@ export class PiRpcClient extends EventEmitter {
       this.stderrTail = (this.stderrTail + String(chunk)).slice(-4000);
     });
     this.child.on('error', err => this.fail(err));
-    this.child.on('exit', (code, signal) => { this.fail(new Error(`pi 已退出 (${signal || code})。${this.diagnostic}`)); this.emit('closed'); });
+    this.child.on('exit', (code, signal) => { this.exitInfo = { code, signal }; this.fail(new Error(`pi 已退出 (${signal || code})。${this.diagnostic}`)); this.emit('closed'); });
     this.child.stdin.on('error', err => this.fail(err));
   }
   request(type: string, data: Record<string, unknown> = {}, timeout = 30_000): Promise<any> {
@@ -56,6 +57,12 @@ export class PiRpcClient extends EventEmitter {
   /** Startup/crash stderr tail (trimmed) — safe to show: pi 的致命错误行不携带密钥，且只在本机 UI 展示。 */
   stderrDetail(): string {
     return this.stderrTail.split('\n').map(l => l.trim()).filter(Boolean).slice(-3).join('\n').slice(0, 400);
+  }
+  /** How the process ended — signal (external kill/OOM) vs exit code (self-exit). 红条诊断关键：无信号无 stderr 的退出多为被系统/外部杀掉。 */
+  exitDetail(): string {
+    if (!this.exitInfo) return '';
+    const how = this.exitInfo.signal ? `信号 ${this.exitInfo.signal}` : `退出码 ${this.exitInfo.code ?? '未知'}`;
+    return how + (this.exitInfo.signal && !this.stderrTail.trim() ? '（无任何报错输出，多为被系统或外部工具终止，如内存压力 kill）' : '');
   }
   private fail(error: Error) {
     this.stopped = true;
