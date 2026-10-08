@@ -499,7 +499,7 @@ export default function PiReplicaApp() {
         <>
           <AccessModeMenu value={run?.accessMode ?? s.draftAccessMode ?? s.desktopPreferences?.sessionAccessModes?.[s.selectedKey ?? ''] ?? s.desktopPreferences?.permission ?? 'ask'} disabled={s.connecting} changing={s.changingAccessMode} zh={s.lang === 'zh'} onChange={s.setAccessMode} />
           {!run && s.history && s.history.leaves.length > 1 && <select className="pi-history-branch" aria-label={s.lang === 'zh' ? '对话历史分支' : 'History branch'} title={s.lang === 'zh' ? '会话消息树在此分叉过（重试/编辑/分叉会产生多个分支），非 git 分支' : 'The session message tree forked here (retry/edit/fork) — not a git branch'} value={s.leaf ?? s.history.leafId ?? ''} onChange={e => usePiStore.setState({leaf:e.target.value})}>{s.history.leaves.map((id, i) => <option key={id} value={id}>{`${s.lang === 'zh' ? '对话分支' : 'Branch'} ${i + 1}`}</option>)}</select>}
-          {s.connecting && <span role="status">{s.lang === 'zh' ? '正在准备任务…' : 'Preparing task…'}</span>}
+          {s.connecting && <span role="status">{run?.status === 'starting' && run?.stage === 'loading' ? (s.lang === 'zh' ? '正在加载会话历史…' : 'Loading session history…') : s.lang === 'zh' ? '正在准备任务…' : 'Preparing task…'}</span>}
         </>
       }
       statusSlot={run ? <ContextUsageChip key={`${run.key}:${run.generation}`} usage={run.contextUsage} model={run.model ? `${run.model.provider} / ${run.model.name || run.model.id}` : undefined} zh={s.lang === 'zh'} compact /> : undefined}
