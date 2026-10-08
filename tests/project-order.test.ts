@@ -103,4 +103,16 @@ describe('stable sidebar project order', () => {
     expect(paths(buildPiSidebar([], [], [], {}, prefs))).toEqual(expected.slice(0, -2));
     expect(JSON.stringify(prefs)).toBe(before);
   });
+
+  it('hides subagent/fork internal sessions (parentSession) from the sidebar', () => {
+    // pi 的 subagent 子会话与父会话同目录（带 parentSession），不能伪装成新会话出现在列表里。
+    const parent = session('/w/z-work', 'main', 100);
+    const subagent: PiSession = { ...session('/w/z-work', 'sub', 200), parentSession: parent.path };
+    const forkCopy: PiSession = { ...session('/w/a/z', 'fork', 300), parentSession: '/external/orig.jsonl' };
+    const sidebar = buildPiSidebar([parent, subagent, forkCopy], [], [], {});
+    const listed = sidebar.projects.flatMap(p => p.sessions.map(s => s.id));
+    expect(listed).toEqual(['main']);
+    // fork 副本所在项目无其余用户会话时不残留空项目行（发现型项目随会话消失）。
+    expect(sidebar.projects.map(p => p.path)).toEqual(['/w/z-work']);
+  });
 });

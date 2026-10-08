@@ -519,7 +519,7 @@ export default function PiReplicaApp() {
   );
 
   const searchItems: SearchItem[] = useMemo(() => {
-    const sessions: SearchItem[] = s.sessions.filter(sess=>!s.archivedKeys.includes(sess.key)&&!s.desktopPreferences?.hiddenProjects?.includes(sess.cwd)).map((sess) => ({
+    const sessions: SearchItem[] = s.sessions.filter(sess=>!s.archivedKeys.includes(sess.key)&&!s.desktopPreferences?.hiddenProjects?.includes(sess.cwd)&&!sess.parentSession).map((sess) => ({
       id: `sess-${sess.key}`,
       kind: 'session',
       title: sess.name,
