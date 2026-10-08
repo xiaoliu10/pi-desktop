@@ -449,6 +449,12 @@
 }
 
 .pireplica .pi-notice.pi-notice--strong svg { flex-shrink: 0; }
+/* 过程列表内的压缩记录行：与步骤行同级观感（更紧凑），位置即触发时序。 */
+.pireplica .pi-execution__steps .pi-notice.pi-notice--strong {
+  padding: 6px 10px;
+  font-size: 12px;
+  margin: 4px 0;
+}
 
 .pireplica .pi-error {
   background: var(--pi-red-bg);
