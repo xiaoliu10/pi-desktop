@@ -5,13 +5,14 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { PiEnvironment, PiEvent, PiRun, PiUiRequest } from '../../shared/pi';
 import { PiRpcClient } from './rpc-client';
-import { SessionIndex, fileKey } from './session-index';
+import { SessionIndex, canonical, fileKey } from './session-index';
 import { runAutomationBridge, SCHEDULE_GUIDANCE } from './automation-bridge';
 import { summarizeContext } from './context-details';
 import { detectThirdPartySubagent, migrateOldSubagentExtension, persistSubagentEvent } from './official-subagent';
 import { clearMemoryEnv, memorySessionEnv } from './memory-bridge';
 import { repairPackages } from './packages-repair';
 import { RetryGroups } from './retry-groups';
+import { loadContinuations, recordContinuation, resolveContinuation, saveContinuations } from './session-continuations';
 /** prompt 出栈前登记的图片 sidecar：pi 的 queue_update 只回文本，权威队列到达后
  *  按 文本+behavior+出现次序 把图接回。at 用于过期清理（暂存一直未被任何 queue_update
  *  确认 = pi 已直接分发或丢弃该项，不能再把图配给后来同文本的纯文本排队项）。 */
@@ -36,6 +37,8 @@ export class PiBackend {
   memoryOptions: (() => { enabled: boolean; dir: string }) | undefined;
   /** main 在 AutomationService 就绪后注入；desktop_schedule 工具经 automation-bridge 读写定时任务。 */
   automations: import('./automation-bridge').AutomationBridgeService | undefined;
+  /** main 提供：编辑重发 fork 后迁移用户 rename（旧 key → 新 key，复制不删）。 */
+  onContinuation?: (fromKey: string, toKey: string) => void;
   constructor(private env: PiEnvironment, private index: SessionIndex, private ownedRoot: string, private policyPath: string, private emit: (e: PiEvent) => void, private dataDir?: string) {}
   hasPendingDialogs(key: string) { return (this.active.get(key)?.dialogs.size ?? 0) > 0; }
   /** 待处理的 UI 审批快照（远控页刷新后据此恢复审批卡片）。 */
@@ -56,8 +59,13 @@ export class PiBackend {
       const source = this.index.history(input.sourceKey);
       cwd = source.session.cwd;
       if (!path.isAbsolute(cwd) || !fs.statSync(cwd).isDirectory()) throw new Error('源项目目录已失效；仍可只读查看历史。');
-      origin = fileKey(source.session.path);
-      const attached = this.active.get(origin) ?? [...this.active.values()].find(r => r.input.origin === origin);
+      // 延续重定向：该会话被「编辑重发」fork 过时，后续对话在链尾文件里。
+      // attach 与打开目标都按链尾匹配——fork 后活着的 run 挂在旧 key/origin 上，
+      // 但它的实际文件已 rebind，直接再 launch 会产生同文件双 pi 进程。
+      const map = loadContinuations(this.dataDir);
+      const continued = canonical(resolveContinuation(map, source.session.path));
+      origin = fileKey(continued);
+      const attached = this.active.get(origin) ?? [...this.active.values()].find(r => canonical(resolveContinuation(map, r.input.file)) === continued);
       if (attached) return attached.view;
     }
     if (this.active.size >= 6) throw new Error('最多同时连接 6 个会话，请先断开空闲会话。');
@@ -65,16 +73,22 @@ export class PiBackend {
     this.ownedRoot = fs.realpathSync(this.ownedRoot);
     if (input.sourceKey) {
       const source = this.index.history(input.sourceKey);
-      cwd = source.session.cwd;
+      const continuedPath = canonical(resolveContinuation(loadContinuations(this.dataDir), source.session.path));
       if (source.session.owned) {
         // Desktop 自建会话原地续聊；只有外部 CLI 会话才派生副本，
         // 否则每次断开后继续都会 fork 出一条新会话。
-        file = source.session.path;
+        file = continuedPath === canonical(source.session.path) ? source.session.path : continuedPath;
       } else {
-        // 外部原件已有 Desktop 副本时，继续最近的那个副本，不再重复 fork。
-        const child = this.index.scan().find(s => s.owned && s.parentSession === source.session.path);
-        if (child) { const activeChild=this.active.get(child.key); if(activeChild)return activeChild.view; file = child.path; }
-        else {
+        // 外部原件已有 Desktop 副本时，继续最近的那个副本（副本自身被 fork 过则继续其链尾），不再重复 fork。
+        const child = this.index.scan().filter(s => s.owned && s.parentSession === source.session.path)
+          .sort((x, y) => y.updatedAt - x.updatedAt)[0];
+        if (child) {
+          const childPath = canonical(resolveContinuation(loadContinuations(this.dataDir), child.path));
+          const childKey = fileKey(childPath);
+          const activeChild = this.active.get(childKey) ?? this.active.get(child.key);
+          if (activeChild) return activeChild.view;
+          file = childPath;
+        } else {
           // Never open an external CLI file for writing. Preserve all entries on a copy.
           const id = randomUUID(); file = path.join(this.ownedRoot, `${Date.now()}_${id}.jsonl`);
           const sourceHeader = JSON.parse(fs.readFileSync(source.session.path, 'utf8').split('\n')[0]);
@@ -608,6 +622,18 @@ export class PiBackend {
     if (this.hasPendingDialogs(key)) throw new Error('等待交互完成后再编辑');
     const result = await run.client.request('fork', { entryId }, 30_000) as { text?: unknown; cancelled?: unknown } | undefined;
     if (result?.cancelled) throw new Error('回退已取消');
+    // pi fork 后把后续对话写进新 session 文件（旧文件成为只读快照）。记录延续关系：
+    // 点击旧条目时重定向到链尾（历史完整），侧栏合并为一条，避免出现同名新会话。
+    try {
+      const state = await run.client.request('get_state', {}, 10_000) as { sessionFile?: string } | undefined;
+      const next = state?.sessionFile;
+      if (this.dataDir && typeof next === 'string' && next && canonical(next) !== canonical(run.input.file)) {
+        saveContinuations(this.dataDir, recordContinuation(loadContinuations(this.dataDir), run.input.file, next));
+        // 二次编辑重发必须喂链尾（否则 record 会用过期链头产生断链映射）。
+        run.input.file = canonical(next);
+        this.onContinuation?.(key, fileKey(run.input.file));
+      }
+    } catch { /* 记录失败不影响 fork 本身；下次编辑重发会再记 */ }
     void this.refreshContextUsage(run);
     this.emit({ type: 'run', run: { ...run.view } });
     return typeof result?.text === 'string' ? result.text : '';

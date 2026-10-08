@@ -14,12 +14,14 @@ import { workspaceReview } from './workspace-review';
 export class PiHost {
   preferences: PiPreferences;
   environment;
+  readonly dataDir: string;
   accounts = new PiAccounts(()=>this.environment.agentDir);
   index: SessionIndex;
   backend: PiBackend;
   private resourcesTimer?: ReturnType<typeof setInterval>;
   private usage = new UsageStatsService(() => this.index.scan());
-  constructor(private dataDir: string, private policyPath: string, private emit: (e: PiEvent) => void, private sharedSkillsDir?: string) {
+  constructor(dataDir: string, private policyPath: string, private emit: (e: PiEvent) => void, private sharedSkillsDir?: string) {
+    this.dataDir = dataDir;
     try { this.preferences = JSON.parse(fs.readFileSync(path.join(dataDir, 'pi-desktop.json'), 'utf8')); } catch { this.preferences = {}; }
     this.environment = discoverPi(this.preferences);
     const owned = path.join(this.environment.agentDir, 'sessions', 'desktop');
