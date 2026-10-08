@@ -19,9 +19,9 @@ async (page) => {
     const React = (await import(entry.match(/"([^"\n]*\/react\.js\?[^"\n]*)"/)[1])).default;
     const { createRoot } = (await import(entry.match(/"([^"\n]*\/react-dom_client\.js\?[^"\n]*)"/)[1])).default;
     const { AutomationsPage } = await import('/pi/AutomationsPage.tsx');
-    await import('/pi/automations.css');
     await import('/pi/replica-app.css');
     await import('/replica/tokens.css');
+    await import('/pi/automations.css');
     window.localPi = {
       automationSnapshot: async () => ({ tasks: [doneTask, activeTask, cappedActive], workflows: [], runs: [{ id: 'r1', taskId: 'done-1', name: '已触发的一次任务', cwd: '/tmp/proj', trigger: 'schedule', status: 'succeeded', startedAt: Date.now() - 86400000, endedAt: Date.now() - 86400000, stepIndex: 0, steps: [] }] }),
       automationToggle: async () => {}, automationStop: async () => {}, automationRunTask: async () => ({}),

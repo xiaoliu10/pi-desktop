@@ -2,17 +2,15 @@
 .pi-auto__header { display:flex; align-items:center; justify-content:space-between; gap:24px; margin-bottom:28px; }
 .pi-auto h1 { margin:0 0 8px; font-size:28px; font-weight:600; letter-spacing:-.6px; }
 .pi-auto__header p { color:var(--pi-text-secondary); margin:0; font-size:13px; }
-/* 按钮基础规则用 .pireplica 前缀提升特异性：tokens.css 的 .pireplica button reset（padding:0/background:none/border:none）
- * 与 .pi-auto button 同为 (0,1,1) 且后加载，会把这里的 padding 全部压掉（保存任务文字贴边）。 */
-.pireplica .pi-auto button { cursor:pointer; display:inline-flex; align-items:center; justify-content:center; gap:6px; border:1px solid var(--pi-border); border-radius:8px; background:var(--pi-bg); color:var(--pi-text); padding:7px 11px; font:inherit; font-size:12px; }
-.pireplica .pi-auto button:hover { background:var(--pi-bg-hover); }
-.pireplica .pi-auto button:disabled { opacity:.45; cursor:default; }
+.pi-auto button { cursor:pointer; display:inline-flex; align-items:center; justify-content:center; gap:6px; border:1px solid var(--pi-border); border-radius:8px; background:var(--pi-bg); color:var(--pi-text); padding:7px 11px; font:inherit; font-size:12px; }
+.pi-auto button:hover { background:var(--pi-bg-hover); }
+.pi-auto button:disabled { opacity:.45; cursor:default; }
 .pi-auto button.pi-auto__primary { background:var(--pi-text);color:var(--pi-bg);border-color:transparent; }
 .pi-auto button.pi-auto__back { padding:0; border:0; color:var(--pi-text-secondary); margin-bottom:14px; }
 .pi-auto__buttons,.pi-auto__filters { display:flex; align-items:center; gap:8px; }
 .pi-auto__tabs { display:flex;gap:22px;border-bottom:1px solid var(--pi-border);margin-bottom:24px; }
-.pireplica .pi-auto__tabs button { border:0;border-radius:0;background:none;padding:12px 0;font-size:14px;color:var(--pi-text-secondary); }
-.pireplica .pi-auto__tabs button[aria-pressed=true] { color:var(--pi-text);border-bottom:2px solid var(--pi-text); }
+.pi-auto__tabs button { border:0;border-radius:0;background:none;padding:12px 0;font-size:14px;color:var(--pi-text-secondary); }
+.pi-auto__tabs button[aria-pressed=true] { color:var(--pi-text);border-bottom:2px solid var(--pi-text); }
 .pi-auto__tabs small { font-size:11px;padding:0 5px;color:var(--pi-text-tertiary); }
 .pi-auto input,.pi-auto select,.pi-auto textarea { box-sizing:border-box;border:1px solid var(--pi-border-strong);border-radius:8px;padding:9px 11px;background:var(--pi-bg);color:var(--pi-text);font:inherit;font-size:13px;min-width:0; }
 .pi-auto textarea { resize:vertical;line-height:1.6; }
@@ -55,7 +53,7 @@
 .pi-auto__step { padding:14px;border:1px solid var(--pi-border);border-radius:10px; }
 .pi-auto__step>div { display:flex;align-items:center;gap:8px;margin-bottom:10px; }.pi-auto__step input { flex:1; }.pi-auto__step textarea { width:100%; }
 .pi-auto__source { white-space:pre-wrap;overflow-wrap:anywhere;background:var(--pi-bg-card);padding:20px;border-radius:12px;font-size:12px; }
-.pi-auto__error { color:var(--pi-red);background:var(--pi-red-bg);padding:10px 14px;border-radius:8px;font-size:12px;overflow-wrap:anywhere;margin-bottom:16px; }.pireplica .pi-auto__error button { float:right;padding:0 4px;border:0;background:none; }
+.pi-auto__error { color:var(--pi-red);background:var(--pi-red-bg);padding:10px 14px;border-radius:8px;font-size:12px;overflow-wrap:anywhere;margin-bottom:16px; }.pi-auto__error button { float:right;padding:0 4px;border:0;background:none; }
 .pi-auto__modal { background:var(--pi-bg);border:1px solid var(--pi-border);border-radius:18px;padding:26px;box-shadow:var(--pi-shadow-popover);width:min(560px,90vw);max-height:85vh;overflow:auto;display:flex;flex-direction:column;gap:16px; }.pi-auto__modal h2 { margin:0;font-size:19px; }
 .pi-auto__history { display:flex;flex-direction:column;gap:16px; }.pi-auto__history article { padding:20px;border:1px solid var(--pi-border);border-radius:12px; }.pi-auto__history header { display:flex;gap:16px;align-items:center;font-size:12px;color:var(--pi-text-secondary); }.pi-auto__history ol { padding-left:20px;font-size:12px; }.pi-auto__history li { padding:7px 0; }.pi-auto__history li small { margin-left:12px;color:var(--pi-text-tertiary); }
 .pi-auto__status { border:1px solid var(--pi-border);border-radius:20px;padding:3px 9px; }.pi-auto__status--succeeded { color:var(--pi-green); }.pi-auto__status--failed,.pi-auto__status--interrupted { color:var(--pi-red); }.pi-auto__status--waiting { color:var(--pi-orange-text); }

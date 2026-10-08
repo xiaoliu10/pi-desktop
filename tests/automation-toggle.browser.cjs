@@ -14,7 +14,7 @@ async (page) => {
     const React = (await import(entry.match(/"([^"\n]*\/react\.js\?[^"\n]*)"/)[1])).default;
     const { createRoot } = (await import(entry.match(/"([^"\n]*\/react-dom_client\.js\?[^"\n]*)"/)[1])).default;
     const { AutomationsPage } = await import('/pi/AutomationsPage.tsx');
-    await import('/pi/automations.css'); await import('/pi/replica-app.css'); await import('/replica/tokens.css');
+    await import('/pi/replica-app.css'); await import('/replica/tokens.css'); await import('/pi/automations.css');
     const task = (id, name, enabled, runCount = 3, maxRuns) => ({ id, name, cwd: '/Users/jason/projects/pi-desktop', prompt: 'prompt ' + id, args: {}, thinking: 'off', permission: 'ask', schedule: { kind: 'cron', expression: '0 9 * * *' }, enabled, runCount, maxRuns, nextRunAt: Date.now() + 3600_000, updatedAt: 0 });
     // t3 跑满 3/3 次：服务端已达上限后 enabled 自动为 false，文案应显示「已结束」而非「已暂停」。
     const snapshot = { tasks: [task('t1', '晚上18点发生产', true), task('t2', '每晚22点发布', false), task('t3', '只跑三次的任务', false, 3, 3)], workflows: [], runs: [] };
