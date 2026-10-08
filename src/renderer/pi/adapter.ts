@@ -1661,7 +1661,11 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
           const rememberedMode = get().desktopPreferences?.sessionAccessModes?.[key];
           const run = await window.localPi!.connect({ sourceKey: key, trustProject: false, permission: rememberedMode ?? get().desktopPreferences?.permission ?? 'ask' });
           set(st => st.runs.some(r => r.key === run.key) ? st : { runs: [...st.runs, run] });
-        } catch { /* 预热失败静默：真正发送时 send 的完整 connect 会再次尝试并明确报错 */ }
+        } catch (e) {
+          // 预热失败不再完全静默：错误恒挂到该会话 key（与本文件其他错误点同款），
+          // 红条只在该会话被选中时显示——归属正确且不会跨会话渗漏。
+          set({ error: String((e as Error).message || e), errorKey: key });
+        }
       })();
       prewarmInFlight.set(key, p);
       void p.finally(() => prewarmInFlight.delete(key));
