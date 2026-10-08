@@ -102,7 +102,8 @@ export function executionTurns(messages: ChatMessage[]): ChatTurn[] {
     for (let i = flattened.length - 1; i >= 0; i -= 1) {
       const k = flattened[i]!.kind;
       if (lastStepsIndex === -1 && (k === 'tool' || k === 'thinking')) lastStepsIndex = i;
-      if (lastTextIndex === -1 && k === 'text') lastTextIndex = i;
+      // 空白 text（stream-delta 的 text_start 空块）不占结论位：否则真实结论会被折回组内
+      if (lastTextIndex === -1 && k === 'text' && (flattened[i] as { text?: string }).text?.trim()) lastTextIndex = i;
       if (lastStepsIndex !== -1 && lastTextIndex !== -1) break;
     }
     const segments: ChatSegment[] = [];
