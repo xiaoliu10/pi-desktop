@@ -512,6 +512,9 @@ export function buildPiSidebar(
   const runByKey = new Map(runs.map((r) => [r.key, r]));
   const byCwd = new Map<string, PiSession[]>();
   for (const s of sessions) {
+    // Subagent / fork 内部会话（parentSession 非空）不进用户会话列表：
+    // pi 的 subagent 子会话与父会话同目录，会被索引扫出并伪装成新会话。
+    if (s.parentSession) continue;
     const list = byCwd.get(s.cwd) ?? [];
     // Archive-only discovered projects still belong in the sidebar.
     if (!archived.has(s.key)) list.push(s);
