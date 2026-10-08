@@ -1,17 +1,17 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync, existsSync } from 'fs';
+import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync, mkdirSync, existsSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { syncBuiltinSkills } from '../src/main/pi/builtin-skills';
+import { syncBuiltinSkills, syncBuiltinPrompts } from '../src/main/pi/builtin-skills';
 
 // P0 回归守卫：sync 调用必须在 PiHost 构造之后（host 变量此前为 undefined，
 // 错误位置会被 catch 吞成静默失效——单测层测不到装配顺序）。
-it('main/index.ts 中 syncBuiltinSkills 位于 host = new PiHost 之后', () => {
+it('main/index.ts 中内置资源同步位于 host = new PiHost 之后', () => {
   const src = readFileSync(join(__dirname, '..', 'src', 'main', 'index.ts'), 'utf8');
   const hostAssign = src.indexOf('host = new PiHost(');
-  const syncCall = src.indexOf('syncBuiltinSkills(host.environment.agentDir');
   expect(hostAssign).toBeGreaterThan(-1);
-  expect(syncCall).toBeGreaterThan(hostAssign);
+  expect(src.indexOf('syncBuiltinSkills(host.environment.agentDir')).toBeGreaterThan(hostAssign);
+  expect(src.indexOf('syncBuiltinPrompts(host.environment.agentDir')).toBeGreaterThan(hostAssign);
 });
 
 const dirs: string[] = [];
@@ -117,6 +117,57 @@ describe('syncBuiltinSkills', () => {
       expect(md).toMatch(/^---\r?\nname: /);
       expect(md).toContain('builtin: true');
       expect(md).toMatch(/^description: "[^"]{20,}/m);
+    }
+  });
+
+  it('prompts 同步：单文件形态独立 manifest，升级/用户改跳过/移除清理', () => {
+    const agent = makeDir(), source = makeDir();
+    writeFileSync(join(source, 'weekly-report.md'), 'v1');
+    writeFileSync(join(source, 'check-failures.md'), 'v1');
+    const r1 = syncBuiltinPrompts(agent, source);
+    expect(r1.synced.sort()).toEqual(['check-failures.md', 'weekly-report.md']);
+    expect(existsSync(join(agent, 'prompts', 'weekly-report.md'))).toBe(true);
+    // 升级
+    writeFileSync(join(source, 'weekly-report.md'), 'v2');
+    expect(syncBuiltinPrompts(agent, source).synced).toEqual(['weekly-report.md']);
+    expect(readFileSync(join(agent, 'prompts', 'weekly-report.md'), 'utf8')).toBe('v2');
+    // 用户改 → 永不覆盖
+    writeFileSync(join(agent, 'prompts', 'check-failures.md'), 'mine');
+    writeFileSync(join(source, 'check-failures.md'), 'v2');
+    const r2 = syncBuiltinPrompts(agent, source);
+    expect(r2.skipped).toEqual(['check-failures.md']);
+    expect(readFileSync(join(agent, 'prompts', 'check-failures.md'), 'utf8')).toBe('mine');
+    // 从内置清单移除：未改副本清理，已改保留
+    rmSync(join(source, 'weekly-report.md'));
+    const r3 = syncBuiltinPrompts(agent, source);
+    expect(r3.removed).toEqual(['weekly-report.md']);
+    expect(existsSync(join(agent, 'prompts', 'weekly-report.md'))).toBe(false);
+    expect(existsSync(join(agent, 'prompts', 'check-failures.md'))).toBe(true);
+  });
+
+  it('同名形态冲突（目标同名文件/目录互错）不覆盖用户之物', () => {
+    const agent = makeDir(), source = makeDir();
+    writeSkill(source, 'pptx', 'shipped');
+    mkdirSync(join(agent, 'skills'), { recursive: true });
+    writeFileSync(join(agent, 'skills', 'pptx'), 'user file'); // 同名文件 vs 内置目录
+    writeFileSync(join(source, 'note.md'), 'prompt');
+    mkdirSync(join(agent, 'prompts'), { recursive: true });
+    mkdirSync(join(agent, 'prompts', 'note.md'), { recursive: true }); // 同名目录 vs 内置文件
+    const r = syncBuiltinSkills(agent, source);
+    const p = syncBuiltinPrompts(agent, source);
+    expect(r.skipped).toEqual(['pptx']);
+    expect(p.skipped).toEqual(['note.md']);
+  });
+
+  it('仓库内置提示词模板 frontmatter 合法（description/命令名=文件名）', () => {
+    const source = join(__dirname, '..', 'resources', 'builtin-prompts');
+    const files = readdirSync(source).filter(f => f.endsWith('.md')).sort();
+    expect(files.length).toBe(12);
+    for (const f of files) {
+      const md = readFileSync(join(source, f), 'utf8');
+      expect(md, f).toMatch(/^---\r?\ndescription: [^\r\n]{10,}\r?\n/);
+      expect(md, f).not.toMatch(/plugin:\/\/|zcode-plugins-official/); // 不残留 ZCode 插件引用
+      expect(md, f).not.toContain('${@'); // 只用支持的替换语法
     }
   });
 });
