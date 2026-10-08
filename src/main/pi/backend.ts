@@ -39,6 +39,8 @@ export class PiBackend {
   automations: import('./automation-bridge').AutomationBridgeService | undefined;
   /** main 提供：编辑重发 fork 后迁移用户 rename（旧 key → 新 key，复制不删）。 */
   onContinuation?: (fromKey: string, toKey: string) => void;
+  /** 测试注入点：替换 PiRpcClient 构造（生产不设）。 */
+  clientFactory?: (command: string, args: string[], cwd: string, env: NodeJS.ProcessEnv) => PiRpcClient;
   constructor(private env: PiEnvironment, private index: SessionIndex, private ownedRoot: string, private policyPath: string, private emit: (e: PiEvent) => void, private dataDir?: string) {}
   hasPendingDialogs(key: string) { return (this.active.get(key)?.dialogs.size ?? 0) > 0; }
   /** 待处理的 UI 审批快照（远控页刷新后据此恢复审批卡片）。 */
@@ -213,7 +215,7 @@ export class PiBackend {
         : input.tools ? ['--tools', input.tools.join(',')] : []),
       ...(input.model ? ['--model', input.model] : []),
     ];
-    const client = new PiRpcClient(this.env.executable!, args, input.cwd, env);
+    const client = (this.clientFactory ?? ((cmd: string, a: string[], cwd: string, e: NodeJS.ProcessEnv) => new PiRpcClient(cmd, a, cwd, e)))(this.env.executable!, args, input.cwd, env);
     const view: PiRun = { accessMode: input.permission, executionMode: input.permission === 'plan' ? input.executionMode ?? 'ask' : input.permission, key, generation, cwd: input.cwd, file: input.file, status: 'starting', models: [], commands: [], pending: 0 };
     const run: Running = { activity: 0, eventCount: 0, lastEventAt: Date.now(), promptSequence: 0, retryUncertain: false, stopUnconfirmed: false, retry: undefined!, retryReady: false, deferredQueue: [], stopEpoch: 0, policyReady: false, client, view, input, dialogs: new Map(), queueImages: [] };
     run.retry = new RetryGroups(state => {
@@ -241,8 +243,25 @@ export class PiBackend {
       view.error = `pi 进程已退出${exit ? `（${exit}）` : ''}，请断开后重连。任务未自动重放。${stderr ? `\npi stderr：${stderr}` : ''}`;
       this.clearDialogs(run); this.emit({ type: 'run', run: { ...view } }); this.emit({ type: 'closed', key, generation });
     });
+    let firstFrameScope = true; // get_state 阶段标记：超时 append 只贴在首帧阶段
     try {
-      const state = await client.request('get_state', {}, 60_000);
+      // 大会话的首帧加载（40MB/700 条含截图的会话实测 60s+）不能按固定 60s 判死——
+      // 慢 ≠ 坏。预算按会话规模放宽，超时后重试一次，仍失败才带着规模信息报错。
+      const budget = this.startupBudget(run.input.file);
+      if (budget > 60_000) { view.stage = 'loading'; this.emit({ type: 'run', run: { ...run.view } }); } // 大会话立刻可见「加载中」
+      let firstFrame: any;
+      try { firstFrame = await client.request('get_state', {}, budget); }
+      catch (e) {
+        // 超时不判死：重试一次（RPC 客户端超时会 reject 但 pi 本体仍在加载，请求可重发）。
+        if (this.active.get(key) !== run) throw e; // 等待期内 pi 崩溃/用户断开：closed 已移除 run，迟到 run 事件会造僵尸条目
+        firstFrame = await client.request('get_state', {}, budget);
+      }
+      // 首帧成功后广播一次（starting 态带历史加载规模），让 UI 从「正在准备」变成「已连接，正在拉取模型」。
+      view.model = firstFrame?.model ? { id: String(firstFrame.model.id), name: String(firstFrame.model.name || firstFrame.model.id), provider: String(firstFrame.model.provider), reasoning: !!firstFrame.model.reasoning, input: Array.isArray(firstFrame.model.input) ? firstFrame.model.input : undefined } : undefined;
+      view.stage = undefined; // 历史已加载完，剩余是轻量的 models/commands 拉取
+      this.emit({ type: 'run', run: { ...run.view } });
+      firstFrameScope = false; // 之后是轻量的 models/commands 拉取，其超时不贴首帧文案
+      const state = firstFrame;
       const models = await client.request('get_available_models');
       const commands = await client.request('get_commands');
       if (!run.policyReady) throw new Error('Desktop 工具权限扩展未成功加载，已断开 pi。');
@@ -253,6 +272,7 @@ export class PiBackend {
       view.thinkingLevel = state?.thinkingLevel ?? 'off';
       view.thinkingLevels = (await client.request('get_available_thinking_levels').catch(() => ({levels: []})))?.levels ?? [];
       view.status = state?.isStreaming || state?.isCompacting ? 'running' : 'idle';
+      view.stage = undefined;
       this.emit({ type: 'run', run: { ...view } }); this.emit({ type: 'sessions-changed' });
       this.refreshContextUsage(run);
       // 迟加载自愈：扩展/npm 包若在初次拉取后才注册命令（或初次拉取失败），
@@ -270,7 +290,15 @@ export class PiBackend {
         }).catch(() => { /* 会话可能已关闭；下次打开补全面板时还会按需重拉 */ });
       }, 8000).unref();
       return { ...view };
-    } catch (err) { this.close(key); throw err; }
+    } catch (err) {
+      // 首帧（含重试）超时仍失败：红条要能区分「真的坏了」与「太大/太慢」。
+      const message = err instanceof Error ? err.message : String(err);
+      if (firstFrameScope && /超时/.test(message)) {
+        const scale = (() => { try { return `${(fs.statSync(run.input.file).size / 1_048_576).toFixed(1)} MB 历史`; } catch { return ''; } })();
+        (err as Error).message = `${message}（会话较大时首次加载可能需要数分钟${scale ? `，本次针对 ${scale}` : ''}；可再次点击该会话重试）`;
+      }
+      this.close(key); throw err;
+    }
   }
   /** 周期哨兵：只在有活动 run 时启动一次，进程级共享，无 run 时空转成本可忽略。 */
   private async verifyStuckRun(run: Running) {
@@ -915,6 +943,17 @@ export class PiBackend {
   }
   close(key: string) { const run = this.active.get(key); if (!run) return; this.active.delete(key); ++run.stopEpoch; if (run.recheckTimer) { clearTimeout(run.recheckTimer); run.recheckTimer = undefined; } this.clearSettlement(run); run.retry.dispose(); run.deferredQueue = []; this.clearDialogs(run); run.client.close(); fs.rm(path.join(this.ownedRoot, `.mode-${key}`), () => undefined); this.emit({ type: 'closed', key, generation: run.view.generation }); }
   async refresh(key: string) { const run = this.get(key); if (run.view.status !== 'idle' || run.view.pending || run.dialogs.size) throw new Error('会话仍在运行或等待交互，请完成或停止后刷新。'); const input = run.input; const executionMode = run.view.executionMode; const timing = run.view.timing; this.close(key); await this.launch(input); const active = this.get(key); active.view.executionMode = executionMode; active.view.timing = timing; this.emit({ type: 'run', run: { ...active.view } }); return { ...active.view }; }
+  /** connect 首帧预算：会话文件越大加载越久（实测 40MB/700 条含截图会话 >60s）。
+   *  小会话保持 60s，大会话按 5s/MB 放宽（40MB→210s，上限 5 分钟）。 */
+  private startupBudget(file: string): number {
+    try {
+      const bytes = fs.statSync(file).size;
+      // 增量按整 MB 计：小会话（<10MB）一律 60s 基线，之后每 MB +5s，封顶 5 分钟。
+      const mb = Math.floor(bytes / 1_048_576);
+      if (mb < 10) return 60_000;
+      return Math.min(300_000, 60_000 + (mb - 10) * 5_000);
+    } catch { return 60_000; }
+  }
   /** 周期哨兵：只在有活动 run 时启动一次，进程级共享，无 run 时空转成本可忽略。 */
   private ensureWatchdog() {
     if (this.watchdog) return;
