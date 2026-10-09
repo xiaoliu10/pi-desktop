@@ -19,7 +19,6 @@ import type { SettingsNavId } from '../replica/contracts';
  */
 
 import { create } from 'zustand';
-import { type ComposerDraft } from './composer-drafts';
 import {
   createNavHistory,
   canGoBack as navCanGoBack,
@@ -903,33 +902,52 @@ function currentRun(state: PiReplicaState): PiRun | undefined {
 }
 
 let navPlayback = false;
+/** 未发送草稿（文字 + 图片/文件/技能等全部附件）。 */
+export interface ComposerDraft { text: string; items: ContextItem[] }
 /** 每个会话（新任务按 cwd）一份未发送草稿：切换会话/导航回放/开新任务都不丢，
- *  回来即还原（文字 + 图片/文件/技能等全部附件）。内存态，重启不保留。 */
+ *  回来即还原。内存态，重启不保留；按体积预算（约 40MB base64）LRU 淘汰。 */
 const composerDrafts = new Map<string, ComposerDraft>();
-const MAX_COMPOSER_DRAFTS = 200;
+const COMPOSER_DRAFTS_BUDGET = 40 * 1024 * 1024;
+const draftSize = (d: ComposerDraft) => d.text.length + d.items.reduce((n, i) => n + i.text.length + (i.image?.data.length ?? 0), 0);
 function composerKeyOf(state: { selectedKey: string | null; draftCwd?: string }): string | null {
   return state.selectedKey ?? (state.draftCwd ? `home:${state.draftCwd}` : null);
+}
+/** 输入归属键：会话 key；新任务 = home:cwd。PiReplicaApp 用它给 Composer 绑定防抖归属。 */
+export function composerOwnerKeyOf(state: { selectedKey: string | null; draftCwd?: string }): string | null {
+  return composerKeyOf(state);
 }
 function stashComposerDraft(key: string, draft: ComposerDraft) {
   composerDrafts.delete(key);
   if (draft.text || draft.items.length) composerDrafts.set(key, draft);
-  while (composerDrafts.size > MAX_COMPOSER_DRAFTS) {
+  while ([...composerDrafts.values()].reduce((n, d) => n + draftSize(d), 0) > COMPOSER_DRAFTS_BUDGET && composerDrafts.size > 1) {
     const oldest = composerDrafts.keys().next().value;
     if (oldest === undefined) break;
     composerDrafts.delete(oldest);
   }
 }
-function takeComposerDraft(key: string | null): ComposerDraft {
-  const draft = key === null ? undefined : composerDrafts.get(key);
-  return draft ? { text: draft.text, items: [...draft.items] } : { text: '', items: [] };
+/** 测试用：清空全部草稿转存。 */
+export function resetComposerDrafts() { composerDrafts.clear(); }
+/** Composer 的 200ms 防抖回调按挂载归属路由：owner 已切换时写回转存而不是 live 草稿。 */
+export function writeComposerDraftText(text: string, ownerKey: string | null | undefined) {
+  const st = usePiStore.getState();
+  if (ownerKey == null || ownerKey === composerKeyOf(st)) { st.setDraftText(text); return; }
+  const prev = composerDrafts.get(ownerKey);
+  stashComposerDraft(ownerKey, { text, items: prev?.items ?? [] });
 }
-/** 切换会话/新任务时的统一草稿转存：把当前 draftText+contextItems 存回旧归属，
- *  再载入新归属的草稿。归属键 = selectedKey，新任务 = home:cwd。 */
-function switchComposerOwner(state: { selectedKey: string | null; draftCwd?: string; draftText: string; contextItems: ContextItem[] }, nextKey: string | null): { draftText: string; contextItems: ContextItem[] } {
+/** 切换前强制冲刷 Composer 的防抖草稿：快速输入后立刻切会话时尾字不丢。 */
+let composerFlush: (() => void) | null = null;
+export function registerComposerFlush(fn: (() => void) | null) { composerFlush = fn; }
+/** 切换会话/新任务时的统一草稿转存：先冲刷未落 store 的本地草稿，把当前内容存回旧归属，
+ *  再取出新归属的草稿（取出即删，消除 map/live 双副本）。同归属（导航回放原地）不动草稿。 */
+function switchComposerOwner(get: () => PiReplicaStore, nextKey: string | null): { draftText: string; contextItems: ContextItem[] } | undefined {
+  composerFlush?.();
+  const state = get();
   const prevKey = composerKeyOf(state);
-  if (prevKey !== null && prevKey !== nextKey) stashComposerDraft(prevKey, { text: state.draftText, items: state.contextItems });
-  const draft = takeComposerDraft(nextKey);
-  return { draftText: draft.text, contextItems: draft.items };
+  if (prevKey === nextKey) return undefined; // 原地回放/重选：live 草稿即最新，不动
+  if (prevKey !== null) stashComposerDraft(prevKey, { text: state.draftText, items: state.contextItems });
+  const draft = nextKey === null ? undefined : composerDrafts.get(nextKey);
+  if (nextKey !== null) composerDrafts.delete(nextKey);
+  return draft ? { draftText: draft.text, contextItems: [...draft.items] } : { draftText: '', contextItems: [] };
 }
 
 export const usePiStore = create<PiReplicaStore>((set, get) => {
@@ -1371,10 +1389,10 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
     try {
       const entry = result.entry;
       if (entry.view === 'chat' && entry.key) {
-        setNow({ selectedKey: entry.key, leaf: undefined, history: undefined, review: undefined, view: 'chat', ...switchComposerOwner(getNow(), entry.key), recoveredSubagents: [], subagentDismissed: getNow().desktopPreferences?.subagentDismissed?.[entry.key] ?? [], navHistory: result.history });
+        setNow({ selectedKey: entry.key, leaf: undefined, history: undefined, review: undefined, view: 'chat', ...(switchComposerOwner(getNow, entry.key) ?? {}), recoveredSubagents: [], subagentDismissed: getNow().desktopPreferences?.subagentDismissed?.[entry.key] ?? [], navHistory: result.history });
         refresh();
       } else if (entry.view === 'chat') {
-        setNow({ view: 'home', selectedKey: null, history: undefined, leaf: undefined, review: undefined, ...switchComposerOwner(getNow(), getNow().draftCwd ? `home:${getNow().draftCwd}` : null), navHistory: result.history });
+        setNow({ view: 'home', selectedKey: null, history: undefined, leaf: undefined, review: undefined, ...(switchComposerOwner(getNow, getNow().draftCwd ? `home:${getNow().draftCwd}` : null) ?? {}), navHistory: result.history });
       } else {
         setNow({ view: entry.view, notificationsOpen: false, navHistory: result.history });
       }
@@ -1676,7 +1694,7 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
       return true;
     },
     selectSession: (key) => {
-      set((s) => ({ selectedKey: key, leaf: undefined, history: undefined, review: undefined, view: 'chat', ...switchComposerOwner(s, key), recoveredSubagents: [], subagentDismissed: s.desktopPreferences?.subagentDismissed?.[key] ?? [] }));
+      set((s) => ({ selectedKey: key, leaf: undefined, history: undefined, review: undefined, view: 'chat', ...(switchComposerOwner(get, key) ?? {}), recoveredSubagents: [], subagentDismissed: s.desktopPreferences?.subagentDismissed?.[key] ?? [] }));
       void refreshHistory();
       get().prewarmSession(key);
     },
@@ -1943,8 +1961,8 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
         ...items.map((it, i) => ({ id: `recall-doc-${stamp}-${i}`, name: it.name, path: it.path, kind: it.kind, text: it.text })),
         ...(item.images ?? []).map((image, i) => ({ id: `recall-img-${stamp}-${i}`, name: `图片 ${i + 1}`, path: '', kind: 'image' as const, text: '', image })),
       ];
-      get().setDraftText(head);
-      if (recalled.length) get().addContext(recalled);
+      // 原子替换草稿（与历史 recall 同语义）：召回是显式编辑动作，不叠加到已有附件。
+      set({ draftText: head, contextItems: recalled });
       get().queueEdit({ type: 'remove', index });
       // 载入输入框不再发通知：草稿已直接出现在输入框，效果可见。
     },
@@ -1998,7 +2016,7 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
     startNewSession: () => {
       const state = get();
       const cwd = currentRun(state)?.cwd ?? state.sessions.find(s => s.key === state.selectedKey)?.cwd ?? state.draftCwd ?? state.desktopPreferences?.projects[0]?.path;
-      set({ selectedKey: null, history: undefined, leaf: undefined, review: undefined, view: 'home', ...switchComposerOwner(state, cwd ? `home:${cwd}` : null), draftCwd: cwd, subagentDismissed: [] });
+      set({ selectedKey: null, history: undefined, leaf: undefined, review: undefined, view: 'home', ...(switchComposerOwner(get, cwd ? `home:${cwd}` : null) ?? {}), draftCwd: cwd, subagentDismissed: [] });
     },
     addProject: () => {
       if (get().addingProject) return;

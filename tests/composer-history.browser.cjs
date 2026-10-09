@@ -42,7 +42,8 @@ async (page) => {
         slashCommands: [], files: [], running: false, queued: 0, queue: [], demo: false, labels: zh,
         hideReasoning: true,
         promptHistory: HISTORY,
-        onRestoreHistoryEntry: (text, items) => { window.__restored = { text, items }; },
+        // 生产实现经 zustand store 同步回 props；Shell 同样把召回文字同步回自己的 state（等价）
+        onRestoreHistoryEntry: (text, items, phase) => { window.__restored = { text, items, phase }; setDraft(text); },
         onSend: (text) => setSent((s) => [...s, text]), onStop: () => {},
         onPickModel: () => {}, onPickReasoning: () => {}, onPickAgentMode: () => {}, onPickPermission: () => {},
       });
@@ -65,7 +66,7 @@ async (page) => {
   assert(await caretAtEnd(), 'caret should be at end after recall');
   // 富 recall：文字之外，图片等附件经 onRestoreHistoryEntry 原样还原（含 base64）
   const restored = await page.evaluate(() => window.__restored);
-  assert(restored && restored.text === '带图的提问' && restored.items.length === 1, `rich recall should restore attachments, got ${JSON.stringify(restored)}`);
+  assert(restored && restored.text === '带图的提问' && restored.items.length === 1 && restored.phase === 'enter', `rich recall should restore attachments, got ${JSON.stringify(restored)}`);
   assert(restored.items[0].kind === 'image' && restored.items[0].image.data === 'aGk=' && restored.items[0].name === '截图.png', 'image attachment fully restored');
 
   // 继续 ↑ → 更旧

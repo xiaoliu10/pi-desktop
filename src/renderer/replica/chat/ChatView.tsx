@@ -13,6 +13,7 @@ import { officialSubagentDetails, SubagentNavigation } from '../../pi/subagents'
 import { memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { navigatePromptHistory } from '../prompt-history';
+import { registerComposerFlush } from '../../pi/adapter';
 import { onCloseTransientPopovers } from '../popovers';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -924,19 +925,34 @@ export function Composer(props: ComposerProps) {
   const [localText, setLocalText] = useState(props.draftText ?? '');
   const text = localText;
   const draftRef = useRef(props.draftText ?? '');
+  // 已上报 store 的最新值：卸载/冲刷比较用它而不是 props.draftText——卸载 cleanup 捕获的是
+  // 首渲染 props，切会话后比较旧值会把旧会话文字误写进新归属（评审 P1）。
+  const lastReportedRef = useRef(props.draftText ?? '');
   const draftTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const flushDraft = () => {
     if (draftTimer.current) { clearTimeout(draftTimer.current); draftTimer.current = null; }
-    if (props.onDraftChange && draftRef.current !== props.draftText) props.onDraftChange(draftRef.current);
+    if (props.onDraftChange && draftRef.current !== lastReportedRef.current) {
+      lastReportedRef.current = draftRef.current;
+      // 归属随回调一起传递：adapter 侧校验 owner，已切换则写回旧归属的草稿转存。
+      props.onDraftChange(draftRef.current, props.draftOwnerKey);
+    }
   };
-  useEffect(() => () => flushDraft(), []);
+  // 卸载用最新渲染的 flush（非首渲染闭包）；并向 store 注册——selectSession 切换前强制
+  // 冲刷防抖草稿，快速输入后立即切会话时尾字不丢。
+  const flushRef = useRef(flushDraft);
+  flushRef.current = flushDraft;
+  useEffect(() => {
+    registerComposerFlush(() => flushRef.current());
+    return () => { registerComposerFlush(null); flushRef.current(); };
+  }, []);
   useEffect(() => {
     if (props.draftText === undefined) return;
     // 历史回填经 200ms debounce 回流的 store 值与本地一致，跳过以免误清历史浏览态；
     // 真正的外部注入（队列召回/草稿恢复）值不同，照常同步并退出浏览态。
-    if (props.draftText === draftRef.current) return;
+    if (props.draftText === draftRef.current) { lastReportedRef.current = props.draftText; return; }
     if (draftTimer.current) { clearTimeout(draftTimer.current); draftTimer.current = null; }
     draftRef.current = props.draftText;
+    lastReportedRef.current = props.draftText;
     historyIndexRef.current = null; // 外部注入（队列召回/草稿恢复）退出历史浏览态
     setLocalText(props.draftText);
   }, [props.draftText]);
@@ -946,7 +962,8 @@ export function Composer(props: ComposerProps) {
     draftRef.current = next;
     if (props.onDraftChange) {
       if (draftTimer.current) clearTimeout(draftTimer.current);
-      draftTimer.current = setTimeout(() => { draftTimer.current = null; props.onDraftChange?.(draftRef.current); }, 200);
+      const owner = props.draftOwnerKey; // 排程时刻的归属：延迟回调不得串写到切换后的会话
+      draftTimer.current = setTimeout(() => { draftTimer.current = null; lastReportedRef.current = draftRef.current; props.onDraftChange?.(draftRef.current, owner); }, 200);
     }
   };
   const [menu, setMenu] = useState<OpenMenu>(null);
@@ -964,10 +981,16 @@ export function Composer(props: ComposerProps) {
     }
   }, [promptHistory]);
   const applyHistoryEntry = (nextIndex: number | null, nextValue: string, nextItems?: readonly Omit<import('../../../shared/composer').ContextItem, 'id'>[]) => {
+    // 阶段语义：首次进入浏览态快照当前未发草稿（文字+附件），↓ 到底退出时还原——
+    // 历史 recall 不再清空用户正在编辑的附件（评审 P2-3）。
+    const phase = nextIndex === null ? 'exit' : historyIndexRef.current === null ? 'enter' : 'browse';
     historyIndexRef.current = nextIndex;
-    // 富 recall：文字+附件经 store 原子替换，避免与本地防抖编辑串写。
-    if (props.onRestoreHistoryEntry) props.onRestoreHistoryEntry(nextValue, nextItems ?? []);
-    setText(nextValue);
+    let value = nextValue;
+    if (props.onRestoreHistoryEntry) {
+      const restored = props.onRestoreHistoryEntry(nextValue, nextItems ?? [], phase);
+      if (restored && typeof restored.text === 'string') value = restored.text;
+    }
+    setText(value);
     // 程序化赋值不触发 onChange/input，手动把光标移到末尾并适配高度（对齐 ZCode selectEnd）。
     requestAnimationFrame(() => {
       const ta = taRef.current;

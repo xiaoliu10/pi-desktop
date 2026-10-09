@@ -49,8 +49,13 @@ function normalizeEntries(entries: readonly unknown[]): PromptHistoryEntry[] {
       const candidate = entry as Partial<PromptHistoryEntry>;
       if (typeof candidate.text !== 'string' || !candidate.text.trim()) return null;
       const items = Array.isArray(candidate.items)
-        ? candidate.items.filter((item): item is PromptHistoryEntry['items'][number] =>
-          Boolean(item) && typeof item === 'object' && typeof (item as ContextItem).name === 'string')
+        ? candidate.items.filter((item): item is PromptHistoryEntry['items'][number] => {
+          if (!item || typeof item !== 'object') return false;
+          const it = item as Partial<ContextItem>;
+          if (typeof it.name !== 'string' || !['file', 'document', 'skill', 'image'].includes(String(it.kind))) return false;
+          if (it.image !== undefined && (typeof it.image !== 'object' || it.image === null || typeof (it.image as { data?: unknown }).data !== 'string' || typeof (it.image as { mimeType?: unknown }).mimeType !== 'string')) return false;
+          return true;
+        })
         : [];
       return { text: candidate.text, items };
     })
@@ -84,13 +89,25 @@ export function readPromptHistory(cwd: string, storage: Storage | null = getBrow
 export function persistPromptHistory(cwd: string, entries: readonly PromptHistoryEntryInput[], storage: Storage | null = getBrowserStorage()) {
   try {
     storage?.setItem(storageKey(cwd), JSON.stringify(normalizeEntries(entries)));
-  } catch { /* quota/security errors: keep memory-only */ }
+  } catch {
+    // 配额超限（图片 base64 很大）：剥离图片数据重试——纯文字历史仍可落盘，
+    // 带图条目保留在内存里本运行内仍可 recall；再失败（storage 被禁用）静默放弃。
+    try {
+      const stripped = normalizeEntries(entries).map(entry => ({
+        ...entry,
+        items: entry.items.map(item => (item.image ? { ...item, image: undefined } : item)),
+      }));
+      storage?.setItem(storageKey(cwd), JSON.stringify(stripped));
+    } catch { /* keep memory-only */ }
+  }
 }
 
 export function appendPromptHistoryEntry(entries: readonly PromptHistoryEntryInput[], entry: PromptHistoryEntryInput, limit = MAX_PROMPT_HISTORY): PromptHistoryEntry[] {
   const normalized = entries.map(asEntry);
-  const next = asEntry(entry);
-  if (!next.text.trim() && next.items.length === 0) return normalized;
+  const raw = asEntry(entry);
+  // 入库前去首尾空白（历史显示与比较都按 trim 后文本）；纯附件发送（空文字）仍入历史。
+  const next = { text: raw.text.trim(), items: raw.items };
+  if (!next.text && next.items.length === 0) return normalized;
   const normalizedLimit = Math.max(1, Math.trunc(limit));
   const previous = normalized.at(-1);
   if (previous && entryFingerprint(previous) === entryFingerprint(next)) return normalized;

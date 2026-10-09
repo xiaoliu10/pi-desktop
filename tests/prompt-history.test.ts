@@ -16,7 +16,7 @@ const skill: Item = { name: 'pdf', path: '/skills/pdf/SKILL.md', kind: 'skill', 
 
 describe('输入框发送历史（↑↓ recall）', () => {
   it('追加：去首尾空白、空串跳过、连续重复去重（不误删 A,B,A）、上限截断', () => {
-    expect(appendPromptHistoryEntry([], '  hello  ')).toEqual([{ text: '  hello  ', items: [] }]);
+    expect(appendPromptHistoryEntry([], '  hello  ')).toEqual([{ text: 'hello', items: [] }]);
     expect(appendPromptHistoryEntry([], '   ')).toEqual([]);
     let entries = appendPromptHistoryEntry([], 'a');
     entries = appendPromptHistoryEntry(entries, 'b');
