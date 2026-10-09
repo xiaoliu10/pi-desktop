@@ -14,8 +14,8 @@ async (page) => {
     const { ExecutionGroup } = await import('/replica/chat/ChatView.tsx');
     const labels = { you: '你' };
     const turn = { id: 'm1', role: 'assistant', startedAt: Date.now() - 1019 * 1000, steps: [
-      { kind: 'tool', id: 't1', toolName: 'read', title: '读取 a.ts', status: 'done' },
-      { kind: 'tool', id: 't2', toolName: 'bash', title: '运行测试', status: 'running' },
+      { kind: 'tool', id: 't1', tool: 'read', title: '读取 a.ts', status: 'done' },
+      { kind: 'tool', id: 't2', tool: 'bash', title: '运行测试', status: 'running' },
     ] };
     const root = createRoot(document.getElementById('root'));
     window.renderGroup = (running) => root.render(React.createElement(ExecutionGroup, { turn, parts: turn.steps, labels, running, active: running, expanded: running, showElapsed: true }));

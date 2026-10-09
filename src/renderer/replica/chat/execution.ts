@@ -13,6 +13,10 @@ export interface ChatTurn {
   messageIds: string[];
   /** Ordered segments: tools/thinking runs interleaved with visible text. */
   segments: ChatSegment[];
+  /** 运行中分类：过程叙述不折进执行组，全部按时间线原位直接可见——
+   *  流式期间 lastText 随输出移动，若套用完成态规则文本会反复「可见↔折叠」跳变。
+   *  完成态（segments）才应用 lastTextIndex 折叠 + 文本合并。 */
+  liveSegments: ChatSegment[];
   /** Convenience views over segments (all execution parts / all visible text). */
   steps: MessagePart[];
   answer: MessagePart[];
@@ -52,7 +56,7 @@ export function executionTurns(messages: ChatMessage[]): ChatTurn[] {
       const message = group.members[0]!;
       const userHit = turnCache.get(group.id);
       if (userHit && userHit.count === 1 && userHit.first === message && userHit.last === message) { turns.push(userHit.turn); continue; }
-      const turn: ChatTurn = { id: group.id, role: 'user', messageIds: [message.id], segments: [{ kind: 'text', parts: message.parts }], steps: [], answer: message.parts };
+      const turn: ChatTurn = { id: group.id, role: 'user', messageIds: [message.id], segments: [{ kind: 'text', parts: message.parts }], liveSegments: [{ kind: 'text', parts: message.parts }], steps: [], answer: message.parts };
       turnCache.set(group.id, { count: 1, first: message, last: message, turn });
       turns.push(turn);
       continue;
@@ -61,7 +65,7 @@ export function executionTurns(messages: ChatMessage[]): ChatTurn[] {
     const last = group.members[group.members.length - 1]!;
     const hit = turnCache.get(group.id);
     if (hit && hit.count === group.members.length && hit.members?.every((message, index) => message === group.members[index]) && hit.turn.startedAt === group.startedAt) { turns.push(hit.turn); continue; }
-    const turn: ChatTurn = { startedAt: group.startedAt, id: group.id, role: 'assistant', messageIds: [], segments: [], steps: [], answer: [], simulated: first.simulated, model: first.model };
+    const turn: ChatTurn = { startedAt: group.startedAt, id: group.id, role: 'assistant', messageIds: [], segments: [], liveSegments: [], steps: [], answer: [], simulated: first.simulated, model: first.model };
     // A successful model response settles earlier failed attempts within THIS user turn.
     // Tool results/partial thinking/empty stream starts are not evidence of recovery.
     let recoveredThrough = -1;
@@ -106,21 +110,27 @@ export function executionTurns(messages: ChatMessage[]): ChatTurn[] {
       if (lastTextIndex === -1 && k === 'text' && (flattened[i] as { text?: string }).text?.trim()) lastTextIndex = i;
       if (lastStepsIndex !== -1 && lastTextIndex !== -1) break;
     }
-    const segments: ChatSegment[] = [];
     const isStepLike = (p?: MessagePart) => !!p && (p.kind === 'tool' || p.kind === 'thinking');
-    flattened.forEach((part, index) => {
-      // 只有过程「文本」进组内段落；error/普通 notice/image 保持独立 text 段（重试隐藏、结论位逻辑都依赖）。
-      // 例外：压缩记录（strong notice）是时序事件，紧邻工具/思考步骤时在触发点原位落入过程列表
-      // （组内步骤行，用户要求：压缩在哪个时序触发就显示在哪个时序，同 ZCode 过程列表）。
-      // 孤立压缩（如手动 /compact 落在末轮结论文本之后、前后都没有步骤）不入组：
-      // 否则它会折进一个只显示计时的空组里反而不可见，保持直接可见的 text 段。
-      const adjacentToSteps = isStepLike(flattened[index - 1]) || isStepLike(flattened[index + 1]);
-      const kind: ChatSegment['kind'] = isStepLike(part) || (part.kind === 'notice' && part.strong && adjacentToSteps) || (part.kind === 'text' && index < lastStepsIndex && index !== lastTextIndex) ? 'steps' : 'text';
-      const currentSeg = segments[segments.length - 1];
-      if (currentSeg && currentSeg.kind === kind) currentSeg.parts.push(part);
-      else segments.push({ kind, parts: [part] });
-    });
-    turn.segments = segments;
+    const buildSegments = (foldProcessText: boolean): ChatSegment[] => {
+      const out: ChatSegment[] = [];
+      flattened.forEach((part, index) => {
+        // 只有过程「文本」进组内段落；error/普通 notice/image 保持独立 text 段（重试隐藏、结论位逻辑都依赖）。
+        // 例外：压缩记录（strong notice）是时序事件，紧邻工具/思考步骤时在触发点原位落入过程列表
+        // （组内步骤行，用户要求：压缩在哪个时序触发就显示在哪个时序，同 ZCode 过程列表）。
+        // 孤立压缩（如手动 /compact 落在末轮结论文本之后、前后都没有步骤）不入组：
+        // 否则它会折进一个只显示计时的空组里反而不可见，保持直接可见的 text 段。
+        const adjacentToSteps = isStepLike(flattened[index - 1]) || isStepLike(flattened[index + 1]);
+        const kind: ChatSegment['kind'] = isStepLike(part) || (part.kind === 'notice' && part.strong && adjacentToSteps)
+          || (foldProcessText && part.kind === 'text' && index < lastStepsIndex && index !== lastTextIndex) ? 'steps' : 'text';
+        const currentSeg = out[out.length - 1];
+        if (currentSeg && currentSeg.kind === kind) currentSeg.parts.push(part);
+        else out.push({ kind, parts: [part] });
+      });
+      return out;
+    };
+    turn.segments = buildSegments(true);   // 完成态：lastText 之外的叙述折进组内
+    turn.liveSegments = buildSegments(false); // 运行中：文本全部原位可见（无跳变）
+    const segments = turn.segments;
     turn.steps = segments.flatMap((s) => (s.kind === 'steps' ? s.parts : []));
     turn.answer = segments.flatMap((s) => (s.kind === 'text' ? s.parts : []));
     turnCache.set(group.id, { count: group.members.length, first, last, members: group.members, turn });
