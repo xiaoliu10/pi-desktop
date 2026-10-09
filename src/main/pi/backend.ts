@@ -824,25 +824,30 @@ export class PiBackend {
     return this.refresh(key);
   }
 
-  async compact(key: string, customInstructions?: string) {
+  async compact(key: string, customInstructions?: string, timeoutMs = 180_000) {
     const run = this.get(key);
     if (run.view.status !== 'idle') throw new Error('请在任务空闲时压缩上下文');
     if (run.dialogs.size) throw new Error('请先处理待确认操作，再压缩上下文。');
     // 压缩是对整段上下文的模型调用，耗时不可预测，超时放宽到 3 分钟。
     let result;
     try {
-      result = await run.client.request('compact', customInstructions ? { customInstructions } : {}, 180_000);
+      result = await run.client.request('compact', customInstructions ? { customInstructions } : {}, timeoutMs);
     } catch (error) {
-      // pi 的摘要生成输出上限固定（reserveTokens 的 80%），超长会话/啰嗦模型会截断收不了尾。
-      // Desktop 无法调大该上限，给可执行建议而不是裸英文错误。
       // 匹配对象是 pi 内核 getSummarizationFailure 的固定模板（stopReason=length 分支），内核升级需复查。
       const raw = String((error as Error)?.message ?? error);
-      // 失败也要走与成功路径相同的收口：compaction_start 已把状态置 running，
-      // 若在这里直接抛出，状态会永久停留 running（假转圈），重试/发送/重载全被 guard 拒绝。
-      this.settleAfterCompact(run);
+      // 只有「明确失败响应」（内核已回绝）才收口：compaction_start 已把状态置 running，
+      // 不收口会假转圈（重试/发送/重载全被 guard 拒绝）。超时例外——rpc-client 的
+      // 超时不取消内核里仍在执行的压缩，此时收口会把 running 误置 idle 并放行重试，
+      // 造成同一会话两个压缩并发；保持忙碌直到 compaction_end 到达或后端自愈核实。
+      // rpc-client 的超时文案是中文「…超时；…」（拼写见 request()），匹配需含中文「超时」。
+      const settled = !/timed? ?out|超时/i.test(raw);
+      if (settled) this.settleAfterCompact(run);
       if (/hit the token cap|summary is incomplete/i.test(raw)) {
-        throw new Error('压缩失败：摘要生成达到模型输出上限被截断。可重试并附加自定义指令要求更精简的摘要（如「300 字以内，只列关键决定」）；仍失败建议新开会话继续工作。');
+        throw new Error(settled
+          ? '压缩失败：摘要生成达到模型输出上限被截断。可重试并附加自定义指令要求更精简的摘要（如「300 字以内，只列关键决定」）；仍失败建议新开会话继续工作。'
+          : '压缩仍在进行（或状态未知）：内核未在 3 分钟内返回。请等待「正在压缩」指示消失后再重试；卡住时可重载会话恢复。');
       }
+      if (!settled) throw new Error('压缩仍在进行（或状态未知）：内核未在 3 分钟内返回。请等待「正在压缩」指示消失后再重试；卡住时可重载会话恢复。');
       throw error;
     }
     this.refreshContextUsage(run);
