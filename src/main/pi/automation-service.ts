@@ -65,7 +65,7 @@ export class AutomationService {
  deleteTask(id:string){if(this.data.runs.some(r=>r.taskId===id&&live(r)))throw Error('请先停止此任务的运行');this.data.tasks=this.data.tasks.filter(t=>t.id!==id);this.persist();}
  private task(id:string){const t=this.data.tasks.find(t=>t.id===id);if(!t)throw Error('任务不存在');return t;}
  private workflow(id:string,cwd:string){const w=this.data.workflows.find(w=>w.id===id);if(!w)throw Error('工作流不存在');if(w.scope==='project'&&w.cwd!==cwd)throw Error('该工作流只适用于所属项目');return w;}
- runTask(id:string,trigger:'manual'|'schedule'='manual',scheduledAt?:number){const task=this.task(id);const workflow=task.workflowId?this.workflow(task.workflowId,task.cwd):undefined;return this.launch({task,workflow,cwd:task.cwd,args:task.args,permission:task.permission,model:task.model,thinking:task.thinking,trigger,scheduledAt});}
+ runTask(id:string,trigger:'manual'|'schedule'='manual',scheduledAt?:number){const task=this.task(id);const workflow=task.workflowId?this.workflow(task.workflowId,task.cwd):undefined;return this.launch({task,workflow,cwd:task.cwd,args:task.args,permission:task.permission,model:task.model,thinking:task.thinking,trigger,scheduledAt,sessionMode:task.sessionMode});}
  runWorkflow(input:WorkflowLaunch){const cwd=directory(input.cwd);return this.launch({...input,cwd,workflow:this.workflow(input.id,cwd),trigger:'manual'});}
  private launch(input:{task?:AutomationTask;workflow?:SavedWorkflow;cwd:string;args:Record<string,string>;permission:WorkflowLaunch['permission'];model?:string;thinking?:WorkflowLaunch['thinking'];trigger:'manual'|'schedule';scheduledAt?:number;sessionMode?:'reuse'|'fresh'}){
   if(this.closed)throw Error('自动化服务正在关闭');if(!isAccessMode(input.permission))throw Error('访问模式无效');if(input.thinking&&!THINKING_LEVELS.includes(input.thinking))throw Error('思考等级无效');
@@ -77,24 +77,30 @@ export class AutomationService {
   if(input.task){input.task.runCount++;input.task.lastRunAt=this.now();if(input.task.maxRuns&&input.task.runCount>=input.task.maxRuns)input.task.enabled=false;}
   this.persist();void this.execute(run,prompts,input);return structuredClone(run);
  }
- /** 解析执行会话：默认复用项目下最近活跃的会话（live run 优先，其次最近更新的会话文件），
-  *  都没有才新建。复用让定时任务跑在用户正在对话的上下文里——这是用户明确要的默认行为
-  *  （此前每次自动化都新起独立会话，任务结论散落在侧栏各处）。fresh 才强制新会话。 */
- private async resolveSession(cwd:string,sessionMode:'reuse'|'fresh'|undefined,config:{permission:WorkflowLaunch['permission'];model?:string}):Promise<{key:string;reused:boolean}>{
+ /** 解析执行会话：默认复用项目下最近活跃的会话，让任务跑在用户正在对话的上下文里
+  *  （此前每次自动化都新起独立会话，任务结论散落在侧栏各处）；fresh 才强制新会话。
+  *  复用必须是 **idle** 会话：步骤完成归因依赖「prompt 后下一个 agent_settled 属于本步骤」，
+  *  复用 busy 会话时用户任务的 settle 会抢在前头，步骤状态整体错位。同 cwd 已有自动化
+  *  在跑时也不再复用（不同 run 共享 key 会互相覆盖 waiter），直接新会话隔离。 */
+ private async resolveSession(cwd:string,sessionMode:'reuse'|'fresh'|undefined,config:{permission:WorkflowLaunch['permission'];model?:string},self?:AutomationRun):Promise<{key:string;reused:boolean}>{
   const backend=this.backend();
-  if(sessionMode==='fresh'){
+  if(sessionMode==='fresh'||this.data.runs.some(r=>live(r)&&r!==self&&r.cwd===cwd)){
    const session=await backend.connect({cwd,trustProject:false,permission:config.permission,model:config.model});
    return {key:session.key,reused:false};
   }
   // macOS /var→/private/var：会话文件 header 的 cwd 未必 realpath 过，归一化后比较
   const target=canonical(cwd);
   const sameCwd=(v:string)=>{try{return canonical(v)===target;}catch{return v===cwd;}};
-  const live=backend.runs().filter(r=>r.status!=='error'&&sameCwd(r.cwd)).sort((a,b)=>(b.timing?.endedAt??b.timing?.startedAt??0)-(a.timing?.endedAt??a.timing?.startedAt??0))[0];
-  if(live)return {key:live.key,reused:true};
-  const recent=this.index().scan().filter(s=>!s.parentSession&&sameCwd(s.cwd)).sort((a,b)=>b.updatedAt-a.updatedAt)[0];
+  // 只复用 idle 且无排队/无待审批的会话（starting/stopping/waiting/error 一律不复用）
+  const idleRun=backend.runs().filter(r=>r.status==='idle'&&!r.pending&&!r.queue?.length&&sameCwd(r.cwd))
+    .sort((a,b)=>(b.timing?.endedAt??b.timing?.startedAt??0)-(a.timing?.endedAt??a.timing?.startedAt??0))[0];
+  if(idleRun&&!backend.hasPendingDialogs(idleRun.key))return {key:idleRun.key,reused:true};
+  // 会话文件复用仅限 Desktop 自建（owned）：外部 CLI 文件 connect 会 fork parentSession 副本，
+  // 产出不在用户原会话里，与「上下文连续」相悖。超限/损坏（#78）回落新建。
+  const recent=this.index().scan().filter(s=>s.owned&&!s.parentSession&&sameCwd(s.cwd)).sort((a,b)=>b.updatedAt-a.updatedAt)[0];
   if(recent){
-   try{const session=await backend.connect({sourceKey:recent.key,cwd,trustProject:false,permission:config.permission,model:config.model});return {key:session.key,reused:true};}
-   catch{/* 会话文件损坏/超限：回落新建 */ }
+   try{const session=await backend.connect({sourceKey:recent.key,cwd,trustProject:false,permission:config.permission});return {key:session.key,reused:true};}
+   catch{ /* 超限/损坏：回落新建 */ }
   }
   const session=await backend.connect({cwd,trustProject:false,permission:config.permission,model:config.model});
   return {key:session.key,reused:false};
@@ -102,9 +108,10 @@ export class AutomationService {
  private async execute(run:AutomationRun,prompts:string[],config:{permission:WorkflowLaunch['permission'];model?:string;thinking?:WorkflowLaunch['thinking'];sessionMode?:'reuse'|'fresh'}){
   let key:string|undefined;let reused=false;
   try{
-   const backend=this.backend();const resolved=await this.resolveSession(run.cwd,config.sessionMode,config);key=resolved.key;reused=resolved.reused;run.sessionKey=key;run.reusedSession=reused;
-   if(!live(run)||this.closed){backend.close(key);return;}
-   if(config.thinking)await backend.thinking(key,config.thinking);
+   const backend=this.backend();const resolved=await this.resolveSession(run.cwd,config.sessionMode,config,run);key=resolved.key;reused=resolved.reused;run.sessionKey=key;run.reusedSession=reused;
+   if(!live(run)||this.closed){if(!reused)backend.close(key);return;}
+   // 复用会话沿用该会话当前的模型/思考等级（不能永久改写用户的会话级设置）；fresh 才应用任务配置
+   if(config.thinking&&!reused)await backend.thinking(key,config.thinking);
    for(let i=0;i<prompts.length;i++){
     if(!live(run)||this.closed)break;run.stepIndex=i;run.steps[i].status='running';this.persist();
     let resolve!:()=>void,reject!:(e:Error)=>void;
@@ -134,7 +141,11 @@ export class AutomationService {
   }
   if(event.type==='closed'||event.type==='run'&&event.run.status==='error')this.waiters.get(key)?.reject(Error('pi 运行进程已退出'));
  }
- async stop(id:string){const run=this.data.runs.find(r=>r.id===id);if(!run||!live(run))return;run.status='stopped';run.endedAt=this.now();this.persist();if(run.sessionKey){const waiter=this.waiters.get(run.sessionKey);try{await this.backend().stop(run.sessionKey);}finally{waiter?.reject(Error('用户停止'));}}}
+ async stop(id:string){const run=this.data.runs.find(r=>r.id===id);if(!run||!live(run))return;run.status='stopped';run.endedAt=this.now();this.persist();
+  // 复用的会话是用户自己的：不 abort（会连用户正在跑的任务一起杀），只解除监护——
+  // 当前步骤若已在用户会话里执行会自然跑完，剩余步骤因 !live 不再分发。
+  if(run.sessionKey&&!run.reusedSession){try{await this.backend().stop(run.sessionKey);}finally{this.waiters.get(run.sessionKey)?.reject(Error('用户停止'));}return;}
+  if(run.sessionKey)this.waiters.get(run.sessionKey)?.reject(Error('用户停止'));}
  tick(){if(this.closed)return;const now=this.now();for(const task of this.data.tasks){if(!task.enabled||!task.nextRunAt||task.nextRunAt>now)continue;const due=task.nextRunAt;
    task.nextRunAt=task.schedule.kind==='interval'?due+(Math.floor((now-due)/(task.schedule.minutes*60000))+1)*task.schedule.minutes*60000:nextSchedule(task.schedule,now);if(!task.nextRunAt||task.endAt&&task.nextRunAt>task.endAt)task.enabled=false;
    if(task.endAt&&due>task.endAt||task.maxRuns&&task.runCount>=task.maxRuns){task.enabled=false;this.persist();continue;}
