@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import type { PiEntry, PiHistory, PiSession } from '../../shared/pi';
-const MAX_SESSION = 64 * 1024 * 1024;
+import { MAX_SESSION, OversizedSessionError, sessionStub } from './session-size';
 /** 大于该值的会话文件变更时只更新元数据、延后全量解析：流式期间活动会话每个 delta
  * 都在追加，若每次 watch/轮询都重读重解析整个 MB 级文件，主进程会被持续拖死。 */
 const DEFER_PARSE_BYTES = 256 * 1024;
@@ -28,6 +28,8 @@ export class SessionIndex {
   private timer?: ReturnType<typeof setInterval>;
   private watchers: fs.FSWatcher[] = [];
   private debounce?: ReturnType<typeof setTimeout>;
+  /** 超限降级缓存（只有元数据）：history() 据此拒绝全量读取。 */
+  private oversized = new WeakSet<PiHistory>();
   constructor(public roots: string[], private readonly ownedRoot: string) {}
   private stampOf(file: string): { stat: fs.Stats; stamp: string } | undefined {
     try {
@@ -39,7 +41,7 @@ export class SessionIndex {
     const stamped = this.stampOf(file);
     if (!stamped) return;
     const { stat, stamp } = stamped;
-    if (stat.size > MAX_SESSION) throw new Error('会话超过 64 MiB 读取上限');
+    if (stat.size > MAX_SESSION) throw new OversizedSessionError(file, stat.size);
     const raw = fs.readFileSync(file, 'utf8');
     const lines = raw.split('\n');
     const tail = lines.pop(); // Never consume an incomplete append.
@@ -103,6 +105,21 @@ export class SessionIndex {
         this.parseFile(file, key);
       } catch (err) {
         if ((err as NodeJS.ErrnoException).code === 'ENOENT') { this.cache.delete(key); continue; }
+        if (err instanceof OversizedSessionError) {
+          // 超限会话降级为「元数据可见」：列表/侧栏照常显示（此前整个会话从侧栏消失，
+          // 用户看到「该项目还没有会话」——96MB ashare 主会话 2026-10-09 的真实事故）。
+          const stub = sessionStub(file);
+          const stamped = this.stampOf(file); // 包裹 ENOENT：文件被并发删除时安全跳过（P2）
+          if (!stub || !stamped) continue;
+          const { stat, stamp } = stamped;
+          const degraded = {
+            session: { key, id: String(stub.header.id ?? key), path: file, cwd: String(stub.header.cwd ?? path.dirname(file)), name: String(stub.firstUserText || '未命名 pi 会话').slice(0, 180), updatedAt: stat.mtimeMs, size: stat.size, warnings: [err.message], owned: file.startsWith(canonical(this.ownedRoot) + path.sep), parentSession: typeof stub.header.parentSession === 'string' ? stub.header.parentSession : undefined },
+            entries: [], branch: [], leaves: [], leafId: null, syncedAt: Date.now(),
+          };
+          this.oversized.add(degraded);
+          this.cache.set(key, { stamp, history: degraded });
+          continue;
+        }
         const old = this.cache.get(key);
         if (old) old.history.session.warnings = [(err as Error).message];
       }
@@ -114,8 +131,11 @@ export class SessionIndex {
     // 目标会话有未落地的脏数据时同步重解析该文件（只此一个），保证刷新拿到完整尾部。
     const dirtyFile = this.dirty.get(key);
     if (dirtyFile) { try { this.parseFile(dirtyFile, key); } catch { /* 保留旧缓存 */ } }
-    const found = this.cache.get(key)?.history;
-    if (!found) throw new Error('会话不存在、不可读或不在选定目录中。');
+    const cached = this.cache.get(key)?.history;
+    if (!cached) throw new Error('会话不存在、不可读或不在选定目录中。');
+    const found = cached;
+    // 超限会话只做了元数据降级：列表可见但全量历史不可读，给可执行错误而不是空历史。
+    if (this.oversized.has(found)) throw new OversizedSessionError(found.session.path, found.session.size);
     if (leaf && !found.entries.some(e => e.id === leaf)) throw new Error('分支记录不存在');
     return leaf ? { ...found, branch: branchEntries(found.entries, leaf), leafId: leaf } : found;
   }
