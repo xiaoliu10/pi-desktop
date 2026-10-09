@@ -31,7 +31,8 @@ import { DEFAULT_SHORTCUTS, DEFAULT_AGENT_PRESETS, shortcutMatches, type Shortcu
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Icon } from '../replica/Icons';
-import { appendPromptHistoryEntry, persistPromptHistory, readPromptHistory } from '../replica/prompt-history';
+import { loadWorkspacePromptHistory, recordWorkspacePrompt, workspacePromptHistory } from '../replica/workspace-prompt-history';
+import { composerOwnerKeyOf, writeComposerDraftText } from './adapter';
 import { replicaLabels } from '../replica/i18n';
 import { Sidebar } from '../replica/shell/Sidebar';
 import { ResizeHandle, usePanelWidth } from '../replica/shell/ResizeHandle';
@@ -287,20 +288,25 @@ export default function PiReplicaApp() {
   }, [imageTarget, imageModels, s.notify]);
   const composerCwd = run?.cwd ?? s.sessions.find(session=>session.key===s.selectedKey)?.cwd ?? s.draftCwd;
   // ↑/↓ 发送历史：按 workspace 隔离、localStorage 持久化（ZCode 同款，最多 30 条）。
-  const [promptHistory, setPromptHistory] = useState<string[]>(() => readPromptHistory(composerCwd ?? ''));
-  useEffect(() => { setPromptHistory(readPromptHistory(composerCwd ?? '')); }, [composerCwd]);
+  // 条目是富结构 { text, items }：recall 原样还原文字 + 图片/文件/技能等全部上下文。
+  // Full image payloads use IndexedDB; workspace switches use complete memory snapshots.
+  const [promptHistory, setPromptHistory] = useState(() => workspacePromptHistory(composerCwd ?? ''));
+  useEffect(() => {
+    let active = true;
+    setPromptHistory(workspacePromptHistory(composerCwd ?? ''));
+    void loadWorkspacePromptHistory(composerCwd ?? '').then(entries => { if (active) setPromptHistory(entries); });
+    return () => { active = false; };
+  }, [composerCwd]);
   const onComposerSend = useCallback((text: string) => {
-    // 只记录用户在输入框真正提交的 prompt（程序化 send 如计划批准语不进历史）。
-    setPromptHistory(prev => {
-      const next = appendPromptHistoryEntry(prev, text);
-      if (next !== prev) persistPromptHistory(composerCwd ?? '', next);
-      return next;
-    });
+    const items = usePiStore.getState().contextItems;
+    setPromptHistory(recordWorkspacePrompt(composerCwd ?? '', { text, items }));
     s.send(text);
   }, [composerCwd, s.send]);
   const draftModelId = s.draftModelId ?? (s.catalog?.defaultProvider && s.catalog?.defaultModel ? `${s.catalog.defaultProvider}/${s.catalog.defaultModel}` : '');
   const draftModel = s.catalog?.providers.flatMap(p=>p.models.map(m=>({...m,combinedId:`${p.id}/${m.id}`}))).find(m=>m.combinedId===draftModelId);
   const [filePreview, setFilePreview] = useState<ReturnType<typeof toolFilePreview>>(null);
+  // ↑↓ 历史浏览前的未发草稿快照：退出浏览态时原样还原（文字+附件不被 recall 清掉）
+  const historySnapshotRef = useRef<{ owner: string | null; text: string; items: import('../../shared/composer').ContextItem[] } | null>(null);
   const [pluginTab, setPluginTab] = useState<'installed' | 'marketplace'>('installed');
   const [pluginTag, setPluginTag] = useState('all');
   // 扩展统一管理：源码编辑器/新建对话框（入口收拢在设置→插件市场）
@@ -450,8 +456,10 @@ export default function PiReplicaApp() {
 
   const composer = (
     <Composer
+      key={composerOwnerKeyOf(s) ?? 'home'}
       draftText={s.draftText}
-      onDraftChange={s.setDraftText}
+      draftOwnerKey={composerOwnerKeyOf(s)}
+      onDraftChange={(text, owner) => writeComposerDraftText(text, owner)}
       preparing={s.connecting || s.changingAccessMode || attachmentLoading}
       hasAttachments={s.contextItems.length > 0}
       onPaste={pasteAttachments}
@@ -510,6 +518,17 @@ export default function PiReplicaApp() {
       statusSlot={run ? <ContextUsageChip key={`${run.key}:${run.generation}`} usage={run.contextUsage} model={run.model ? `${run.model.provider} / ${run.model.name || run.model.id}` : undefined} zh={s.lang === 'zh'} compact /> : undefined}
       onSend={onComposerSend}
       promptHistory={promptHistory}
+      onRestoreHistoryEntry={(text, items, phase) => {
+        const st = usePiStore.getState();
+        if (phase === 'enter') historySnapshotRef.current = { owner: composerOwnerKeyOf(st), text: st.draftText, items: st.contextItems };
+        if (phase === 'exit') {
+          const snap = historySnapshotRef.current; historySnapshotRef.current = null;
+          const restored = snap?.owner === composerOwnerKeyOf(st) ? snap : { text: '', items: [] as import('../../shared/composer').ContextItem[] };
+          usePiStore.setState({ draftText: restored.text, contextItems: restored.items });
+          return { text: restored.text };
+        }
+        usePiStore.setState({ draftText: text, contextItems: items.map((item, i) => ({ ...item, id: `hist-${Date.now()}-${i}` })) });
+      }}
       imageModels={imageModels}
       imageTarget={imageTarget}
       onPickImageModel={setImageTarget}
