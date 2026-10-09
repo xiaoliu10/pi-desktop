@@ -34,6 +34,7 @@ function handle(r) {
  case 'exit': return process.exit(7);
  case 'noise': process.stdout.write('plugin log\n'); return ok('fine');
  case 'unicode': { const data = Buffer.from(JSON.stringify({type:'response',id:r.id,success:true,data:'中文\u2028\u2029'})+'\n'); const pos=data.indexOf(Buffer.from('中'))+1; process.stdout.write(data.subarray(0,pos)); setTimeout(()=>process.stdout.write(data.subarray(pos)),5); return; }
+ case 'compact': if(r.customInstructions === 'CAP') { send({type:'compaction_start'}); send({type:'compaction_end',reason:'manual',aborted:false,errorMessage:'Summarization failed: generation hit the token cap and the summary is incomplete'}); return send({type:'response',id:r.id,success:false,error:'Summarization failed: generation hit the token cap and the summary is incomplete'}); } return ok({summary:'fake summary',tokensBefore:123456});
  case 'prompt_log': return ok(promptLog);
  case 'prompt':
   promptLog.push({message:r.message, behavior:r.streamingBehavior, images:r.images ?? null});

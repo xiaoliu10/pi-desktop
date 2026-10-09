@@ -166,6 +166,19 @@ it('shows compacting during compaction and repairs wiped package registrations o
  await vi.waitFor(()=>expect(backend2.runs()[0]?.status).toBe('idle'));
 });
 
+it('compact: success settles normally; token-cap failure collapses the fake running state and rethrows an actionable message',async()=>{
+ const{root,backend}=setup();const run=await backend.connect({cwd:root,trustProject:false,permission:'ask'});
+ // 成功：直接调用 RPC compact（状态本就 idle，收口无副作用）
+ await expect(backend.compact(run.key)).resolves.toMatchObject({summary:'fake summary'});
+ // 失败：真实链路——idle 时发起 compact，pi 发 compaction_start（状态转 running）后摘要截断拒绝，
+ // 收口必须把状态拉回 idle（否则假转圈：重试/发送/重载全被 guard 拒绝）
+ await expect(backend.compact(run.key,'CAP')).rejects.toThrow('压缩失败：摘要生成达到模型输出上限被截断');
+ expect(backend.runs()[0]?.status).toBe('idle');
+ expect(backend.runs()[0]?.compacting).toBe(false);
+ // 收口后重试不再被「请在任务空闲时压缩」guard 拒绝（guard 直接放行到 fake 的成功分支）
+ await expect(backend.compact(run.key)).resolves.toMatchObject({summary:'fake summary'});
+});
+
 it('fails closed when the mandatory policy extension is missing',async()=>{const {root,index,owned}=setup();const backend=new PiBackend({executable:path.resolve('tests/fixtures/fake-pi.mjs'),version:'0.85.1',supported:true,agentDir:root,sessionDirs:[root],diagnostics:[]},index,owned,path.join(root,'missing.mjs'),()=>{});backends.push(backend);await expect(backend.connect({cwd:root,trustProject:false,permission:'ask'})).rejects.toThrow('权限扩展缺失');expect(backend.runs()).toEqual([]);});
 
 it('releases ownership when pi unexpectedly exits',async()=>{const{root,backend}=setup();const run=await backend.connect({cwd:root,trustProject:false,permission:'ask'});await expect(backend.prompt(run.key,'/crash','followUp')).rejects.toThrow('退出');await vi.waitFor(()=>expect(backend.runs()).toEqual([]));});

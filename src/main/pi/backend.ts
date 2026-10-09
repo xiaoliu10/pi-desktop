@@ -835,21 +835,31 @@ export class PiBackend {
     } catch (error) {
       // pi 的摘要生成输出上限固定（reserveTokens 的 80%），超长会话/啰嗦模型会截断收不了尾。
       // Desktop 无法调大该上限，给可执行建议而不是裸英文错误。
+      // 匹配对象是 pi 内核 getSummarizationFailure 的固定模板（stopReason=length 分支），内核升级需复查。
       const raw = String((error as Error)?.message ?? error);
+      // 失败也要走与成功路径相同的收口：compaction_start 已把状态置 running，
+      // 若在这里直接抛出，状态会永久停留 running（假转圈），重试/发送/重载全被 guard 拒绝。
+      this.settleAfterCompact(run);
       if (/hit the token cap|summary is incomplete/i.test(raw)) {
         throw new Error('压缩失败：摘要生成达到模型输出上限被截断。可重试并附加自定义指令要求更精简的摘要（如「300 字以内，只列关键决定」）；仍失败建议新开会话继续工作。');
       }
       throw error;
     }
     this.refreshContextUsage(run);
-    // compaction 期间 compaction_start 已把状态置为 running（TS 看不到事件改写，故宽化比较）；排队中的消息不动。
-    const statusAfter = run.view.status as string;
-    if (statusAfter === 'running' && !run.view.pending && !run.view.queue?.length) {
-      run.view.status = 'idle';
-      if (run.view.timing && run.view.timing.endedAt === undefined) run.view.timing = { ...run.view.timing, endedAt: Date.now() };
-      this.emit({ type: 'run', run: { ...run.view } });
-    }
+    this.settleAfterCompact(run);
     return result;
+  }
+  /** 压缩结束（成功或失败）的统一状态收口：compaction_start 已把状态置为 running
+   *  （TS 看不到事件改写，故宽化比较）；排队中的消息不动。失败路径同样必须收口，
+   *  否则状态永久停留 running（假转圈），重试/发送/重载全被 guard 拒绝。 */
+  private settleAfterCompact(run: Running) {
+    const view = run.view;
+    const statusAfter = view.status as string;
+    if (statusAfter === 'running' && !view.pending && !view.queue?.length) {
+      view.status = 'idle';
+      if (view.timing && view.timing.endedAt === undefined) view.timing = { ...view.timing, endedAt: Date.now() };
+      this.emit({ type: 'run', run: { ...view } });
+    }
   }
   /**
    * Mutate the follow-up queue of a running session. pi only exposes
