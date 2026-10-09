@@ -31,8 +31,16 @@ async (page) => {
     ];
     const labels = { you: '你', assistant: 'pi', simulatedRun: '演示', toolRunning: '运行中', toolDone: '完成', toolError: '失败', details: '详情', queued: '排队', working: '执行中' };
     const root = createRoot(document.getElementById('root'));
-    root.render(React.createElement('div', { className: 'pireplica', style: { padding: 16 } },
-      React.createElement(ChatView, { messages: historyToMessages(branch), running: true, queued: 0, demo: false, labels, onJumpToMessage: () => {} })));
+    const multi = [React.createElement(ChatView, { key: 'multi', messages: historyToMessages(branch), running: true, queued: 0, demo: false, labels, onJumpToMessage: () => {} })];
+    // 单组形态：用户消息 + 一段持续运行的工具（无叙述分隔），组即末段即 running
+    const singleBranch = [
+      { id: 'lf2-u1', type: 'message', timestamp: '2026-10-09T00:00:00Z', message: { role: 'user', content: '跑长任务' } },
+      { id: 'lf2-a1', type: 'message', message: { role: 'assistant', timestamp: '2026-10-09T00:00:10Z', content: [{ type: 'text', text: '正在读取文件' }, { type: 'toolCall', id: 'lf2-c1', name: 'bash', arguments: { command: 'sleep 300' } }] } },
+    ];
+    const single = [React.createElement(ChatView, { key: 'single', messages: historyToMessages(singleBranch), running: true, queued: 0, demo: false, labels, onJumpToMessage: () => {} })];
+    window.mountMulti = () => root.render(React.createElement('div', { className: 'pireplica', style: { padding: 16 } }, multi));
+    window.mountSingle = () => root.render(React.createElement('div', { className: 'pireplica', style: { padding: 16 } }, single));
+    window.mountMulti();
   });
   await page.locator('.pi-msg__runninghead').waitFor({ timeout: 15000 });
   const expanded = await page.evaluate(() => {
@@ -84,6 +92,28 @@ async (page) => {
   });
   assert(restored.details === 3 && restored.open === 3, '恢复逐段展开视图，实际 ' + JSON.stringify(restored));
   await page.screenshot({ path: '/Users/jason/projects/opensource/pi-desktop/output/playwright/live-fold-expanded.png', fullPage: true });
+
+  // P2-1 回归：单组 [steps] 且它是 running 末段（工具执行期最常见形态）→ 点击同样整轮折叠
+  await page.evaluate(() => window.mountSingle && window.mountSingle());
+  await page.waitForFunction(() => document.querySelectorAll('details.pi-execution').length === 1);
+  const single = await page.evaluate(() => ({ open: document.querySelector('details.pi-execution').open, collapsable: !!document.querySelector('details.pi-execution') }));
+  assert(single.open && single.collapsable, '单组 running 形态展开');
+  await page.locator('details.pi-execution').first().locator('summary.pi-execution__summary').click();
+  await page.waitForTimeout(400);
+  const singleFolded = await page.evaluate(() => {
+    const ds = [...document.querySelectorAll('details.pi-execution')];
+    return { count: ds.length, open: ds[0]?.open, narration: [...document.querySelectorAll('.pi-msg--assistant .pi-msg__answer')].map(a => a.textContent.trim()).filter(Boolean) };
+  });
+  assert(singleFolded.count === 1 && !singleFolded.open, '单组 running 点击收成汇总条');
+  assert(singleFolded.narration.length >= 1 && singleFolded.narration.some(t => t.includes('正在读取文件')), '叙述保持可见');
+  // 单组折叠后点开汇总条 → 恢复该组展开视图（onExpandAll 路径）
+  await page.locator('details.pi-execution').first().locator('summary.pi-execution__summary').click();
+  await page.waitForTimeout(400);
+  const singleRestored = await page.evaluate(() => {
+    const d = document.querySelector('details.pi-execution');
+    return { open: d?.open, details: document.querySelectorAll('details.pi-execution').length };
+  });
+  assert(singleRestored.details === 1 && singleRestored.open, '单组恢复展开视图，实际 ' + JSON.stringify(singleRestored));
   assert(errors.length === 0, 'no page errors: ' + errors.join(' | '));
   return 'PASS live-fold: narration stays visible in place; first group header folds whole turn; expanding summary restores segments';
 }

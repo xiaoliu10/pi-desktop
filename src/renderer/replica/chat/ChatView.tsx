@@ -338,11 +338,12 @@ export function ExecutionGroup({ turn, parts, running, active, expanded, showEla
   // 模型此刻正在流式输出思考（最新内容是 thinking）→ 该思考行内滚动展示内容（见 ExecutionNote active）。
   // running 的组必须保持展开：工具组后面跟着文字段时，用户仍要能看到正在执行/刚执行的步骤
   return <details open={open} onToggle={(e) => {
+    // 运行中整轮折叠：点击任一过程组头不是折叠本段，而是把整轮全部过程段收成一条汇总
+    // （视图整体切换，不受 running 强制展开 guard 影响——末段 steps 组也是可折叠目标）
+    if (!e.currentTarget.open && onCollapseAll) { e.currentTarget.open = true; onCollapseAll(); return; }
     // 回合进行中强制展开：浏览器原生 toggle 会先把 DOM 翻到折叠态（onToggle 异步），
     // 若不立即写回，用户点击会闪折/需点两下才能再开。直接在 DOM 上拉直。
     if (running) { e.currentTarget.open = true; return; }
-    // 运行中整轮折叠：点击过程组头不是折叠本段，而是把整轮全部过程段收成一条汇总。
-    if (!e.currentTarget.open && onCollapseAll) { e.currentTarget.open = true; onCollapseAll(); return; }
     // 汇总条展开 → 恢复逐段渲染（切视图而不是展开汇总内容）
     if (e.currentTarget.open && onExpandAll) { e.currentTarget.open = false; onExpandAll(); return; }
     setUserOpen(e.currentTarget.open);
@@ -565,6 +566,8 @@ export const TurnArticle = memo(function TurnArticle({ m, liveTurn, retrying, su
   // 运行中整轮过程折叠：点击任一过程组头把全部工具/思考收成一条汇总（可再展开）。
   // 文本段（叙述/结论）不折叠，保持可见。组件按 turn id 挂载，状态天然按轮隔离。
   const [processCollapsed, setProcessCollapsed] = useState(false);
+  // 回合结束（完成态接管渲染）后清掉折叠状态：retry 恢复/running 抖动重回 live 时不复现旧折叠视图
+  useEffect(() => { if (!liveTurn) setProcessCollapsed(false); }, [liveTurn]);
   const zh = labels.you === '你';
   const [copied, setCopied] = useState(false);
   const copiedTimer = useRef<number>(0);
@@ -650,18 +653,16 @@ export const TurnArticle = memo(function TurnArticle({ m, liveTurn, retrying, su
                 const allSteps = segs.filter(s => s.kind === 'steps').flatMap(s => s.parts);
                 const answerSegs = segs.filter(s => s.kind === 'text');
                 return <>
-                  {allSteps.length > 0 && <ExecutionGroup key={`${m.id}-live-folded`} turn={m} parts={allSteps} running={false} labels={labels} onOpenToolFile={onOpenToolFile} onExpandAll={() => setProcessCollapsed(false)} />}
+                  {allSteps.length > 0 && <ExecutionGroup key={`${m.id}-live-folded`} turn={m} parts={allSteps} running={false} showElapsed={retrying} headerChrome={retrying} labels={labels} onOpenToolFile={onOpenToolFile} onExpandAll={() => setProcessCollapsed(false)} />}
                   {answerSegs.map((seg, si) => (seg.parts.length === 0 || seg.parts.every(part => hiddenErrors?.has(part.id))) ? null
                     : <div key={`${m.id}-folded-ans-${si}`} className="pi-msg__answer"><MessageParts parts={seg.parts} labels={labels} onOpenToolFile={onOpenToolFile} hiddenErrors={hiddenErrors} /></div>)}
                 </>;
               }
-              let firstStepsSeen = false;
               return segs.map((seg, si) => {
               const liveSegment = si === segs.length - 1;
               const retryHead = retrying && si === lastStepsSegment;
               if (seg.kind === 'steps' && seg.parts.length > 0) {
-                const first = !firstStepsSeen; firstStepsSeen = true;
-                return <ExecutionGroup key={`${m.id}-seg-${si}`} turn={m} parts={seg.parts} running={liveSegment && !retrying} expanded showElapsed={retryHead} headerChrome={retryHead} labels={labels} onOpenToolFile={onOpenToolFile} onCollapseAll={first ? () => setProcessCollapsed(true) : undefined} />;
+                return <ExecutionGroup key={`${m.id}-seg-${si}`} turn={m} parts={seg.parts} running={liveSegment && !retrying} expanded showElapsed={retryHead} headerChrome={retryHead} labels={labels} onOpenToolFile={onOpenToolFile} onCollapseAll={() => setProcessCollapsed(true)} />;
               }
               if (seg.kind === 'text' && seg.parts.length > 0) {
                 if (seg.parts.every(part => hiddenErrors?.has(part.id))) return null;
