@@ -902,6 +902,53 @@ function currentRun(state: PiReplicaState): PiRun | undefined {
 }
 
 let navPlayback = false;
+/** 未发送草稿（文字 + 图片/文件/技能等全部附件）。 */
+export interface ComposerDraft { text: string; items: ContextItem[] }
+/** 每个会话（新任务按 cwd）一份未发送草稿：切换会话/导航回放/开新任务都不丢，
+ *  回来即还原。内存态，重启不保留；按体积预算（约 40MB base64）LRU 淘汰。 */
+const composerDrafts = new Map<string, ComposerDraft>();
+const COMPOSER_DRAFTS_BUDGET = 40 * 1024 * 1024;
+const draftSize = (d: ComposerDraft) => d.text.length + d.items.reduce((n, i) => n + i.text.length + (i.image?.data.length ?? 0), 0);
+function composerKeyOf(state: { selectedKey: string | null; draftCwd?: string }): string | null {
+  return state.selectedKey ?? `home:${state.draftCwd ?? ''}`;
+}
+/** 输入归属键：会话 key；新任务 = home:cwd。PiReplicaApp 用它给 Composer 绑定防抖归属。 */
+export function composerOwnerKeyOf(state: { selectedKey: string | null; draftCwd?: string }): string | null {
+  return composerKeyOf(state);
+}
+function stashComposerDraft(key: string, draft: ComposerDraft) {
+  composerDrafts.delete(key);
+  if (draft.text || draft.items.length) composerDrafts.set(key, draft);
+  while ([...composerDrafts.values()].reduce((n, d) => n + draftSize(d), 0) > COMPOSER_DRAFTS_BUDGET && composerDrafts.size > 1) {
+    const oldest = composerDrafts.keys().next().value;
+    if (oldest === undefined) break;
+    composerDrafts.delete(oldest);
+  }
+}
+/** 测试用：清空全部草稿转存。 */
+export function resetComposerDrafts() { composerDrafts.clear(); }
+/** Composer 的 200ms 防抖回调按挂载归属路由：owner 已切换时写回转存而不是 live 草稿。 */
+export function writeComposerDraftText(text: string, ownerKey: string | null | undefined) {
+  const st = usePiStore.getState();
+  if (ownerKey == null || ownerKey === composerKeyOf(st)) { st.setDraftText(text); return; }
+  const prev = composerDrafts.get(ownerKey);
+  stashComposerDraft(ownerKey, { text, items: prev?.items ?? [] });
+}
+/** 切换前强制冲刷 Composer 的防抖草稿：快速输入后立刻切会话时尾字不丢。 */
+let composerFlush: (() => void) | null = null;
+export function registerComposerFlush(fn: (() => void) | null) { composerFlush = fn; }
+/** 切换会话/新任务时的统一草稿转存：先冲刷未落 store 的本地草稿，把当前内容存回旧归属，
+ *  再取出新归属的草稿（取出即删，消除 map/live 双副本）。同归属（导航回放原地）不动草稿。 */
+function switchComposerOwner(get: () => PiReplicaStore, nextKey: string | null): { draftText: string; contextItems: ContextItem[] } | undefined {
+  composerFlush?.();
+  const state = get();
+  const prevKey = composerKeyOf(state);
+  if (prevKey === nextKey) return undefined; // 原地回放/重选：live 草稿即最新，不动
+  if (prevKey !== null) stashComposerDraft(prevKey, { text: state.draftText, items: state.contextItems });
+  const draft = nextKey === null ? undefined : composerDrafts.get(nextKey);
+  if (nextKey !== null) composerDrafts.delete(nextKey);
+  return draft ? { draftText: draft.text, contextItems: [...draft.items] } : { draftText: '', contextItems: [] };
+}
 
 export const usePiStore = create<PiReplicaStore>((set, get) => {
   let catalogLoadSeq = 0;
@@ -1342,10 +1389,13 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
     try {
       const entry = result.entry;
       if (entry.view === 'chat' && entry.key) {
-        setNow({ selectedKey: entry.key, leaf: undefined, history: undefined, review: undefined, view: 'chat', draftText: '', contextItems: [], recoveredSubagents: [], subagentDismissed: getNow().desktopPreferences?.subagentDismissed?.[entry.key] ?? [], navHistory: result.history });
+        setNow({ selectedKey: entry.key, leaf: undefined, history: undefined, review: undefined, view: 'chat', ...(switchComposerOwner(getNow, entry.key) ?? {}), recoveredSubagents: [], subagentDismissed: getNow().desktopPreferences?.subagentDismissed?.[entry.key] ?? [], navHistory: result.history });
         refresh();
       } else if (entry.view === 'chat') {
-        setNow({ view: 'home', selectedKey: null, history: undefined, leaf: undefined, review: undefined, navHistory: result.history });
+        setNow({ view: 'home', selectedKey: null, history: undefined, leaf: undefined, review: undefined, ...(switchComposerOwner(getNow, `home:${getNow().draftCwd ?? ''}`) ?? {}), navHistory: result.history });
+      } else if (entry.view === 'home') {
+        const draft = switchComposerOwner(getNow, `home:${getNow().draftCwd ?? ''}`);
+        setNow({ view: 'home', selectedKey: null, history: undefined, leaf: undefined, review: undefined, ...(draft ?? {}), navHistory: result.history });
       } else {
         setNow({ view: entry.view, notificationsOpen: false, navHistory: result.history });
       }
@@ -1647,7 +1697,8 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
       return true;
     },
     selectSession: (key) => {
-      set((s) => ({ selectedKey: key, leaf: undefined, history: undefined, review: undefined, view: 'chat', draftText: '', contextItems: [], recoveredSubagents: [], subagentDismissed: s.desktopPreferences?.subagentDismissed?.[key] ?? [] }));
+      const draft = switchComposerOwner(get, key);
+      set((s) => ({ selectedKey: key, leaf: undefined, history: undefined, review: undefined, view: 'chat', ...(draft ?? {}), recoveredSubagents: [], subagentDismissed: s.desktopPreferences?.subagentDismissed?.[key] ?? [] }));
       void refreshHistory();
       get().prewarmSession(key);
     },
@@ -1758,6 +1809,8 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
       scheduleStreamFlush(true);
       const send: OptimisticSend = { id: `send-${crypto.randomUUID()}`, key: state.selectedKey, at: Date.now(), text: message, images, baseline: (state.history?.branch ?? []).flatMap(e => e.id ? [e.id] : []) };
       set({ connecting: !existing, sends: queued ? state.sends : [...(state.sends ?? []), send], pendingPrompt: queued ? undefined : message, pendingPromptAt: send.at, draftText: '', contextItems: [] });
+      const sentOwner = composerKeyOf(state);
+      if (sentOwner !== null) composerDrafts.delete(sentOwner);
       // 草稿首发立即切到 chat 视图：connect 空窗（pi 启动加载扩展可达 10s+）里 working bar、
       // 待发气泡、停止按钮都只存在于 ChatView——停在 home 的话用户只看到输入被清空，毫无反馈。
       if (!existing && get().view !== 'chat') set({ view: 'chat' });
@@ -1809,7 +1862,7 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
           const own = current.sends?.find(s => s.id === send.id);
           // Late rejection cannot erase another session's draft or an already confirmed send.
           set({ error: String((error as Error).message ?? error), errorKey: state.selectedKey ?? undefined, sends: current.sends?.filter(s => s.id !== send.id || !!s.confirmedId),
-            ...(current.selectedKey === (own?.key ?? targetKey) && !own?.confirmedId && !current.draftText && !current.contextItems.length ? { draftText: text, contextItems: state.contextItems } : {}),
+            ...(composerKeyOf(current) === (own?.key ?? targetKey ?? sentOwner) && !own?.confirmedId && !current.draftText && !current.contextItems.length ? { draftText: text, contextItems: state.contextItems } : {}),
             ...(current.pendingPromptAt === send.at ? { pendingPrompt: undefined, pendingPromptAt: undefined } : {}),
             ...(!own?.confirmedId && current.sentAt?.key === targetKey && current.sentAt.at === send.at ? { sentAt: undefined } : {}),
             ...(queuedItem ? { runs: current.runs.map(r => {
@@ -1817,6 +1870,11 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
               const queue = r.queue.filter(q => q !== queuedItem);
               return { ...r, queue, pending: queue.length };
             }) } : {}) });
+          // Restore a failed send to its original owner's stored draft when the user
+          // navigated away; never overwrite a newer draft in either conversation.
+          const restoreOwner = own?.key ?? targetKey ?? sentOwner;
+          if (!own?.confirmedId && restoreOwner !== null && composerKeyOf(get()) !== restoreOwner
+            && !composerDrafts.has(restoreOwner)) stashComposerDraft(restoreOwner, { text, items: state.contextItems });
         } finally {
           // pendingPrompt 不在这里清：prompt 应答 ≠ 用户消息已上屏。乐观气泡要撑到
           // 历史刷新带回真实用户条目（见 settlePendingPrompt），否则模型思考的几十秒里
@@ -1912,8 +1970,8 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
         ...items.map((it, i) => ({ id: `recall-doc-${stamp}-${i}`, name: it.name, path: it.path, kind: it.kind, text: it.text })),
         ...(item.images ?? []).map((image, i) => ({ id: `recall-img-${stamp}-${i}`, name: `图片 ${i + 1}`, path: '', kind: 'image' as const, text: '', image })),
       ];
-      get().setDraftText(head);
-      if (recalled.length) get().addContext(recalled);
+      // 原子替换草稿（与历史 recall 同语义）：召回是显式编辑动作，不叠加到已有附件。
+      set({ draftText: head, contextItems: recalled });
       get().queueEdit({ type: 'remove', index });
       // 载入输入框不再发通知：草稿已直接出现在输入框，效果可见。
     },
@@ -1967,7 +2025,7 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
     startNewSession: () => {
       const state = get();
       const cwd = currentRun(state)?.cwd ?? state.sessions.find(s => s.key === state.selectedKey)?.cwd ?? state.draftCwd ?? state.desktopPreferences?.projects[0]?.path;
-      set({ selectedKey: null, history: undefined, leaf: undefined, review: undefined, view: 'home', draftText: '', contextItems: [], draftCwd: cwd, subagentDismissed: [] });
+      set({ selectedKey: null, history: undefined, leaf: undefined, review: undefined, view: 'home', ...(switchComposerOwner(get, `home:${cwd ?? ''}`) ?? {}), draftCwd: cwd, subagentDismissed: [] });
     },
     addProject: () => {
       if (get().addingProject) return;
@@ -1981,7 +2039,7 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
         const project = preferences.projects.find(p => p.path === cwd) ?? preferences.projects.at(-1);
         const projectPath = project?.path ?? cwd;
         get().startNewSession();
-        set({ desktopPreferences: preferences, draftCwd: projectPath, expandedProjects: [...new Set([...get().expandedProjects, projectPath])] });
+        set({ desktopPreferences: preferences, ...(switchComposerOwner(get, `home:${projectPath}`) ?? {}), draftCwd: projectPath, expandedProjects: [...new Set([...get().expandedProjects, projectPath])] });
       }).finally(() => set({ addingProject: false }));
     },
     setAccessMode: async (mode) => {
@@ -2032,7 +2090,7 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
     chooseWorkspace: () => {
       void attempt(async () => {
         const cwd = await window.localPi!.pickDirectory();
-        if (cwd) set({ draftCwd: cwd });
+        if (cwd) set({ ...(switchComposerOwner(get, `home:${cwd}`) ?? {}), draftCwd: cwd });
       });
     },
     setTheme: (theme) => {

@@ -29,7 +29,7 @@ async (page) => {
       voiceNotConfigured: '语音输入需至少配置一个就绪的 ASR 模型', slashCommands: '命令', atFiles: '文件',
       demoBadge: '界面预览 · 演示数据', commandsEmpty: '没有匹配的命令', filesEmpty: '没有匹配的文件',
     };
-    const HISTORY = ['第一条消息', '第二次提问', '第三次提问'];
+    const HISTORY = ['第一条消息', '第二次提问', { text: '带图的提问', items: [{ name: '截图.png', path: '/tmp/截图.png', kind: 'image', text: '', image: { type: 'image', mimeType: 'image/png', data: 'aGk=' } }] }];
     const root = createRoot(document.getElementById('root'));
     function Shell() {
       const [draft, setDraft] = React.useState('');
@@ -42,6 +42,8 @@ async (page) => {
         slashCommands: [], files: [], running: false, queued: 0, queue: [], demo: false, labels: zh,
         hideReasoning: true,
         promptHistory: HISTORY,
+        // 生产实现经 zustand store 同步回 props；Shell 同样把召回文字同步回自己的 state（等价）
+        onRestoreHistoryEntry: (text, items, phase) => { window.__restored = { text, items, phase }; setDraft(text); },
         onSend: (text) => setSent((s) => [...s, text]), onStop: () => {},
         onPickModel: () => {}, onPickReasoning: () => {}, onPickAgentMode: () => {}, onPickPermission: () => {},
       });
@@ -60,12 +62,19 @@ async (page) => {
   // 空输入 ↑ → 最新一条
   await ta.focus();
   await page.keyboard.press('ArrowUp');
-  assert(await value() === '第三次提问', `ArrowUp from empty should recall newest, got "${await value()}"`);
+  assert(await value() === '带图的提问', `ArrowUp from empty should recall newest, got "${await value()}"`);
   assert(await caretAtEnd(), 'caret should be at end after recall');
+  // 富 recall：文字之外，图片等附件经 onRestoreHistoryEntry 原样还原（含 base64）
+  const restored = await page.evaluate(() => window.__restored);
+  assert(restored && restored.text === '带图的提问' && restored.items.length === 1 && restored.phase === 'enter', `rich recall should restore attachments, got ${JSON.stringify(restored)}`);
+  assert(restored.items[0].kind === 'image' && restored.items[0].image.data === 'aGk=' && restored.items[0].name === '截图.png', 'image attachment fully restored');
 
   // 继续 ↑ → 更旧
   await page.keyboard.press('ArrowUp');
   assert(await value() === '第二次提问', `2nd ArrowUp should recall older, got "${await value()}"`);
+  // 纯文字旧条目：items 为空数组
+  const restoredText = await page.evaluate(() => window.__restored);
+  assert(restoredText && restoredText.text === '第二次提问' && restoredText.items.length === 0, 'plain text entry recalls with empty items');
   await page.keyboard.press('ArrowUp');
   assert(await value() === '第一条消息', `3rd ArrowUp should recall oldest, got "${await value()}"`);
   // 到最旧再 ↑ 停住
@@ -76,7 +85,7 @@ async (page) => {
   await page.keyboard.press('ArrowDown');
   assert(await value() === '第二次提问', `ArrowDown should go newer, got "${await value()}"`);
   await page.keyboard.press('ArrowDown');
-  assert(await value() === '第三次提问', `ArrowDown should reach newest, got "${await value()}"`);
+  assert(await value() === '带图的提问', `ArrowDown should reach newest, got "${await value()}"`);
   await page.keyboard.press('ArrowDown');
   assert(await value() === '', `ArrowDown past newest should restore empty draft, got "${await value()}"`);
 
@@ -88,18 +97,18 @@ async (page) => {
   // 进入浏览态后手动编辑 → 退出浏览态，再按 ↑ 不接管
   await ta.fill('');
   await page.keyboard.press('ArrowUp');
-  assert(await value() === '第三次提问', 're-enter history mode');
-  await ta.fill('第三次提问手改');
+  assert(await value() === '带图的提问', 're-enter history mode');
+  await ta.fill('带图的提问手改');
   await page.keyboard.press('ArrowUp');
-  assert(await value() === '第三次提问手改', 'manual edit exits history mode; ArrowUp must not take over');
+  assert(await value() === '带图的提问手改', 'manual edit exits history mode; ArrowUp must not take over');
 
   // Enter 发送照常工作
   await ta.fill('');
-  await page.keyboard.press('ArrowUp'); // 第三次提问
+  await page.keyboard.press('ArrowUp'); // 带图的提问
   await page.keyboard.press('Enter');
   await page.waitForTimeout(50);
   const sent = await page.evaluate(() => window.__sent);
-  assert(sent.length === 1 && sent[0] === '第三次提问', `Enter should send recalled text, got ${JSON.stringify(sent)}`);
+  assert(sent.length === 1 && sent[0] === '带图的提问', `Enter should send recalled text, got ${JSON.stringify(sent)}`);
 
   await page.screenshot({ path: 'output/playwright/composer-history-recall.png' });
   assert(errors.length === 0, 'no page errors: ' + errors.join(' | '));

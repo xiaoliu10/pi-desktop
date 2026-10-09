@@ -3,6 +3,14 @@
 // - 连续重复只留一条（只比较最后一条，避免误删 A、B、A 非连续重复）；
 // - up: 未进入历史态 → 最新一条，否则向更旧；到最旧停在 0；
 // - down: 未进入历史态 → 最新一条；已在最新一条 → 退出历史态、恢复空草稿。
+// 富条目：一次发送可能携带图片/文件/技能等上下文（ContextItem），recall 必须
+// 原样还原（含 base64 图片数据），因此条目从纯 string 扩展为
+// `{ text, items }`；旧版 string 条目照常读取（等价于 items: []）。
+// Complete entries are retained in workspace memory and IndexedDB (see
+// workspace-prompt-history.ts). localStorage is only a backwards-compatible copy;
+// quota failures must never strip image payloads or block sending.
+
+import type { ContextItem } from '../../shared/composer';
 
 export const MAX_PROMPT_HISTORY = 30;
 
@@ -10,17 +18,50 @@ const STORAGE_KEY_PREFIX = 'pi-desktop-chat-prompt-history:';
 
 type PromptHistoryDirection = 'up' | 'down';
 
+/** A recalled prompt: visible text plus every image/file/document/skill attachment. */
+export interface PromptHistoryEntry {
+  text: string;
+  items: Array<Omit<ContextItem, 'id'>>;
+}
+
+/** Legacy entries (plain strings) stay readable; `asEntry` normalizes both. */
+export type PromptHistoryEntryInput = string | PromptHistoryEntry | { text: string; items: readonly Omit<ContextItem, 'id'>[] };
+
+export function asEntry(value: PromptHistoryEntryInput): PromptHistoryEntry {
+  return typeof value === 'string' ? { text: value, items: [] } : { text: value.text, items: [...value.items] };
+}
+
+function entryFingerprint(entry: PromptHistoryEntry): string {
+  return JSON.stringify([entry.text.trim(), entry.items.map(item => [item.name, item.path, item.kind, item.text, item.image ?? null])]);
+}
+
 export interface PromptHistoryNavigationResult {
   nextIndex: number | null;
   nextValue: string;
+  nextItems: PromptHistoryEntry['items'];
   shouldHandle: boolean;
 }
 
-function normalizeEntries(entries: readonly unknown[]): string[] {
+function normalizeEntries(entries: readonly unknown[]): PromptHistoryEntry[] {
   return entries
-    .filter((entry): entry is string => typeof entry === 'string')
-    .map((entry) => entry.trim())
-    .filter((entry) => entry.length > 0)
+    .map((entry) => {
+      if (typeof entry === 'string') return entry.trim() ? { text: entry, items: [] } : null;
+      if (!entry || typeof entry !== 'object') return null;
+      const candidate = entry as Partial<PromptHistoryEntry>;
+      if (typeof candidate.text !== 'string') return null;
+      const items = Array.isArray(candidate.items)
+        ? candidate.items.filter((item): item is PromptHistoryEntry['items'][number] => {
+          if (!item || typeof item !== 'object') return false;
+          const it = item as Partial<ContextItem>;
+          if (typeof it.name !== 'string' || typeof it.path !== 'string' || typeof it.text !== 'string'
+            || !['file', 'document', 'skill', 'image'].includes(String(it.kind))) return false;
+          if (it.image !== undefined && (typeof it.image !== 'object' || it.image === null || typeof (it.image as { data?: unknown }).data !== 'string' || typeof (it.image as { mimeType?: unknown }).mimeType !== 'string' || it.image.type !== 'image')) return false;
+          return true;
+        })
+        : [];
+      return candidate.text.trim() || items.length ? { text: candidate.text, items } : null;
+    })
+    .filter((entry): entry is PromptHistoryEntry => entry !== null)
     .slice(-MAX_PROMPT_HISTORY);
 }
 
@@ -33,10 +74,10 @@ function getBrowserStorage(): Storage | null {
   try { return window.localStorage; } catch { return null; }
 }
 
-export function readPromptHistory(cwd: string, storage: Storage | null = getBrowserStorage()): string[] {
-  const raw = storage?.getItem(storageKey(cwd));
-  if (!raw) return [];
+export function readPromptHistory(cwd: string, storage: Storage | null = getBrowserStorage()): PromptHistoryEntry[] {
   try {
+    const raw = storage?.getItem(storageKey(cwd));
+    if (!raw) return [];
     const parsed: unknown = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
     return normalizeEntries(parsed);
@@ -45,37 +86,49 @@ export function readPromptHistory(cwd: string, storage: Storage | null = getBrow
   }
 }
 
-export function persistPromptHistory(cwd: string, entries: readonly string[], storage: Storage | null = getBrowserStorage()) {
-  storage?.setItem(storageKey(cwd), JSON.stringify(normalizeEntries(entries)));
+/** Backwards-compatible localStorage copy. Image payloads live in IndexedDB
+ *  (workspace-prompt-history.ts) and blow the localStorage quota, so this copy is
+ *  written without them on purpose; failures are swallowed. */
+export function persistPromptHistory(cwd: string, entries: readonly PromptHistoryEntryInput[], storage: Storage | null = getBrowserStorage()) {
+  try {
+    const stripped = normalizeEntries(entries).map(entry => ({
+      ...entry,
+      items: entry.items.map(item => (item.image ? { ...item, image: undefined } : item)),
+    }));
+    storage?.setItem(storageKey(cwd), JSON.stringify(stripped));
+  } catch { /* Full entries remain in memory and IndexedDB. */ }
 }
 
-export function appendPromptHistoryEntry(entries: readonly string[], entry: string, limit = MAX_PROMPT_HISTORY): string[] {
-  const trimmed = entry.trim();
-  if (!trimmed) return [...entries];
-  if (entries.at(-1)?.trim() === trimmed) return [...entries];
+export function appendPromptHistoryEntry(entries: readonly PromptHistoryEntryInput[], entry: PromptHistoryEntryInput, limit = MAX_PROMPT_HISTORY): PromptHistoryEntry[] {
+  const normalized = entries.map(asEntry);
+  const raw = asEntry(entry);
+  // 入库前去首尾空白（历史显示与比较都按 trim 后文本）；纯附件发送（空文字）仍入历史。
+  const next = { text: raw.text.trim(), items: raw.items };
+  if (!next.text && next.items.length === 0) return normalized;
   const normalizedLimit = Math.max(1, Math.trunc(limit));
-  return [...entries, trimmed].slice(-normalizedLimit);
+  const previous = normalized.at(-1);
+  if (previous && entryFingerprint(previous) === entryFingerprint(next)) return normalized;
+  return [...normalized, next].slice(-normalizedLimit);
 }
 
 export function navigatePromptHistory(
-  entries: readonly string[],
+  entries: readonly PromptHistoryEntryInput[],
   currentIndex: number | null,
   direction: PromptHistoryDirection,
 ): PromptHistoryNavigationResult {
   if (entries.length === 0) {
-    return { nextIndex: currentIndex, nextValue: '', shouldHandle: false };
+    return { nextIndex: currentIndex, nextValue: '', nextItems: [], shouldHandle: false };
   }
+  const recall = (index: number): PromptHistoryNavigationResult => {
+    const entry = asEntry(entries[index]!);
+    return { nextIndex: index, nextValue: entry.text, nextItems: entry.items, shouldHandle: true };
+  };
   if (direction === 'up') {
-    const nextIndex = currentIndex === null ? entries.length - 1 : Math.max(currentIndex - 1, 0);
-    return { nextIndex, nextValue: entries[nextIndex] ?? '', shouldHandle: true };
+    return recall(currentIndex === null ? entries.length - 1 : Math.max(currentIndex - 1, 0));
   }
-  if (currentIndex === null) {
-    const nextIndex = entries.length - 1;
-    return { nextIndex, nextValue: entries[nextIndex] ?? '', shouldHandle: true };
-  }
+  if (currentIndex === null) return recall(entries.length - 1);
   if (currentIndex >= entries.length - 1) {
-    return { nextIndex: null, nextValue: '', shouldHandle: true };
+    return { nextIndex: null, nextValue: '', nextItems: [], shouldHandle: true };
   }
-  const nextIndex = currentIndex + 1;
-  return { nextIndex, nextValue: entries[nextIndex] ?? '', shouldHandle: true };
+  return recall(currentIndex + 1);
 }
