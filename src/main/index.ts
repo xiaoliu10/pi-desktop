@@ -541,7 +541,7 @@ void app.whenReady().then(() => {
     enabled: settings.preferences().memoryAssist === true,
     dir: builtinMemoryDir(host.environment.agentDir),
   });
-  automations = new AutomationService(path.join(app.getPath('userData'),'automations.json'),()=>host.backend,()=>{
+  automations = new AutomationService(path.join(app.getPath('userData'),'automations.json'),()=>host.backend,()=>host.index,()=>{
     if(mainWindow&&!mainWindow.isDestroyed())mainWindow.webContents.send('local-pi:automations-changed');
   });
   host.backend.automations = automations; // desktop_schedule 工具的调度通道

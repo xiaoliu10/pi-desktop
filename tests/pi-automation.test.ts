@@ -4,11 +4,13 @@ import { AutomationService, nextSchedule, validateWorkflow } from '../src/main/p
 import { workflowPrompts } from '../src/shared/automation';
 import type { AutomationTask, SavedWorkflow } from '../src/shared/automation';
 import type { PiBackend } from '../src/main/pi/backend';
+import type { SessionIndex } from '../src/main/pi/session-index';
 const roots:string[]=[];const services:AutomationService[]=[];
 afterEach(()=>{services.splice(0).forEach(s=>s.dispose());roots.splice(0).forEach(r=>fs.rmSync(r,{recursive:true,force:true}));});
-function setup(){const root=fs.mkdtempSync(path.join(os.tmpdir(),'pi-auto-'));roots.push(root);let now=Date.parse('2026-09-21T00:00:00Z');let seq=0;let service:AutomationService;
- const backend={connect:vi.fn(async()=>({key:`run-${++seq}`})),thinking:vi.fn(async()=>{}),prompt:vi.fn(async()=>{}),close:vi.fn(),stop:vi.fn(async()=>{})};
- service=new AutomationService(path.join(root,'automation.json'),()=>backend as unknown as PiBackend,()=>{},()=>now);services.push(service);
+function setup(indexOverride?:unknown){const root=fs.mkdtempSync(path.join(os.tmpdir(),'pi-auto-'));roots.push(root);let now=Date.parse('2026-09-21T00:00:00Z');let seq=0;let service:AutomationService;
+ const backend={connect:vi.fn(async()=>({key:`run-${++seq}`})),thinking:vi.fn(async()=>{}),prompt:vi.fn(async()=>{}),close:vi.fn(),stop:vi.fn(async()=>{}),runs:()=>[],hasPendingDialogs:vi.fn(()=>false)};
+ const index=(indexOverride??{scan:()=>[]}) as unknown as SessionIndex;
+ service=new AutomationService(path.join(root,'automation.json'),()=>backend as unknown as PiBackend,()=>index,()=>{},()=>now);services.push(service);
  const task=(overrides:Partial<AutomationTask>={})=>service.saveTask({id:'',name:'Daily check',cwd:root,prompt:'Check only',args:{},permission:'plan',schedule:{kind:'interval',minutes:1},enabled:true,runCount:0,updatedAt:0,...overrides});
  const workflow=(overrides:Partial<SavedWorkflow>={})=>service.saveWorkflow({id:'',name:'Review',description:'Review changes',whenToUse:'Before commit',scope:'project',cwd:root,parameters:[{name:'target',type:'string',required:true,description:'Target'}],steps:[{id:'1',name:'Inspect',prompt:'Inspect {{target}}'},{id:'2',name:'Summarize',prompt:'Summarize findings'}],updatedAt:0,...overrides});
  const settle=(key:string)=>service.onPiEvent({type:'rpc',key,generation:'g',event:{type:'agent_settled'}});
@@ -33,6 +35,81 @@ it('runs workflow steps sequentially in one isolated pi session and persists out
  expect(h.service.snapshot().runs[0].steps.map(s=>s.status)).toEqual(['succeeded','succeeded']);expect(h.backend.close).toHaveBeenCalledWith('run-1');
  expect(JSON.parse(fs.readFileSync(path.join(h.root,'automation.json'),'utf8')).runs[0].id).toBe(run.id);
 });
+it('reuse mode (default): prefers a live session, then the most recent project session, and never closes it',async()=>{
+ // 1) live run 复用：backend.runs 返回同 cwd 的 idle 会话 → connect 不被调用、结束不 close
+ const h=setup();
+ const runsSpy = vi.fn(() => [{ key: 'live-1', cwd: h.root, status: 'idle', timing: { startedAt: 1 } }]);
+ (h.backend as unknown as { runs: unknown }).runs = runsSpy;
+ const w1=h.workflow();h.service.runWorkflow({id:w1.id,cwd:h.root,args:{target:'X'},permission:'ask'});
+ await vi.waitFor(()=>expect(h.backend.prompt).toHaveBeenCalledTimes(1));h.settle('live-1');
+ await vi.waitFor(()=>expect(h.backend.prompt).toHaveBeenCalledTimes(2));h.settle('live-1');
+ await vi.waitFor(()=>expect(h.service.snapshot().runs[0].status).toBe('succeeded'));
+ expect(h.backend.connect).not.toHaveBeenCalled();
+ expect(h.service.snapshot().runs[0].sessionKey).toBe('live-1');
+ expect(h.service.snapshot().runs[0].reusedSession).toBe(true);
+ expect(h.backend.close).not.toHaveBeenCalledWith('live-1');
+
+ // 2) 无 live run：按 updatedAt 取最近的会话文件走 sourceKey 连接
+ const files:string[]=[];for(let i=0;i<2;i++){const f=path.join(h.root,`s${i}.jsonl`);fs.writeFileSync(f,JSON.stringify({type:'session',version:3,id:`s${i}`,cwd:h.root,timestamp:new Date().toISOString()})+'\n');files.push(f);}
+ fs.utimesSync(files[0],new Date(Date.now()-60000),new Date(Date.now()-60000)); // 更旧
+ const h2=setup({ scan: () => files.map((f,i) => ({ key: `k${i}`, path: f, cwd: h2.root, updatedAt: Date.now()-i*1000, name: `s${i}`, size: 10, parentSession: undefined, owned: true })) });
+ const w2=h2.workflow();h2.service.runWorkflow({id:w2.id,cwd:h2.root,args:{target:'Y'},permission:'ask'});
+ await vi.waitFor(()=>expect(h2.backend.prompt).toHaveBeenCalledTimes(1));h2.settle('run-1');
+ await vi.waitFor(()=>expect(h2.backend.prompt).toHaveBeenCalledTimes(2));h2.settle('run-1');
+ await vi.waitFor(()=>expect(h2.service.snapshot().runs[0].status).toBe('succeeded'));
+ expect(h2.backend.connect).toHaveBeenCalledWith(expect.objectContaining({sourceKey:'k0'})); // 最近更新的 Desktop 自建文件
+ expect(h2.backend.close).not.toHaveBeenCalled(); // 复用的会话不 close
+
+ // 2b) 外部 CLI 文件（owned:false）不复用：connect 会 fork 副本，产出不在原会话 → 新建
+ const h2b=setup({ scan: () => files.map((f,i) => ({ key: `k${i}`, path: f, cwd: h2b.root, updatedAt: Date.now()-i*1000, name: `s${i}`, size: 10, parentSession: undefined, owned: false })) });
+ const w2b=h2b.workflow();h2b.service.runWorkflow({id:w2b.id,cwd:h2b.root,args:{target:'Y2'},permission:'ask'});
+ await vi.waitFor(()=>expect(h2b.backend.prompt).toHaveBeenCalledTimes(1));h2b.settle('run-1');
+ await vi.waitFor(()=>expect(h2b.backend.prompt).toHaveBeenCalledTimes(2));h2b.settle('run-1');
+ await vi.waitFor(()=>expect(h2b.service.snapshot().runs[0].status).toBe('succeeded'));
+ expect(h2b.backend.connect).not.toHaveBeenCalledWith(expect.objectContaining({sourceKey:'k0'}));
+ expect(h2b.backend.close).toHaveBeenCalledWith('run-1');
+
+ // 2c) busy live run（running）不复用：步骤归因会错位 → 新建隔离
+ const h2c=setup();
+ (h2c.backend as unknown as { runs: unknown }).runs = vi.fn(() => [{ key: 'busy-1', cwd: h2c.root, status: 'running', timing: { startedAt: 1 } }]);
+ const w2c=h2c.workflow();h2c.service.runWorkflow({id:w2c.id,cwd:h2c.root,args:{target:'Y3'},permission:'ask'});
+ await vi.waitFor(()=>expect(h2c.backend.prompt).toHaveBeenCalledTimes(1));h2c.settle('run-1');
+ expect(h2c.backend.connect).toHaveBeenCalledWith(expect.objectContaining({cwd:expect.any(String)})); // 新建而非复用 busy
+ await vi.waitFor(()=>expect(h2c.backend.prompt).toHaveBeenCalledTimes(2));h2c.settle('run-1');
+ await vi.waitFor(()=>expect(h2c.service.snapshot().runs[0].status).toBe('succeeded'));
+
+ // 2d) 同 cwd 已有自动化在跑：不再复用（waiter 单槽会互相覆盖）→ 新建隔离
+ const h2d=setup();
+ (h2d.backend as unknown as { runs: unknown }).runs = vi.fn(() => [{ key: 'live-x', cwd: h2d.root, status: 'idle', timing: { startedAt: 1 } }]);
+ const t2d=h2d.task();h2d.advance(61000);h2d.service.tick();
+ await vi.waitFor(()=>expect(h2d.backend.prompt).toHaveBeenCalledTimes(1));
+ const w2d=h2d.workflow();h2d.service.runWorkflow({id:w2d.id,cwd:h2d.root,args:{target:'Y4'},permission:'ask'});
+ await vi.waitFor(()=>expect(h2d.service.snapshot().runs.find(r=>r.workflowId===w2d.id)?.sessionKey).toBeDefined());
+ const wfKey=h2d.service.snapshot().runs.find(r=>r.workflowId===w2d.id)!.sessionKey!;
+ expect(wfKey).not.toBe('live-x'); // 没有复用被自动化占用的 key
+
+ // 2e) busy 会话的文件恰是「最近会话文件」（活跃对话 mtime 最新）：attached 去重不得架空
+ // idle-only guard —— 不走 sourceKey，直接新建隔离
+ const h2e=setup({ scan: () => [{ key: 'k-owned', path: path.join(h2e.root, 'busy-owned.jsonl'), cwd: h2e.root, updatedAt: Date.now(), name: 'busy-owned', size: 10, parentSession: undefined, owned: true }] });
+ (h2e.backend as unknown as { runs: unknown }).runs = vi.fn(() => [{ key: 'busy-attached', cwd: h2e.root, status: 'running', timing: { startedAt: 1 } }]);
+ const w2e=h2e.workflow();h2e.service.runWorkflow({id:w2e.id,cwd:h2e.root,args:{target:'Y5'},permission:'ask'});
+ await vi.waitFor(()=>expect(h2e.backend.prompt).toHaveBeenCalledTimes(1));h2e.settle('run-1');
+ await vi.waitFor(()=>expect(h2e.backend.prompt).toHaveBeenCalledTimes(2));h2e.settle('run-1');
+ await vi.waitFor(()=>expect(h2e.service.snapshot().runs[0].status).toBe('succeeded'));
+ expect(h2e.backend.connect).not.toHaveBeenCalledWith(expect.objectContaining({sourceKey:'k-owned'}));
+ expect(h2e.service.snapshot().runs[0].sessionKey).not.toBe('busy-attached');
+
+ // 3) fresh：任务显式选「独立新会话」→ runTask 端到端新建并回收（P0-1 回归）
+ const h3=setup();
+ const t3=h3.task({sessionMode:'fresh'});
+ h3.service.runTask(t3.id);
+ await vi.waitFor(()=>expect(h3.backend.prompt).toHaveBeenCalledTimes(1));h3.settle('run-1');
+ await vi.waitFor(()=>expect(h3.service.snapshot().runs[0].status).toBe('succeeded'));
+ const c=(v:string)=>fs.realpathSync(v);
+ expect(h3.backend.connect).toHaveBeenCalledWith(expect.objectContaining({cwd:c(h3.root),trustProject:false}));
+ expect(h3.backend.close).toHaveBeenCalledWith('run-1'); // 自己新建的会话照旧回收
+});
+
 it('claims scheduled occurrences once, blocks overlap, and retains phase-aligned interval times',async()=>{
  const h=setup(),task=h.task();h.advance(61000);h.service.tick();h.service.tick();await vi.waitFor(()=>expect(h.backend.prompt).toHaveBeenCalledTimes(1));
  expect(h.service.snapshot().tasks[0].nextRunAt).toBe(Date.parse('2026-09-21T00:02:00Z'));
