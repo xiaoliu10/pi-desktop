@@ -80,8 +80,9 @@ export class AutomationService {
  /** 解析执行会话：默认复用项目下最近活跃的会话，让任务跑在用户正在对话的上下文里
   *  （此前每次自动化都新起独立会话，任务结论散落在侧栏各处）；fresh 才强制新会话。
   *  复用必须是 **idle** 会话：步骤完成归因依赖「prompt 后下一个 agent_settled 属于本步骤」，
-  *  复用 busy 会话时用户任务的 settle 会抢在前头，步骤状态整体错位。同 cwd 已有自动化
-  *  在跑时也不再复用（不同 run 共享 key 会互相覆盖 waiter），直接新会话隔离。 */
+  *  复用 busy 会话（或步骤执行期间用户插话排队）都会让 settle 边界错位、步骤状态整体
+  *  偏移——这是已知限制，无数据丢失但结论时序可能提前。同 cwd 已有自动化在跑或存在
+  *  非 idle 会话时同样不复用（waiter 单槽互斥/attached 去重会架空 idle guard），直接新会话。 */
  private async resolveSession(cwd:string,sessionMode:'reuse'|'fresh'|undefined,config:{permission:WorkflowLaunch['permission'];model?:string},self?:AutomationRun):Promise<{key:string;reused:boolean}>{
   const backend=this.backend();
   if(sessionMode==='fresh'||this.data.runs.some(r=>live(r)&&r!==self&&r.cwd===cwd)){
@@ -95,6 +96,13 @@ export class AutomationService {
   const idleRun=backend.runs().filter(r=>r.status==='idle'&&!r.pending&&!r.queue?.length&&sameCwd(r.cwd))
     .sort((a,b)=>(b.timing?.endedAt??b.timing?.startedAt??0)-(a.timing?.endedAt??a.timing?.startedAt??0))[0];
   if(idleRun&&!backend.hasPendingDialogs(idleRun.key))return {key:idleRun.key,reused:true};
+  // 走到这里说明同 cwd 没有 idle run，但可能有 busy run（用户正在对话，文件 mtime 最新、
+  // 恰是最近会话文件）：connect({sourceKey}) 的 attached 去重会直接返回那个 busy run，
+  // 架空 idle-only guard → 步骤归因级联错位。存在任何非 idle run 时直接新建隔离。
+  if(backend.runs().some(r=>sameCwd(r.cwd))){
+   const session=await backend.connect({cwd,trustProject:false,permission:config.permission,model:config.model});
+   return {key:session.key,reused:false};
+  }
   // 会话文件复用仅限 Desktop 自建（owned）：外部 CLI 文件 connect 会 fork parentSession 副本，
   // 产出不在用户原会话里，与「上下文连续」相悖。超限/损坏（#78）回落新建。
   const recent=this.index().scan().filter(s=>s.owned&&!s.parentSession&&sameCwd(s.cwd)).sort((a,b)=>b.updatedAt-a.updatedAt)[0];

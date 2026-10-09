@@ -88,6 +88,17 @@ it('reuse mode (default): prefers a live session, then the most recent project s
  const wfKey=h2d.service.snapshot().runs.find(r=>r.workflowId===w2d.id)!.sessionKey!;
  expect(wfKey).not.toBe('live-x'); // 没有复用被自动化占用的 key
 
+ // 2e) busy 会话的文件恰是「最近会话文件」（活跃对话 mtime 最新）：attached 去重不得架空
+ // idle-only guard —— 不走 sourceKey，直接新建隔离
+ const h2e=setup({ scan: () => [{ key: 'k-owned', path: path.join(h2e.root, 'busy-owned.jsonl'), cwd: h2e.root, updatedAt: Date.now(), name: 'busy-owned', size: 10, parentSession: undefined, owned: true }] });
+ (h2e.backend as unknown as { runs: unknown }).runs = vi.fn(() => [{ key: 'busy-attached', cwd: h2e.root, status: 'running', timing: { startedAt: 1 } }]);
+ const w2e=h2e.workflow();h2e.service.runWorkflow({id:w2e.id,cwd:h2e.root,args:{target:'Y5'},permission:'ask'});
+ await vi.waitFor(()=>expect(h2e.backend.prompt).toHaveBeenCalledTimes(1));h2e.settle('run-1');
+ await vi.waitFor(()=>expect(h2e.backend.prompt).toHaveBeenCalledTimes(2));h2e.settle('run-1');
+ await vi.waitFor(()=>expect(h2e.service.snapshot().runs[0].status).toBe('succeeded'));
+ expect(h2e.backend.connect).not.toHaveBeenCalledWith(expect.objectContaining({sourceKey:'k-owned'}));
+ expect(h2e.service.snapshot().runs[0].sessionKey).not.toBe('busy-attached');
+
  // 3) fresh：任务显式选「独立新会话」→ runTask 端到端新建并回收（P0-1 回归）
  const h3=setup();
  const t3=h3.task({sessionMode:'fresh'});
