@@ -963,8 +963,10 @@ export function Composer(props: ComposerProps) {
       historyIndexRef.current = null;
     }
   }, [promptHistory]);
-  const applyHistoryEntry = (nextIndex: number | null, nextValue: string) => {
+  const applyHistoryEntry = (nextIndex: number | null, nextValue: string, nextItems?: readonly Omit<import('../../../shared/composer').ContextItem, 'id'>[]) => {
     historyIndexRef.current = nextIndex;
+    // 富 recall：文字+附件经 store 原子替换，避免与本地防抖编辑串写。
+    if (props.onRestoreHistoryEntry) props.onRestoreHistoryEntry(nextValue, nextItems ?? []);
     setText(nextValue);
     // 程序化赋值不触发 onChange/input，手动把光标移到末尾并适配高度（对齐 ZCode selectEnd）。
     requestAnimationFrame(() => {
@@ -1143,7 +1145,7 @@ export function Composer(props: ComposerProps) {
         const result = navigatePromptHistory(promptHistory, currentIndex, e.key === 'ArrowUp' ? 'up' : 'down');
         if (result.shouldHandle) {
           e.preventDefault();
-          applyHistoryEntry(result.nextIndex, result.nextValue);
+          applyHistoryEntry(result.nextIndex, result.nextValue, result.nextItems);
           return;
         }
       }

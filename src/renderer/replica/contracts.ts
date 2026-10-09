@@ -230,8 +230,11 @@ export interface ComposerProps {
    */
   hideReasoning?: boolean;
   onSend: (text: string) => void;
-  /** 已发送消息历史（↑/↓ recall，ZCode 同款）；空数组时方向键不接管。 */
-  promptHistory?: readonly string[];
+  /** 已发送消息历史（↑/↓ recall，ZCode 同款）；空数组时方向键不接管。
+   *  条目为富结构：text + 非图片上下文（文件/文档/技能），recall 原样还原。 */
+  promptHistory?: readonly (string | { text: string; items: readonly Omit<import('../../shared/composer').ContextItem, 'id'>[] })[];
+  /** 历史 recall 的整份还原（文字+附件）：生产侧经 store 原子替换，防与本地编辑串写。 */
+  onRestoreHistoryEntry?: (text: string, items: readonly Omit<import('../../shared/composer').ContextItem, 'id'>[]) => void;
   /** 图像模型目录（空 = 运行时不支持，菜单不出「图像生成」区块）。 */
   imageModels?: ImageGenModelOption[];
   /** 当前生图目标（ImageGenModelOption.key）；置位后输入框进入生图模式。 */

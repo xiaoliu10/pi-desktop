@@ -287,12 +287,14 @@ export default function PiReplicaApp() {
   }, [imageTarget, imageModels, s.notify]);
   const composerCwd = run?.cwd ?? s.sessions.find(session=>session.key===s.selectedKey)?.cwd ?? s.draftCwd;
   // ↑/↓ 发送历史：按 workspace 隔离、localStorage 持久化（ZCode 同款，最多 30 条）。
-  const [promptHistory, setPromptHistory] = useState<string[]>(() => readPromptHistory(composerCwd ?? ''));
+  // 条目是富结构 { text, items }：recall 原样还原文字 + 图片/文件/技能等全部上下文。
+  // 图片 base64 超 localStorage 配额时持久化静默降级为内存历史（本运行内仍可 recall）。
+  const [promptHistory, setPromptHistory] = useState(() => readPromptHistory(composerCwd ?? ''));
   useEffect(() => { setPromptHistory(readPromptHistory(composerCwd ?? '')); }, [composerCwd]);
   const onComposerSend = useCallback((text: string) => {
-    // 只记录用户在输入框真正提交的 prompt（程序化 send 如计划批准语不进历史）。
+    const items = usePiStore.getState().contextItems;
     setPromptHistory(prev => {
-      const next = appendPromptHistoryEntry(prev, text);
+      const next = appendPromptHistoryEntry(prev, { text, items });
       if (next !== prev) persistPromptHistory(composerCwd ?? '', next);
       return next;
     });
@@ -510,6 +512,10 @@ export default function PiReplicaApp() {
       statusSlot={run ? <ContextUsageChip key={`${run.key}:${run.generation}`} usage={run.contextUsage} model={run.model ? `${run.model.provider} / ${run.model.name || run.model.id}` : undefined} zh={s.lang === 'zh'} compact /> : undefined}
       onSend={onComposerSend}
       promptHistory={promptHistory}
+      onRestoreHistoryEntry={(text, items) => usePiStore.setState({
+        draftText: text,
+        contextItems: items.map((item, i) => ({ ...item, id: `hist-${Date.now()}-${i}` })),
+      })}
       imageModels={imageModels}
       imageTarget={imageTarget}
       onPickImageModel={setImageTarget}
