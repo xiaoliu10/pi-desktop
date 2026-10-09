@@ -78,10 +78,12 @@ export class PiBackend {
       if (attached) return attached.view;
     }
     if (this.active.size >= MAX_SESSIONS) {
-      // 满员时不直接拒绝：自动断开最久空闲的会话腾位（idle 且无排队/无待确认对话框/
-      // 无停止与重试不确定态；历史在 session 文件里无损，点开即重连）。全繁忙才拒绝。
+      // 满员时不直接拒绝：自动断开最久空闲的会话腾位（历史在 session 文件里无损，点开即重连）。
+      // 只选真正无状态的会话：idle 且无排队/无待确认对话框/无停止与重试不确定态/非重试链持有期——
+      // close() 会清空 deferredQueue，「追问已保留」的排队输入绝不能被腾位静默丢掉。全繁忙才拒绝。
       const victim = [...this.active.values()]
-        .filter(r => r.view.status === 'idle' && !r.view.pending && r.dialogs.size === 0 && !r.stopUnconfirmed && !r.retryUncertain)
+        .filter(r => r.view.status === 'idle' && !r.view.pending && r.dialogs.size === 0 && !r.stopUnconfirmed && !r.retryUncertain
+          && r.deferredQueue.length === 0 && !r.retry.holding)
         .sort((a, b) => a.lastEventAt - b.lastEventAt)[0];
       if (!victim) throw new Error(`最多同时连接 ${MAX_SESSIONS} 个会话，且都在运行或等待交互；请稍后再试。`);
       this.close(victim.view.key); // UI 静默移除断开态（renderer 对本机主动断开不渲染错误条），点开即重连

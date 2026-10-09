@@ -57,6 +57,21 @@ describe('会话连接上限（12）与空闲腾位', () => {
     expect(runs.some(r => r.key === fileKey(extra))).toBe(true);
   });
 
+  it('腾位不选「追问已保留」的会话：排队输入不能被静默丢弃', async () => {
+    const s = setup(12);
+    await connectAll(s);
+    // 白盒注入：keys[0] 是 idle 但挂着未恢复的排队追问（close 会清空 deferredQueue）
+    const guarded = (s.backend as unknown as { active: Map<string, { deferredQueue: unknown[] }> }).active.get(s.keys[0]!)!;
+    guarded.deferredQueue.push({ text: '排队中的追问', behavior: 'followUp' });
+    const extra = path.join(s.owned, 'extra.jsonl');
+    fs.writeFileSync(extra, JSON.stringify({ type: 'session', version: 3, id: 'extra', cwd: s.root, timestamp: new Date().toISOString() }) + '\n');
+    await s.backend.connect({ sourceKey: fileKey(extra), cwd: s.root, trustProject: false, permission: 'ask' });
+    const runs = s.backend.runs();
+    expect(runs.some(r => r.key === s.keys[0])).toBe(true); // 带排队输入的会话幸存
+    expect(runs.some(r => r.key === s.keys[1])).toBe(false); // 腾的是下一个最久空闲
+    expect(runs.some(r => r.key === fileKey(extra))).toBe(true);
+  });
+
   it('腾位不选运行中的会话：全繁忙时拒绝并给出可执行文案', async () => {
     const s = setup(12);
     await connectAll(s);
