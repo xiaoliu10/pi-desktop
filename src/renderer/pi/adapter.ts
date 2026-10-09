@@ -2039,7 +2039,7 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
         const project = preferences.projects.find(p => p.path === cwd) ?? preferences.projects.at(-1);
         const projectPath = project?.path ?? cwd;
         get().startNewSession();
-        set({ desktopPreferences: preferences, draftCwd: projectPath, expandedProjects: [...new Set([...get().expandedProjects, projectPath])] });
+        set({ desktopPreferences: preferences, ...(switchComposerOwner(get, `home:${projectPath}`) ?? {}), draftCwd: projectPath, expandedProjects: [...new Set([...get().expandedProjects, projectPath])] });
       }).finally(() => set({ addingProject: false }));
     },
     setAccessMode: async (mode) => {
@@ -2090,7 +2090,7 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
     chooseWorkspace: () => {
       void attempt(async () => {
         const cwd = await window.localPi!.pickDirectory();
-        if (cwd) set({ draftCwd: cwd });
+        if (cwd) set({ ...(switchComposerOwner(get, `home:${cwd}`) ?? {}), draftCwd: cwd });
       });
     },
     setTheme: (theme) => {

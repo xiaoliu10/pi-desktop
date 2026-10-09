@@ -7,6 +7,17 @@ import {
 // in memory for synchronous switches and in IndexedDB for reloads/restarts.
 const histories = new Map<string, PromptHistoryEntry[]>();
 const revisions = new Map<string, number>();
+const HISTORY_WORKSPACES = 20;
+const HISTORY_BUDGET = 40 * 1024 * 1024;
+const entrySize = (entry: PromptHistoryEntry) => entry.text.length + entry.items.reduce((n, item) => n + item.text.length + (item.image?.data.length ?? 0), 0);
+function retainWorkspaceHistory() {
+  while (histories.size > HISTORY_WORKSPACES
+    || [...histories.values()].reduce((n, entries) => n + entries.reduce((m, entry) => m + entrySize(entry), 0), 0) > HISTORY_BUDGET && histories.size > 1) {
+    const oldest = histories.keys().next().value;
+    if (oldest === undefined) break;
+    histories.delete(oldest);
+  }
+}
 let database: Promise<IDBDatabase | null> | undefined;
 const writes = new Map<string, Promise<void>>();
 
@@ -29,7 +40,10 @@ function openHistoryDatabase(): Promise<IDBDatabase | null> {
 }
 
 export function workspacePromptHistory(cwd: string): PromptHistoryEntry[] {
-  if (!histories.has(cwd)) histories.set(cwd, readPromptHistory(cwd));
+  if (!histories.has(cwd)) {
+    histories.set(cwd, readPromptHistory(cwd));
+    retainWorkspaceHistory();
+  }
   return histories.get(cwd)!;
 }
 
@@ -58,7 +72,10 @@ export async function loadWorkspacePromptHistory(cwd: string): Promise<PromptHis
 
 export function recordWorkspacePrompt(cwd: string, entry: PromptHistoryEntryInput): PromptHistoryEntry[] {
   const next = appendPromptHistoryEntry(workspacePromptHistory(cwd), entry);
+  if (next === workspacePromptHistory(cwd)) return next; // Deduplicated write: keep revision/load protocol untouched.
+  histories.delete(cwd);
   histories.set(cwd, next);
+  retainWorkspaceHistory();
   revisions.set(cwd, (revisions.get(cwd) ?? 0) + 1);
   // Maintain backwards-compatible storage when it fits; a quota error is harmless.
   persistPromptHistory(cwd, next);

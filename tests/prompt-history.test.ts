@@ -79,7 +79,8 @@ describe('输入框发送历史（↑↓ recall）', () => {
     persistPromptHistory('/w/a', entries, fake);
     persistPromptHistory('/w/b', [{ text: '带图', items: [img] }], fake);
     expect(readPromptHistory('/w/a', fake).map(e => e.text)).toEqual(entries.slice(-30));
-    expect(readPromptHistory('/w/b', fake)).toEqual([{ text: '带图', items: [img] }]);
+    // localStorage 是兼容副本：图片 payload 有意剥离（完整图片存 IndexedDB，见 workspace 测试）
+    expect(readPromptHistory('/w/b', fake)).toEqual([{ text: '带图', items: [{ ...img, image: undefined }] }]);
     store.set('pi-desktop-chat-prompt-history:/w/c', '{broken');
     expect(readPromptHistory('/w/c', fake)).toEqual([]);
     // 旧版纯 string 条目照常读取（等价 items: []）
@@ -87,11 +88,12 @@ describe('输入框发送历史（↑↓ recall）', () => {
     expect(readPromptHistory('/w/e', fake)).toEqual([{ text: 'old', items: [] }]);
   });
 
-  it('image-only prompts survive persistence with every attachment field intact', () => {
+  it('image-only prompts survive localStorage compatibility copy with metadata intact', () => {
     const values = new Map<string, string>();
     const storage = { getItem: (key: string) => values.get(key) ?? null, setItem: (key: string, value: string) => void values.set(key, value) } as Storage;
     persistPromptHistory('/image-only', [{ text: '', items: [img, doc, skill] }], storage);
-    expect(readPromptHistory('/image-only', storage)).toEqual([{ text: '', items: [img, doc, skill] }]);
+    // 图片数据走 IndexedDB；兼容副本保留 kind/name/path/text 与非图片附件全文
+    expect(readPromptHistory('/image-only', storage)).toEqual([{ text: '', items: [{ ...img, image: undefined }, doc, skill] }]);
   });
 
   it('storage access errors do not break loading or sending', () => {

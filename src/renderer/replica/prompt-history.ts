@@ -86,12 +86,17 @@ export function readPromptHistory(cwd: string, storage: Storage | null = getBrow
   }
 }
 
-/** Storage failures (quota with image base64, disabled storage) are swallowed:
- *  the in-memory list keeps the full entry so recall still works this run. */
+/** Backwards-compatible localStorage copy. Image payloads live in IndexedDB
+ *  (workspace-prompt-history.ts) and blow the localStorage quota, so this copy is
+ *  written without them on purpose; failures are swallowed. */
 export function persistPromptHistory(cwd: string, entries: readonly PromptHistoryEntryInput[], storage: Storage | null = getBrowserStorage()) {
   try {
-    storage?.setItem(storageKey(cwd), JSON.stringify(normalizeEntries(entries)));
-  } catch { /* Full entries remain in memory and IndexedDB; never strip attachments. */ }
+    const stripped = normalizeEntries(entries).map(entry => ({
+      ...entry,
+      items: entry.items.map(item => (item.image ? { ...item, image: undefined } : item)),
+    }));
+    storage?.setItem(storageKey(cwd), JSON.stringify(stripped));
+  } catch { /* Full entries remain in memory and IndexedDB. */ }
 }
 
 export function appendPromptHistoryEntry(entries: readonly PromptHistoryEntryInput[], entry: PromptHistoryEntryInput, limit = MAX_PROMPT_HISTORY): PromptHistoryEntry[] {
