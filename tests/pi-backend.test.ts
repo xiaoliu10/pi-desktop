@@ -166,6 +166,33 @@ it('shows compacting during compaction and repairs wiped package registrations o
  await vi.waitFor(()=>expect(backend2.runs()[0]?.status).toBe('idle'));
 });
 
+it('compact: success settles normally; token-cap failure collapses the fake running state and rethrows an actionable message',async()=>{
+ const{root,backend}=setup();const run=await backend.connect({cwd:root,trustProject:false,permission:'ask'});
+ // 成功：直接调用 RPC compact（状态本就 idle，收口无副作用）
+ await expect(backend.compact(run.key)).resolves.toMatchObject({summary:'fake summary'});
+ // 失败：真实链路——idle 时发起 compact，pi 发 compaction_start（状态转 running）后摘要截断拒绝，
+ // 收口必须把状态拉回 idle（否则假转圈：重试/发送/重载全被 guard 拒绝）
+ await expect(backend.compact(run.key,'CAP')).rejects.toThrow('压缩失败：摘要生成达到模型输出上限被截断');
+ expect(backend.runs()[0]?.status).toBe('idle');
+ expect(backend.runs()[0]?.compacting).toBe(false);
+ // 收口后重试不再被「请在任务空闲时压缩」guard 拒绝（guard 直接放行到 fake 的成功分支）
+ await expect(backend.compact(run.key)).resolves.toMatchObject({summary:'fake summary'});
+});
+
+it('compact RPC timeout keeps the session busy: no premature idle, no concurrent retry',async()=>{
+ // 真实超时场景：idle 时发起 compact，内核发 compaction_start（状态转 running）后挂住不回，
+ // 180s 超时只拒绝 Promise、不取消内核压缩。此时若收口会把 running 误置 idle、guard 放行重试
+ // → 同会话两个压缩并发。用 200ms 注入超时驱动这条真实路径。
+ const{root,backend}=setup();const run=await backend.connect({cwd:root,trustProject:false,permission:'ask'});
+ await expect(backend.compact(run.key,'TIMEOUT',200)).rejects.toThrow('压缩仍在进行');
+ expect(backend.runs()[0]?.status).toBe('running'); // 未收口：保持忙碌
+ expect(backend.runs()[0]?.compacting).toBe(true);
+ await expect(backend.compact(run.key)).rejects.toThrow('请在任务空闲时压缩上下文'); // 重试仍被 guard 拒绝
+ // 内核随后真的结束：compaction_end 到达后状态回落 idle（结束事件是权威收口源）
+ await backend.prompt(run.key,'/compact-end','followUp');
+ await vi.waitFor(()=>expect(backend.runs()[0]?.status).toBe('idle'));
+});
+
 it('fails closed when the mandatory policy extension is missing',async()=>{const {root,index,owned}=setup();const backend=new PiBackend({executable:path.resolve('tests/fixtures/fake-pi.mjs'),version:'0.85.1',supported:true,agentDir:root,sessionDirs:[root],diagnostics:[]},index,owned,path.join(root,'missing.mjs'),()=>{});backends.push(backend);await expect(backend.connect({cwd:root,trustProject:false,permission:'ask'})).rejects.toThrow('权限扩展缺失');expect(backend.runs()).toEqual([]);});
 
 it('releases ownership when pi unexpectedly exits',async()=>{const{root,backend}=setup();const run=await backend.connect({cwd:root,trustProject:false,permission:'ask'});await expect(backend.prompt(run.key,'/crash','followUp')).rejects.toThrow('退出');await vi.waitFor(()=>expect(backend.runs()).toEqual([]));});
