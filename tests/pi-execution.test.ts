@@ -201,9 +201,12 @@ describe('running head pinned to the top of the live turn', () => {
     expect(markup.match(/已工作/g)).toHaveLength(1);
   });
 
-  it('suppresses the running head while a retry is in progress (RetryStatus owns the state)', () => {
+  it('while retrying: no top head (RetryStatus owns it) and the group header carries the elapsed time', () => {
+    // 停止/重试后：顶部运行头让位（RetryStatus 显示状态），组头恢复「用时」——分割线上面是计时，下面是过程内容
     const messages = executionTurns(historyToMessages(splitBranch));
     const markup = renderToStaticMarkup(createElement(TurnArticle, { m: messages[1]!, liveTurn: true, retrying: true, labels, onJumpToMessage: () => {} } as never));
     expect(markup).not.toContain('pi-msg__runninghead');
+    expect(markup).toContain('pi-execution__elapsed');
+    expect(markup).toContain('用时');
   });
 });
