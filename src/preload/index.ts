@@ -120,9 +120,11 @@ const localPi: LocalPiApi = {
   usageStats: () => invoke('usageStats'),
   remoteStart: () => invoke('remoteStart'), remoteStop: () => invoke('remoteStop'), remoteStatus: () => invoke('remoteStatus'),
   imConfig: () => invoke('imConfig'), imSave: patch => invoke('imSave', patch), imTest: () => invoke('imTest'),
+  // 钉钉一键配置：必须走 invoke helper（自动加 local-pi: 前缀）。曾用裸 ipcRenderer.invoke
+  // 导致通道名错配（main 注册的是 local-pi:dingtalkRegister:*），点「一键配置」必报 No handler。
   dingtalkRegister: {
-    start: () => ipcRenderer.invoke('dingtalkRegister:start') as Promise<{ url: string; deviceCode: string; userCode: string; intervalMs: number; expireInMs: number }>,
-    poll: (deviceCode: string) => ipcRenderer.invoke('dingtalkRegister:poll', deviceCode) as Promise<{ done: boolean; status: 'waiting' | 'success' | 'fail' | 'expired'; clientId?: string; clientSecret?: string; error?: string }>,
+    start: () => invoke('dingtalkRegister:start') as Promise<{ url: string; deviceCode: string; userCode: string; intervalMs: number; expireInMs: number }>,
+    poll: (deviceCode: string) => invoke('dingtalkRegister:poll', deviceCode) as Promise<{ done: boolean; status: 'waiting' | 'success' | 'fail' | 'expired'; clientId?: string; clientSecret?: string; error?: string }>,
   },
   pickDirectory: () => invoke('pickDirectory'),
   revealPath: p => invoke('revealPath', p),

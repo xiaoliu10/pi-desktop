@@ -829,7 +829,18 @@ export class PiBackend {
     if (run.view.status !== 'idle') throw new Error('请在任务空闲时压缩上下文');
     if (run.dialogs.size) throw new Error('请先处理待确认操作，再压缩上下文。');
     // 压缩是对整段上下文的模型调用，耗时不可预测，超时放宽到 3 分钟。
-    const result = await run.client.request('compact', customInstructions ? { customInstructions } : {}, 180_000);
+    let result;
+    try {
+      result = await run.client.request('compact', customInstructions ? { customInstructions } : {}, 180_000);
+    } catch (error) {
+      // pi 的摘要生成输出上限固定（reserveTokens 的 80%），超长会话/啰嗦模型会截断收不了尾。
+      // Desktop 无法调大该上限，给可执行建议而不是裸英文错误。
+      const raw = String((error as Error)?.message ?? error);
+      if (/hit the token cap|summary is incomplete/i.test(raw)) {
+        throw new Error('压缩失败：摘要生成达到模型输出上限被截断。可重试并附加自定义指令要求更精简的摘要（如「300 字以内，只列关键决定」）；仍失败建议新开会话继续工作。');
+      }
+      throw error;
+    }
     this.refreshContextUsage(run);
     // compaction 期间 compaction_start 已把状态置为 running（TS 看不到事件改写，故宽化比较）；排队中的消息不动。
     const statusAfter = run.view.status as string;
