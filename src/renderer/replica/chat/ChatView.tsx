@@ -625,14 +625,15 @@ export const TurnArticle = memo(function TurnArticle({ m, liveTurn, retrying, su
             // RetryStatus 接管，不出正常运行头；startedAt 已由 ChatView 优先用 runTiming
             // 修正，无时间戳时 ElapsedTime 渲染 null（不编造计时）。
             return <>{!retrying && (
-              <div className="pi-msg__runninghead" role="status" aria-label={zh ? '正在工作' : 'Working'}>
-                <Spinner />
+              <div className="pi-msg__runninghead">
+                {/* 语义归 Spinner（role=status，播报一次）；计时每秒刷新不进 live region，避免 SR 逐秒播报 */}
+                <Spinner label={zh ? '运行中' : 'Running'} />
                 <ElapsedTime startedAt={m.startedAt} running zh={zh} />
               </div>
             )}{m.segments.map((seg, si) => {
               const liveSegment = si === m.segments.length - 1;
               if (seg.kind === 'steps' && seg.parts.length > 0) {
-                return <ExecutionGroup key={`${m.id}-seg-${si}`} turn={m} parts={seg.parts} running={liveSegment && !retrying} active={liveSegment && !retrying} expanded showElapsed={liveSegment && !retrying} headerChrome={false} labels={labels} onOpenToolFile={onOpenToolFile} />;
+                return <ExecutionGroup key={`${m.id}-seg-${si}`} turn={m} parts={seg.parts} running={liveSegment && !retrying} expanded headerChrome={false} labels={labels} onOpenToolFile={onOpenToolFile} />;
               }
               if (seg.kind === 'text' && seg.parts.length > 0) {
                 if (seg.parts.every(part => hiddenErrors?.has(part.id))) return null;

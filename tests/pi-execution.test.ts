@@ -187,8 +187,9 @@ describe('running head pinned to the top of the live turn', () => {
     expect(markup.match(/已工作/g)).toHaveLength(1);
     // 组头退化为步数标题（不再显示「正在工作」文案，避免与顶部头重复）
     expect(markup).toContain('执行过程 ·');
-    // 组头不再重复「正在工作」：全文仅头部 aria-label 一处
-    expect(markup.match(/正在工作/g)).toHaveLength(1);
+    // 组头不再重复「正在工作」；运行语义归顶部 Spinner（role=status，播报一次）
+    expect(markup).not.toContain('正在工作');
+    expect(markup.match(/运行中/g)).toHaveLength(1);
   });
 
   it('keeps the head above content when the turn is text-tailed (no trailing tools yet)', () => {
