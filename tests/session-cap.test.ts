@@ -4,14 +4,13 @@ import os from 'node:os';
 import path from 'node:path';
 import { PiBackend } from '../src/main/pi/backend';
 import { SessionIndex, fileKey } from '../src/main/pi/session-index';
-import { PiRpcClient } from '../src/main/pi/rpc-client';
+import { RetryGroups } from '../src/main/pi/retry-groups';
 import type { PiEnvironment } from '../src/shared/pi';
 
 // 会话连接上限：12 个硬上限；满员时自动断开最久空闲的 idle 会话腾位（历史无损，点开即重连）。
-const dirs: string[] = [], backends: PiBackend[] = [], clients: PiRpcClient[] = [];
+const dirs: string[] = [], backends: PiBackend[] = [];
 afterEach(() => {
   backends.splice(0).forEach(b => b.dispose());
-  clients.splice(0).forEach(c => c.close());
   for (const d of dirs.splice(0)) fs.rmSync(d, { recursive: true, force: true });
 });
 
@@ -70,6 +69,39 @@ describe('会话连接上限（12）与空闲腾位', () => {
     expect(runs.some(r => r.key === s.keys[0])).toBe(true); // 带排队输入的会话幸存
     expect(runs.some(r => r.key === s.keys[1])).toBe(false); // 腾的是下一个最久空闲
     expect(runs.some(r => r.key === fileKey(extra))).toBe(true);
+  });
+
+  it('recent activity changes the eviction order independently of insertion order', async () => {
+    const s = setup(12);
+    await connectAll(s);
+    const active = (s.backend as unknown as { active: Map<string, { lastEventAt: number }> }).active;
+    for (const [i, key] of s.keys.entries()) active.get(key)!.lastEventAt = 100 + i;
+    active.get(s.keys[0]!)!.lastEventAt = 1000;
+    const extra = path.join(s.owned, 'extra.jsonl');
+    fs.writeFileSync(extra, JSON.stringify({ type: 'session', version: 3, id: 'extra', cwd: s.root, timestamp: new Date().toISOString() }) + '\n');
+    await s.backend.connect({ sourceKey: fileKey(extra), trustProject: false, permission: 'ask' });
+    expect(s.backend.runs().some(r => r.key === s.keys[0])).toBe(true);
+    expect(s.backend.runs().some(r => r.key === s.keys[1])).toBe(false);
+  });
+
+  it('protects a dispatched prompt before the first agent_start event', async () => {
+    const s = setup(12);
+    await connectAll(s);
+    const active = (s.backend as unknown as { active: Map<string, { retry: RetryGroups; lastEventAt: number }> }).active;
+    for (const [i, key] of s.keys.entries()) active.get(key)!.lastEventAt = 100 + i;
+    const guarded = active.get(s.keys[0]!)!;
+    // prompt() begins tracking before RPC dispatch; status stays idle until agent_start.
+    guarded.retry.begin();
+    expect(guarded.retry.tracking).toBe(true);
+    expect(guarded.retry.holding).toBe(false);
+    expect(s.backend.runs().find(r => r.key === s.keys[0])!.status).toBe('idle');
+    const extra = path.join(s.owned, 'extra.jsonl');
+    fs.writeFileSync(extra, JSON.stringify({ type: 'session', version: 3, id: 'extra', cwd: s.root, timestamp: new Date().toISOString() }) + '\n');
+    await s.backend.connect({ sourceKey: fileKey(extra), trustProject: false, permission: 'ask' });
+    expect(s.backend.runs()).toHaveLength(12);
+    expect(s.backend.runs().some(r => r.key === s.keys[0])).toBe(true);
+    expect(s.backend.runs().some(r => r.key === s.keys[1])).toBe(false);
+    expect(guarded.retry.tracking).toBe(true);
   });
 
   it('腾位不选运行中的会话：全繁忙时拒绝并给出可执行文案', async () => {
