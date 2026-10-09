@@ -621,32 +621,32 @@ export const TurnArticle = memo(function TurnArticle({ m, liveTurn, retrying, su
             // 工作进行中进度可见，中途出现结论文字也不折叠，完成态才统一收起）。
             // 顶部运行头：计时与转圈钉在本轮所有内容之前，不随最后段 kind 下移
             // （#72 后结论文本会插在 steps 之间，组头计时随之下移——改由顶部唯一承担，
-            // 各组 headerChrome=false 让位但保留工具/思考 active 状态）。retry 期间由
-            // RetryStatus 接管，不出正常运行头；startedAt 已由 ChatView 优先用 runTiming
-            // 修正，无时间戳时 ElapsedTime 渲染 null（不编造计时）。
-            // 顶部运行头：计时与转圈钉在本轮所有内容之前，不随最后段 kind 下移
-            // （#72 后结论文本会插在 steps 之间，组头计时随之下移——改由顶部唯一承担，
             // 各组 headerChrome=false 让位但保留工具/思考 active 状态）。
-            // retry/停止后（RetryStatus 横幅接管状态）：不出顶部头，组头恢复「用时」承担计时——
-            // 否则横幅下过程平铺且无任何计时（用户要求：分割线上面是计时，下面是过程内容）。
-            // startedAt 已由 ChatView 优先用 runTiming 修正，无时间戳时 ElapsedTime 渲染 null（不编造计时）。
+            // retry/会话错误收口后（RetryStatus 横幅接管状态）：不出顶部头，但**最后一个
+            // 过程段**的组头恢复「用时」——分割线上面是计时，下面是过程内容；多段轮次
+            // 不得重复 N 处同一轮总时长。startedAt 已由 ChatView 优先用 runTiming 修正，
+            // 无时间戳/无 endedAt 时 ElapsedTime 渲染 null 或回退步数标题（不编造计时）。
             return <>{!retrying && (
               <div className="pi-msg__runninghead">
                 {/* 语义归 Spinner（role=status，播报一次）；计时每秒刷新不进 live region，避免 SR 逐秒播报 */}
                 <Spinner label={zh ? '运行中' : 'Running'} />
                 <ElapsedTime startedAt={m.startedAt} running zh={zh} />
               </div>
-            )}{m.segments.map((seg, si) => {
+            )}{(() => {
+              const lastStepsSegment = m.segments.map((s, i) => (s.kind === 'steps' ? i : -1)).filter(i => i >= 0).pop() ?? -1;
+              return m.segments.map((seg, si) => {
               const liveSegment = si === m.segments.length - 1;
+              const retryHead = retrying && si === lastStepsSegment;
               if (seg.kind === 'steps' && seg.parts.length > 0) {
-                return <ExecutionGroup key={`${m.id}-seg-${si}`} turn={m} parts={seg.parts} running={liveSegment && !retrying} expanded showElapsed={retrying} headerChrome={retrying} labels={labels} onOpenToolFile={onOpenToolFile} />;
+                return <ExecutionGroup key={`${m.id}-seg-${si}`} turn={m} parts={seg.parts} running={liveSegment && !retrying} expanded showElapsed={retryHead} headerChrome={retryHead} labels={labels} onOpenToolFile={onOpenToolFile} />;
               }
               if (seg.kind === 'text' && seg.parts.length > 0) {
                 if (seg.parts.every(part => hiddenErrors?.has(part.id))) return null;
                 return <div key={`${m.id}-seg-${si}`} className="pi-msg__answer"><MessageParts parts={seg.parts} labels={labels} onOpenToolFile={onOpenToolFile} hiddenErrors={hiddenErrors} /></div>;
               }
               return null;
-            })}</>;
+              });
+            })()}</>;
           }
           // 完成态：思考与工具都是任务过程产物，统一收进「用时」折叠块，结论直接可见
           const allSteps = m.segments.filter((s) => s.kind === 'steps').flatMap((s) => s.parts);
