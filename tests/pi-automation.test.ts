@@ -4,11 +4,13 @@ import { AutomationService, nextSchedule, validateWorkflow } from '../src/main/p
 import { workflowPrompts } from '../src/shared/automation';
 import type { AutomationTask, SavedWorkflow } from '../src/shared/automation';
 import type { PiBackend } from '../src/main/pi/backend';
+import type { SessionIndex } from '../src/main/pi/session-index';
 const roots:string[]=[];const services:AutomationService[]=[];
 afterEach(()=>{services.splice(0).forEach(s=>s.dispose());roots.splice(0).forEach(r=>fs.rmSync(r,{recursive:true,force:true}));});
-function setup(){const root=fs.mkdtempSync(path.join(os.tmpdir(),'pi-auto-'));roots.push(root);let now=Date.parse('2026-09-21T00:00:00Z');let seq=0;let service:AutomationService;
- const backend={connect:vi.fn(async()=>({key:`run-${++seq}`})),thinking:vi.fn(async()=>{}),prompt:vi.fn(async()=>{}),close:vi.fn(),stop:vi.fn(async()=>{})};
- service=new AutomationService(path.join(root,'automation.json'),()=>backend as unknown as PiBackend,()=>{},()=>now);services.push(service);
+function setup(indexOverride?:unknown){const root=fs.mkdtempSync(path.join(os.tmpdir(),'pi-auto-'));roots.push(root);let now=Date.parse('2026-09-21T00:00:00Z');let seq=0;let service:AutomationService;
+ const backend={connect:vi.fn(async()=>({key:`run-${++seq}`})),thinking:vi.fn(async()=>{}),prompt:vi.fn(async()=>{}),close:vi.fn(),stop:vi.fn(async()=>{}),runs:()=>[]};
+ const index=(indexOverride??{scan:()=>[]}) as unknown as SessionIndex;
+ service=new AutomationService(path.join(root,'automation.json'),()=>backend as unknown as PiBackend,()=>index,()=>{},()=>now);services.push(service);
  const task=(overrides:Partial<AutomationTask>={})=>service.saveTask({id:'',name:'Daily check',cwd:root,prompt:'Check only',args:{},permission:'plan',schedule:{kind:'interval',minutes:1},enabled:true,runCount:0,updatedAt:0,...overrides});
  const workflow=(overrides:Partial<SavedWorkflow>={})=>service.saveWorkflow({id:'',name:'Review',description:'Review changes',whenToUse:'Before commit',scope:'project',cwd:root,parameters:[{name:'target',type:'string',required:true,description:'Target'}],steps:[{id:'1',name:'Inspect',prompt:'Inspect {{target}}'},{id:'2',name:'Summarize',prompt:'Summarize findings'}],updatedAt:0,...overrides});
  const settle=(key:string)=>service.onPiEvent({type:'rpc',key,generation:'g',event:{type:'agent_settled'}});
@@ -33,6 +35,43 @@ it('runs workflow steps sequentially in one isolated pi session and persists out
  expect(h.service.snapshot().runs[0].steps.map(s=>s.status)).toEqual(['succeeded','succeeded']);expect(h.backend.close).toHaveBeenCalledWith('run-1');
  expect(JSON.parse(fs.readFileSync(path.join(h.root,'automation.json'),'utf8')).runs[0].id).toBe(run.id);
 });
+it('reuse mode (default): prefers a live session, then the most recent project session, and never closes it',async()=>{
+ // 1) live run 复用：backend.runs 返回同 cwd 的 idle 会话 → connect 不被调用、结束不 close
+ const h=setup();
+ const runsSpy = vi.fn(() => [{ key: 'live-1', cwd: h.root, status: 'idle', timing: { startedAt: 1 } }]);
+ (h.backend as unknown as { runs: unknown }).runs = runsSpy;
+ const w1=h.workflow();h.service.runWorkflow({id:w1.id,cwd:h.root,args:{target:'X'},permission:'ask'});
+ await vi.waitFor(()=>expect(h.backend.prompt).toHaveBeenCalledTimes(1));h.settle('live-1');
+ await vi.waitFor(()=>expect(h.backend.prompt).toHaveBeenCalledTimes(2));h.settle('live-1');
+ await vi.waitFor(()=>expect(h.service.snapshot().runs[0].status).toBe('succeeded'));
+ expect(h.backend.connect).not.toHaveBeenCalled();
+ expect(h.service.snapshot().runs[0].sessionKey).toBe('live-1');
+ expect(h.service.snapshot().runs[0].reusedSession).toBe(true);
+ expect(h.backend.close).not.toHaveBeenCalledWith('live-1');
+
+ // 2) 无 live run：按 updatedAt 取最近的会话文件走 sourceKey 连接
+ const files:string[]=[];for(let i=0;i<2;i++){const f=path.join(h.root,`s${i}.jsonl`);fs.writeFileSync(f,JSON.stringify({type:'session',version:3,id:`s${i}`,cwd:h.root,timestamp:new Date().toISOString()})+'\n');files.push(f);}
+ fs.utimesSync(files[0],new Date(Date.now()-60000),new Date(Date.now()-60000)); // 更旧
+ const h2=setup({ scan: () => files.map((f,i) => ({ key: `k${i}`, path: f, cwd: h2.root, updatedAt: Date.now()-i*1000, name: `s${i}`, size: 10, parentSession: undefined, owned: false })) });
+ const w2=h2.workflow();h2.service.runWorkflow({id:w2.id,cwd:h2.root,args:{target:'Y'},permission:'ask'});
+ await vi.waitFor(()=>expect(h2.backend.prompt).toHaveBeenCalledTimes(1));h2.settle('run-1');
+ await vi.waitFor(()=>expect(h2.backend.prompt).toHaveBeenCalledTimes(2));h2.settle('run-1');
+ await vi.waitFor(()=>expect(h2.service.snapshot().runs[0].status).toBe('succeeded'));
+ expect(h2.backend.connect).toHaveBeenCalledWith(expect.objectContaining({sourceKey:'k0'})); // 最近更新的文件
+ expect(h2.backend.close).not.toHaveBeenCalled(); // 复用的会话不 close
+
+ // 3) fresh：明确要求独立会话 → 新 connect + 运行结束 close
+ const h3=setup();const w3=h3.workflow();
+ h3.service.runWorkflow({id:w3.id,cwd:h3.root,args:{target:'Z'},permission:'ask'});
+ await vi.waitFor(()=>expect(h3.backend.prompt).toHaveBeenCalledTimes(1));h3.settle('run-1');
+ await vi.waitFor(()=>expect(h3.backend.prompt).toHaveBeenCalledTimes(2));h3.settle('run-1');
+ await vi.waitFor(()=>expect(h3.service.snapshot().runs[0].status).toBe('succeeded'));
+ // directory() 会 realpath cwd（macOS /var→/private/var），断言用 canonical 比较
+ const c=(v:string)=>fs.realpathSync(v);
+ expect(h3.backend.connect).toHaveBeenCalledWith(expect.objectContaining({cwd:c(h3.root),trustProject:false}));
+ expect(h3.backend.close).toHaveBeenCalledWith('run-1'); // 自己新建的会话照旧回收
+});
+
 it('claims scheduled occurrences once, blocks overlap, and retains phase-aligned interval times',async()=>{
  const h=setup(),task=h.task();h.advance(61000);h.service.tick();h.service.tick();await vi.waitFor(()=>expect(h.backend.prompt).toHaveBeenCalledTimes(1));
  expect(h.service.snapshot().tasks[0].nextRunAt).toBe(Date.parse('2026-09-21T00:02:00Z'));

@@ -3,6 +3,8 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { Cron } from 'croner';
 import type { PiBackend } from './backend';
+import type { SessionIndex } from './session-index';
+import { canonical } from './session-index';
 import type { PiEvent } from '../../shared/pi';
 import { isAccessMode } from '../../shared/access-mode';
 import { THINKING_LEVELS } from '../../shared/composer';
@@ -34,7 +36,7 @@ export class AutomationService {
  private waiters=new Map<string,{resolve:()=>void;reject:(error:Error)=>void}>();
  private closed=false;
  private stepErrors=new Map<string,string>();
- constructor(private file:string,private backend:()=>PiBackend,private changed:()=>void=()=>{},private now=()=>Date.now()) {
+ constructor(private file:string,private backend:()=>PiBackend,private index:()=>SessionIndex,private changed:()=>void=()=>{},private now=()=>Date.now()) {
   if(fs.existsSync(file)){const parsed=JSON.parse(fs.readFileSync(file,'utf8'));if(!Array.isArray(parsed.tasks)||!Array.isArray(parsed.workflows)||!Array.isArray(parsed.runs))throw Error('自动化数据格式损坏');this.data=parsed;}
   for(const r of this.data.runs)if(live(r)){r.status='interrupted';r.error='客户端已退出，未自动重放；可查看历史并重新运行。';r.endedAt=this.now();for(const step of r.steps)if(step.status==='running')step.status='stopped';}
   this.persist();
@@ -55,7 +57,8 @@ export class AutomationService {
   const schedule=structuredClone(input.schedule),changed=JSON.stringify(old?.schedule)!==JSON.stringify(schedule);
   const next=changed||(!old?.enabled&&input.enabled)?nextSchedule(schedule,this.now()):old?.nextRunAt;
   if(input.enabled&&(!next||input.endAt&&next>input.endAt))throw Error('调度规则在截止时间前没有未来执行时间');
-  const item:AutomationTask={id:old?.id||randomUUID(),name,cwd,prompt,workflowId:input.workflowId||undefined,args,model:input.model||undefined,thinking:input.thinking,permission:input.permission,schedule,enabled:!!input.enabled,maxRuns:input.maxRuns,endAt:input.endAt,runCount:old?.runCount||0,nextRunAt:next,lastRunAt:old?.lastRunAt,updatedAt:this.now()};
+  const sessionMode=input.sessionMode==='fresh'?'fresh':'reuse';
+  const item:AutomationTask={id:old?.id||randomUUID(),name,cwd,prompt,workflowId:input.workflowId||undefined,args,model:input.model||undefined,thinking:input.thinking,permission:input.permission,schedule,enabled:!!input.enabled,maxRuns:input.maxRuns,endAt:input.endAt,runCount:old?.runCount||0,nextRunAt:next,lastRunAt:old?.lastRunAt,updatedAt:this.now(),sessionMode};
   this.data.tasks=this.data.tasks.filter(t=>t.id!==item.id).concat(item);this.persist();return item;
  }
  toggle(id:string){const task=this.task(id);if(task.enabled){task.enabled=false;}else{if(task.maxRuns&&task.runCount>=task.maxRuns)throw Error('已达到执行次数上限，请编辑上限');const next=nextSchedule(task.schedule,this.now());if(!next||task.endAt&&next>task.endAt)throw Error('调度已结束，请编辑执行时间');task.enabled=true;task.nextRunAt=next;}this.persist();}
@@ -64,7 +67,7 @@ export class AutomationService {
  private workflow(id:string,cwd:string){const w=this.data.workflows.find(w=>w.id===id);if(!w)throw Error('工作流不存在');if(w.scope==='project'&&w.cwd!==cwd)throw Error('该工作流只适用于所属项目');return w;}
  runTask(id:string,trigger:'manual'|'schedule'='manual',scheduledAt?:number){const task=this.task(id);const workflow=task.workflowId?this.workflow(task.workflowId,task.cwd):undefined;return this.launch({task,workflow,cwd:task.cwd,args:task.args,permission:task.permission,model:task.model,thinking:task.thinking,trigger,scheduledAt});}
  runWorkflow(input:WorkflowLaunch){const cwd=directory(input.cwd);return this.launch({...input,cwd,workflow:this.workflow(input.id,cwd),trigger:'manual'});}
- private launch(input:{task?:AutomationTask;workflow?:SavedWorkflow;cwd:string;args:Record<string,string>;permission:WorkflowLaunch['permission'];model?:string;thinking?:WorkflowLaunch['thinking'];trigger:'manual'|'schedule';scheduledAt?:number}){
+ private launch(input:{task?:AutomationTask;workflow?:SavedWorkflow;cwd:string;args:Record<string,string>;permission:WorkflowLaunch['permission'];model?:string;thinking?:WorkflowLaunch['thinking'];trigger:'manual'|'schedule';scheduledAt?:number;sessionMode?:'reuse'|'fresh'}){
   if(this.closed)throw Error('自动化服务正在关闭');if(!isAccessMode(input.permission))throw Error('访问模式无效');if(input.thinking&&!THINKING_LEVELS.includes(input.thinking))throw Error('思考等级无效');
   if(this.data.runs.some(r=>live(r)&&(input.task?r.taskId===input.task.id:r.workflowId===input.workflow?.id&&r.cwd===input.cwd)))throw Error('已有运行正在执行，不能重复启动');
   if(this.data.runs.filter(live).length>=3)throw Error('最多同时运行 3 个自动化，请稍后再试');
@@ -74,10 +77,32 @@ export class AutomationService {
   if(input.task){input.task.runCount++;input.task.lastRunAt=this.now();if(input.task.maxRuns&&input.task.runCount>=input.task.maxRuns)input.task.enabled=false;}
   this.persist();void this.execute(run,prompts,input);return structuredClone(run);
  }
- private async execute(run:AutomationRun,prompts:string[],config:{permission:WorkflowLaunch['permission'];model?:string;thinking?:WorkflowLaunch['thinking']}){
-  let key:string|undefined;
+ /** 解析执行会话：默认复用项目下最近活跃的会话（live run 优先，其次最近更新的会话文件），
+  *  都没有才新建。复用让定时任务跑在用户正在对话的上下文里——这是用户明确要的默认行为
+  *  （此前每次自动化都新起独立会话，任务结论散落在侧栏各处）。fresh 才强制新会话。 */
+ private async resolveSession(cwd:string,sessionMode:'reuse'|'fresh'|undefined,config:{permission:WorkflowLaunch['permission'];model?:string}):Promise<{key:string;reused:boolean}>{
+  const backend=this.backend();
+  if(sessionMode==='fresh'){
+   const session=await backend.connect({cwd,trustProject:false,permission:config.permission,model:config.model});
+   return {key:session.key,reused:false};
+  }
+  // macOS /var→/private/var：会话文件 header 的 cwd 未必 realpath 过，归一化后比较
+  const target=canonical(cwd);
+  const sameCwd=(v:string)=>{try{return canonical(v)===target;}catch{return v===cwd;}};
+  const live=backend.runs().filter(r=>r.status!=='error'&&sameCwd(r.cwd)).sort((a,b)=>(b.timing?.endedAt??b.timing?.startedAt??0)-(a.timing?.endedAt??a.timing?.startedAt??0))[0];
+  if(live)return {key:live.key,reused:true};
+  const recent=this.index().scan().filter(s=>!s.parentSession&&sameCwd(s.cwd)).sort((a,b)=>b.updatedAt-a.updatedAt)[0];
+  if(recent){
+   try{const session=await backend.connect({sourceKey:recent.key,cwd,trustProject:false,permission:config.permission,model:config.model});return {key:session.key,reused:true};}
+   catch{/* 会话文件损坏/超限：回落新建 */ }
+  }
+  const session=await backend.connect({cwd,trustProject:false,permission:config.permission,model:config.model});
+  return {key:session.key,reused:false};
+ }
+ private async execute(run:AutomationRun,prompts:string[],config:{permission:WorkflowLaunch['permission'];model?:string;thinking?:WorkflowLaunch['thinking'];sessionMode?:'reuse'|'fresh'}){
+  let key:string|undefined;let reused=false;
   try{
-   const backend=this.backend();const session=await backend.connect({cwd:run.cwd,trustProject:false,permission:config.permission,model:config.model});key=session.key;run.sessionKey=key;
+   const backend=this.backend();const resolved=await this.resolveSession(run.cwd,config.sessionMode,config);key=resolved.key;reused=resolved.reused;run.sessionKey=key;run.reusedSession=reused;
    if(!live(run)||this.closed){backend.close(key);return;}
    if(config.thinking)await backend.thinking(key,config.thinking);
    for(let i=0;i<prompts.length;i++){
@@ -90,7 +115,7 @@ export class AutomationService {
    }
    if(live(run))run.status='succeeded';
   }catch(error){if(live(run)){run.status='failed';run.error=String((error as Error).message||error);if(run.steps[run.stepIndex])run.steps[run.stepIndex].status='failed';}}
-  finally{run.endedAt=this.now();for(const step of run.steps)if(step.status==='running')step.status=run.status==='failed'?'failed':'stopped';this.persist();if(key){this.waiters.delete(key);this.backend().close(key);}}
+  finally{run.endedAt=this.now();for(const step of run.steps)if(step.status==='running')step.status=run.status==='failed'?'failed':'stopped';this.persist();if(key){this.waiters.delete(key);if(!reused)this.backend().close(key);}}
  }
  onPiEvent(event:PiEvent){
   const key=event.type==='run'?event.run.key:'key' in event?event.key:undefined;if(!key)return;
