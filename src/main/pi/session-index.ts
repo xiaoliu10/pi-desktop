@@ -109,14 +109,15 @@ export class SessionIndex {
           // 超限会话降级为「元数据可见」：列表/侧栏照常显示（此前整个会话从侧栏消失，
           // 用户看到「该项目还没有会话」——96MB ashare 主会话 2026-10-09 的真实事故）。
           const stub = sessionStub(file);
-          if (!stub) continue;
-          const stat = fs.statSync(file);
+          const stamped = this.stampOf(file); // 包裹 ENOENT：文件被并发删除时安全跳过（P2）
+          if (!stub || !stamped) continue;
+          const { stat, stamp } = stamped;
           const degraded = {
             session: { key, id: String(stub.header.id ?? key), path: file, cwd: String(stub.header.cwd ?? path.dirname(file)), name: String(stub.firstUserText || '未命名 pi 会话').slice(0, 180), updatedAt: stat.mtimeMs, size: stat.size, warnings: [err.message], owned: file.startsWith(canonical(this.ownedRoot) + path.sep), parentSession: typeof stub.header.parentSession === 'string' ? stub.header.parentSession : undefined },
             entries: [], branch: [], leaves: [], leafId: null, syncedAt: Date.now(),
           };
           this.oversized.add(degraded);
-          this.cache.set(key, { stamp: `${stat.ino}:${stat.size}:${stat.mtimeMs}:${stat.ctimeMs}`, history: degraded });
+          this.cache.set(key, { stamp, history: degraded });
           continue;
         }
         const old = this.cache.get(key);
