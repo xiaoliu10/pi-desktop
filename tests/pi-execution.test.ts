@@ -2,7 +2,7 @@ import { createElement } from 'react';
 import { describe, expect, it } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { executionTurns } from '../src/renderer/replica/chat/execution';
-import { ChatView } from '../src/renderer/replica/chat/ChatView';
+import { ChatView, TurnArticle } from '../src/renderer/replica/chat/ChatView';
 import { conversationMessages, historyToMessages, liveToMessages } from '../src/renderer/pi/adapter';
 import type { PiEntry } from '../src/shared/pi';
 import type { ToolPart } from '../src/renderer/replica/contracts';
@@ -158,5 +158,51 @@ describe('final answer stays visible after trailing tools', () => {
     const conclusion = markup.indexOf('最终回复保持直接可见。');
     expect(group).toBeGreaterThanOrEqual(0);
     expect(conclusion).toBeGreaterThan(group); // 结论在过程组之后直接可见（完成态合并渲染）
+  });
+});
+
+describe('running head pinned to the top of the live turn', () => {
+  const labels = { you: '你', assistant: 'pi', simulatedRun: '演示', toolRunning: '运行中', toolDone: '完成', toolError: '失败', details: '详情', queued: '排队', working: '执行中' };
+  // [steps, text(中间叙述), steps(尾随工具)]：#72 后结论文本会插在过程之间，计时不得跟着尾段下移
+  const splitBranch: PiEntry[] = [
+    { id: 'rh-u1', type: 'message', timestamp: '2026-10-09T00:00:00Z', message: { role: 'user', content: '继续任务' } },
+    { id: 'rh-a1', type: 'message', message: { role: 'assistant', timestamp: 10, content: [{ type: 'thinking', thinking: '先查一下。' }, { type: 'toolCall', id: 'rh-c1', name: 'bash', arguments: { command: 'ls' } }] } },
+    { id: 'rh-r1', type: 'message', message: { role: 'toolResult', toolCallId: 'rh-c1', toolName: 'bash', content: 'ok' } },
+    { id: 'rh-a2', type: 'message', message: { role: 'assistant', timestamp: 20, content: [{ type: 'text', text: '中间叙述：已列出文件，继续处理。' }] } },
+    { id: 'rh-a3', type: 'message', message: { role: 'assistant', timestamp: 30, content: [{ type: 'toolCall', id: 'rh-c2', name: 'bash', arguments: { command: 'wc -l' } }] } },
+    { id: 'rh-r2', type: 'message', message: { role: 'toolResult', toolCallId: 'rh-c2', toolName: 'bash', content: 'done' } },
+  ];
+
+  it('shows exactly one running head above all assistant content; group headers yield', () => {
+    const messages = historyToMessages(splitBranch);
+    const markup = renderToStaticMarkup(createElement(ChatView, { messages, running: true, queued: 0, demo: false, labels, onJumpToMessage: () => {} }));
+    // 唯一顶部运行头，带计时
+    expect(markup.match(/pi-msg__runninghead/g)).toHaveLength(1);
+    const head = markup.indexOf('pi-msg__runninghead');
+    const firstGroup = markup.indexOf('<details');
+    expect(head).toBeGreaterThanOrEqual(0);
+    expect(firstGroup).toBeGreaterThan(head); // 计时头在本轮所有过程内容之前
+    expect(markup.slice(head, head + 700)).toContain('已工作');
+    // 全文只有头部一处「已工作」（各组 headerChrome=false 让位，不再随尾段下移）
+    expect(markup.match(/已工作/g)).toHaveLength(1);
+    // 组头退化为步数标题（不再显示「正在工作」文案，避免与顶部头重复）
+    expect(markup).toContain('执行过程 ·');
+    // 组头不再重复「正在工作」：全文仅头部 aria-label 一处
+    expect(markup.match(/正在工作/g)).toHaveLength(1);
+  });
+
+  it('keeps the head above content when the turn is text-tailed (no trailing tools yet)', () => {
+    const tail = [...splitBranch.slice(0, 5)]; // 到中间叙述为止（末段是 text）
+    const messages = historyToMessages(tail);
+    const markup = renderToStaticMarkup(createElement(ChatView, { messages, running: true, queued: 0, demo: false, labels, onJumpToMessage: () => {} }));
+    expect(markup.match(/pi-msg__runninghead/g)).toHaveLength(1);
+    expect(markup.indexOf('pi-msg__runninghead')).toBeLessThan(markup.indexOf('<details'));
+    expect(markup.match(/已工作/g)).toHaveLength(1);
+  });
+
+  it('suppresses the running head while a retry is in progress (RetryStatus owns the state)', () => {
+    const messages = executionTurns(historyToMessages(splitBranch));
+    const markup = renderToStaticMarkup(createElement(TurnArticle, { m: messages[1]!, liveTurn: true, retrying: true, labels, onJumpToMessage: () => {} } as never));
+    expect(markup).not.toContain('pi-msg__runninghead');
   });
 });

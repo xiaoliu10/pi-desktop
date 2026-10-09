@@ -325,14 +325,14 @@ export function ElapsedTime({ startedAt, endedAt, running, zh }: { startedAt?: n
   return <span className="pi-execution__elapsed">{running ? (zh ? '已工作 ' : 'Working for ') : (zh ? '用时 ' : 'Took ')}{formatElapsed((running ? now : endedAt!) - startedAt, zh)}</span>;
 }
 
-export function ExecutionGroup({ turn, parts, running, active, expanded, showElapsed, labels, onOpenToolFile }: { turn: ChatTurn; parts: MessagePart[]; running: boolean; /** 仅最后一个 steps 段为 active：转圈/计时/正在思考只出现一处 */ active?: boolean; /** 回合进行中：所有过程段都保持展开（用户要求），完成态不传即默认折叠 */ expanded?: boolean; showElapsed?: boolean; labels: ChatViewProps['labels']; onOpenToolFile?: ChatViewProps['onOpenToolFile'] }) {
+export function ExecutionGroup({ turn, parts, running, active, expanded, showElapsed, headerChrome = true, labels, onOpenToolFile }: { turn: ChatTurn; parts: MessagePart[]; running: boolean; /** 仅最后一个 steps 段为 active：转圈/计时/正在思考只出现一处 */ active?: boolean; /** 回合进行中：所有过程段都保持展开（用户要求），完成态不传即默认折叠 */ expanded?: boolean; showElapsed?: boolean; /** 计时与转圈归 TurnArticle 顶部运行头（运行中传 false）：组头只保留展开/折叠与失败徽标，工具/思考的 active 状态不受影响。默认 true 保持完成态组头计时。 */ headerChrome?: boolean; labels: ChatViewProps['labels']; onOpenToolFile?: ChatViewProps['onOpenToolFile'] }) {
   const zh = labels.you === '你';
   const live = active ?? running;
   const [userOpen, setUserOpen] = useState(false);
   // 回合进行中强制展开（expanded 覆盖所有段，不限最后一个）；完成态跟随用户手动开合。
   // 非受控会被流式 re-render 重置，open 必须是受控推导。
   const open = running || expanded || userOpen;
-  const hasTiming = showElapsed && turn.startedAt !== undefined && (live || turn.endedAt !== undefined);
+  const hasTiming = headerChrome && showElapsed && turn.startedAt !== undefined && (live || turn.endedAt !== undefined);
   const failures = parts.filter(p => p.kind === 'error' || (p.kind === 'tool' && p.status === 'error')).length;
   // 模型此刻正在流式输出思考（最新内容是 thinking）→ 该思考行内滚动展示内容（见 ExecutionNote active）。
   // running 的组必须保持展开：工具组后面跟着文字段时，用户仍要能看到正在执行/刚执行的步骤
@@ -344,9 +344,9 @@ export function ExecutionGroup({ turn, parts, running, active, expanded, showEla
   }} className={`pi-execution ${running ? 'pi-execution--running' : ''} ${failures ? 'pi-execution--error' : ''}`}>
     <summary className="pi-execution__summary">
       {/* 「正在思考」粗体由活动思考行自己展示（滚动内容同行）；组头只保留计时，避免重复 */}
-      {hasTiming ? <ElapsedTime startedAt={turn.startedAt} endedAt={turn.endedAt} running={live} zh={zh} /> : <span className="pi-execution__title">{live ? (zh ? '正在工作' : 'Working') : (zh ? `执行过程 · ${parts.length} 步` : `Execution · ${parts.length} steps`)}</span>}
+      {hasTiming ? <ElapsedTime startedAt={turn.startedAt} endedAt={turn.endedAt} running={live} zh={zh} /> : <span className="pi-execution__title">{live && headerChrome ? (zh ? '正在工作' : 'Working') : (zh ? `执行过程 · ${parts.length} 步` : `Execution · ${parts.length} steps`)}</span>}
       {failures > 0 && <span className="pi-execution__failure">{failures} {zh ? '项失败' : 'failed'}</span>}
-      {live && <Spinner label={zh ? '运行中' : 'Running'} />}
+      {live && headerChrome && <Spinner label={zh ? '运行中' : 'Running'} />}
       <Icon name="chevron-right" size={14} className="pi-execution__chevron" />
     </summary>
     <div className="pi-execution__steps">{renderSteps(parts, live, zh, labels, onOpenToolFile)}</div>
@@ -618,11 +618,21 @@ export const TurnArticle = memo(function TurnArticle({ m, liveTurn, retrying, su
               ...m.segments.flatMap(segment => segment.parts).filter(part => part.kind === 'error' && part.source === 'model').map(part => part.id),
             ]) : undefined;
             // 活动轮：保持时间顺序，逐步段渲染；所有过程段保持展开（用户要求：
-            // 工作进行中进度可见，中途出现结论文字也不折叠，完成态才统一收起）
-            return <>{m.segments.map((seg, si) => {
+            // 工作进行中进度可见，中途出现结论文字也不折叠，完成态才统一收起）。
+            // 顶部运行头：计时与转圈钉在本轮所有内容之前，不随最后段 kind 下移
+            // （#72 后结论文本会插在 steps 之间，组头计时随之下移——改由顶部唯一承担，
+            // 各组 headerChrome=false 让位但保留工具/思考 active 状态）。retry 期间由
+            // RetryStatus 接管，不出正常运行头；startedAt 已由 ChatView 优先用 runTiming
+            // 修正，无时间戳时 ElapsedTime 渲染 null（不编造计时）。
+            return <>{!retrying && (
+              <div className="pi-msg__runninghead" role="status" aria-label={zh ? '正在工作' : 'Working'}>
+                <Spinner />
+                <ElapsedTime startedAt={m.startedAt} running zh={zh} />
+              </div>
+            )}{m.segments.map((seg, si) => {
               const liveSegment = si === m.segments.length - 1;
               if (seg.kind === 'steps' && seg.parts.length > 0) {
-                return <ExecutionGroup key={`${m.id}-seg-${si}`} turn={m} parts={seg.parts} running={liveSegment && !retrying} active={liveSegment && !retrying} expanded showElapsed={liveSegment && !retrying} labels={labels} onOpenToolFile={onOpenToolFile} />;
+                return <ExecutionGroup key={`${m.id}-seg-${si}`} turn={m} parts={seg.parts} running={liveSegment && !retrying} active={liveSegment && !retrying} expanded showElapsed={liveSegment && !retrying} headerChrome={false} labels={labels} onOpenToolFile={onOpenToolFile} />;
               }
               if (seg.kind === 'text' && seg.parts.length > 0) {
                 if (seg.parts.every(part => hiddenErrors?.has(part.id))) return null;
@@ -634,7 +644,6 @@ export const TurnArticle = memo(function TurnArticle({ m, liveTurn, retrying, su
           // 完成态：思考与工具都是任务过程产物，统一收进「用时」折叠块，结论直接可见
           const allSteps = m.segments.filter((s) => s.kind === 'steps').flatMap((s) => s.parts);
           const allText = m.segments.filter((s) => s.kind === 'text').flatMap((s) => s.parts);
-          const zh = labels.you === '你';
           return <>
             {allSteps.length > 0
               ? <ExecutionGroup turn={m} parts={allSteps} running={false} showElapsed labels={labels} onOpenToolFile={onOpenToolFile} />
@@ -818,9 +827,12 @@ export const ChatView = memo(function ChatView(props: ChatViewProps) {
             </article>
           )}
           {(() => {
-            // 发送后立刻转圈计时；一旦执行组（steps）开始流式输出，计时交还给组内，避免重复。
+            // 发送后立刻转圈计时；活动轮的顶部运行头（TurnArticle）一旦出现，计时归它唯一
+            // 承担——这里只在「还没出 assistant 轮」的等待期兑底显示，避免组头让位/
+            // text-tail 末段后与顶部头双计时（stepsLive 保留旧语义：末段是 steps 时也不重复）。
             const lastTurn = turns[turns.length - 1];
             const stepsLive = (lastTurn?.segments.at(-1)?.kind ?? 'text') === 'steps';
+            const headLive = !props.sendingText && lastTurn?.role === 'assistant' && (props.running || retryUI.recovering);
             if (retryUI.visible) return <RetryStatus retry={props.retrying} group={props.retryGroup} stopping={props.stopping} onStop={props.onStop} zh={props.labels.you === '你'} />;
             if (!props.sending && !props.running) return null;
             const timerStart = props.runTiming?.startedAt ?? props.sendingAt;
@@ -830,7 +842,7 @@ export const ChatView = memo(function ChatView(props: ChatViewProps) {
                 <Spinner />
                 {props.compacting && <span>{zh ? '正在压缩上下文…' : 'Compacting context…'}</span>}
                 {props.queued > 0 && <span>{props.queued} {props.labels.queued}</span>}
-                {!stepsLive && !props.compacting && timerStart !== undefined && <ElapsedTime startedAt={timerStart} running zh={zh} />}
+                {!stepsLive && !headLive && !props.compacting && timerStart !== undefined && <ElapsedTime startedAt={timerStart} running zh={zh} />}
                 <span className="pi-chat__caret" />
               </div>
             );
