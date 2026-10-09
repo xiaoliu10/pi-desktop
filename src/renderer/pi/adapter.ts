@@ -910,7 +910,7 @@ const composerDrafts = new Map<string, ComposerDraft>();
 const COMPOSER_DRAFTS_BUDGET = 40 * 1024 * 1024;
 const draftSize = (d: ComposerDraft) => d.text.length + d.items.reduce((n, i) => n + i.text.length + (i.image?.data.length ?? 0), 0);
 function composerKeyOf(state: { selectedKey: string | null; draftCwd?: string }): string | null {
-  return state.selectedKey ?? (state.draftCwd ? `home:${state.draftCwd}` : null);
+  return state.selectedKey ?? `home:${state.draftCwd ?? ''}`;
 }
 /** 输入归属键：会话 key；新任务 = home:cwd。PiReplicaApp 用它给 Composer 绑定防抖归属。 */
 export function composerOwnerKeyOf(state: { selectedKey: string | null; draftCwd?: string }): string | null {
@@ -1392,7 +1392,10 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
         setNow({ selectedKey: entry.key, leaf: undefined, history: undefined, review: undefined, view: 'chat', ...(switchComposerOwner(getNow, entry.key) ?? {}), recoveredSubagents: [], subagentDismissed: getNow().desktopPreferences?.subagentDismissed?.[entry.key] ?? [], navHistory: result.history });
         refresh();
       } else if (entry.view === 'chat') {
-        setNow({ view: 'home', selectedKey: null, history: undefined, leaf: undefined, review: undefined, ...(switchComposerOwner(getNow, getNow().draftCwd ? `home:${getNow().draftCwd}` : null) ?? {}), navHistory: result.history });
+        setNow({ view: 'home', selectedKey: null, history: undefined, leaf: undefined, review: undefined, ...(switchComposerOwner(getNow, `home:${getNow().draftCwd ?? ''}`) ?? {}), navHistory: result.history });
+      } else if (entry.view === 'home') {
+        const draft = switchComposerOwner(getNow, `home:${getNow().draftCwd ?? ''}`);
+        setNow({ view: 'home', selectedKey: null, history: undefined, leaf: undefined, review: undefined, ...(draft ?? {}), navHistory: result.history });
       } else {
         setNow({ view: entry.view, notificationsOpen: false, navHistory: result.history });
       }
@@ -1694,7 +1697,8 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
       return true;
     },
     selectSession: (key) => {
-      set((s) => ({ selectedKey: key, leaf: undefined, history: undefined, review: undefined, view: 'chat', ...(switchComposerOwner(get, key) ?? {}), recoveredSubagents: [], subagentDismissed: s.desktopPreferences?.subagentDismissed?.[key] ?? [] }));
+      const draft = switchComposerOwner(get, key);
+      set((s) => ({ selectedKey: key, leaf: undefined, history: undefined, review: undefined, view: 'chat', ...(draft ?? {}), recoveredSubagents: [], subagentDismissed: s.desktopPreferences?.subagentDismissed?.[key] ?? [] }));
       void refreshHistory();
       get().prewarmSession(key);
     },
@@ -1858,7 +1862,7 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
           const own = current.sends?.find(s => s.id === send.id);
           // Late rejection cannot erase another session's draft or an already confirmed send.
           set({ error: String((error as Error).message ?? error), errorKey: state.selectedKey ?? undefined, sends: current.sends?.filter(s => s.id !== send.id || !!s.confirmedId),
-            ...(current.selectedKey === (own?.key ?? targetKey) && !own?.confirmedId && !current.draftText && !current.contextItems.length ? { draftText: text, contextItems: state.contextItems } : {}),
+            ...(composerKeyOf(current) === (own?.key ?? targetKey ?? sentOwner) && !own?.confirmedId && !current.draftText && !current.contextItems.length ? { draftText: text, contextItems: state.contextItems } : {}),
             ...(current.pendingPromptAt === send.at ? { pendingPrompt: undefined, pendingPromptAt: undefined } : {}),
             ...(!own?.confirmedId && current.sentAt?.key === targetKey && current.sentAt.at === send.at ? { sentAt: undefined } : {}),
             ...(queuedItem ? { runs: current.runs.map(r => {
@@ -1866,6 +1870,11 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
               const queue = r.queue.filter(q => q !== queuedItem);
               return { ...r, queue, pending: queue.length };
             }) } : {}) });
+          // Restore a failed send to its original owner's stored draft when the user
+          // navigated away; never overwrite a newer draft in either conversation.
+          const restoreOwner = own?.key ?? targetKey ?? sentOwner;
+          if (!own?.confirmedId && restoreOwner !== null && composerKeyOf(get()) !== restoreOwner
+            && !composerDrafts.has(restoreOwner)) stashComposerDraft(restoreOwner, { text, items: state.contextItems });
         } finally {
           // pendingPrompt 不在这里清：prompt 应答 ≠ 用户消息已上屏。乐观气泡要撑到
           // 历史刷新带回真实用户条目（见 settlePendingPrompt），否则模型思考的几十秒里
@@ -2016,7 +2025,7 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
     startNewSession: () => {
       const state = get();
       const cwd = currentRun(state)?.cwd ?? state.sessions.find(s => s.key === state.selectedKey)?.cwd ?? state.draftCwd ?? state.desktopPreferences?.projects[0]?.path;
-      set({ selectedKey: null, history: undefined, leaf: undefined, review: undefined, view: 'home', ...(switchComposerOwner(get, cwd ? `home:${cwd}` : null) ?? {}), draftCwd: cwd, subagentDismissed: [] });
+      set({ selectedKey: null, history: undefined, leaf: undefined, review: undefined, view: 'home', ...(switchComposerOwner(get, `home:${cwd ?? ''}`) ?? {}), draftCwd: cwd, subagentDismissed: [] });
     },
     addProject: () => {
       if (get().addingProject) return;

@@ -6,8 +6,9 @@
 // 富条目：一次发送可能携带图片/文件/技能等上下文（ContextItem），recall 必须
 // 原样还原（含 base64 图片数据），因此条目从纯 string 扩展为
 // `{ text, items }`；旧版 string 条目照常读取（等价于 items: []）。
-// 图片 base64 很容易超出 localStorage 配额：持久化失败只降级为「本条不入
-// 磁盘历史」，内存里仍然完整可 recall，绝不阻断发送。
+// Complete entries are retained in workspace memory and IndexedDB (see
+// workspace-prompt-history.ts). localStorage is only a backwards-compatible copy;
+// quota failures must never strip image payloads or block sending.
 
 import type { ContextItem } from '../../shared/composer';
 
@@ -17,7 +18,7 @@ const STORAGE_KEY_PREFIX = 'pi-desktop-chat-prompt-history:';
 
 type PromptHistoryDirection = 'up' | 'down';
 
-/** A recalled prompt: visible head text plus the non-image context entries. */
+/** A recalled prompt: visible text plus every image/file/document/skill attachment. */
 export interface PromptHistoryEntry {
   text: string;
   items: Array<Omit<ContextItem, 'id'>>;
@@ -47,17 +48,18 @@ function normalizeEntries(entries: readonly unknown[]): PromptHistoryEntry[] {
       if (typeof entry === 'string') return entry.trim() ? { text: entry, items: [] } : null;
       if (!entry || typeof entry !== 'object') return null;
       const candidate = entry as Partial<PromptHistoryEntry>;
-      if (typeof candidate.text !== 'string' || !candidate.text.trim()) return null;
+      if (typeof candidate.text !== 'string') return null;
       const items = Array.isArray(candidate.items)
         ? candidate.items.filter((item): item is PromptHistoryEntry['items'][number] => {
           if (!item || typeof item !== 'object') return false;
           const it = item as Partial<ContextItem>;
-          if (typeof it.name !== 'string' || !['file', 'document', 'skill', 'image'].includes(String(it.kind))) return false;
-          if (it.image !== undefined && (typeof it.image !== 'object' || it.image === null || typeof (it.image as { data?: unknown }).data !== 'string' || typeof (it.image as { mimeType?: unknown }).mimeType !== 'string')) return false;
+          if (typeof it.name !== 'string' || typeof it.path !== 'string' || typeof it.text !== 'string'
+            || !['file', 'document', 'skill', 'image'].includes(String(it.kind))) return false;
+          if (it.image !== undefined && (typeof it.image !== 'object' || it.image === null || typeof (it.image as { data?: unknown }).data !== 'string' || typeof (it.image as { mimeType?: unknown }).mimeType !== 'string' || it.image.type !== 'image')) return false;
           return true;
         })
         : [];
-      return { text: candidate.text, items };
+      return candidate.text.trim() || items.length ? { text: candidate.text, items } : null;
     })
     .filter((entry): entry is PromptHistoryEntry => entry !== null)
     .slice(-MAX_PROMPT_HISTORY);
@@ -73,9 +75,9 @@ function getBrowserStorage(): Storage | null {
 }
 
 export function readPromptHistory(cwd: string, storage: Storage | null = getBrowserStorage()): PromptHistoryEntry[] {
-  const raw = storage?.getItem(storageKey(cwd));
-  if (!raw) return [];
   try {
+    const raw = storage?.getItem(storageKey(cwd));
+    if (!raw) return [];
     const parsed: unknown = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
     return normalizeEntries(parsed);
@@ -89,17 +91,7 @@ export function readPromptHistory(cwd: string, storage: Storage | null = getBrow
 export function persistPromptHistory(cwd: string, entries: readonly PromptHistoryEntryInput[], storage: Storage | null = getBrowserStorage()) {
   try {
     storage?.setItem(storageKey(cwd), JSON.stringify(normalizeEntries(entries)));
-  } catch {
-    // 配额超限（图片 base64 很大）：剥离图片数据重试——纯文字历史仍可落盘，
-    // 带图条目保留在内存里本运行内仍可 recall；再失败（storage 被禁用）静默放弃。
-    try {
-      const stripped = normalizeEntries(entries).map(entry => ({
-        ...entry,
-        items: entry.items.map(item => (item.image ? { ...item, image: undefined } : item)),
-      }));
-      storage?.setItem(storageKey(cwd), JSON.stringify(stripped));
-    } catch { /* keep memory-only */ }
-  }
+  } catch { /* Full entries remain in memory and IndexedDB; never strip attachments. */ }
 }
 
 export function appendPromptHistoryEntry(entries: readonly PromptHistoryEntryInput[], entry: PromptHistoryEntryInput, limit = MAX_PROMPT_HISTORY): PromptHistoryEntry[] {

@@ -233,7 +233,7 @@ export interface ComposerProps {
   hideReasoning?: boolean;
   onSend: (text: string) => void;
   /** 已发送消息历史（↑/↓ recall，ZCode 同款）；空数组时方向键不接管。
-   *  条目为富结构：text + 非图片上下文（文件/文档/技能），recall 原样还原。 */
+   *  条目为富结构：text + 全部附件（图片/文件/文档/技能），recall 原样还原。 */
   promptHistory?: readonly (string | { text: string; items: readonly Omit<import('../../shared/composer').ContextItem, 'id'>[] })[];
   /** 历史 recall 的整份还原（文字+附件）：生产侧经 store 原子替换，防与本地编辑串写。
    *  phase='enter' 时调用方应快照当前未发草稿，'exit' 时还原并返回要显示的文字。 */

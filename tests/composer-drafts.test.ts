@@ -99,6 +99,28 @@ describe('未发送草稿按会话保留（切换不丢）', () => {
     expect(usePiStore.getState().contextItems).toEqual([docA]);
   });
 
+  it('new drafts without a workspace still survive a conversation round trip', () => {
+    usePiStore.setState({ selectedKey: null, draftCwd: undefined, draftText: 'no workspace yet', contextItems: [docA] });
+    usePiStore.getState().selectSession('no-workspace-chat');
+    usePiStore.getState().startNewSession();
+    expect(usePiStore.getState().draftText).toBe('no workspace yet');
+    expect(usePiStore.getState().contextItems).toEqual([docA]);
+  });
+
+  it('navigation back and forward preserve both conversation drafts', () => {
+    seed();
+    usePiStore.getState().selectSession('nav-draft-a');
+    usePiStore.setState({ draftText: 'nav A', contextItems: [docA] });
+    usePiStore.getState().selectSession('nav-draft-b');
+    usePiStore.setState({ draftText: 'nav B', contextItems: [skillA] });
+    usePiStore.getState().navBack();
+    expect(usePiStore.getState().draftText).toBe('nav A');
+    expect(usePiStore.getState().contextItems).toEqual([docA]);
+    usePiStore.getState().navForward();
+    expect(usePiStore.getState().draftText).toBe('nav B');
+    expect(usePiStore.getState().contextItems).toEqual([skillA]);
+  });
+
   it('发送成功后该会话的草稿转存被清除（重进是空输入框）', () => {
     seed();
     usePiStore.setState({ draftText: '将要发送', contextItems: [docA] });

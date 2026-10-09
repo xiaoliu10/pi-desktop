@@ -981,6 +981,7 @@ export function Composer(props: ComposerProps) {
     }
   }, [promptHistory]);
   const applyHistoryEntry = (nextIndex: number | null, nextValue: string, nextItems?: readonly Omit<import('../../../shared/composer').ContextItem, 'id'>[]) => {
+    flushDraft(); // Snapshot the current local draft, including edits within the debounce window.
     // 阶段语义：首次进入浏览态快照当前未发草稿（文字+附件），↓ 到底退出时还原——
     // 历史 recall 不再清空用户正在编辑的附件（评审 P2-3）。
     const phase = nextIndex === null ? 'exit' : historyIndexRef.current === null ? 'enter' : 'browse';

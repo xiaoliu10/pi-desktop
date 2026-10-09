@@ -87,6 +87,24 @@ describe('输入框发送历史（↑↓ recall）', () => {
     expect(readPromptHistory('/w/e', fake)).toEqual([{ text: 'old', items: [] }]);
   });
 
+  it('image-only prompts survive persistence with every attachment field intact', () => {
+    const values = new Map<string, string>();
+    const storage = { getItem: (key: string) => values.get(key) ?? null, setItem: (key: string, value: string) => void values.set(key, value) } as Storage;
+    persistPromptHistory('/image-only', [{ text: '', items: [img, doc, skill] }], storage);
+    expect(readPromptHistory('/image-only', storage)).toEqual([{ text: '', items: [img, doc, skill] }]);
+  });
+
+  it('storage access errors do not break loading or sending', () => {
+    const failing = { getItem: () => { throw new Error('disabled'); }, setItem: () => { throw new Error('disabled'); } } as unknown as Storage;
+    expect(readPromptHistory('/disabled', failing)).toEqual([]);
+    expect(() => persistPromptHistory('/disabled', [{ text: '', items: [img] }], failing)).not.toThrow();
+  });
+
+  it('malformed attachment fields are rejected without fabricating context', () => {
+    const raw = JSON.stringify([{ text: 'ok', items: [img, { name: 'bad', kind: 'file', text: 42 }, { ...img, image: { data: 'x' } }] }]);
+    expect(readPromptHistory('/malformed', { getItem: () => raw } as unknown as Storage)).toEqual([{ text: 'ok', items: [img] }]);
+  });
+
   it('localStorage 配额超限（大图 base64）：持久化静默降级，不抛错不丢内存条目', () => {
     const failing = { getItem: () => null, setItem: () => { throw new DOMException('quota', 'QuotaExceededError'); } } as unknown as Storage;
     expect(() => persistPromptHistory('/w/q', [{ text: '大图', items: [img] }], failing)).not.toThrow();
