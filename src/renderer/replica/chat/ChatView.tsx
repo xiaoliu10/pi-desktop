@@ -326,7 +326,7 @@ export function ElapsedTime({ startedAt, endedAt, running, zh }: { startedAt?: n
   return <span className="pi-execution__elapsed">{running ? (zh ? '已工作 ' : 'Working for ') : (zh ? '用时 ' : 'Took ')}{formatElapsed((running ? now : endedAt!) - startedAt, zh)}</span>;
 }
 
-export function ExecutionGroup({ turn, parts, running, active, expanded, showElapsed, headerChrome = true, labels, onOpenToolFile }: { turn: ChatTurn; parts: MessagePart[]; running: boolean; /** 仅最后一个 steps 段为 active：转圈/计时/正在思考只出现一处 */ active?: boolean; /** 回合进行中：所有过程段都保持展开（用户要求），完成态不传即默认折叠 */ expanded?: boolean; showElapsed?: boolean; /** 计时与转圈归 TurnArticle 顶部运行头（运行中传 false）：组头只保留展开/折叠与失败徽标，工具/思考的 active 状态不受影响。默认 true 保持完成态组头计时。 */ headerChrome?: boolean; labels: ChatViewProps['labels']; onOpenToolFile?: ChatViewProps['onOpenToolFile'] }) {
+export function ExecutionGroup({ turn, parts, running, active, expanded, showElapsed, headerChrome = true, labels, onOpenToolFile, onCollapseAll, onExpandAll }: { turn: ChatTurn; parts: MessagePart[]; running: boolean; /** 仅最后一个 steps 段为 active：转圈/计时/正在思考只出现一处 */ active?: boolean; /** 回合进行中：所有过程段都保持展开（用户要求），完成态不传即默认折叠 */ expanded?: boolean; showElapsed?: boolean; /** 计时与转圈归 TurnArticle 顶部运行头（运行中传 false）：组头只保留展开/折叠与失败徽标，工具/思考的 active 状态不受影响。默认 true 保持完成态组头计时。 */ headerChrome?: boolean; labels: ChatViewProps['labels']; onOpenToolFile?: ChatViewProps['onOpenToolFile']; /** 运行中整轮折叠：点击组头收起整轮全部过程段（TurnArticle 切渲染为汇总条）。 */ onCollapseAll?: () => void; /** 汇总条展开：恢复逐段渲染（TurnArticle 切回展开视图）。 */ onExpandAll?: () => void }) {
   const zh = labels.you === '你';
   const live = active ?? running;
   const [userOpen, setUserOpen] = useState(false);
@@ -341,6 +341,10 @@ export function ExecutionGroup({ turn, parts, running, active, expanded, showEla
     // 回合进行中强制展开：浏览器原生 toggle 会先把 DOM 翻到折叠态（onToggle 异步），
     // 若不立即写回，用户点击会闪折/需点两下才能再开。直接在 DOM 上拉直。
     if (running) { e.currentTarget.open = true; return; }
+    // 运行中整轮折叠：点击过程组头不是折叠本段，而是把整轮全部过程段收成一条汇总。
+    if (!e.currentTarget.open && onCollapseAll) { e.currentTarget.open = true; onCollapseAll(); return; }
+    // 汇总条展开 → 恢复逐段渲染（切视图而不是展开汇总内容）
+    if (e.currentTarget.open && onExpandAll) { e.currentTarget.open = false; onExpandAll(); return; }
     setUserOpen(e.currentTarget.open);
   }} className={`pi-execution ${running ? 'pi-execution--running' : ''} ${failures ? 'pi-execution--error' : ''}`}>
     <summary className="pi-execution__summary">
@@ -558,6 +562,9 @@ export function MessageNav({ turns, listRef, onJump }: { turns: ChatTurn[]; list
 export const TurnArticle = memo(function TurnArticle({ m, liveTurn, retrying, suppressModelErrors, retryingError, labels, onOpenToolFile, onEditUser, editCorrection, onDownloadImage }: { m: ChatTurn; liveTurn: boolean; retrying?: boolean; suppressModelErrors?: boolean; /** 本次重试的错误首行：只藏末尾同类的失败，异类错误保持可见。 */ retryingError?: string; labels: ChatViewProps['labels']; onOpenToolFile?: ChatViewProps['onOpenToolFile']; /** 提供时用户消息可「编辑并重发」（先 fork 截断再发送，等价 ZCode 编辑语义）。 */ onEditUser?: (entryId: string, text: string) => void; /** 任务运行中：提交不再是 fork 重发而是作为更正发送（fork 会截断在跑 agent 的上下文）。 */ editCorrection?: boolean; onDownloadImage?: ChatViewProps['onDownloadImage'] }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
+  // 运行中整轮过程折叠：点击任一过程组头把全部工具/思考收成一条汇总（可再展开）。
+  // 文本段（叙述/结论）不折叠，保持可见。组件按 turn id 挂载，状态天然按轮隔离。
+  const [processCollapsed, setProcessCollapsed] = useState(false);
   const zh = labels.you === '你';
   const [copied, setCopied] = useState(false);
   const copiedTimer = useRef<number>(0);
@@ -634,12 +641,27 @@ export const TurnArticle = memo(function TurnArticle({ m, liveTurn, retrying, su
                 <ElapsedTime startedAt={m.startedAt} running zh={zh} />
               </div>
             )}{(() => {
-              const lastStepsSegment = m.segments.map((s, i) => (s.kind === 'steps' ? i : -1)).filter(i => i >= 0).pop() ?? -1;
-              return m.segments.map((seg, si) => {
-              const liveSegment = si === m.segments.length - 1;
+              // 运行中用 liveSegments：过程叙述不折进执行组、全部按时间线原位直接可见
+              // （流式期间 lastText 随输出移动，套用完成态折叠规则会让已见的文本反复跳进折叠块）
+              const segs = m.liveSegments ?? m.segments;
+              const lastStepsSegment = segs.map((s, i) => (s.kind === 'steps' ? i : -1)).filter(i => i >= 0).pop() ?? -1;
+              if (processCollapsed) {
+                // 整轮折叠：全部工具/思考收成一条汇总（点击展开恢复逐段渲染）；文本段保持可见
+                const allSteps = segs.filter(s => s.kind === 'steps').flatMap(s => s.parts);
+                const answerSegs = segs.filter(s => s.kind === 'text');
+                return <>
+                  {allSteps.length > 0 && <ExecutionGroup key={`${m.id}-live-folded`} turn={m} parts={allSteps} running={false} labels={labels} onOpenToolFile={onOpenToolFile} onExpandAll={() => setProcessCollapsed(false)} />}
+                  {answerSegs.map((seg, si) => (seg.parts.length === 0 || seg.parts.every(part => hiddenErrors?.has(part.id))) ? null
+                    : <div key={`${m.id}-folded-ans-${si}`} className="pi-msg__answer"><MessageParts parts={seg.parts} labels={labels} onOpenToolFile={onOpenToolFile} hiddenErrors={hiddenErrors} /></div>)}
+                </>;
+              }
+              let firstStepsSeen = false;
+              return segs.map((seg, si) => {
+              const liveSegment = si === segs.length - 1;
               const retryHead = retrying && si === lastStepsSegment;
               if (seg.kind === 'steps' && seg.parts.length > 0) {
-                return <ExecutionGroup key={`${m.id}-seg-${si}`} turn={m} parts={seg.parts} running={liveSegment && !retrying} expanded showElapsed={retryHead} headerChrome={retryHead} labels={labels} onOpenToolFile={onOpenToolFile} />;
+                const first = !firstStepsSeen; firstStepsSeen = true;
+                return <ExecutionGroup key={`${m.id}-seg-${si}`} turn={m} parts={seg.parts} running={liveSegment && !retrying} expanded showElapsed={retryHead} headerChrome={retryHead} labels={labels} onOpenToolFile={onOpenToolFile} onCollapseAll={first ? () => setProcessCollapsed(true) : undefined} />;
               }
               if (seg.kind === 'text' && seg.parts.length > 0) {
                 if (seg.parts.every(part => hiddenErrors?.has(part.id))) return null;
