@@ -237,6 +237,17 @@
 .pireplica .pi-waiting-process__body { padding: 12px 16px; border-radius: 10px; background: var(--pi-bg-inset); line-height: 1.7; }
 .pireplica .pi-waiting-process__body p { margin: 0 0 10px; }
 
+/* 顶部运行头：活动轮的计时与转圈钉在本轮所有内容之前（不随最后段 kind 下移） */
+.pireplica .pi-msg__runninghead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 2px 0 12px;
+  color: var(--pi-text-tertiary);
+  font-size: var(--pi-font-size-sm);
+}
+.pireplica .pi-msg__runninghead .pi-execution__elapsed { font-size: 13px; }
+
 .pireplica .pi-chat__working {
   color: var(--pi-text-tertiary);
   font-size: var(--pi-font-size-sm);
