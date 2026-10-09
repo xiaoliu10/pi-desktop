@@ -161,6 +161,43 @@ describe('final answer stays visible after trailing tools', () => {
   });
 });
 
+describe('live segments keep narration in place while running', () => {
+  const multi: PiEntry[] = [
+    { id: 'lv-u1', type: 'message', message: { role: 'user', content: '做三步' } },
+    { id: 'lv-a1', type: 'message', message: { role: 'assistant', timestamp: 10, content: [{ type: 'toolCall', id: 'lv-c1', name: 'bash', arguments: { command: 'step1' } }] } },
+    { id: 'lv-r1', type: 'message', message: { role: 'toolResult', toolCallId: 'lv-c1', toolName: 'bash', content: 'ok' } },
+    { id: 'lv-a2', type: 'message', message: { role: 'assistant', timestamp: 20, content: [{ type: 'text', text: '叙述一。' }] } },
+    { id: 'lv-a3', type: 'message', message: { role: 'assistant', timestamp: 30, content: [{ type: 'toolCall', id: 'lv-c2', name: 'bash', arguments: { command: 'step2' } }] } },
+    { id: 'lv-r2', type: 'message', message: { role: 'toolResult', toolCallId: 'lv-c2', toolName: 'bash', content: 'ok' } },
+    { id: 'lv-a4', type: 'message', message: { role: 'assistant', timestamp: 40, content: [{ type: 'text', text: '叙述二。' }] } },
+    { id: 'lv-a5', type: 'message', message: { role: 'assistant', timestamp: 50, content: [{ type: 'toolCall', id: 'lv-c3', name: 'bash', arguments: { command: 'step3' } }] } },
+    { id: 'lv-r3', type: 'message', message: { role: 'toolResult', toolCallId: 'lv-c3', toolName: 'bash', content: 'done' } },
+    { id: 'lv-a6', type: 'message', message: { role: 'assistant', timestamp: 60, content: [{ type: 'text', text: '最终结论。' }] } },
+  ];
+
+  it('running: narration stays visible in place; completed: only the final text stays outside', () => {
+    const turns = executionTurns(historyToMessages(multi));
+    const turn = turns[1]!;
+    // 完成态：叙述折进过程，最后文本是唯一结论（lastTextIndex 规则）
+    expect(turn.segments.map(s => s.kind)).toEqual(['steps', 'text']);
+    expect(turn.segments[0].parts.some(p => p.kind === 'text' && (p as { text: string }).text === '叙述一。')).toBe(true);
+    expect(turn.answer.map(p => (p as { text: string }).text)).toEqual(['最终结论。']);
+    // 运行中：文本全部按时间线原位直接可见——否则流式期间 lastText 移动会让已见文本反复跳进折叠块
+    expect(turn.liveSegments.map(s => s.kind)).toEqual(['steps', 'text', 'steps', 'text', 'steps', 'text']);
+    expect(turn.liveSegments[1].parts[0]).toMatchObject({ kind: 'text', text: '叙述一。' });
+    expect(turn.liveSegments[3].parts[0]).toMatchObject({ kind: 'text', text: '叙述二。' });
+  });
+
+  it('renders running narration as answer blocks, not in-group commentary', () => {
+    const labels = { you: '你', assistant: 'pi', simulatedRun: '演示', toolRunning: '运行中', toolDone: '完成', toolError: '失败', details: '详情', queued: '排队', working: '执行中' };
+    const partial = multi.slice(0, 7); // 到叙述二为止（仍在运行、无最终结论）
+    const markup = renderToStaticMarkup(createElement(ChatView, { messages: historyToMessages(partial), running: true, queued: 0, demo: false, labels, onJumpToMessage: () => {} }));
+    expect(markup).not.toContain('pi-execution__commentary'); // 运行中叙述不进组内段落
+    expect(markup).toContain('叙述一。');
+    expect(markup).toContain('叙述二。');
+  });
+});
+
 describe('running head pinned to the top of the live turn', () => {
   const labels = { you: '你', assistant: 'pi', simulatedRun: '演示', toolRunning: '运行中', toolDone: '完成', toolError: '失败', details: '详情', queued: '排队', working: '执行中' };
   // [steps, text(中间叙述), steps(尾随工具)]：#72 后结论文本会插在过程之间，计时不得跟着尾段下移
