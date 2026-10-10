@@ -88,6 +88,20 @@ PI Desktop drives your local pi through its RPC mode. CLI sessions are discovere
 - **Voice input** — cloud ASR (OpenAI transcriptions endpoint or chat-multimodal gateways, with 404 auto-fallback), transcription appended to the composer, never auto-sent. See [Voice input setup](./docs/voice-input.md) for configuration details.
 - **Bilingual UI & theming** — Chinese/English switchable, light/dark themes, font choice.
 
+## 📅 Recent releases
+
+| Version | Highlights |
+| --- | --- |
+| **0.1.14** | <ul><li>**Automations now reuse the project's latest idle session by default** — context carries over and results land in the original conversation; opt into a fresh session per task (#79).</li><li>**Fold an entire running turn** — click any execution-group header to collapse all tools/thinking into one summary row; narration stays in place while streaming, no more position jumping (#80).</li><li>**Session cap raised 6 → 12** with LRU eviction of the safest idle session instead of rejecting connects (#75).</li><li>**Oversized sessions no longer vanish from the sidebar** — limit raised to 512 MiB with metadata-visible degradation (#78).</li><li>**DingTalk one-click setup fixed** (IPC channel mismatch, broken since #49) + actionable Chinese message for `/compact` truncation (#77).</li><li>**Unsent drafts kept per session** (text + images/files survive switching); ↑↓ history recall restores all attachments (#76).</li></ul> |
+| **0.1.13** | <ul><li>**`desktop_schedule` tool** — agents can create/manage Desktop scheduled tasks (once/interval/cron), executed by the Desktop scheduler in dedicated sessions.</li><li>**DingTalk scan-to-configure** (device flow auto-creates the app, #48/#49); **WeChat channel** with ServerChan/PushPlus push (#50).</li><li>**Mobile remote page redesigned** as a ZCode-style project list (#47).</li><li>Editable reasoning-level chips (#54); renderer black-screen guard (#51); user bubble overflow fix (#52); compaction token accounting fix (#46).</li></ul> |
+| **0.1.12** | <ul><li>**pi 1.0 adaptation** — bundled runtime pi 1.0.0 / Node 22.23.3; **direct image generation** with session-side result cards (#15).</li><li>**Unified plugin marketplace** — extensions merged into the marketplace with enable/update/source editing (#12/#14); MCP disable toggles + import (#3); memory UI badge (#2).</li><li>Notification dedup + independent scrolling; ZCode-aligned channel icons (#10/#11).</li></ul> |
+| **0.1.11** | <ul><li>**Runtime core** — retry groups, model retry states, fake-running self-healing, memory bridge, voice service (#1).</li><li>Skills scope switching + MCP status dots (#5); ZCode-aligned chat/workbench polish (#4).</li></ul> |
+| **0.1.1** | <ul><li>**ZCode-aligned approvals/ask cards** — permission cards with expandable diff + five options; paginated ask cards; auto-expanded PlanViewer.</li><li>**Voice input** (cloud ASR, draft-append only); built-in browser, docked terminal, `/compact` end-to-end, ↑/↓ send history.</li><li>Stability: history-load retry with backoff; stuck elapsed timers reconciled on focus.</li></ul> |
+| **0.1.0** | <ul><li>**LAN remote control** — prompt/stop/respond write routes + approval cards/live typewriter (not just viewing).</li><li>Message copy/edit-and-resend, image lightbox; memory bridge (auto-tidying + one-click pi-memory install); syntax-highlighted code viewer.</li><li>Fixed slow "back to app" (ChatView keep-alive); subagent "clear" resurrection.</li></ul> |
+| **0.0.1** | <ul><li>Initial release (Apache-2.0).</li></ul> |
+
+> Only recent releases are listed here. See [CHANGELOG.md](./CHANGELOG.md) for the full history.
+
 ## Development
 
 ```bash

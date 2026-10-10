@@ -21,6 +21,21 @@
   同步前先 `ps` 确认实例代际。
 - 例外：用户明确要求立即同步验证某个修复时照做。
 
+## 发版检查清单（统一发版时逐项执行，缺一不可）
+
+1. **版本号**：`package.json` bump（修改用 patch、功能用 minor）+ `git tag vX.Y.Z` 推送。
+2. **CHANGELOG.md**：新增版本条目（`## [X.Y.Z] - 日期`），用**用户视角**描述（解决什么问题，
+   不是 commit 标题堆砌）；未发版的改动先落在 `[Unreleased]`。
+3. **README 表格**：`README.zh-CN.md`「📅 最近版本变化」与 `README.md`「📅 Recent releases」
+   同步插入新版本行（HTML 表格格式），保持最近 10 个版本以内，并核对「完整记录见 CHANGELOG.md」链接。
+4. **文档提交先行**：以上 1–3 作为独立 docs/chore 提交进 main 后再打包（保证 asar 外文档与包一致）。
+5. **打包同步**：`ps` 确认运行实例代际 → `pnpm build && npx electron-builder --dir &&
+   node scripts/sync-release.mjs --force`（electron-builder 输出在 `dist/mac-arm64`，
+   `release/` 由 sync-release 写入——验证要看对目录）。
+6. **asar 验证**：`LC_ALL=C grep -ac "<本版关键字符串>" release/mac-arm64/"PI Desktop.app"/Contents/Resources/app.asar`
+   （grep 运行时字符串；压缩后变量名会被混淆，选 CSS 类名或中文 UI 文案）。
+7. **提醒重启**：同步完成后告知用户 ⌘Q 重启生效。
+
 ## PR 流程约定
 
 - **提交 PR 后必须跟进 Copilot code review 的结果**，三类意见都要查：
