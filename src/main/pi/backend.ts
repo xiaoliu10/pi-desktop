@@ -9,6 +9,7 @@ import { SessionIndex, canonical, fileKey } from './session-index';
 import { runAutomationBridge, SCHEDULE_GUIDANCE } from './automation-bridge';
 import { cacheHitRateFromTotals, summarizeContext } from './context-details';
 import { detectThirdPartySubagent, migrateOldSubagentExtension, persistSubagentEvent } from './official-subagent';
+import { detectThirdPartyAsk, bridgeableQuestions, planAnswer, type AskBridgeState, type AskBridgeQuestion } from './third-party-ask';
 import { clearMemoryEnv, memorySessionEnv } from './memory-bridge';
 import { repairPackages } from './packages-repair';
 import { RetryGroups } from './retry-groups';
@@ -36,7 +37,7 @@ const STUCK_WATCHDOG_INTERVAL_MS = 30_000;
  *  满员时 connect 自动断开最久空闲的会话腾位（历史无损，点开即重连），全繁忙才拒绝。 */
 const MAX_SESSIONS = 12;
 type QueuedInput = NonNullable<PiRun['queue']>[number];
-interface Running { recheckTimer?: ReturnType<typeof setTimeout>; stopQueueSnapshot?: QueuedInput[]; settlement?: { token: string; timer: ReturnType<typeof setTimeout> }; activity: number; /** 假 running 自愈用：全部 pi 事件计数与最近事件时刻 */ eventCount: number; lastEventAt: number; verifying?: boolean; promptSequence: number; retryUncertain: boolean; stopUnconfirmed: boolean; retry: RetryGroups; retryReady: boolean; retryEntryId?: string; deferredQueue: QueuedInput[]; stopEpoch: number; policyReady: boolean; client: PiRpcClient; view: PiRun; input: { cwd: string; trustProject: boolean; permission: AccessMode; executionMode?: Exclude<AccessMode, 'plan'>; file: string; origin: string; systemPrompt?: string; tools?: string[]; model?: string }; dialogs: Map<string, { timer?: ReturnType<typeof setTimeout>; method: string; request: PiUiRequest }>; queueImages: StagedQueueImage[] }
+interface Running { recheckTimer?: ReturnType<typeof setTimeout>; stopQueueSnapshot?: QueuedInput[]; settlement?: { token: string; timer: ReturnType<typeof setTimeout> }; activity: number; /** 假 running 自愈用：全部 pi 事件计数与最近事件时刻 */ eventCount: number; lastEventAt: number; verifying?: boolean; promptSequence: number; retryUncertain: boolean; stopUnconfirmed: boolean; retry: RetryGroups; retryReady: boolean; retryEntryId?: string; deferredQueue: QueuedInput[]; stopEpoch: number; policyReady: boolean; client: PiRpcClient; view: PiRun; input: { cwd: string; trustProject: boolean; permission: AccessMode; executionMode?: Exclude<AccessMode, 'plan'>; file: string; origin: string; systemPrompt?: string; tools?: string[]; model?: string }; dialogs: Map<string, { timer?: ReturnType<typeof setTimeout>; method: string; request: PiUiRequest }>; /** 第三方 ask 插件在供题（desktop-ask 未随会话加载）——事件层把其原生问卷桥接成桌面卡片。 */ thirdPartyAsk: boolean; /** tool_execution_start 暂存的问卷入参：首个原生 UI 请求到达即消费；校验失败直接 end 时由 end 清理。 */ pendingAskArgs?: { toolCallId: string; questions: AskBridgeQuestion[] }; /** 活动问卷桥：卡片已下发，后续原生请求按 plan 自动应答。 */ askBridge?: AskBridgeState; queueImages: StagedQueueImage[] }
 export class PiBackend {
   private active = new Map<string, Running>();
   private watchdog: ReturnType<typeof setInterval> | undefined;
@@ -192,8 +193,12 @@ export class PiBackend {
     // GUI applications may not inherit the same PATH as a terminal.
     env.PATH = [path.dirname(this.env.executable!), '/opt/homebrew/bin', '/usr/local/bin', env.PATH || ''].join(path.delimiter);
     // Desktop 自带的 ask_user_question 扩展（随 Desktop 默认加载；缺失不阻塞会话）。
+    // 用户装了第三方 ask 插件时必须省略：pi 对同名工具的注册冲突会在扩展加载阶段
+    // 直接抛错退出（实测退出码 1）——与 subagent 的条件加载同一模式。供题方换成
+    // 第三方插件，Desktop 在 onEvent 把它的原生 select/input 桥接成富问题卡片。
+    const thirdPartyAsk = detectThirdPartyAsk(this.env.agentDir);
     const askPath = path.join(path.dirname(this.policyPath), '..', 'desktop-ask', 'index.mjs');
-    const askArgs = fs.existsSync(askPath) ? ['-e', askPath] : [];
+    const askArgs = !thirdPartyAsk.detected && fs.existsSync(askPath) ? ['-e', askPath] : [];
     // Desktop 定时任务工具：会话内可创建/管理 automations.json 调度任务（缺失不阻塞会话）。
     const schedulePath = path.join(path.dirname(this.policyPath), '..', 'desktop-schedule', 'index.mjs');
     const scheduleArgs = fs.existsSync(schedulePath) ? ['-e', schedulePath] : [];
@@ -254,7 +259,7 @@ export class PiBackend {
       fs.appendFile(rpcLogPath, `[${new Date().toISOString()}] ${String(message)}\n`, () => { /* 落盘失败不影响主流程 */ });
     });
     const view: PiRun = { accessMode: input.permission, executionMode: input.permission === 'plan' ? input.executionMode ?? 'ask' : input.permission, key, generation, cwd: input.cwd, file: input.file, status: 'starting', models: [], commands: [], pending: 0 };
-    const run: Running = { activity: 0, eventCount: 0, lastEventAt: Date.now(), promptSequence: 0, retryUncertain: false, stopUnconfirmed: false, retry: undefined!, retryReady: false, deferredQueue: [], stopEpoch: 0, policyReady: false, client, view, input, dialogs: new Map(), queueImages: [] };
+    const run: Running = { activity: 0, eventCount: 0, lastEventAt: Date.now(), promptSequence: 0, retryUncertain: false, stopUnconfirmed: false, retry: undefined!, retryReady: false, deferredQueue: [], stopEpoch: 0, policyReady: false, thirdPartyAsk: thirdPartyAsk.detected, client, view, input, dialogs: new Map(), queueImages: [] };
     run.retry = new RetryGroups(state => {
       view.retryGroup = state;
       if (state?.error) {
@@ -419,7 +424,10 @@ export class PiBackend {
         } catch { /* Ignore malformed/stale bridge notifications. */ }
         return;
       }
-      if (run.view.status === 'stopping' && ['select', 'confirm', 'input', 'editor'].includes(req.method)) { run.client.send({ type: 'extension_ui_response', id: req.id, cancelled: true }); return; }
+      if (run.view.status === 'stopping' && ['select', 'confirm', 'input', 'editor'].includes(req.method)) { if (run.askBridge) run.askBridge.cancelled = true; run.client.send({ type: 'extension_ui_response', id: req.id, cancelled: true }); return; } // 防御：常规路径 stop() 已同步清桥，这里兜 stopping 期间产生的桥
+      // 第三方 ask 桥接：native select/input → 合成 desktop-ask 卡片，或按 plan 自动应答。
+      // 必须排在通用注册之前：被桥接的原生请求不进 dialogs、不 emit 原样 UI。
+      if (run.thirdPartyAsk && (req.method === 'select' || req.method === 'input') && this.bridgeAskUiRequest(run, req)) return;
       if (['select', 'confirm', 'input', 'editor'].includes(req.method)) {
         const timer = typeof req.timeout === 'number' && Number.isFinite(req.timeout) && req.timeout > 0 ? setTimeout(() => { run.dialogs.delete(req.id); this.emit({ type: 'rpc', key, generation, event: { type: 'ui-expired', id: req.id } }); }, Math.max(0, req.timeout)) : undefined;
         run.dialogs.set(req.id, { timer, method: req.method, request: req });
@@ -528,6 +536,29 @@ export class PiBackend {
     // (official, npm pi-subagents, custom) by observing RPC events, not extension internals.
     if (['tool_execution_start', 'tool_execution_update', 'tool_execution_end'].includes(event.type) && event.toolName === 'subagent') {
       persistSubagentEvent(this.env.agentDir, key, String(event.toolCallId ?? ''), event);
+    }
+    // 第三方 ask 桥接：暂存问卷入参（不可桥接时为 undefined，原生请求走通用对话框降级）。
+    // 校验失败没有 UI 请求直接 end：stash 未消费即被下面清理，不留悬挂状态。
+    // 取消态残留的旧桥必须先丢弃（in-process subagent 可在旧工具收尾期并发新问卷），
+    // 否则新问卷首个请求会被旧桥的 cancelled 分支吞掉——用户没见卡片，模型却收到「拒绝」。
+    // 未取消且未答的旧桥不动：并发时新请求走 fail-open 通用对话框（见 bridgeAskUiRequest）。
+    if (run.thirdPartyAsk && event.type === 'tool_execution_start' && event.toolName === 'ask_user_question') {
+      if (run.askBridge?.cancelled) run.askBridge = undefined;
+      const questions = bridgeableQuestions(event.args);
+      run.pendingAskArgs = questions ? { toolCallId: String(event.toolCallId ?? ''), questions } : undefined;
+    }
+    if (run.thirdPartyAsk && event.type === 'tool_execution_end') {
+      const toolCallId = String(event.toolCallId ?? '');
+      if (toolCallId && run.pendingAskArgs?.toolCallId === toolCallId) run.pendingAskArgs = undefined;
+      if (toolCallId && run.askBridge?.toolCallId === toolCallId) {
+        const id = run.askBridge.requestId;
+        const dialog = run.dialogs.get(id);
+        if (dialog) {
+          clearTimeout(dialog.timer); run.dialogs.delete(id);
+          this.emit({ type: 'rpc', key, generation, event: { type: 'ui-expired', id } });
+        }
+        run.askBridge = undefined;
+      }
     }
     // Preserve the CLI boundary for diagnostics without advertising a final Desktop
     // settlement to automation/notifications while an outer retry is pending.
@@ -721,6 +752,7 @@ export class PiBackend {
     const snapshot = run.stopQueueSnapshot ?? [...(run.view.queue ?? [])];
     run.view.status = 'stopping'; this.emit({ type: 'run', run: { ...run.view } });
     // Resolve dialogs first; extension commands can otherwise block the RPC handler.
+    if (run.askBridge) run.askBridge.cancelled = true;
     for (const id of run.dialogs.keys()) run.client.send({ type: 'extension_ui_response', id, cancelled: true });
     this.clearDialogs(run);
     // Send clear_queue and abort in wire order without waiting for clear_queue's
@@ -1008,7 +1040,37 @@ export class PiBackend {
   }
   respond(key: string, generation: string, response: { id: string; value?: string; confirmed?: boolean; cancelled?: boolean }) {
     const run = this.get(key);
-    if (run.view.generation !== generation || !run.dialogs.has(response.id)) throw new Error('交互请求已过期');
+    if (run.view.generation !== generation) throw new Error('交互请求已过期');
+    // 第三方 ask 桥接卡片：JSON 答案 → 逐题 plan，当前题立即应答原生请求，其余由事件层自动推进。
+    const bridge = run.thirdPartyAsk ? run.askBridge : undefined;
+    if (bridge && !bridge.answered && !bridge.cancelled && response.id === bridge.requestId && run.dialogs.has(response.id)) {
+      let answers: Array<{ answers: string[] }> = [];
+      if (!response.cancelled) {
+        try {
+          const parsed: unknown = JSON.parse(String(response.value ?? ''));
+          if (!Array.isArray(parsed) || parsed.length !== bridge.questions.length || parsed.some(a =>
+            !a || !Array.isArray(a.answers) || a.answers.some((value: unknown) => typeof value !== 'string'))) throw new Error();
+          answers = parsed as Array<{ answers: string[] }>;
+        } catch { throw new Error('问卷答案格式无效'); }
+      }
+      clearTimeout(run.dialogs.get(response.id)?.timer); run.dialogs.delete(response.id);
+      if (response.cancelled) {
+        // 卡片取消 → 原生 DECLINE；rpiv 收到 cancelled 会自行终止整个问卷，
+        // 若仍有残余请求，bridgeAskUiRequest 会按 bridge.cancelled 自动补 cancelled。
+        bridge.cancelled = true;
+        run.client.send({ type: 'extension_ui_response', id: response.id, cancelled: true });
+      } else {
+        bridge.plan = bridge.questions.map((_, i) => planAnswer(bridge.questions, i, answers[i].answers));
+        const first = bridge.plan[0];
+        run.client.send({ type: 'extension_ui_response', id: response.id, value: first.value });
+        if (first.kind === 'sentinel') bridge.awaitingSentinelInput = true;
+        else bridge.currentQuestionIndex = 1;
+        if (bridge.currentQuestionIndex >= bridge.questions.length) bridge.answered = true;
+      }
+      this.emit({ type: 'rpc', key, generation, event: { type: 'ui-resolved', id: response.id } });
+      return;
+    }
+    if (!run.dialogs.has(response.id)) throw new Error('交互请求已过期');
     clearTimeout(run.dialogs.get(response.id)?.timer); run.dialogs.delete(response.id);
     run.client.send({ type: 'extension_ui_response', id: response.id, ...(typeof response.value === 'string' ? { value: response.value } : {}), ...(typeof response.confirmed === 'boolean' ? { confirmed: response.confirmed } : {}), ...(typeof response.cancelled === 'boolean' ? { cancelled: response.cancelled } : {}) });
     // 多端同步：桌面端已本地移除卡片，远控页（可能多台）靠此事件同步消失。
@@ -1020,6 +1082,68 @@ export class PiBackend {
       this.emit({type:'rpc',key:run.view.key,generation:run.view.generation,event:{type:'ui-expired',id}});
     }
     run.dialogs.clear();
+    // 第三方 ask 桥接状态一并清：stop()/close()/agent_settled 后不留悬挂问卷。
+    run.pendingAskArgs = undefined;
+    run.askBridge = undefined;
+  }
+  /**
+   * 第三方 ask 问卷桥（run.thirdPartyAsk 时的 select/input 拦截）。返回 true 表示已消费：
+   *  - 活动桥且问卷未完：按 plan 自动应答后续原生请求（不发 UI，多端补 ui-resolved 同步）；
+   *  - 桥已取消：后续同问卷请求自动 cancelled；
+   *  - 有 stash 无桥：消费 stash，把首个原生请求改写成 desktop-ask 形状的合成卡片
+   *    （同一 id、method input、title desktop-ask）——渲染层 isAskDialog 按这三样识别，零渲染改动。
+   * 显式假设：extension_ui_request 不携带 toolCallId，故 stash 消费按「ask 工具 start 后的首个
+   * select/input 即属于该问卷」的时序归属（插件逐题阻塞串行，事件间隙插入他人请求的概率极低；
+   * 真发生时最坏是把无关请求改写成卡片——排查从这条假设入手）。
+   */
+  private bridgeAskUiRequest(run: Running, req: PiUiRequest): boolean {
+    const { key, generation } = run.view;
+    const bridge = run.askBridge;
+    if (bridge) {
+      const replyNative = (body: { value?: string; cancelled?: boolean }) => {
+        run.client.send({ type: 'extension_ui_response', id: req.id, ...body });
+        // 被桥接的原生请求没进 dialogs、没 emit 原样 UI；多端同步改为显式宣告终结。
+        this.emit({ type: 'rpc', key, generation, event: { type: 'ui-resolved', id: req.id } });
+      };
+      if (bridge.cancelled) { replyNative({ cancelled: true }); return true; }
+      if (!bridge.answered && bridge.plan.length > 0 && bridge.currentQuestionIndex < bridge.questions.length) {
+        const entry = bridge.plan[bridge.currentQuestionIndex];
+        let value: string;
+        if (bridge.awaitingSentinelInput) {
+          // 哨兵编号选中后的自由文本收尾：回 plan 记住的 custom 文本，本题完结。
+          value = entry.custom ?? '';
+          bridge.awaitingSentinelInput = false;
+          bridge.currentQuestionIndex += 1;
+        } else if (entry.kind === 'sentinel') {
+          value = entry.value;
+          bridge.awaitingSentinelInput = true; // 下一请求是同题的自由文本 input，不推进题号
+        } else {
+          value = entry.value;
+          bridge.currentQuestionIndex += 1;
+        }
+        if (bridge.currentQuestionIndex >= bridge.questions.length) bridge.answered = true;
+        replyNative({ value });
+        return true;
+      }
+      // 桥在但 plan 未就绪（卡片还没答）：协议上不会发生（插件逐题阻塞等待应答），
+      // 放行走通用对话框兜底，宁可多弹一次也不要吞掉真实交互。
+    }
+    // Never consume a second stash while another questionnaire bridge is active.
+    if (bridge) return false;
+    const stash = run.pendingAskArgs;
+    if (!stash) return false;
+    run.pendingAskArgs = undefined;
+    run.askBridge = { questions: stash.questions, requestId: req.id, toolCallId: stash.toolCallId, plan: [], answered: false, cancelled: false, currentQuestionIndex: 0, awaitingSentinelInput: false };
+    const timeout = typeof req.timeout === 'number' && Number.isFinite(req.timeout) && req.timeout > 0 ? req.timeout : undefined;
+    const synthesized: PiUiRequest = { id: req.id, method: 'input', title: 'desktop-ask', placeholder: JSON.stringify({ v: 1, questions: stash.questions }), ...(timeout !== undefined ? { timeout } : {}) };
+    const timer = timeout !== undefined ? setTimeout(() => {
+      run.dialogs.delete(req.id);
+      if (run.askBridge?.requestId === req.id) run.askBridge.cancelled = true;
+      this.emit({ type: 'rpc', key, generation, event: { type: 'ui-expired', id: req.id } });
+    }, Math.max(0, timeout)) : undefined;
+    run.dialogs.set(req.id, { timer, method: 'input', request: synthesized });
+    this.emit({ type: 'ui', key, generation, request: synthesized });
+    return true;
   }
   close(key: string) { const run = this.active.get(key); if (!run) return; this.active.delete(key); ++run.stopEpoch; if (run.recheckTimer) { clearTimeout(run.recheckTimer); run.recheckTimer = undefined; } this.clearSettlement(run); run.retry.dispose(); run.deferredQueue = []; this.clearDialogs(run); run.client.close(); // 同步删 mode 文件：close 后立即 launch（/reload、资源页刷新）时异步 rm 会晚于重写到达，把新写的文件删掉
   fs.rmSync(path.join(this.ownedRoot, `.mode-${key}`), { force: true }); this.emit({ type: 'closed', key, generation: run.view.generation }); }
