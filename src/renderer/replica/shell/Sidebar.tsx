@@ -66,6 +66,16 @@ export function Sidebar(props: SidebarProps) {
             </button>
           </div>
         )}
+        {props.updateBadge && (
+          <button
+            className="pi-update-dot"
+            onClick={props.onOpenUpdate}
+            aria-label={props.updateBadge.title}
+            title={props.updateBadge.title}
+          >
+            <span className="pi-update-dot__core" />
+          </button>
+        )}
       </div>
 
       {actions}
