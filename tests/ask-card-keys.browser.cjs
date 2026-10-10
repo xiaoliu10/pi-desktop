@@ -62,6 +62,71 @@ async (page) => {
   assert(result.answers[0].answers[0] === '以审计清单为准（推荐）', `q1 answer: ${JSON.stringify(result.answers[0])}`);
   assert(JSON.stringify(result.answers[1].answers) === JSON.stringify(['全部', '最近']), `q2 answers: ${JSON.stringify(result.answers[1])}`);
 
+  // ── 键盘导航焦点回归：↓ 到自定义行时 DOM 焦点跟随（无需鼠标）、直接 type 可提交、
+  // ↑ 从自定义行移回上一选项、Tab/Shift+Tab 双向。焦点行与高亮行必须一致（roving tabindex），
+  // 且自定义行 Enter 只提交一次（textarea stopPropagation，容器不得重复提交）。──
+  await page.evaluate(async () => {
+    const entry = await (await fetch('/main.tsx')).text();
+    const React = (await import(entry.match(/"([^"\n]*\/react\.js\?[^"]*)"/)[1])).default;
+    const { createRoot } = (await import(entry.match(/"([^"\n]*\/react-dom_client\.js\?[^"]*)"/)[1])).default;
+    const { AskQuestionCard, parseAskPayload } = await import('/pi/PiReplicaApp.tsx');
+    const payload = parseAskPayload(JSON.stringify({ questions: [{ header: 'K', question: '键盘焦点？', options: [{ label: 'A' }, { label: 'B' }] }] }));
+    window.__kbd = { calls: 0, answers: null };
+    const rootK = createRoot(document.getElementById('root'));
+    rootK.render(React.createElement('main', { className: 'pireplica', style: { padding: 24 } },
+      React.createElement('section', { className: 'pi-ask-inline' },
+        React.createElement(AskQuestionCard, {
+          payload, zh: true,
+          onAnswer: (a) => { window.__kbd.calls += 1; window.__kbd.answers = a; },
+          onCancel: () => {},
+          stopTask: () => {}, stopping: false,
+        }))));
+  });
+  await page.locator('.pi-eli').waitFor();
+  assert(await page.evaluate(() => document.activeElement?.classList?.contains('pi-eli')), 'kbd nav: card container auto-focuses on mount');
+
+  // ↓ 三次：容器 → 选项 A → 选项 B → 自定义行；每次 DOM 焦点必须跟随高亮行
+  await page.keyboard.press('ArrowDown');
+  let focusInfo = await page.evaluate(() => ({ cls: document.activeElement?.className, text: document.activeElement?.textContent }));
+  assert(focusInfo.cls?.includes('pi-eli__opt') && focusInfo.cls.includes('pi-eli__opt--active') && focusInfo.text?.includes('A'), `first ↓ focuses option A, got ${JSON.stringify(focusInfo)}`);
+  await page.keyboard.press('ArrowDown');
+  focusInfo = await page.evaluate(() => ({ cls: document.activeElement?.className, text: document.activeElement?.textContent }));
+  assert(focusInfo.cls?.includes('pi-eli__opt') && focusInfo.text?.includes('B'), `second ↓ focuses option B, got ${JSON.stringify(focusInfo)}`);
+  await page.keyboard.press('ArrowDown');
+  assert(await page.evaluate(() => document.activeElement?.classList?.contains('pi-eli__input')), 'third ↓ moves DOM focus to custom input without any mouse click');
+  assert(await page.evaluate(() => document.querySelector('.pi-eli__opt--custom')?.classList?.contains('pi-eli__opt--active')), 'custom row is highlighted when focused');
+
+  // 焦点已在输入框：直接打字（无需点击），文字必须进入 textarea
+  await page.keyboard.type('键盘直达的自定义回答');
+  const typed = await page.evaluate(() => document.querySelector('.pi-eli__input')?.value);
+  assert(typed === '键盘直达的自定义回答', `typing lands in focused custom input, got ${JSON.stringify(typed)}`);
+
+  // ↑ 从自定义行移回上一个选项按钮 B，高亮同步
+  await page.keyboard.press('ArrowUp');
+  focusInfo = await page.evaluate(() => ({
+    isOpt: document.activeElement?.classList?.contains('pi-eli__opt'),
+    isB: document.activeElement?.textContent?.includes('B'),
+    activeIdx: [...document.querySelectorAll('.pi-eli__opt')].findIndex(b => b.classList.contains('pi-eli__opt--active')),
+  }));
+  assert(focusInfo.isOpt && focusInfo.isB && focusInfo.activeIdx === 1, `ArrowUp from custom row refocuses option B, got ${JSON.stringify(focusInfo)}`);
+
+  // Tab/Shift+Tab 双向接管：选项按钮 tabIndex=-1（roving），原生 Tab 无法到达——
+  // Shift+Tab B→A、Tab A→B、Tab B→自定义行，全部依赖手动 focus。
+  await page.keyboard.press('Shift+Tab');
+  focusInfo = await page.evaluate(() => ({ text: document.activeElement?.textContent, cls: document.activeElement?.className }));
+  assert(focusInfo.cls?.includes('pi-eli__opt') && focusInfo.text?.includes('A'), `Shift+Tab moves focus back to option A, got ${JSON.stringify(focusInfo)}`);
+  await page.keyboard.press('Tab');
+  focusInfo = await page.evaluate(() => ({ text: document.activeElement?.textContent, cls: document.activeElement?.className }));
+  assert(focusInfo.cls?.includes('pi-eli__opt') && focusInfo.text?.includes('B'), `Tab moves focus forward to option B, got ${JSON.stringify(focusInfo)}`);
+  await page.keyboard.press('Tab');
+  assert(await page.evaluate(() => document.activeElement?.classList?.contains('pi-eli__input')), 'Tab from option B moves focus to custom input');
+
+  // 自定义行 Enter 直接提交：恰好一次（textarea stopPropagation，容器不得重复 onAnswer）
+  await page.keyboard.press('Enter');
+  const rk = await page.evaluate(() => window.__kbd);
+  assert(rk.calls === 1, `custom row Enter must submit exactly once, got ${rk.calls} calls`);
+  assert(rk.answers && JSON.stringify(rk.answers[0].answers) === JSON.stringify(['键盘直达的自定义回答']), `keyboard-typed custom answer submits: ${JSON.stringify(rk.answers)}`);
+
   // 重新渲染测 Esc 忽略 + 自定义行
   await page.evaluate(async () => {
     const entry = await (await fetch('/main.tsx')).text();
@@ -118,5 +183,5 @@ async (page) => {
 
   await page.screenshot({ path: 'output/playwright/ask-card-keys.png' });
   assert(errors.length === 0, 'no page errors: ' + errors.join(' | '));
-  return 'PASS ask-card-keys: enter-noadvance unanswered / focus+enter selects&advances / space checks / submit gathers all / custom row / escape dismisses';
+  return 'PASS ask-card-keys: enter-noadvance unanswered / focus+enter selects&advances / space checks / submit gathers all / custom row / escape dismisses / kbd-focus follows ↓↑Tab to custom input, type+Enter submits once';
 }
