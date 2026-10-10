@@ -71,6 +71,9 @@ export interface SidebarProps {
   activeSessionId: string | null;
   collapsed: boolean;
   version: string;
+  /** 有新版本时的绿色下载标（方向符号右侧）；undefined = 无更新不渲染。 */
+  updateBadge?: { version: string; title: string };
+  onOpenUpdate?: () => void;
   labels: SidebarLabels;
   onSelectSession: (id: string) => void;
   onNewSession: () => void;
