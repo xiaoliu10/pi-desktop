@@ -167,9 +167,7 @@ function registerIpc() {
     if (updateInFlight) return;
     updateInFlight = true;
     try {
-      const push = (patch: Partial<UpdateStatus>) => {
-        if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('local-pi:update-status', { ...updateChecker!.status()!, ...patch });
-      };
+      const push = updateChecker!.setApplyState.bind(updateChecker);
       const zipPath = path.join(app.getPath('temp'), `pi-desktop-update-${status.latest}.zip`);
       if (status.state !== 'ready') {
         const { response } = await dialog.showMessageBox(mainWindow, {
@@ -179,19 +177,19 @@ function registerIpc() {
           buttons: ['下载并重启', '以后再说'], defaultId: 0, cancelId: 1,
         });
         if (response !== 0) return;
-        push({ state: 'downloading', progress: 0 });
+        push('downloading', 0);
         try {
           await downloadUpdateZip(status.zipUrl, zipPath, pct => {
-            push({ state: 'downloading', progress: pct });
+            push('downloading', pct);
             try { mainWindow!.setProgressBar(pct / 100); } catch { /* 非 macOS 无 Dock 进度，忽略 */ }
-          });
+          }, { size: status.zipSize, digest: status.zipDigest });
         } catch (e) {
-          push({ state: 'idle', progress: undefined });
-          try { mainWindow!.setProgressBar(0); } catch { /* ignore */ }
+          push('idle');
+          try { mainWindow!.setProgressBar(-1); } catch { /* ignore */ } // -1 清除 Dock 进度，0 会常驻空进度条
           throw e;
         }
-        push({ state: 'ready' });
-        try { mainWindow!.setProgressBar(0); } catch { /* ignore */ }
+        push('ready');
+        try { mainWindow!.setProgressBar(-1); } catch { /* ignore */ }
       }
       const { response } = await dialog.showMessageBox(mainWindow, {
         type: 'info',
@@ -201,9 +199,10 @@ function registerIpc() {
       });
       if (response !== 0) return;
       const newBundle = await swapAppBundle({ zipPath, bundlePath: bundle });
+      fsSync.rmSync(zipPath, { force: true }); // ~200MB 不滞留 temp
       // 延迟启动：等旧实例退出释放单实例锁，否则新实例会撞 second-instance 直接退出。
-      const safe = newBundle.replace(/'/g, `'\''`);
-      spawn('/bin/bash', ['-c', `sleep 2; /usr/bin/open -n '${safe}'`], { detached: true, stdio: 'ignore' }).unref();
+      // argv 传路径不经 shell 转义（路径含空格/单引号都安全）；"$1" 由 bash 位置参数展开。
+      spawn('/bin/bash', ['-c', 'sleep 2; exec /usr/bin/open -n "$1"', 'bash', newBundle], { detached: true, stdio: 'ignore' }).unref();
       app.quit();
     } catch (e) {
       try {
@@ -593,8 +592,16 @@ app.on('web-contents-created', (_event, contents) => {
 });
 if (process.env.PI_DESKTOP_DATA_DIR) app.setPath('userData', path.resolve(process.env.PI_DESKTOP_DATA_DIR));
 // One scheduler per data directory; opening the app again focuses the existing window.
-const primaryInstance = app.requestSingleInstanceLock();
-if (!primaryInstance) app.quit();
+let primaryInstance = app.requestSingleInstanceLock();
+if (!primaryInstance) {
+  // 自动更新换包重启的时序：新实例可能早于旧实例完全退出。未拿到锁时小间隔重试，
+  // 8s 内拿到则照常启动；超时才放弃（维持旧的单实例语义退出）。
+  const lockRetry = setInterval(() => {
+    primaryInstance = app.requestSingleInstanceLock();
+    if (primaryInstance) clearInterval(lockRetry);
+  }, 500);
+  setTimeout(() => { if (!primaryInstance) { clearInterval(lockRetry); app.quit(); } }, 8_000);
+}
 app.on('second-instance',()=>{if(mainWindow&&!mainWindow.isDestroyed()){if(mainWindow.isMinimized())mainWindow.restore();mainWindow.show();mainWindow.focus();}else if(host)createWindow();});
 void app.whenReady().then(() => {
   if(!primaryInstance)return;

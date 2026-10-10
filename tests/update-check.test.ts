@@ -123,6 +123,19 @@ describe('startUpdateChecker', () => {
     checker.dispose();
   });
 
+  it('setApplyState survives later checkNow rebuilds (no re-download after ready)', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => okResponse(releaseJson('v0.1.16'))));
+    const checker = startUpdateChecker({ currentVersion: '0.1.15', onStatus, initialDelayMs: 999_999 });
+    await checker.checkNow();
+    checker.setApplyState('downloading', 40);
+    expect(checker.status()).toMatchObject({ state: 'downloading', progress: 40 });
+    checker.setApplyState('ready');
+    // 6h 周期检查或手动 Check for Updates 重建结果时，apply 状态必须保留
+    await checker.checkNow();
+    expect(statuses.at(-1)).toMatchObject({ available: true, state: 'ready', latest: '0.1.16' });
+    checker.dispose();
+  });
+
   it('picks the arm64 zip asset for auto-apply and keeps state idle', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => okResponse({
       ...releaseJson('v0.1.16'),
@@ -153,5 +166,40 @@ describe('startUpdateChecker', () => {
     expect(status.zipUrl).toBeUndefined();
     expect(status.zipSize).toBeUndefined();
     checker.dispose();
+  });
+});
+
+import { createHash } from 'node:crypto';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { downloadUpdateZip } from '../src/main/update-check';
+
+describe('downloadUpdateZip', () => {
+  const bytes = Buffer.from('fake zip payload for update download');
+  const sha256 = createHash('sha256').update(bytes).digest('hex');
+  let dir = '';
+  beforeEach(() => { dir = fs.mkdtempSync(path.join(os.tmpdir(), 'update-dl-')); });
+  afterEach(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const zipResponse = () => new Response(bytes, { headers: { 'content-length': String(bytes.length) } });
+
+  it('downloads with progress and passes size and digest checks', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => zipResponse()));
+    const dest = path.join(dir, 'update.zip');
+    const progress: number[] = [];
+    await downloadUpdateZip('https://github.com/x/pi.zip', dest, p => progress.push(p), { size: bytes.length, digest: `sha256:${sha256}` });
+    expect(fs.readFileSync(dest)).toEqual(bytes);
+    expect(progress.at(-1)).toBe(100);
+  });
+
+  it('rejects when the digest does not match (tampered/corrupted payload)', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => zipResponse()));
+    await expect(downloadUpdateZip('https://github.com/x/pi.zip', path.join(dir, 'update.zip'), () => {}, { digest: `sha256:${'0'.repeat(64)}` })).rejects.toThrow(/sha256 不符/);
+  });
+
+  it('rejects when the size does not match the release asset', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => zipResponse()));
+    // size 不符会先被「下载不完整」（received ≠ total）接住，两条校验语义等价
+    await expect(downloadUpdateZip('https://github.com/x/pi.zip', path.join(dir, 'update.zip'), () => {}, { size: bytes.length + 1 })).rejects.toThrow(/不完整|不符/);
   });
 });

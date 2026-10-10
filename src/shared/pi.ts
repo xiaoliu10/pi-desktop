@@ -225,6 +225,8 @@ export interface UpdateStatus {
   /** mac 自动换包用的 zip 资产；无 zip（或非 mac 平台）时降级为 updateOpen 打开 release 页。 */
   zipUrl?: string;
   zipSize?: number;
+  /** GitHub release 资产 digest（sha256:hex，与 URL 同源信任根），下载后校验。 */
+  zipDigest?: string;
   /** 下载状态：idle=未开始；downloading=下载中（progress 0-100）；ready=已下载待重启。 */
   state: 'idle' | 'downloading' | 'ready';
   progress?: number;
