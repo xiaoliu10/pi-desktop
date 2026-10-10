@@ -4,6 +4,23 @@ const file = process.argv[process.argv.indexOf('--session') + 1];
 if (process.argv.includes('--session') && !fs.existsSync(file)) fs.writeFileSync(file, JSON.stringify({ type:'session',version:3,id:'fake',cwd:process.cwd(),timestamp:new Date().toISOString() })+'\n');
 const send = obj => process.stdout.write(JSON.stringify(obj)+'\n');
 let pendingUi, queue = {steering:[],followUp:[]};
+// Native questionnaire RPC fixture: one request at a time, with sentinel follow-ups.
+let askScenario, askResponses = [];
+function nextAskRequest() {
+ const q = askScenario.questions[askScenario.index];
+ const id = `ask-${askScenario.callId}-${askScenario.index}${askScenario.custom ? '-custom' : ''}`;
+ askScenario.requestId = id;
+ send({type:'extension_ui_request', id, method:q.multiSelect || askScenario.custom ? 'input' : 'select',
+  title:askScenario.custom ? `${q.question}\nType your answer:` : q.question,
+  ...(q.multiSelect ? {placeholder:'1,3'} : askScenario.custom ? {placeholder:''} :
+   {options:[...q.options.map((o,i)=>`${i+1}. ${o.label} — ${o.description ?? ''}`), `${q.options.length+1}. Type something.`]}),
+  ...(askScenario.timeout ? {timeout:askScenario.timeout} : {})});
+}
+function finishAsk() {
+ // Real RPC tool_execution_end need not repeat toolName; match by toolCallId.
+ send({type:'tool_execution_end',toolCallId:askScenario.callId,result:{}});
+ askScenario = undefined;
+}
 let promptLog = [];
 let commandFetches = 0;
 let policySent = false;
@@ -37,6 +54,14 @@ function handle(r) {
  case 'compact': if(r.customInstructions === 'TIMEOUT') { send({type:'compaction_start'}); return; } // 永不回：模拟 rpc-client 超时
  if(r.customInstructions === 'CAP') { send({type:'compaction_start'}); send({type:'compaction_end',reason:'manual',aborted:false,errorMessage:'Summarization failed: generation hit the token cap and the summary is incomplete'}); return send({type:'response',id:r.id,success:false,error:'Summarization failed: generation hit the token cap and the summary is incomplete'}); } return ok({summary:'fake summary',tokensBefore:123456});
  case 'prompt_log': return ok(promptLog);
+ case 'ask_responses': return ok(askResponses);
+ case 'emit_events': for (const event of r.events) send(event); return ok({});
+ case 'ask_scenario':
+  askResponses = [];
+  askScenario = {questions:r.questions,index:0,custom:false,callId:r.callId ?? 'third-party-ask',timeout:r.timeout};
+  send({type:'tool_execution_start',toolName:'ask_user_question',toolCallId:askScenario.callId,args:{questions:r.questions}});
+  if (r.noUi) finishAsk(); else nextAskRequest();
+  return ok({});
  case 'prompt':
   promptLog.push({message:r.message, behavior:r.streamingBehavior, images:r.images ?? null});
   if(r.message === '/failprompt') return send({type:'response',id:r.id,success:false,error:'injected prompt failure'});
@@ -68,7 +93,20 @@ function handle(r) {
   }
   ok({}); send({type:'agent_start'}); send({type:'agent_end',willRetry:true});
   setTimeout(()=>send({type:'agent_settled'}), 80); return;
- case 'extension_ui_response': if(pendingUi) { send({type:'response',id:pendingUi.id,success:true}); pendingUi=null; } return;
+ case 'extension_ui_response':
+  if (askScenario && r.id === askScenario.requestId) {
+   askResponses.push(r);
+   if (r.cancelled) { finishAsk(); return; }
+   const q = askScenario.questions[askScenario.index];
+   if (!q.multiSelect && !askScenario.custom && parseInt(r.value,10) === q.options.length+1) {
+    askScenario.custom = true; nextAskRequest(); return;
+   }
+   askScenario.custom = false;
+   askScenario.index++;
+   if (askScenario.index < askScenario.questions.length) nextAskRequest(); else finishAsk();
+   return;
+  }
+  if(pendingUi) { send({type:'response',id:pendingUi.id,success:true}); pendingUi=null; } return;
  case 'fork': return ok({text:'forked text',cancelled:false});
  case 'clear_queue': { const old=queue; queue={steering:[],followUp:[]}; ok(old); send({type:'queue_update', steering:[], followUp:[]}); return; }
  case 'abort': send({type:'agent_settled'}); return ok({});

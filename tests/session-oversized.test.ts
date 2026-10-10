@@ -28,15 +28,12 @@ describe('超限会话不再从侧栏消失', () => {
   it('会话超过 MAX_SESSION 时：列表仍返回（元数据+警告），history() 抛出可执行错误', () => {
     const { root, owned, index } = setup();
     const file = writeSession(owned, 'big.jsonl', [header('big-1', root), userMsg('u1', '第一个问题')]);
-    // 稀疏撑到上限之上：写一个大 padding 行（JSON 里允许的额外字段），不必真占 512MB 磁盘
-    const padding = JSON.stringify({ type: 'custom', customType: 'pad', data: { blob: 'x'.repeat(1024) } });
-    const stream = fs.createWriteStream(file, { flags: 'a' });
-    // 直接追加大量行把 size 推过上限（每行 ~1KB，512K 行 ≈ 512MB 太大；改用 fs.truncate 稀疏文件）
-    stream.end();
+    // 稀疏撑到上限之上：fs.truncate 稀疏文件（不必真占 512MB 磁盘）。
+    // 注意不能用 createWriteStream 异步收尾——afterEach 的 rmSync 会先删目录，
+    // 流底层 open 回调拿到 ENOENT 变成 unhandled error（断言全过也 exit 1）。
     const fd = fs.openSync(file, 'r+');
     fs.ftruncateSync(fd, MAX_SESSION + 4096);
     fs.closeSync(fd);
-    void padding;
     const sessions = index.scan();
     const found = sessions.find(s => s.key === fileKey(file));
     expect(found, 'oversized session must still appear in the sidebar list').toBeDefined();
