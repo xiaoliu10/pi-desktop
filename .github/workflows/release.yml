@@ -70,4 +70,5 @@ jobs:
           tag_name: ${{ inputs.tag || github.ref_name }}
           files: |
             dist/*.dmg
+            dist/*.zip
             dist/*.exe

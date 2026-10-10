@@ -131,7 +131,8 @@
         "NSMicrophoneUsageDescription": "PI Desktop 需要麦克风权限以进行语音输入。"
       },
       "target": [
-        "dmg"
+        "dmg",
+        "zip"
       ]
     },
     "win": {

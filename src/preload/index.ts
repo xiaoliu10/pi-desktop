@@ -137,6 +137,7 @@ const localPi: LocalPiApi = {
   onTerminalExit: listener => { const handler = (_e: IpcRendererEvent, event: TerminalExitEvent) => listener(event); ipcRenderer.on('local-pi:terminalExit', handler); return () => ipcRenderer.removeListener('local-pi:terminalExit', handler); },
   onEvent: callback => { const listener = (_e: IpcRendererEvent, value: PiEvent) => callback(value); ipcRenderer.on('local-pi:event', listener); return () => ipcRenderer.off('local-pi:event', listener); },
   updateStatus: () => invoke('updateStatus'),
+  updateApply: () => invoke('updateApply'),
   updateOpen: () => invoke('updateOpen'),
   onUpdateStatus: callback => { const listener = (_e: IpcRendererEvent, value: UpdateStatus) => callback(value); ipcRenderer.on('local-pi:update-status', listener); return () => ipcRenderer.off('local-pi:update-status', listener); },
 };
