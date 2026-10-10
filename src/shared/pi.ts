@@ -208,6 +208,8 @@ export interface LocalPiApi extends importSettingsApi {
   onEvent(callback: (event: PiEvent) => void): () => void;
   /** 应用更新：查询最近一次检查结果（启动后 10s 首查，之后每 6h 静默复查）。 */
   updateStatus(): Promise<UpdateStatus>;
+  /** 应用更新：确认下载 → 重启换包（mac 打包态）；无 zip/非 mac 时降级为打开 release 页。 */
+  updateApply(): Promise<void>;
   /** 打开新版本的 release 页；无可用更新时静默无操作。 */
   updateOpen(): Promise<void>;
   /** 订阅后续检查结果（主进程推送）。返回退订函数。 */
@@ -220,6 +222,14 @@ export interface UpdateStatus {
   current: string;
   latest?: string;
   url?: string;
+  /** mac 自动换包用的 zip 资产；无 zip（或非 mac 平台）时降级为 updateOpen 打开 release 页。 */
+  zipUrl?: string;
+  zipSize?: number;
+  /** GitHub release 资产 digest（sha256:hex，与 URL 同源信任根），下载后校验。 */
+  zipDigest?: string;
+  /** 下载状态：idle=未开始；downloading=下载中（progress 0-100）；ready=已下载待重启。 */
+  state: 'idle' | 'downloading' | 'ready';
+  progress?: number;
   checkedAt: number;
 }
 
