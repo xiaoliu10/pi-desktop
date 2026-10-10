@@ -47,7 +47,7 @@ const api: PiApi = {
 contextBridge.exposeInMainWorld('pi', api);
 
 // pi-backed desktop API. Legacy bridge remains for source compatibility only.
-import type { LocalPiApi, PiEvent } from '../shared/pi';
+import type { LocalPiApi, PiEvent, UpdateStatus } from '../shared/pi';
 import type { TerminalDataEvent, TerminalExitEvent } from '../shared/terminal';
 const invoke = (name: string, ...args: unknown[]) => ipcRenderer.invoke(`local-pi:${name}`, ...args);
 const localPi: LocalPiApi = {
@@ -136,5 +136,8 @@ const localPi: LocalPiApi = {
   onTerminalData: listener => { const handler = (_e: IpcRendererEvent, event: TerminalDataEvent) => listener(event); ipcRenderer.on('local-pi:terminalData', handler); return () => ipcRenderer.removeListener('local-pi:terminalData', handler); },
   onTerminalExit: listener => { const handler = (_e: IpcRendererEvent, event: TerminalExitEvent) => listener(event); ipcRenderer.on('local-pi:terminalExit', handler); return () => ipcRenderer.removeListener('local-pi:terminalExit', handler); },
   onEvent: callback => { const listener = (_e: IpcRendererEvent, value: PiEvent) => callback(value); ipcRenderer.on('local-pi:event', listener); return () => ipcRenderer.off('local-pi:event', listener); },
+  updateStatus: () => invoke('updateStatus'),
+  updateOpen: () => invoke('updateOpen'),
+  onUpdateStatus: callback => { const listener = (_e: IpcRendererEvent, value: UpdateStatus) => callback(value); ipcRenderer.on('local-pi:update-status', listener); return () => ipcRenderer.off('local-pi:update-status', listener); },
 };
 contextBridge.exposeInMainWorld('localPi', localPi);

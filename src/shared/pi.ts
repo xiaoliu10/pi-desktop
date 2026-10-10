@@ -206,6 +206,21 @@ export interface LocalPiApi extends importSettingsApi {
   modelProviderRemove(id: string): Promise<PiModelCatalog>;
   usageStats(): Promise<PiUsageStats>;
   onEvent(callback: (event: PiEvent) => void): () => void;
+  /** 应用更新：查询最近一次检查结果（启动后 10s 首查，之后每 6h 静默复查）。 */
+  updateStatus(): Promise<UpdateStatus>;
+  /** 打开新版本的 release 页；无可用更新时静默无操作。 */
+  updateOpen(): Promise<void>;
+  /** 订阅后续检查结果（主进程推送）。返回退订函数。 */
+  onUpdateStatus(callback: (status: UpdateStatus) => void): () => void;
+}
+
+/** 应用更新检查状态（main/update-check.ts 产出，GitHub Releases 比对 app.getVersion()）。 */
+export interface UpdateStatus {
+  available: boolean;
+  current: string;
+  latest?: string;
+  url?: string;
+  checkedAt: number;
 }
 
 // ---------------------------------------------------------------------------

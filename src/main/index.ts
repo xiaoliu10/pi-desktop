@@ -29,6 +29,7 @@ import { PiHost } from './pi/host';
 import { RemoteServer } from './pi/remote-server';
 import { ImBot } from './pi/im-bot';
 import { createBotActions } from './pi/bot/actions';
+import { startUpdateChecker, type UpdateChecker, type UpdateStatus } from './update-check';
 import type { PiEvent } from '../shared/pi';
 
 const APP_ICON = path.join(app.getAppPath(), 'resources/icon.png');
@@ -61,6 +62,10 @@ let voice: VoiceService;
 const dockBadge = createDockBadge(text => {
   try { app.setBadgeCount(text ? Number(text) : 0); } catch { /* 未 ready 或平台不支持时忽略 */ }
 });
+// 应用更新检查：启动后延迟一次 + 每 6 小时静默复查；有新版本时把状态推给渲染层（侧栏绿色下载标）。
+let updateChecker: UpdateChecker | undefined;
+let updateUrl: string | undefined;
+
 function broadcast(event: PiEvent) {
   // 一轮 agent 运行结束（权威信号 agent_settled；排除 desktop-wait-for-idle 合成事件）→ Dock 角标 +1。
   if (event.type === 'rpc'
@@ -145,6 +150,9 @@ function registerIpc() {
     return real;
   };
   handle('projectReveal', cwd => shell.showItemInFolder(knownProject(cwd)));
+  // 更新检查：查询最近一次状态 / 打开 release 页（url 由主进程存留，渲染层不传参，免校验）。
+  handle('updateStatus', (): UpdateStatus => updateChecker?.status() ?? { available: false, current: app.getVersion(), checkedAt: 0 });
+  handle('updateOpen', () => { if (updateUrl) return shell.openExternal(updateUrl); });
   handle('projectWorktree', async value => {
     knownProject(value?.projectPath);
     const project=await createProjectWorktree(value);
@@ -438,6 +446,10 @@ function createWindow(): void {
         label: 'Help',
         submenu: [
           {
+            label: 'Check for Updates…',
+            click: () => void updateChecker?.checkNow(),
+          },
+          {
             label: 'Project Repository',
             click: () => shell.openExternal('https://github.com/vastsa/PI-Desktop'),
           },
@@ -552,6 +564,16 @@ void app.whenReady().then(() => {
     if (renamed && !prefs.sessionRenames?.[toKey]) settings.savePreferences({ sessionRenames: { ...prefs.sessionRenames, [toKey]: renamed } });
   };
   registerIpc();
+  // 更新检查不跑 smoke：smoke 快速退出，无需网络请求。状态推送进 registerIpc 里注册的回调闭包。
+  if (!process.env.PI_SMOKE) {
+    updateChecker = startUpdateChecker({
+      currentVersion: app.getVersion(),
+      onStatus: status => {
+        updateUrl = status.available ? status.url : undefined;
+        if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('local-pi:update-status', status satisfies UpdateStatus);
+      },
+    });
+  }
   if(!process.env.PI_SMOKE)automations.start();
   setTimeout(archiveCleanupPass, 15_000).unref(); // 启动后先扫一次
   setInterval(archiveCleanupPass, 30 * 60 * 1000).unref(); // 每 30 分钟定时扫描
@@ -637,6 +659,7 @@ app.on('before-quit', () => {
   automations?.dispose();
   host?.dispose();
   terminals?.dispose();
+  updateChecker?.dispose();
   void remote.stop();
   void imBot.stopTransport();
 });

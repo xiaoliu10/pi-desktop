@@ -76,7 +76,7 @@ import {
 // 测试 harness（浏览器重渲染验证）需从同一模块图取 store：直接 import '/pi/adapter.ts' 可能
 // 因 vite HMR 注入的 ?t= URL 拿到另一个模块实例，seed 到的不是组件用的 store。
 export { usePiStore };
-import type { PiCatalogProvider } from '../../shared/pi';
+import type { PiCatalogProvider, UpdateStatus } from '../../shared/pi';
 import './replica-app.css';
 import '../replica/tokens.css';
 // automations.css 必须在 tokens.css 之后加载：它的裸按钮规则（.pi-auto button 等）与
@@ -407,6 +407,14 @@ export default function PiReplicaApp() {
   const [terminalHeight, setTerminalHeight, resetTerminalHeight] = usePanelWidth('pi.terminalHeight', 300, 160, 640);
   const previewRequest = useRef(0);
   useEffect(() => { previewRequest.current++; setFilePreview(null); }, [s.selectedKey]);
+  // 应用更新检查：首查前拿不到状态（主进程启动后 10s 才查），订阅推送保持角标实时出现。
+  const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
+  useEffect(() => {
+    let live = true;
+    void window.localPi!.updateStatus().then(st => { if (live) setUpdateStatus(st); }).catch(() => { /* 主进程未起或通道异常：角标隐藏 */ });
+    const off = window.localPi!.onUpdateStatus(st => setUpdateStatus(st));
+    return () => { live = false; off(); };
+  }, []);
   // 切到插件市场 tab 时若列表为空则自动搜索一次（覆盖任何进入路径，不单靠 tab 点击回调）。
   useEffect(() => {
     if (s.view === 'plugins' && pluginTab === 'marketplace' && !s.market.length && !s.marketLoading && !s.marketQuery) {
@@ -824,6 +832,10 @@ export default function PiReplicaApp() {
             activeSessionId={s.view === 'chat' || s.view === 'home' ? s.selectedKey : null}
             collapsed={s.sidebarCollapsed}
             version={`pi ${s.env?.version ?? '未发现'}`}
+            updateBadge={updateStatus?.available && updateStatus.latest
+              ? { version: updateStatus.latest, title: s.lang === 'zh' ? `新版本 ${updateStatus.latest} 可用，点击查看` : `Version ${updateStatus.latest} available — click to view` }
+              : undefined}
+            onOpenUpdate={() => { void window.localPi!.updateOpen(); }}
             labels={t.sidebar}
             onSelectSession={s.selectSession}
             onArchiveSession={id=>void s.setSessionArchived(id,true)}

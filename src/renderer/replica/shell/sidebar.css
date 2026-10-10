@@ -62,6 +62,40 @@
   background: transparent;
 }
 
+/* 新版本绿色下载标（方向符号右侧）：小圆点 + 呼吸光晕；父容器 __top 是原生拖拽区，
+   必须显式 no-drag 否则点击被拖拽层吞掉（同 sidebar.css 顶部注释的坑）。 */
+.pireplica .pi-update-dot {
+  -webkit-app-region: no-drag;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+}
+.pireplica .pi-update-dot__core {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #34c759;
+  box-shadow: 0 0 0 0 rgba(52, 199, 89, 0.45);
+  animation: pi-update-pulse 2.4s ease-out infinite;
+}
+.pireplica .pi-update-dot:hover .pi-update-dot__core {
+  transform: scale(1.25);
+}
+@keyframes pi-update-pulse {
+  0% { box-shadow: 0 0 0 0 rgba(52, 199, 89, 0.45); }
+  70% { box-shadow: 0 0 0 7px rgba(52, 199, 89, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(52, 199, 89, 0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pireplica .pi-update-dot__core { animation: none; }
+}
+
 .pireplica .pi-sidebar__scroll {
   flex: 1;
   min-height: 0;
