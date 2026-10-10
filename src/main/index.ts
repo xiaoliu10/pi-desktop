@@ -23,13 +23,15 @@ import { projectFiles, projectContext, readContext, projectBranch, skillChoices 
 import { isAccessMode } from '../shared/access-mode';
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, shell } from 'electron';
 import path from 'node:path';
+import { spawn } from 'node:child_process';
 import { SettingsService } from './pi/settings-service';
 import { VoiceService } from './pi/voice-service';
 import { PiHost } from './pi/host';
 import { RemoteServer } from './pi/remote-server';
 import { ImBot } from './pi/im-bot';
 import { createBotActions } from './pi/bot/actions';
-import { startUpdateChecker, type UpdateChecker, type UpdateStatus } from './update-check';
+import { startUpdateChecker, downloadUpdateZip, type UpdateChecker, type UpdateStatus } from './update-check';
+import { swapAppBundle, cleanupOldBundle } from './update-apply';
 import type { PiEvent } from '../shared/pi';
 
 const APP_ICON = path.join(app.getAppPath(), 'resources/icon.png');
@@ -65,6 +67,7 @@ const dockBadge = createDockBadge(text => {
 // 应用更新检查：启动后延迟一次 + 每 6 小时静默复查；有新版本时把状态推给渲染层（侧栏绿色下载标）。
 let updateChecker: UpdateChecker | undefined;
 let updateUrl: string | undefined;
+let updateInFlight = false;
 
 function broadcast(event: PiEvent) {
   // 一轮 agent 运行结束（权威信号 agent_settled；排除 desktop-wait-for-idle 合成事件）→ Dock 角标 +1。
@@ -151,8 +154,70 @@ function registerIpc() {
   };
   handle('projectReveal', cwd => shell.showItemInFolder(knownProject(cwd)));
   // 更新检查：查询最近一次状态 / 打开 release 页（url 由主进程存留，渲染层不传参，免校验）。
-  handle('updateStatus', (): UpdateStatus => updateChecker?.status() ?? { available: false, current: app.getVersion(), checkedAt: 0 });
+  handle('updateStatus', (): UpdateStatus => updateChecker?.status() ?? { available: false, current: app.getVersion(), state: 'idle', checkedAt: 0 });
   handle('updateOpen', () => { if (updateUrl) return shell.openExternal(updateUrl); });
+  // 自动换包（ZCode 模式）：确认 → 流式下载（Dock 进度 + 角标 title）→ ditto 解压换位 → 重启。
+  // 非 mac / dev 态 / release 无 zip 资产时降级为打开 release 页（旧行为）。
+  handle('updateApply', async () => {
+    if (!mainWindow) return;
+    const status = updateChecker?.status();
+    if (!status?.available) return;
+    const bundle = path.resolve(app.getPath('exe'), '..', '..', '..');
+    if (process.platform !== 'darwin' || !app.isPackaged || !status.zipUrl) { if (updateUrl) await shell.openExternal(updateUrl); return; }
+    if (updateInFlight) return;
+    updateInFlight = true;
+    try {
+      const push = (patch: Partial<UpdateStatus>) => {
+        if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('local-pi:update-status', { ...updateChecker!.status()!, ...patch });
+      };
+      const zipPath = path.join(app.getPath('temp'), `pi-desktop-update-${status.latest}.zip`);
+      if (status.state !== 'ready') {
+        const { response } = await dialog.showMessageBox(mainWindow, {
+          type: 'info',
+          message: `发现新版本 ${status.latest}`,
+          detail: `当前版本 ${status.current}。下载更新包并重启安装？`,
+          buttons: ['下载并重启', '以后再说'], defaultId: 0, cancelId: 1,
+        });
+        if (response !== 0) return;
+        push({ state: 'downloading', progress: 0 });
+        try {
+          await downloadUpdateZip(status.zipUrl, zipPath, pct => {
+            push({ state: 'downloading', progress: pct });
+            try { mainWindow!.setProgressBar(pct / 100); } catch { /* 非 macOS 无 Dock 进度，忽略 */ }
+          });
+        } catch (e) {
+          push({ state: 'idle', progress: undefined });
+          try { mainWindow!.setProgressBar(0); } catch { /* ignore */ }
+          throw e;
+        }
+        push({ state: 'ready' });
+        try { mainWindow!.setProgressBar(0); } catch { /* ignore */ }
+      }
+      const { response } = await dialog.showMessageBox(mainWindow, {
+        type: 'info',
+        message: '更新包已就绪',
+        detail: `重启 PI Desktop 以完成更新到 ${status.latest}？`,
+        buttons: ['立即重启', '稍后'], defaultId: 0, cancelId: 1,
+      });
+      if (response !== 0) return;
+      const newBundle = await swapAppBundle({ zipPath, bundlePath: bundle });
+      // 延迟启动：等旧实例退出释放单实例锁，否则新实例会撞 second-instance 直接退出。
+      const safe = newBundle.replace(/'/g, `'\''`);
+      spawn('/bin/bash', ['-c', `sleep 2; /usr/bin/open -n '${safe}'`], { detached: true, stdio: 'ignore' }).unref();
+      app.quit();
+    } catch (e) {
+      try {
+        await dialog.showMessageBox(mainWindow, {
+          type: 'error',
+          message: '更新失败',
+          detail: `${String((e as Error).message || e)}\n当前版本不受影响；可稍后重试，或到 release 页手动下载。`,
+          buttons: ['好'], defaultId: 0,
+        });
+      } catch { /* 窗口已关 */ }
+    } finally {
+      updateInFlight = false;
+    }
+  });
   handle('projectWorktree', async value => {
     knownProject(value?.projectPath);
     const project=await createProjectWorktree(value);
@@ -575,6 +640,8 @@ void app.whenReady().then(() => {
     });
   }
   if(!process.env.PI_SMOKE)automations.start();
+  // 上次更新中断残留的旧 bundle 兜底清理（正常换包已自删；延迟避让启动 IO）。
+  if (!process.env.PI_SMOKE) setTimeout(() => cleanupOldBundle(path.resolve(app.getPath('exe'), '..', '..', '..')), 10_000).unref();
   setTimeout(archiveCleanupPass, 15_000).unref(); // 启动后先扫一次
   setInterval(archiveCleanupPass, 30 * 60 * 1000).unref(); // 每 30 分钟定时扫描
   void imBot.syncTransport().catch(() => undefined); // resume a configured two-way bot

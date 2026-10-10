@@ -122,4 +122,36 @@ describe('startUpdateChecker', () => {
     expect(checker.status()?.latest).toBe('0.1.16');
     checker.dispose();
   });
+
+  it('picks the arm64 zip asset for auto-apply and keeps state idle', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => okResponse({
+      ...releaseJson('v0.1.16'),
+      assets: [
+        { name: 'PI.Desktop-0.1.16-arm64.dmg', browser_download_url: 'https://github.com/xiaoliu10/pi-desktop/releases/download/v0.1.16/PI.Desktop-0.1.16-arm64.dmg', size: 10 },
+        { name: 'PI.Desktop-0.1.16-arm64.zip', browser_download_url: 'https://github.com/xiaoliu10/pi-desktop/releases/download/v0.1.16/PI.Desktop-0.1.16-arm64.zip', size: 222 },
+        { name: 'PI.Desktop.Setup.0.1.16.exe', browser_download_url: 'https://github.com/xiaoliu10/pi-desktop/releases/download/v0.1.16/PI.Desktop.Setup.0.1.16.exe', size: 30 },
+      ],
+    })));
+    const checker = startUpdateChecker({ currentVersion: '0.1.15', onStatus, initialDelayMs: 999_999 });
+    const status = await checker.checkNow();
+    expect(status.zipUrl).toBe('https://github.com/xiaoliu10/pi-desktop/releases/download/v0.1.16/PI.Desktop-0.1.16-arm64.zip');
+    expect(status.zipSize).toBe(222);
+    expect(status.state).toBe('idle');
+    checker.dispose();
+  });
+
+  it.each([
+    ['no zip asset', [{ name: 'only.dmg', browser_download_url: 'https://github.com/x/only.dmg', size: 1 }]],
+    ['x64-only zip', [{ name: 'PI.Desktop-0.1.16-x64.zip', browser_download_url: 'https://github.com/x/pi.zip', size: 1 }]],
+    ['foreign url zip', [{ name: 'PI.Desktop-0.1.16-arm64.zip', browser_download_url: 'https://evil.example/pi.zip', size: 1 }]],
+    ['assets missing', undefined],
+  ])('degrades to no zipUrl on %s', async (_name, assets) => {
+    vi.stubGlobal('fetch', vi.fn(async () => okResponse({ ...releaseJson('v0.1.16'), assets })));
+    const checker = startUpdateChecker({ currentVersion: '0.1.15', onStatus, initialDelayMs: 999_999 });
+    const status = await checker.checkNow();
+    expect(status.available).toBe(true);
+    expect(status.zipUrl).toBeUndefined();
+    expect(status.zipSize).toBeUndefined();
+    checker.dispose();
+  });
 });

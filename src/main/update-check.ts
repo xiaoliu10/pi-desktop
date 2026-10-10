@@ -52,6 +52,27 @@ export function isNewerVersion(latest: string, current: string): boolean {
 
 interface ReleaseInfo { tag: string; url: string }
 
+/** Release 附带的 mac zip 资产（自动换包用）；无 zip 时降级为「打开 release 页」。 */
+export interface ZipAsset { name: string; url: string; size: number }
+
+interface ReleaseInfo { tag: string; url: string; zipAsset?: ZipAsset }
+
+/** 从 release assets 里挑 mac arm64 zip（electron-builder 产物：PI Desktop-0.1.16-arm64.zip，
+ *  GitHub 上传后空格会变成点）。挑不到返回 undefined——不阻塞版本通知，只是降级为打开页面。 */
+function pickMacZip(assets: unknown): ZipAsset | undefined {
+  if (!Array.isArray(assets)) return undefined;
+  for (const a of assets) {
+    const name = typeof (a as { name?: unknown })?.name === 'string' ? (a as { name: string }).name : '';
+    const url = typeof (a as { browser_download_url?: unknown })?.browser_download_url === 'string' ? (a as { browser_download_url: string }).browser_download_url : '';
+    const size = typeof (a as { size?: unknown })?.size === 'number' ? (a as { size: number }).size : 0;
+    if (!name || !url || !/\.zip$/i.test(name)) continue;
+    if (!/arm64/i.test(name) || /x64/i.test(name)) continue; // 只要本机架构，宽匘配 mac 段
+    if (!/^https:\/\/github\.com\//.test(url)) continue;
+    return { name, url, size };
+  }
+  return undefined;
+}
+
 /** 拉取最新 release；非 2xx / 草稿 / 预发布 / 字段异常 / 网络失败一律返回 null。 */
 async function fetchLatestRelease(apiUrl: string): Promise<ReleaseInfo | null> {
   try {
@@ -60,12 +81,12 @@ async function fetchLatestRelease(apiUrl: string): Promise<ReleaseInfo | null> {
       signal: AbortSignal.timeout(15_000),
     });
     if (!res.ok) return null; // 404（无 release）/403（限流）等
-    const data = (await res.json()) as { tag_name?: unknown; html_url?: unknown; draft?: unknown; prerelease?: unknown };
+    const data = (await res.json()) as { tag_name?: unknown; html_url?: unknown; draft?: unknown; prerelease?: unknown; assets?: unknown };
     if (data.draft === true || data.prerelease === true) return null;
     if (typeof data.tag_name !== 'string' || typeof data.html_url !== 'string') return null;
     // 打开地址只信任 github.com 域（数据源本身是 GitHub API，防御纵深）。
     if (!/^https:\/\/github\.com\//.test(data.html_url)) return null;
-    return { tag: data.tag_name, url: data.html_url };
+    return { tag: data.tag_name, url: data.html_url, zipAsset: pickMacZip(data.assets) };
   } catch {
     return null;
   }
@@ -77,6 +98,33 @@ export interface UpdateChecker {
   /** 最近一次检查结果；首次检查完成前为 undefined。 */
   status(): UpdateStatus | undefined;
   dispose(): void;
+}
+
+/** 流式下载更新包到指定路径；每收到数据回调进度（0-100）。size>0 时校验总大小不符则抛错。 */
+export async function downloadUpdateZip(zipUrl: string, destPath: string, onProgress: (percent: number) => void, expectedSize?: number): Promise<void> {
+  const res = await fetch(zipUrl, { headers: { 'User-Agent': 'pi-desktop-update-check' }, signal: AbortSignal.timeout(10 * 60_000) });
+  if (!res.ok || !res.body) throw new Error(`下载失败（HTTP ${res.status}）`);
+  const total = expectedSize && expectedSize > 0 ? expectedSize : Number(res.headers.get('content-length')) || 0;
+  const fs = await import('node:fs');
+  const out = fs.createWriteStream(destPath);
+  let received = 0;
+  const reader = res.body.getReader();
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      received += value.byteLength;
+      if (!out.write(Buffer.from(value))) {
+        await new Promise<void>(resolve => out.once('drain', resolve));
+      }
+      if (total > 0) onProgress(Math.min(100, Math.round((received / total) * 100)));
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  await new Promise<void>((resolve, reject) => { out.on('finish', resolve); out.on('error', reject); out.end(); });
+  if (total > 0 && received !== total) throw new Error(`下载不完整（${received}/${total} 字节）`);
+  if (expectedSize && expectedSize > 0 && received !== expectedSize) throw new Error(`下载大小与 release 资产不符（${received}/${expectedSize} 字节）`);
 }
 
 export function startUpdateChecker(options: {
@@ -106,9 +154,12 @@ export function startUpdateChecker(options: {
           current: options.currentVersion,
           latest: release.tag.replace(/^v/i, ''),
           url: release.url,
+          zipUrl: release.zipAsset?.url,
+          zipSize: release.zipAsset?.size,
+          state: 'idle',
           checkedAt: Date.now(),
         }
-      : { available: false, current: options.currentVersion, checkedAt: Date.now() };
+      : { available: false, current: options.currentVersion, state: 'idle', checkedAt: Date.now() };
     if (disposed) return status;
     last = status;
     options.onStatus(status);
