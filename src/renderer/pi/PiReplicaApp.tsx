@@ -29,7 +29,7 @@ import { DEFAULT_SHORTCUTS, DEFAULT_AGENT_PRESETS, shortcutMatches, type Shortcu
  * explanation instead of pretending.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Icon } from '../replica/Icons';
 import { loadWorkspacePromptHistory, recordWorkspacePrompt, workspacePromptHistory } from '../replica/workspace-prompt-history';
 import { composerOwnerKeyOf, writeComposerDraftText } from './adapter';
@@ -1449,6 +1449,9 @@ export function AskQuestionCard({ payload, zh, onAnswer, onCancel, stopTask, sto
   const questions = payload.questions;
   const [questionIndex, setQuestionIndex] = useState(0);
   const containerRef = useRef<HTMLDivElement>(null);
+  // Keep keyboard highlight and DOM focus in sync, including the custom input.
+  const optionRefs = useRef<(HTMLButtonElement | null)[]>([]);
+  const customRef = useRef<HTMLTextAreaElement>(null);
   // 卡片出现/翻页时自动聚焦：方向键/Tab 的 onKeyDown 挂在容器上，焦点不在卡内就完全
   // 失效（用户从 composer 或别处按 ↑↓ 毫无反应）。卡片显示时 composer 已被替换，这里
   // 抢焦点没有副作用；用户点进自定义输入框后焦点自然移交。
@@ -1467,6 +1470,14 @@ export function AskQuestionCard({ payload, zh, onAnswer, onCancel, stopTask, sto
     () => Object.fromEntries(questions.map((_, i) => [i, { selected: [], custom: '' }])) as Record<number, { selected: string[]; custom: string }>,
   );
   const [activeOption, setActiveOption] = useState(-1); // 0..options.length-1 为选项行，options.length 为自定义输入行，-1 无
+  const pendingOptionFocus = useRef(false);
+  const [, requestOptionFocus] = useState(0);
+  useLayoutEffect(() => {
+    if (!pendingOptionFocus.current) return;
+    pendingOptionFocus.current = false;
+    const target = optionRefs.current[activeOption] ?? customRef.current;
+    target?.focus();
+  });
   const question = questions[Math.min(questionIndex, Math.max(questions.length - 1, 0))];
   const draft = drafts[questionIndex] ?? { selected: [], custom: '' };
   const customIndex = question ? question.options.length : 0;
@@ -1525,7 +1536,13 @@ export function AskQuestionCard({ payload, zh, onAnswer, onCancel, stopTask, sto
     if (!question) return;
     const total = question.options.length + 1; // 含自定义输入行
     const move = (delta: number) => {
+      // Do not steal focus from pager or footer controls.
+      const target = e.target as HTMLElement;
+      if (target !== containerRef.current && !target.closest('[data-card-options]')) return;
       e.preventDefault();
+      // Keep the updater pure; focus after commit so onFocus cannot enqueue a stale index.
+      pendingOptionFocus.current = true;
+      requestOptionFocus(cur => cur + 1); // Also commit focus when clamped at a boundary.
       setActiveOption(cur => Math.max(0, Math.min((cur < 0 ? (delta > 0 ? 0 : -1) : cur + delta), total - 1)));
     };
     switch (e.key) {
@@ -1561,6 +1578,7 @@ export function AskQuestionCard({ payload, zh, onAnswer, onCancel, stopTask, sto
       <button
         key={option.label}
         type="button"
+        ref={(el) => { optionRefs.current[index] = el; }}
         role={question.multiSelect ? 'checkbox' : 'option'}
         aria-checked={question.multiSelect ? selected : undefined}
         aria-selected={question.multiSelect ? undefined : selected}
@@ -1615,7 +1633,7 @@ export function AskQuestionCard({ payload, zh, onAnswer, onCancel, stopTask, sto
         )}
       </div>
 
-      <div className="pi-eli__options">
+      <div className="pi-eli__options" data-card-options>
         {question.options.map((o, i) => renderOption(o, i))}
         <div
           className={`pi-eli__opt pi-eli__opt--custom${customFilled ? ' pi-eli__opt--on' : ''}${activeOption === customIndex ? ' pi-eli__opt--active' : ''}`}
@@ -1631,6 +1649,7 @@ export function AskQuestionCard({ payload, zh, onAnswer, onCancel, stopTask, sto
           <textarea
             className="pi-eli__input"
             rows={1}
+            ref={customRef}
             value={draft.custom}
             placeholder={zh ? '输入你的回答...' : 'Type your answer...'}
             aria-label={zh ? '自定义回答' : 'Custom answer'}
@@ -1646,6 +1665,7 @@ export function AskQuestionCard({ payload, zh, onAnswer, onCancel, stopTask, sto
               // 输入框也是末行选项：↑↓ 移动焦点由容器处理；Enter 推进/提交，IME 组合中放行。
               if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
                 e.preventDefault();
+                e.stopPropagation(); // The container must not submit the same answer again.
                 continueOrSubmit();
               }
             }}
@@ -1747,6 +1767,9 @@ export function InlineApprovalCard({ dialog }: { dialog: Dialog }) {
   // 卡片替换 composer 显示时抢键盘焦点：↑↓/Tab/Enter 不需要先点一下才生效
   // （与 AskQuestionCard/ExtensionDialog 同款；后续点击选项按钮，keydown 仍冒泡到这里）。
   const containerRef = useRef<HTMLElement>(null);
+  // Keep keyboard selection and DOM focus in sync, including the custom input.
+  const optionRefs = useRef<(HTMLButtonElement | null)[]>([]);
+  const customRef = useRef<HTMLTextAreaElement>(null);
   useEffect(() => { containerRef.current?.focus(); }, []);
   // 窗口重聚焦兑底（同 AskQuestionCard）：焦点不在卡内则收回，否则 ↑↓/Tab 无反应。
   useEffect(() => {
@@ -1770,23 +1793,37 @@ export function InlineApprovalCard({ dialog }: { dialog: Dialog }) {
     if (choice === 4 && !value) return; // 自定义行未输入文字不提交
     s.answerDialog({ id: r.id, value });
   };
-  // ZCode 权限卡键盘语义：↑↓/Tab 移动选择（即改选），Enter 确认；自定义行内 Ctrl/Cmd+Enter 提交。
+  const pendingChoiceFocus = useRef(false);
+  const [, requestChoiceFocus] = useState(0);
+  useLayoutEffect(() => {
+    if (!pendingChoiceFocus.current) return;
+    pendingChoiceFocus.current = false;
+    (optionRefs.current[choice] ?? customRef.current)?.focus();
+  });
+  // Arrow keys and Tab select and focus a row; Enter confirms.
+  const moveChoice = (delta: number) => {
+    // Keep the updater pure; also commit focus when clamped at a boundary.
+    pendingChoiceFocus.current = true;
+    requestChoiceFocus(cur => cur + 1);
+    setChoice(cur => Math.max(0, Math.min(cur + delta, 4)));
+  };
   const onKeyDown = (e: React.KeyboardEvent) => {
     if (e.nativeEvent.isComposing) return;
     const inTextarea = e.target instanceof HTMLTextAreaElement;
-    if (inTextarea) {
-      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); confirm(); }
-      return; // 自定义行内裸 Enter 留给换行/容器推进由 textarea onKeyDown 决定
+    if (inTextarea && e.key === 'Enter') {
+      // Plain Enter is handled by the textarea; preserve modified Enter without double submission.
+      if (!e.defaultPrevented && (e.ctrlKey || e.metaKey)) { e.preventDefault(); confirm(); }
+      return;
     }
     switch (e.key) {
-      case 'ArrowDown': case 'Tab':
+      case 'ArrowDown': case 'ArrowUp': case 'Tab': {
+        // Do not steal focus from the tool row, document, or footer controls.
+        const target = e.target as HTMLElement;
+        if (target !== containerRef.current && !target.closest('[data-card-options]')) return;
         e.preventDefault();
-        setChoice(c => Math.min(c + 1, 4));
+        moveChoice(e.key === 'ArrowUp' || (e.key === 'Tab' && e.shiftKey) ? -1 : 1);
         break;
-      case 'ArrowUp':
-        e.preventDefault();
-        setChoice(c => Math.max(c - 1, 0));
-        break;
+      }
       case 'Enter':
         e.preventDefault();
         confirm();
@@ -1815,7 +1852,7 @@ export function InlineApprovalCard({ dialog }: { dialog: Dialog }) {
         <Icon name={docOpen ? 'chevron-down' : 'chevron-right'} size={13} />
       </button>
       {docOpen && parsed.message && <pre className="pi-approval-inline__doc" tabIndex={0}>{parsed.message}</pre>}
-      <div className="pi-eli__options" role="radiogroup" aria-label={zh ? '审批选项' : 'Approval options'}>
+      <div className="pi-eli__options" role="radiogroup" aria-label={zh ? '审批选项' : 'Approval options'} data-card-options>
         {PERMISSION_CHOICES.map((label, index) => {
           const desc = [
             zh ? '仅允许这一次' : 'This call only',
@@ -1827,6 +1864,7 @@ export function InlineApprovalCard({ dialog }: { dialog: Dialog }) {
             <button
               key={label}
               type="button"
+              ref={(el) => { optionRefs.current[index] = el; }}
               role="radio"
               aria-checked={choice === index}
               tabIndex={-1}
@@ -1847,6 +1885,7 @@ export function InlineApprovalCard({ dialog }: { dialog: Dialog }) {
           <textarea
             className="pi-eli__input"
             rows={1}
+            ref={customRef}
             value={customText}
             placeholder={zh ? '告诉模型接下来应该怎么做...' : 'Tell the model what to do next...'}
             aria-label={zh ? '告诉模型接下来应该怎么做' : 'Tell the model what to do next'}
@@ -1872,7 +1911,7 @@ export function InlineApprovalCard({ dialog }: { dialog: Dialog }) {
         </button>
         <p className="pi-eli__note">
           <span aria-hidden="true">ⓘ</span>
-          <span>{zh ? '使用 Tab / 上下键选择，回车确认' : 'Tab / ↑↓ to choose, Enter to confirm'}</span>
+          <span>{zh ? '使用 Tab / 上下键选择，回车确认，Shift+Enter 换行' : 'Tab / ↑↓ to choose, Enter to confirm, Shift+Enter for newline'}</span>
         </p>
         <div className="pi-eli__actions">
           <button type="button" className="pi-btn pi-btn--primary" onClick={confirm}>{zh ? '确认' : 'Confirm'}</button>
