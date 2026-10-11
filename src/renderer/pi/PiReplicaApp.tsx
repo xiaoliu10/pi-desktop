@@ -950,6 +950,7 @@ export default function PiReplicaApp() {
                   {run?.accessMode === 'plan' && run.status === 'idle' && run.planReady && <PlanApprovalCard lang={s.lang} executing={Boolean(s.changingAccessMode)} onApprove={s.executePlan} onDecline={s.declinePlan} />}
                   <ChatView
                     messages={messages}
+                    conversationKey={s.selectedKey}
                     runTiming={run?.timing}
                     running={Boolean(run && ['running', 'stopping'].includes(run.status))}
                     queued={run?.pending ?? 0}
