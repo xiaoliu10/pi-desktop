@@ -37,7 +37,7 @@ const STUCK_WATCHDOG_INTERVAL_MS = 30_000;
  *  满员时 connect 自动断开最久空闲的会话腾位（历史无损，点开即重连），全繁忙才拒绝。 */
 const MAX_SESSIONS = 12;
 type QueuedInput = NonNullable<PiRun['queue']>[number];
-interface Running { recheckTimer?: ReturnType<typeof setTimeout>; stopQueueSnapshot?: QueuedInput[]; settlement?: { token: string; timer: ReturnType<typeof setTimeout> }; activity: number; /** 假 running 自愈用：全部 pi 事件计数与最近事件时刻 */ eventCount: number; lastEventAt: number; verifying?: boolean; promptSequence: number; retryUncertain: boolean; stopUnconfirmed: boolean; retry: RetryGroups; retryReady: boolean; retryEntryId?: string; deferredQueue: QueuedInput[]; stopEpoch: number; policyReady: boolean; client: PiRpcClient; view: PiRun; input: { cwd: string; trustProject: boolean; permission: AccessMode; executionMode?: Exclude<AccessMode, 'plan'>; file: string; origin: string; systemPrompt?: string; tools?: string[]; model?: string }; dialogs: Map<string, { timer?: ReturnType<typeof setTimeout>; method: string; request: PiUiRequest }>; /** 第三方 ask 插件在供题（desktop-ask 未随会话加载）——事件层把其原生问卷桥接成桌面卡片。 */ thirdPartyAsk: boolean; /** tool_execution_start 暂存的问卷入参：首个原生 UI 请求到达即消费；校验失败直接 end 时由 end 清理。 */ pendingAskArgs?: { toolCallId: string; questions: AskBridgeQuestion[] }; /** 活动问卷桥：卡片已下发，后续原生请求按 plan 自动应答。 */ askBridge?: AskBridgeState; queueImages: StagedQueueImage[] }
+interface Running { recheckTimer?: ReturnType<typeof setTimeout>; stopQueueSnapshot?: QueuedInput[]; settlement?: { token: string; timer: ReturnType<typeof setTimeout> }; activity: number; /** 假 running 自愈用：全部 pi 事件计数与最近事件时刻 */ eventCount: number; lastEventAt: number; verifying?: boolean; promptSequence: number; retryUncertain: boolean; stopUnconfirmed: boolean; retry: RetryGroups; retryReady: boolean; retryEntryId?: string; deferredQueue: QueuedInput[]; stopEpoch: number; policyReady: boolean; client: PiRpcClient; view: PiRun; input: { cwd: string; trustProject: boolean; permission: AccessMode; executionMode?: Exclude<AccessMode, 'plan'>; file: string; origin: string; sidecarOf?: string; systemPrompt?: string; tools?: string[]; model?: string }; dialogs: Map<string, { timer?: ReturnType<typeof setTimeout>; method: string; request: PiUiRequest }>; /** 第三方 ask 插件在供题（desktop-ask 未随会话加载）——事件层把其原生问卷桥接成桌面卡片。 */ thirdPartyAsk: boolean; /** tool_execution_start 暂存的问卷入参：首个原生 UI 请求到达即消费；校验失败直接 end 时由 end 清理。 */ pendingAskArgs?: { toolCallId: string; questions: AskBridgeQuestion[] }; /** 活动问卷桥：卡片已下发，后续原生请求按 plan 自动应答。 */ askBridge?: AskBridgeState; queueImages: StagedQueueImage[] }
 export class PiBackend {
   private active = new Map<string, Running>();
   private watchdog: ReturnType<typeof setInterval> | undefined;
@@ -58,8 +58,12 @@ export class PiBackend {
     return [...run.dialogs.values()].map(d => ({ generation: run.view.generation, request: d.request }));
   }
   runs() { return [...this.active.values()].map(x => x.view); }
+  sessionContext(key: string): { cwd: string; trustProject: boolean } | undefined {
+    const run = this.active.get(key) ?? [...this.active.values()].find(r => r.input.origin === key);
+    return run ? { cwd: run.input.cwd, trustProject: run.input.trustProject } : undefined;
+  }
   private get(key: string) { const run = this.active.get(key); if (!run) throw new Error('会话未由 Desktop 连接'); return run; }
-  async connect(input: { sourceKey?: string; cwd?: string; trustProject: boolean; permission: AccessMode; executionMode?: Exclude<AccessMode, 'plan'>; systemPrompt?: string; tools?: string[]; model?: string }): Promise<PiRun> {
+  async connect(input: { sidecarOf?: string; sourceKey?: string; cwd?: string; trustProject: boolean; permission: AccessMode; executionMode?: Exclude<AccessMode, 'plan'>; systemPrompt?: string; tools?: string[]; model?: string }): Promise<PiRun> {
     if (input.executionMode !== undefined && (!isAccessMode(input.executionMode) || (input.executionMode as string) === 'plan')) throw new Error('无效执行模式');
     if (!isAccessMode(input.permission)) throw new Error('无效访问模式');
     if (!this.env.supported || !this.env.executable) throw new Error(this.env.diagnostics.join('\n'));
@@ -82,9 +86,11 @@ export class PiBackend {
       // 满员时不直接拒绝：自动断开最久空闲的会话腾位（历史在 session 文件里无损，点开即重连）。
       // 只选真正无状态的会话：idle 且无排队/无待确认对话框/无停止与重试不确定态/无已分发任务——
       // close() 会清空 deferredQueue，「追问已保留」的排队输入绝不能被腾位静默丢掉。全繁忙才拒绝。
+      // 副驾不得腾位它的主会话（含 fork 链 origin）：点开副驾把主会话踢下线违背「不打扰」语义。
       const victim = [...this.active.values()]
         .filter(r => r.view.status === 'idle' && !r.view.pending && r.dialogs.size === 0 && !r.stopUnconfirmed && !r.retryUncertain
-          && r.deferredQueue.length === 0 && !r.retry.tracking)
+          && r.deferredQueue.length === 0 && !r.retry.tracking
+          && !(input.sidecarOf !== undefined && (r.view.key === input.sidecarOf || r.input.origin === input.sidecarOf)))
         .sort((a, b) => a.lastEventAt - b.lastEventAt)[0];
       if (!victim) throw new Error(`最多同时连接 ${MAX_SESSIONS} 个会话，且都在运行或等待交互；请稍后再试。`);
       this.close(victim.view.key); // UI 静默移除断开态（renderer 对本机主动断开不渲染错误条），点开即重连
@@ -116,10 +122,10 @@ export class PiBackend {
         }
       }
     } else {
-      const id = randomUUID(); file = path.join(this.ownedRoot, `${Date.now()}_${id}.jsonl`);
+      const id = randomUUID(); file = path.join(this.ownedRoot, `${input.sidecarOf !== undefined ? 'sidecar_' : ''}${Date.now()}_${id}.jsonl`);
     }
     if (!cwd || !path.isAbsolute(cwd) || !fs.statSync(cwd).isDirectory()) throw new Error('项目目录不存在，请选择有效目录。');
-    return this.launch({ cwd, file, origin, trustProject: input.trustProject, permission: input.permission, executionMode: input.executionMode, systemPrompt: input.systemPrompt, tools: input.tools, model: input.model });
+    return this.launch({ cwd, file, origin, sidecarOf: input.sidecarOf, trustProject: input.trustProject, permission: input.permission, executionMode: input.executionMode, systemPrompt: input.systemPrompt, tools: input.tools, model: input.model });
   }
   private contextRequests = new WeakMap<Running, number>();
   /** 上次明细拉取时间：get_messages 会序列化全量消息（大会话 MB 级），pi 与主进程都会被阻塞，
@@ -258,7 +264,7 @@ export class PiBackend {
       if (!rpcLogReady) { try { fs.mkdirSync(piLogDir, { recursive: true }); rpcLogReady = true; } catch { return; } }
       fs.appendFile(rpcLogPath, `[${new Date().toISOString()}] ${String(message)}\n`, () => { /* 落盘失败不影响主流程 */ });
     });
-    const view: PiRun = { accessMode: input.permission, executionMode: input.permission === 'plan' ? input.executionMode ?? 'ask' : input.permission, key, generation, cwd: input.cwd, file: input.file, status: 'starting', models: [], commands: [], pending: 0 };
+    const view: PiRun = { sidecarOf: input.sidecarOf, accessMode: input.permission, executionMode: input.permission === 'plan' ? input.executionMode ?? 'ask' : input.permission, key, generation, cwd: input.cwd, file: input.file, status: 'starting', models: [], commands: [], pending: 0 };
     const run: Running = { activity: 0, eventCount: 0, lastEventAt: Date.now(), promptSequence: 0, retryUncertain: false, stopUnconfirmed: false, retry: undefined!, retryReady: false, deferredQueue: [], stopEpoch: 0, policyReady: false, thirdPartyAsk: thirdPartyAsk.detected, client, view, input, dialogs: new Map(), queueImages: [] };
     run.retry = new RetryGroups(state => {
       view.retryGroup = state;
@@ -291,7 +297,9 @@ export class PiBackend {
         : client.closedLocally?.() ? 'Desktop 已主动断开该会话'
         : `pi 进程已退出${exit ? `（${exit}）` : ''}`;
       view.error = `${how}，请断开后重连。任务未自动重放。${suffix}`;
-      this.clearDialogs(run); this.emit({ type: 'run', run: { ...view } }); this.emit({ type: 'closed', key, generation });
+      this.clearDialogs(run); this.emit({ type: 'run', run: { ...view } });
+      // sidecarOf 随事件带出：active 已 delete，消费端事后查 runs() 会漏（时序盲区）。
+      this.emit({ type: 'closed', key, generation, ...(run.input.sidecarOf !== undefined ? { sidecarOf: run.input.sidecarOf } : {}) });
     });
     let firstFrameScope = true; // get_state 阶段标记：超时 append 只贴在首帧阶段
     try {
@@ -1146,7 +1154,7 @@ export class PiBackend {
     return true;
   }
   close(key: string) { const run = this.active.get(key); if (!run) return; this.active.delete(key); ++run.stopEpoch; if (run.recheckTimer) { clearTimeout(run.recheckTimer); run.recheckTimer = undefined; } this.clearSettlement(run); run.retry.dispose(); run.deferredQueue = []; this.clearDialogs(run); run.client.close(); // 同步删 mode 文件：close 后立即 launch（/reload、资源页刷新）时异步 rm 会晚于重写到达，把新写的文件删掉
-  fs.rmSync(path.join(this.ownedRoot, `.mode-${key}`), { force: true }); this.emit({ type: 'closed', key, generation: run.view.generation }); }
+  fs.rmSync(path.join(this.ownedRoot, `.mode-${key}`), { force: true }); this.emit({ type: 'closed', key, generation: run.view.generation, ...(run.input.sidecarOf !== undefined ? { sidecarOf: run.input.sidecarOf } : {}) }); }
   async refresh(key: string) { const run = this.get(key); if (run.view.status !== 'idle' || run.view.pending || run.dialogs.size) throw new Error('会话仍在运行或等待交互，请完成或停止后刷新。'); const input = run.input; const executionMode = run.view.executionMode; const timing = run.view.timing; this.close(key); await this.launch(input); const active = this.get(key); active.view.executionMode = executionMode; active.view.timing = timing; this.emit({ type: 'run', run: { ...active.view } }); return { ...active.view }; }
   /** connect 首帧预算：会话文件越大加载越久（实测 40MB/700 条含截图会话 >60s）。
    *  小会话保持 60s，大会话按 5s/MB 放宽（40MB→210s，上限 5 分钟）。 */

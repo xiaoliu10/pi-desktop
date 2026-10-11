@@ -37,7 +37,7 @@ import type { PiEvent } from '../shared/pi';
 const APP_ICON = path.join(app.getAppPath(), 'resources/icon.png');
 const remote = new RemoteServer({
   sessions: () => host.index.scan(),
-  runs: () => host.backend.runs(),
+  runs: () => host.backend.runs().filter(r => r.sidecarOf === undefined), // 副驾不出现在手机端会话列表（可被误 stop/误路由）
   history: key => {
     try { return host.index.history(key); } catch { return null; }
   },
@@ -70,14 +70,22 @@ let updateUrl: string | undefined;
 let updateInFlight = false;
 
 function broadcast(event: PiEvent) {
+  const eventKey = event.type === 'run' ? event.run.key : 'key' in event ? event.key : undefined;
+  // closed 优先读事件自带 sidecarOf（事发时 active 已删，runs() 事后快照查不到）；
+  // 其余事件类型退回 runs() 快照（事件期间 run 仍活跃，可靠）。
+  const isSidecar = eventKey === undefined ? false
+    : event.type === 'run' ? event.run.sidecarOf !== undefined
+    : event.type === 'closed' ? event.sidecarOf !== undefined
+    : (host?.backend.runs().some(r => r.key === eventKey && r.sidecarOf !== undefined) ?? false);
   // 一轮 agent 运行结束（权威信号 agent_settled；排除 desktop-wait-for-idle 合成事件）→ Dock 角标 +1。
-  if (event.type === 'rpc'
+  if (!isSidecar && event.type === 'rpc'
     && (event.event as { type?: string }).type === 'agent_settled'
     && (event.event as { source?: string }).source !== 'desktop-wait-for-idle') {
     dockBadge.taskDone(event.key, Boolean(mainWindow && !mainWindow.isDestroyed() && mainWindow.isFocused()));
   }
-  automations?.onPiEvent(event);
+  if (!isSidecar) automations?.onPiEvent(event);
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('local-pi:event', event);
+  if (isSidecar) return; // Auxiliary conversations do not create main-session notifications.
   remote.publish(event);
   void imBot.onPiEvent(event, key => {
     try {
@@ -267,6 +275,11 @@ function registerIpc() {
       return applyContinuations(sessions, loadContinuations(host.dataDir), renames, s => s.key, '未命名 pi 会话');
     } catch { return sessions; }
   });
+  handle('sidecarEnsure', async mainKey => {
+    const run = await host.sidecar.ensure(mainKey);
+    return { key: run.key, run };
+  });
+  handle('sidecarBinding', mainKey => host.sidecar.bindingOf(mainKey));
   handle('history', (key, leaf) => host.index.history(key, leaf));
   handle('resources', cwd => host.resources(cwd));
   handle('connect', input => {

@@ -20,7 +20,8 @@ const baseName = (p: string) => p.split(/[\\/]/).filter(Boolean).at(-1) ?? p;
 
 export function createBotActions(host: PiHost, settings: SettingsService): BotActions {
   const runsFor = (cwd?: string): PiRun[] => {
-    const runs = host.backend.runs();
+    // 副驾会话绝不参与 IM 路由：latestRun 命中副驾会把后续 IM 消息误写进旁路对话。
+    const runs = host.backend.runs().filter(r => r.sidecarOf === undefined);
     if (!cwd) return runs;
     const target = norm(cwd);
     return runs.filter((r) => norm(r.cwd) === target);
@@ -32,7 +33,7 @@ export function createBotActions(host: PiHost, settings: SettingsService): BotAc
     const sessions = host.index.scan();
     const byCwd = new Map<string, number>();
     for (const s of sessions) byCwd.set(s.cwd, Math.max(byCwd.get(s.cwd) ?? 0, s.updatedAt));
-    for (const r of host.backend.runs()) if (!byCwd.has(r.cwd)) byCwd.set(r.cwd, r.timing?.startedAt ?? 0);
+    for (const r of host.backend.runs()) if (r.sidecarOf === undefined && !byCwd.has(r.cwd)) byCwd.set(r.cwd, r.timing?.startedAt ?? 0);
     return [...byCwd.entries()].sort((a, b) => b[1] - a[1]).map(([cwd]) => cwd);
   };
 

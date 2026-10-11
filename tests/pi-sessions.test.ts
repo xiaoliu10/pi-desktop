@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { SessionIndex } from '../src/main/pi/session-index';
+import { SessionIndex, fileKey } from '../src/main/pi/session-index';
 const roots: string[]=[];
 const temp=()=>{const p=fs.mkdtempSync(path.join(os.tmpdir(),'pi-sessions-'));roots.push(p);return p;};
 afterEach(()=>{vi.useRealTimers(); roots.splice(0).forEach(p=>fs.rmSync(p,{recursive:true,force:true}));});
@@ -10,6 +10,23 @@ const header={type:'session',version:3,id:'s',cwd:'/project/no-longer-present'};
 const user={type:'message',id:'a',parentId:null,message:{role:'user',content:'CLI first message',timestamp:1}};
 const write=(file:string,entries:unknown[])=>fs.writeFileSync(file,entries.map(e=>JSON.stringify(e)).join('\n')+'\n');
 describe('read-only native pi sessions',()=>{
+ it('hides sidecar-prefixed files from main lists while preserving history and change notifications',async()=>{
+  const root=temp(), file=path.join(root,'sidecar_8675309_unique.jsonl');
+  const entry={type:'message',id:'sidecar-index-user-unique',parentId:null,message:{role:'user',content:'auxiliary question'}};
+  write(file,[{...header,id:'sidecar-index-header-unique'},entry]);
+  const index=new SessionIndex([root],root), key=fileKey(file), changed=vi.fn();
+  expect(index.scan()).toEqual([]);
+  expect(index.scan(true)[0].sidecarOf).toBe('');
+  expect(index.history(key).session.sidecarOf).toBe('');
+  expect(index.history(key).branch).toEqual([entry]);
+  index.start(changed);
+  try {
+   fs.appendFileSync(file,JSON.stringify({type:'message',id:'sidecar-index-answer-unique',parentId:entry.id,message:{role:'assistant',content:'independent answer'}})+'\n');
+   await vi.waitFor(()=>expect(changed).toHaveBeenCalled(),{timeout:1900,interval:100});
+   expect(index.scan()).toEqual([]);
+   expect(index.history(key).branch).toHaveLength(2);
+  } finally {index.close();}
+ });
  it('discovers existing sessions without project registration, preserves bytes and mtime',()=>{
   const root=temp(), file=path.join(root,'s.jsonl');write(file,[header,user]);
   const before=fs.readFileSync(file),time=fs.statSync(file).mtimeMs;

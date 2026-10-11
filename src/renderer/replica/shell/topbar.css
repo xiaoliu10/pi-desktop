@@ -34,3 +34,16 @@
   gap: 8px;
   flex-shrink: 0;
 }
+
+/* 副驾按钮待确认角标：面板关着时副驾会话挂起权限/提问对话框的可见提示 */
+.pi-topbar .pi-iconbtn--attention::after {
+  content: '';
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--amber, #f59e0b);
+  pointer-events: none;
+}

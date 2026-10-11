@@ -19,7 +19,7 @@ export interface PiEnvironment {
   bundledVersion?: string | null;
 }
 export interface PiUpgradeResult { exitCode: number; stdout: string; stderr: string }
-export interface PiSession { key: string; id: string; path: string; cwd: string; name: string; updatedAt: number; size: number; warnings: string[]; owned: boolean; parentSession?: string }
+export interface PiSession { key: string; id: string; path: string; cwd: string; name: string; updatedAt: number; size: number; warnings: string[]; owned: boolean; parentSession?: string; sidecarOf?: string }
 export interface PiEntry { type: string; id?: string; parentId?: string | null; timestamp?: string; message?: Record<string, unknown>; [key: string]: unknown }
 export interface PiHistory { session: PiSession; entries: PiEntry[]; branch: PiEntry[]; leaves: string[]; leafId: string | null; syncedAt: number }
 export interface PiResource { id: string; name: string; kind: string; path: string; scope: 'user' | 'project'; status: 'discovered' | 'callable' | 'disabled' | 'missing' | 'error'; detail: string }
@@ -32,9 +32,9 @@ export interface PiRetryGroup {
   phase: 'running' | 'waiting' | 'completed' | 'exhausted' | 'cancelled' | 'failed';
   delayMs?: number; nextRetryAt?: number; error?: string;
 }
-export interface PiRun { retryGroup?: PiRetryGroup; queue?: {text: string; behavior: 'steer' | 'followUp'; images?: PiImage[]; pendingSync?: boolean}[]; pendingModel?: { provider: string; id: string }; pendingThinking?: ThinkingLevel; thinkingLevel?: ThinkingLevel; thinkingLevels?: ThinkingLevel[]; planReady?: boolean; accessMode?: AccessMode; executionMode?: Exclude<AccessMode, 'plan'>; timing?: { startedAt: number; endedAt?: number }; compacting?: boolean; key: string; generation: string; cwd: string; file: string; status: 'starting' | 'idle' | 'running' | 'stopping' | 'error'; /** starting 期的子阶段：loading=会话历史加载中（大会话可长达数分钟），就绪后置 undefined。 */ stage?: 'loading'; model?: PiModel; models: PiModel[]; commands: PiCommand[]; pending: number; error?: string; contextDetails?: import('./context-details').ContextDetails; contextUsage?: { tokens: number; contextWindow: number; percent: number }; stats?: PiSessionStats }
+export interface PiRun { sidecarOf?: string; retryGroup?: PiRetryGroup; queue?: {text: string; behavior: 'steer' | 'followUp'; images?: PiImage[]; pendingSync?: boolean}[]; pendingModel?: { provider: string; id: string }; pendingThinking?: ThinkingLevel; thinkingLevel?: ThinkingLevel; thinkingLevels?: ThinkingLevel[]; planReady?: boolean; accessMode?: AccessMode; executionMode?: Exclude<AccessMode, 'plan'>; timing?: { startedAt: number; endedAt?: number }; compacting?: boolean; key: string; generation: string; cwd: string; file: string; status: 'starting' | 'idle' | 'running' | 'stopping' | 'error'; /** starting 期的子阶段：loading=会话历史加载中（大会话可长达数分钟），就绪后置 undefined。 */ stage?: 'loading'; model?: PiModel; models: PiModel[]; commands: PiCommand[]; pending: number; error?: string; contextDetails?: import('./context-details').ContextDetails; contextUsage?: { tokens: number; contextWindow: number; percent: number }; stats?: PiSessionStats }
 export interface PiSessionStats { tokens: { input: number; output: number; cacheRead: number; cacheWrite: number; total: number }; cost?: number; totalMessages?: number; toolCalls?: number }
-export type PiEvent = { type: 'sessions-changed' } | { type: 'resources-changed' } | { type: 'run'; run: PiRun } | { type: 'rpc'; key: string; generation: string; event: Record<string, unknown> } | { type: 'ui'; key: string; generation: string; request: PiUiRequest } | { type: 'closed'; key: string; generation: string } | { type: 'compaction-record'; key: string; generation: string; /** 留痕 entry 的 data.at（扩展写入的时间戳），用于匹配过程流里的压缩记录 */ at: number; /** 压缩后投影 tokens（compaction_end result.estimatedTokensAfter，与 tokensBefore 同口径） */ tokensAfter: number; contextWindow: number };
+export type PiEvent = { type: 'sessions-changed' } | { type: 'resources-changed' } | { type: 'run'; run: PiRun } | { type: 'rpc'; key: string; generation: string; event: Record<string, unknown> } | { type: 'ui'; key: string; generation: string; request: PiUiRequest } | { type: 'closed'; key: string; generation: string; /** 副驾会话断开时带出归属（active 已删，事后查不到） */ sidecarOf?: string } | { type: 'compaction-record'; key: string; generation: string; /** 留痕 entry 的 data.at（扩展写入的时间戳），用于匹配过程流里的压缩记录 */ at: number; /** 压缩后投影 tokens（compaction_end result.estimatedTokensAfter，与 tokensBefore 同口径） */ tokensAfter: number; contextWindow: number };
 export interface PiReview { root: string; baseline: string; diff: string; untracked: string[]; untrackedFiles?: { path: string; lines: number }[]; warning?: string }
 export type PiQueueOp = { type: 'remove'; index: number } | { type: 'edit'; index: number; text: string } | { type: 'now'; index: number; /** 队列项附带图片（pi 的 queue_update 不回传，由桌面端在点击时补上）。 */ images?: PiImage[] };
 /** A pi package physically present / registered in the agent dir. */
@@ -118,6 +118,8 @@ export interface LocalPiApi extends importSettingsApi {
   history(key: string, leafId?: string): Promise<PiHistory>;
   resources(cwd?: string): Promise<PiResource[]>;
   connect(input: { sourceKey?: string; cwd?: string; trustProject: boolean; permission: AccessMode; executionMode?: Exclude<AccessMode, 'plan'> }): Promise<PiRun>;
+  sidecarEnsure(mainKey: string): Promise<{ key: string; run: PiRun }>;
+  sidecarBinding(mainKey: string): Promise<string | undefined>;
   runs(): Promise<PiRun[]>;
   prompt(key: string, text: string, behavior: 'steer' | 'followUp', images?: PiImage[]): Promise<void>;
   /** 手动压缩会话上下文（内置 /compact：pi RPC 专用 compact 命令，get_commands 不含内置命令）。 */

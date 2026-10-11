@@ -82,6 +82,7 @@ const localPi: LocalPiApi = {
   refreshEnvironment: () => invoke('refreshEnvironment'), upgradeLocalPi: () => invoke('upgradeLocalPi'),
   sessions: () => invoke('sessions'), history: (key, leaf) => invoke('history', key, leaf),
   resources: cwd => invoke('resources', cwd), connect: input => invoke('connect', input),
+  sidecarEnsure: mainKey => invoke('sidecarEnsure', mainKey), sidecarBinding: mainKey => invoke('sidecarBinding', mainKey),
   runs: () => invoke('runs'), prompt: (key, text, behavior, images) => invoke('prompt', key, text, behavior, images),
   stop: key => invoke('stop', key), queueEdit: (key, op) => invoke('queueEdit', key, op), close: key => invoke('close', key), refresh: key => invoke('refresh', key),
   packageList: () => invoke('packageList'), packageSearch: q => invoke('packageSearch', q),
