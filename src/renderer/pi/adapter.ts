@@ -788,7 +788,7 @@ export interface PiReplicaState {
   paths: { runtime: 'auto' | 'bundled' | 'system' | 'custom'; executable: string; agentDir: string; sessionDirs: string };
 
   workbenchOpen: boolean;
-  workbenchTab: 'review' | 'files' | 'browser';
+  workbenchTab: 'review' | 'files' | 'browser' | 'aux' | 'home';
   review?: PiReview;
   reviewLoading: boolean;
 
@@ -862,7 +862,7 @@ export interface PiReplicaActions {
   setFontScale: (n: number) => void;
   setFont: (f: string) => void;
   toggleWorkbench: () => void;
-  selectWorkbenchTab: (tab: 'review' | 'files' | 'browser') => void;
+  selectWorkbenchTab: (tab: 'review' | 'files' | 'browser' | 'aux' | 'home') => void;
   setSearchOpen: (open: boolean) => void;
   setSearchQuery: (q: string) => void;
   toggleNotifications: () => void;
@@ -2147,8 +2147,9 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
     toggleWorkbench: () => {
       const state = get();
       const open = !state.workbenchOpen;
-      set({ workbenchOpen: open });
-      if (open && state.workbenchTab === 'review') void get().selectWorkbenchTab(state.workbenchTab);
+      // 打开默认落在功能选择页（ZCode 同款）：用户从卡片进入具体功能，
+      // 不再默认拉取 review diff（点「变更」卡片时才拉）。
+      set(open ? { workbenchOpen: true, workbenchTab: 'home' } : { workbenchOpen: false });
     },
     selectWorkbenchTab: (tab) => {
       set({ workbenchTab: tab, workbenchOpen: true });
