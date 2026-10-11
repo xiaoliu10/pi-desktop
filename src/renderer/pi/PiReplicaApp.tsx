@@ -256,7 +256,7 @@ export default function PiReplicaApp() {
   // 兜底：任何入口（导航回放/启动恢复）没把 subagentDismissed 初始化时，直接读持久化偏好，
   // 防止已清空的子代理重进又出现。
   const dismissed = s.subagentDismissed ?? s.desktopPreferences?.subagentDismissed?.[s.selectedKey ?? ''] ?? [];
-  const subagents=useMemo(()=>projectSubagents(messages,parentRunning,(s.recoveredSubagents??[]).filter(r=>!dismissed.includes(r.callId))).filter(c=>!dismissed.includes(c.callId)),[messages,parentRunning,s.recoveredSubagents,dismissed]);
+  const subagents=useMemo(()=>projectSubagents(messages,parentRunning,(s.recoveredSubagents??[]).filter(r=>!dismissed.includes(r.callId))).filter(c=>!dismissed.includes(c.id)&&!dismissed.includes(c.callId)),[messages,parentRunning,s.recoveredSubagents,dismissed]);
   // 计划查看器（复刻 ZCode plan-detail 侧板）：与会话绑定，切换会话时关闭。
   const [planOpen,setPlanOpen]=useState(false);
   // 内置终端（ZCode 侧板终端）：面板常挂载，切换会话不关闭。

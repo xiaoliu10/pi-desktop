@@ -101,7 +101,7 @@ export function SubagentPanel({ children, initialCall, onClose, onStop, parentRu
         <section className="pi-subagents__ended">
           <div className="pi-subagents__sectionhead">
             <h3 className="pi-subagents__section">{zh ? '已结束' : 'Ended'} · {ended.length}</h3>
-            {ended.length > 0 && <button className="pi-subagents__clear" onClick={() => s.dismissFinishedSubagents(ended.map(c => c.callId))}>{zh ? '清空' : 'Clear all'}</button>}
+            {ended.length > 0 && <button className="pi-subagents__clear" onClick={() => s.dismissFinishedSubagents(ended.map(c => c.id))}>{zh ? '清空' : 'Clear all'}</button>}
           </div>
           {ended.slice(0, limit).map(c => (
             <div className="pi-subagent-row pi-subagent-row--ended" key={c.id} role="button" tabIndex={0} onClick={() => setSelected(c.id)} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setSelected(c.id); } }}>
@@ -113,7 +113,7 @@ export function SubagentPanel({ children, initialCall, onClose, onStop, parentRu
                 </span>
                 {c.task && <span className="pi-subagent-row__summary">{c.task}</span>}
               </span>
-              <button className="pi-subagent-row__remove" title={zh ? '从列表移除' : 'Remove from list'} aria-label={zh ? '从列表移除' : 'Remove from list'} onClick={(e) => { e.stopPropagation(); s.dismissSubagent(c.callId); }}>
+              <button className="pi-subagent-row__remove" title={zh ? '从列表移除' : 'Remove from list'} aria-label={zh ? '从列表移除' : 'Remove from list'} onClick={(e) => { e.stopPropagation(); s.dismissSubagent(c.id); }}>
                 <Icon name="x" size={13} />
               </button>
             </div>

@@ -91,7 +91,7 @@ describe('状态面板终端/子代理区（ZCode 智能体/终端区同位复�
   const boardMarkup = (subagents: SubagentChild[]) => renderToStaticMarkup(createElement(ConversationStatusPanel, {
     ...base, subagents, onOpenSubagent() {}, onDismissSubagent() {}, onDismissFinishedSubagents() {},
   }));
-  const displayedCalls = (html: string) => [...html.matchAll(/data-call-id="([^"]+)"/g)].map(match => match[1]);
+  const displayedCalls = (html: string) => [...html.matchAll(/data-child-id="([^"]+)"/g)].map(match => match[1]);
 
   it('stably displays running, queued, then every ended status without mutating source children', () => {
     const statuses: SubagentChild['status'][] = ['failed', 'queued', 'completed', 'running', 'unknown', 'queued', 'interrupted', 'running', 'recovered', 'skipped', 'completed'];
@@ -100,7 +100,7 @@ describe('状态面板终端/子代理区（ZCode 智能体/终端区同位复�
     for (const item of children) Object.freeze(item);
     Object.freeze(children);
     const html = boardMarkup(children);
-    expect(displayedCalls(html)).toEqual(['call-3', 'call-7', 'call-1', 'call-5', 'call-0', 'call-2', 'call-4', 'call-6', 'call-8', 'call-9', 'call-10']);
+    expect(displayedCalls(html)).toEqual(['id-3', 'id-7', 'id-1', 'id-5', 'id-0', 'id-2', 'id-4', 'id-6', 'id-8', 'id-9', 'id-10']);
     expect(children).toEqual(before);
     expect(html).toContain('4 运行 · 7 已结束');
     expect(html.match(/class="pi-status-agent-remove"/g)).toHaveLength(7);
@@ -122,7 +122,8 @@ describe('状态面板终端/子代理区（ZCode 智能体/终端区同位复�
     expect(children.map(item => item.callId)).toEqual(['a', 'b', 'c', 'd']);
   });
 
-  it('keeps shared-call live protection after rows move apart in the visible order', () => {
+
+  it('offers per-child removal even when a live sibling shares the call', () => {
     const html = boardMarkup([
       child({ id: 'chain:ended', callId: 'chain', status: 'completed', task: 'protected ended sibling' }),
       child({ id: 'done', callId: 'done', status: 'failed', task: 'removable' }),
@@ -130,10 +131,11 @@ describe('状态面板终端/子代理区（ZCode 智能体/终端区同位复�
       child({ id: 'queue:ended', callId: 'queue', status: 'skipped' }),
       child({ id: 'queue:live', callId: 'queue', status: 'queued' }),
     ]);
-    expect(displayedCalls(html)).toEqual(['chain', 'queue', 'chain', 'done', 'queue']);
+    expect(displayedCalls(html)).toEqual(['chain:live', 'queue:live', 'chain:ended', 'done', 'queue:ended']); // live/queued 优先，ended 保源序且全带行内 ×
     expect(html).toContain('2 运行 · 3 已结束');
-    expect(html.match(/class="pi-status-agent-remove"/g)).toHaveLength(1);
+    expect(html.match(/class="pi-status-agent-remove"/g)).toHaveLength(3); // 全部 ended 行可单独移除（live sibling 不再锁整调用）
     expect(html).toContain('aria-label="从列表移除：removable"');
+    expect(html).toContain('aria-label="从列表移除：protected ended sibling"');
   });
 
   it('removes the floating subagent pill while keeping board and chat navigation wired to details', () => {
