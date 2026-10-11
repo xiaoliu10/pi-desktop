@@ -8,8 +8,8 @@ import { conversationMessages, usePiStore } from './adapter';
 
 export function sidecarLabelsFor(lang: 'en' | 'zh') {
   return lang === 'zh'
-    ? { title: '副驾', start: '点击开始副驾对话', hint: '独立对话 · 仅 read 工具 · 不共享主会话上下文', placeholder: '向副驾提问…', send: '发送', stop: '停止', close: '关闭副驾面板', retry: '重新连接', deny: '取消 / 拒绝', allow: '允许本次', submit: '确定' }
-    : { title: 'Sidecar', start: 'Start a sidecar conversation', hint: 'Independent conversation · read tool only · no main context', placeholder: 'Ask the sidecar…', send: 'Send', stop: 'Stop', close: 'Close sidecar panel', retry: 'Reconnect', deny: 'Cancel / deny', allow: 'Allow once', submit: 'Submit' };
+    ? { title: '辅助对话', start: '点击开始辅助对话', hint: '独立对话 · 仅 read 工具 · 不共享主会话上下文', placeholder: '向辅助对话提问…', send: '发送', stop: '停止', close: '关闭辅助对话面板', retry: '重新连接', deny: '取消 / 拒绝', allow: '允许本次', submit: '确定' }
+    : { title: 'Auxiliary chat', start: 'Start an auxiliary chat', hint: 'Independent conversation · read tool only · no main context', placeholder: 'Ask the auxiliary chat…', send: 'Send', stop: 'Stop', close: 'Close auxiliary chat panel', retry: 'Reconnect', deny: 'Cancel / deny', allow: 'Allow once', submit: 'Submit' };
 }
 
 /** Never selects a session: history is local; live data stays in the keyed store. */
@@ -21,6 +21,7 @@ export function SidecarPanel({ mainKey, autoStart, onClose }: { mainKey: string;
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string>();
+  const [historyError, setHistoryError] = useState<string>();
   const [draft, setDraft] = useState(() => { try { return localStorage.getItem(`pi.sidecarDraft:${mainKey}`) ?? ''; } catch { return ''; } });
   const [answer, setAnswer] = useState('');
   const alive = useRef(true), ensuring = useRef(false);
@@ -49,7 +50,7 @@ export function SidecarPanel({ mainKey, autoStart, onClose }: { mainKey: string;
     let cancelled = false;
     void window.localPi!.sidecarBinding(mainKey).then(bound => {
       if (cancelled) return;
-      setKey(bound);
+      // Only publish the key returned by ensure: a stored binding may be stale.
       if (bound || autoStart) void ensure(); else setLoading(false);
     }).catch(e => { if (!cancelled) { setError(String(e)); setLoading(false); } });
     return () => { cancelled = true; };
@@ -64,8 +65,8 @@ export function SidecarPanel({ mainKey, autoStart, onClose }: { mainKey: string;
       inFlight = true;
       try {
         const value = await window.localPi!.history(key);
-        if (!cancelled) setHistory(value);
-      } catch (e) { if (!cancelled) setError(String((e as Error).message ?? e)); }
+        if (!cancelled) { setHistory(value); setHistoryError(undefined); }
+      } catch (e) { if (!cancelled) setHistoryError(String((e as Error).message ?? e)); }
       finally { inFlight = false; if (again && !cancelled) { again = false; void load(); } }
     };
     void load();
@@ -112,7 +113,7 @@ export function SidecarPanel({ mainKey, autoStart, onClose }: { mainKey: string;
     <small className="pi-sidecar__hint">{t.hint}</small>
     <div className="pi-sidecar__messages" ref={scroll} onScroll={e => { const el = e.currentTarget; follow.current = el.scrollHeight - el.clientHeight - el.scrollTop < 48; }}>
       {turns.map((turn, i) => <TurnArticle key={turn.id} m={turn} liveTurn={busy && i === turns.length - 1} labels={replicaLabels(s.lang).chat} />)}
-      {error || run?.error ? <p role="alert" className="pi-sidecar__error">{error || run?.error}</p> : null}
+      {error || historyError || run?.error ? <p role="alert" className="pi-sidecar__error">{error || historyError || run?.error}</p> : null}
       {(loading || busy || sending) && <p role="status" aria-label={replicaLabels(s.lang).chat.working}>…</p>}
       {!key && !loading && <button className="pi-btn pi-btn--outline" onClick={() => void ensure()}>{t.start}</button>}
       {key && !loading && (!run || run.status === 'error') && <button className="pi-btn pi-btn--outline" onClick={() => void ensure()}>{t.retry}</button>}
