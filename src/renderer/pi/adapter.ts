@@ -1857,7 +1857,24 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
           }
           // 记录发送时刻：prompt 应答后到 agent_start 之间的空窗，聊天界面照样立刻转圈计时
           set({ sentAt: { key: run.key, at: send.at } });
-          await window.localPi!.prompt(run.key, message, behavior, ...(images.length ? [images] : []));
+          const disposition = await window.localPi!.prompt(run.key, message, behavior, ...(images.length ? [images] : []));
+          if (disposition === 'handled') {
+            // pi 的扩展命令（如 /plan 无参 toggle）吞掉全部文字且不产生任何 run 事件——
+            // 不收场的话乐观气泡 + 计时器会永远挂着（用户看到「只有计时器没有过程」）。
+            const now = get();
+            set({
+              sends: now.sends?.filter(s => s.id !== send.id),
+              ...(now.sentAt?.key === run.key && now.sentAt.at === send.at ? { sentAt: undefined } : {}),
+              ...(now.pendingPromptAt === send.at ? { pendingPrompt: undefined, pendingPromptAt: undefined } : {}),
+              ...(queuedItem ? { runs: now.runs.map(r => r.key !== run.key ? r : { ...r, queue: (r.queue ?? []).filter(q => q !== queuedItem), pending: Math.max(0, (r.pending ?? 1) - 1) } ) } : {}),
+            });
+            // 文字退回输入框供修改（命令本身已生效，例如 plan 模式已切换）
+            const owner = composerKeyOf(get());
+            if (owner !== null && !composerDrafts.has(owner)) stashComposerDraft(owner, { text, items: [] });
+            set({ draftText: text, contextItems: [] });
+            pushNotification({ kind: 'info', title: `已执行命令「${text.trim().split(/\s+/)[0]}」；命令参数不会作为消息发送，文字已退回输入框`, time: '刚刚' });
+            return;
+          }
           set({ sends: get().sends?.map(x => (x.id === send.id ? { ...x, promptDone: true } : x)) });
           if (get().selectedKey === run.key) void refreshHistory();
         } catch (error) {

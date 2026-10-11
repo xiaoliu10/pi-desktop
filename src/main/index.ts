@@ -43,7 +43,7 @@ const remote = new RemoteServer({
   },
   version: () => host.environment.version,
   // 写操作直转 backend：与桌面 IPC 同一套校验（会话连接、generation、可发送状态）。
-  prompt: (key, text) => host.backend.prompt(key, text, 'followUp'),
+  prompt: (key, text) => { void host.backend.prompt(key, text, 'followUp'); },
   stop: key => host.backend.stop(key),
   respond: (key, generation, response) => host.backend.respond(key, generation, response),
   pendingDialogs: key => host.backend.pendingDialogs(key),

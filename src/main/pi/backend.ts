@@ -665,7 +665,7 @@ export class PiBackend {
       });
     });
   }
-  async prompt(key: string, text: string, behavior: 'steer' | 'followUp', images?: import('../../shared/composer').PiImage[], dispatchDeferred = false) {
+  async prompt(key: string, text: string, behavior: 'steer' | 'followUp', images?: import('../../shared/composer').PiImage[], dispatchDeferred = false): Promise<string | undefined> {
     if (!text.trim() || text.length > 200_000) throw new Error('输入为空或超过 200000 字符');
     const run = this.get(key);
     if (!['idle', 'running'].includes(run.view.status) || run.stopUnconfirmed || run.retryUncertain) throw new Error('当前会话暂不能发送；请先停止确认执行状态');
@@ -700,7 +700,22 @@ export class PiBackend {
       this.emit({ type: 'run', run: { ...run.view } });
     }
     try {
-      await run.client.request('prompt', { message: text, streamingBehavior: behavior, ...(images?.length ? {images} : {}) }, 300_000);
+      const answer = await run.client.request('prompt', { message: text, streamingBehavior: behavior, ...(images?.length ? {images} : {}) }, 300_000) as { disposition?: string } | undefined;
+      const disposition = answer?.disposition ?? 'started';
+      if (disposition === 'handled') {
+        // pi 对 / 开头的输入先执行扩展命令（如 /plan 是无参 toggle）并把全部参数吞掉：
+        // disposition='handled' 意味着不会有任何 run/事件——若这是运行中排队发送，乐观队列
+        // 条目必须撤回，否则 UI 永远等一条不会到的 queue_update。
+        if (staged) run.queueImages = run.queueImages.filter(s => s !== staged);
+        if (optimisticEntry && run.view.queue?.includes(optimisticEntry)) {
+          run.view.queue = run.view.queue.filter(q => q !== optimisticEntry);
+          run.view.pending = run.view.queue.length;
+          this.emit({ type: 'run', run: { ...run.view } });
+        }
+        if (startsGroup) run.retry.cancel();
+        return 'handled';
+      }
+      return disposition;
     } catch (error) {
       if (this.active.get(key) !== run || run.stopEpoch !== promptEpoch) throw error;
       // Some runtimes/commands defer prompt's response; a transport timeout is

@@ -123,7 +123,8 @@ export interface LocalPiApi extends importSettingsApi {
   sidecarEnsure(mainKey: string): Promise<{ key: string; run: PiRun }>;
   sidecarBinding(mainKey: string): Promise<string | undefined>;
   runs(): Promise<PiRun[]>;
-  prompt(key: string, text: string, behavior: 'steer' | 'followUp', images?: PiImage[]): Promise<void>;
+  /** 返回 pi 的 prompt disposition：'started'（已开始 run）/ 'queued'（已排队）/ 'handled'（扩展命令吞掉全部文字，无 run 无事件）。 */
+  prompt(key: string, text: string, behavior: 'steer' | 'followUp', images?: PiImage[]): Promise<string | undefined>;
   /** 手动压缩会话上下文（内置 /compact：pi RPC 专用 compact 命令，get_commands 不含内置命令）。 */
   compact(key: string, customInstructions?: string): Promise<{ summary: string; tokensBefore?: number }>;
   /** 内置 /reload：重启 pi 并重连同一会话（历史完整保留），等效热重载扩展/skills/prompts/主题。 */
