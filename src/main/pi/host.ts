@@ -51,7 +51,11 @@ export class PiHost {
     this.preferences = { runtime:input.runtime, executable: input.executable?.trim() || undefined, agentDir: input.agentDir?.trim() || undefined, sessionDirs: input.sessionDirs?.map(expand) };
     fs.mkdirSync(this.dataDir, { recursive: true });
     const target = path.join(this.dataDir, 'pi-desktop.json');
-    fs.writeFileSync(target + '.tmp', JSON.stringify(this.preferences, null, 2), { mode: 0o600 }); fs.renameSync(target + '.tmp', target);
+    // 合并磁盘最新文档：pi-desktop.json 还承载 packages/codemode 等期望记录，
+    // 整包重写会把 repair 真理源（codemode 等）抹掉（reviewer P2 实证）。
+    let persisted: Record<string, unknown> = {};
+    try { const parsed: unknown = JSON.parse(fs.readFileSync(target, 'utf8')); if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) persisted = parsed as Record<string, unknown>; } catch { /* 缺失/损坏按空处理 */ }
+    fs.writeFileSync(target + '.tmp', JSON.stringify({ ...persisted, ...this.preferences }, null, 2), { mode: 0o600 }); fs.renameSync(target + '.tmp', target);
     this.accounts.dispose(); this.backend.dispose(); this.index.close();
     this.environment = this.withAppVersion(discoverPi(this.preferences));
     const owned = path.join(this.environment.agentDir, 'sessions', 'desktop');

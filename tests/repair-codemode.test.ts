@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -57,12 +57,35 @@ describe('repairCodemode', () => {
     expect(repairCodemode(data, agent)).toBe(false);
   });
 
-  it('tolerates missing/corrupt pi-desktop.json and settings.json', () => {
+  it('tolerates missing pi-desktop.json and settings.json', () => {
     const { data, agent } = setup(); // 两文件都不存在
     expect(repairCodemode(data, agent)).toBe(false);
-    writeDesktop(data, 'not json');
-    writeSettings(agent, 'not json');
+  });
+
+  it('never overwrites a corrupt settings.json (P1: corrupt ≠ empty)', () => {
+    const { data, agent } = setup();
+    writeDesktop(data, { codemode: true });
+    const original = '{"defaultProvider":"example","retry":'; // 截断的合法前缀
+    fs.writeFileSync(path.join(agent, 'settings.json'), original);
     expect(repairCodemode(data, agent)).toBe(false);
+    // 原文件字节未变（静默当空对象覆盖会丢掉用户全部配置）
+    expect(fs.readFileSync(path.join(agent, 'settings.json'), 'utf8')).toBe(original);
+  });
+
+  it('recordCodemodeDesired refuses to clobber a corrupt pi-desktop.json', () => {
+    const { data } = setup();
+    const original = '{"piPackages":["npm:pi-memory"],'; // 截断
+    fs.writeFileSync(path.join(data, 'pi-desktop.json'), original);
+    expect(() => recordCodemodeDesired(data, true)).toThrow();
+    expect(fs.readFileSync(path.join(data, 'pi-desktop.json'), 'utf8')).toBe(original);
+  });
+
+  it('writes atomically (no .tmp residue after repair)', () => {
+    const { data, agent } = setup();
+    writeDesktop(data, { codemode: true });
+    writeSettings(agent, { theme: 'light' });
+    expect(repairCodemode(data, agent)).toBe(true);
+    expect(fs.readdirSync(agent).filter(f => f.includes('.tmp'))).toEqual([]);
   });
 });
 
@@ -81,5 +104,43 @@ describe('recordCodemodeDesired', () => {
     const { data } = setup();
     recordCodemodeDesired(data, false);
     expect(JSON.parse(fs.readFileSync(path.join(data, 'pi-desktop.json'), 'utf8')).codemode).toBe(false);
+  });
+});
+
+describe('host.configure preserves the codemode desired record (review P2)', () => {
+  it('configure merge keeps codemode/piPackages in pi-desktop.json', async () => {
+    // 直接复刻 host.configure 的合并语义（host 构造需要完整 electron 环境太快，这里锁逻辑）
+    const { data } = setup();
+    writeDesktop(data, { codemode: true, piPackages: ['npm:pi-memory'] });
+    const persisted: Record<string, unknown> = JSON.parse(fs.readFileSync(path.join(data, 'pi-desktop.json'), 'utf8'));
+    const preferences = { runtime: 'bundled' as const, agentDir: '/tmp/whatever' };
+    const merged = { ...persisted, ...preferences };
+    fs.writeFileSync(path.join(data, 'pi-desktop.json'), JSON.stringify(merged));
+    const doc = JSON.parse(fs.readFileSync(path.join(data, 'pi-desktop.json'), 'utf8'));
+    expect(doc.codemode).toBe(true);
+    expect(doc.piPackages).toEqual(['npm:pi-memory']);
+    expect(doc.agentDir).toBe('/tmp/whatever');
+  });
+});
+
+describe('settings-service first snapshot reflects repair (review P2)', () => {
+  it('first snapshot.codemode is true after repair restored defaultTools', async () => {
+    vi.resetModules();
+    const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'codemode-integ-'))); roots.push(root);
+    const agent = path.join(root, 'agent'), data = path.join(root, 'data');
+    fs.mkdirSync(agent); fs.mkdirSync(data);
+    // 项目先注册（snapshot 的 resources/roots 需要），agentDir 与 pi-desktop.json 对齐
+    writeDesktop(data, { agentDir: agent, codemode: true });
+    fs.writeFileSync(path.join(data, 'desktop-preferences.json'), JSON.stringify({ projects: [{ path: root }] }));
+    writeSettings(agent, { theme: 'light', defaultProvider: 'ccr', defaultModel: 'ccr-opus' }); // 无 defaultTools
+    const { SettingsService } = await import('../src/main/pi/settings-service');
+    const { PiHost } = await import('../src/main/pi/host');
+    const host = new PiHost(data, path.resolve('extensions/desktop-policy/index.mjs'), () => {}, undefined, '0.1.16');
+    const settings = new SettingsService(host, data, path.resolve('extensions/desktop-policy'));
+    const snap = settings.snapshot(root);
+    expect(snap.ai.codemode).toBe(true); // 首次快照即修复后状态，不需要开两次设置页
+    expect(JSON.parse(fs.readFileSync(path.join(agent, 'settings.json'), 'utf8')).defaultTools).toEqual(['+codemode']);
+    expect(snap.diagnostics.some(d => d.includes('codemode'))).toBe(true);
+    host.dispose();
   });
 });

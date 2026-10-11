@@ -57,9 +57,11 @@ export class SettingsService {
     } catch { /* 修复失败不影响快照 */ }
   }
   snapshot(cwd?:string):SettingsSnapshot {
-    const diagnostics:string[]=[];let ai:any={};try{ai=readJson(this.settingsPath());}catch(e){diagnostics.push(String((e as Error).message));}
+    const diagnostics:string[]=[];
+    // repair 必须在读 ai 之前：修复写盘后首次快照即反映真实状态（否则 UI 显示关闭、要开两次设置页）
     this.repairPackages(diagnostics);
     if (repairCodemode(this.dataDir, this.host.environment.agentDir)) diagnostics.push('已恢复 codemode 开关（pi 退出抹除后自愈）');
+    let ai:any={};try{ai=readJson(this.settingsPath());}catch(e){diagnostics.push(String((e as Error).message));}
     const resources=this.resources(cwd),mcp:McpServerRow[]=[];
     for(const {root,scope}of this.roots(cwd)){const file=path.join(root,'mcp.json');try{const cfg=this.mcpMigrate(file);const seen=new Set<string>();const target=(c:any)=>c.command?path.basename(String(c.command)):(()=>{try{const url=new URL(c.url);return url.origin+url.pathname;}catch{return 'URL 无效';}})();for(const[name,c]of Object.entries(cfg.mcpServers||{}) as [string,any][]){seen.add(name);if(!object(c)){diagnostics.push(`MCP ${name} 配置无效`);continue;}mcp.push({id:hash(file+'\0'+name),name,scope,transport:c.command?'stdio':'Streamable HTTP',target:target(c),enabled:c.enabled!==false,path:file,revision:revision(file)});}}catch(e){diagnostics.push(`${file}：${(e as Error).message}`);}}
     const prefs=this.preferences(),sessions=this.host.index.scan(),paths=[...new Set([...prefs.projects.map(p=>p.path),...sessions.map(s=>s.cwd)].map(canonical))];
@@ -67,7 +69,12 @@ export class SettingsService {
     return {preferences:prefs,ai:{defaultProvider:String(ai.defaultProvider||''),defaultModel:String(ai.defaultModel||''),defaultThinkingLevel:String(ai.defaultThinkingLevel||'off'),autoCompact:ai.compaction?.enabled!==false,retry:ai.retry?.enabled!==false,codemode:Array.isArray(ai.defaultTools)&&(ai.defaultTools as unknown[]).includes('+codemode'),revision:revision(this.settingsPath())},resources,mcp,mcpRevisions:Object.fromEntries(this.roots(cwd).map(r=>[r.scope,revision(path.join(r.root,'mcp.json'))])),diagnostics,projects:paths.map(p=>({path:p,name:prefs.projects.find(x=>canonical(x.path)===p)?.name||path.basename(p),registered:prefs.projects.some(x=>canonical(x.path)===p),exists:fs.existsSync(p),sessions:sessions.filter(s=>canonical(s.cwd)===p).length})),loadedExtensions};
   }
   saveAi(value:SettingsSnapshot['ai']) {if(!value||!['off','minimal','low','medium','high','xhigh','max'].includes(value.defaultThinkingLevel)||typeof value.autoCompact!=='boolean'||typeof value.retry!=='boolean'||typeof value.defaultProvider!=='string'||typeof value.defaultModel!=='string'||value.defaultProvider.length>200||value.defaultModel.length>200)throw new Error('AI 设置无效');mergeJson(this.settingsPath(),p=>{for(const k of ['defaultProvider','defaultModel']as const){if(value[k].trim())p[k]=value[k].trim();else delete p[k];}p.defaultThinkingLevel=value.defaultThinkingLevel;p.compaction={...p.compaction,enabled:value.autoCompact};p.retry={...p.retry,enabled:value.retry};},value.revision); }
-  setCodemode(enabled:boolean) {recordCodemodeDesired(this.dataDir,enabled);mergeJson(this.settingsPath(),p=>{const list=Array.isArray(p.defaultTools)?(p.defaultTools as unknown[]).filter(t=>typeof t==='string'):[];const next=list.filter(t=>t!=='+codemode');if(enabled)next.push('+codemode');if(next.length)p.defaultTools=next;else delete p.defaultTools;}); }
+  setCodemode(enabled:boolean) {
+    // 先写 settings.json（可能失败：损坏/revision 冲突），成功后才记期望——
+    // 失败时不提交期望，避免「UI 报错回滚、repair 却把未生效状态固化」的不一致。
+    mergeJson(this.settingsPath(),p=>{const list=Array.isArray(p.defaultTools)?(p.defaultTools as unknown[]).filter(t=>typeof t==='string'):[];const next=list.filter(t=>t!=='+codemode');if(enabled)next.push('+codemode');if(next.length)p.defaultTools=next;else delete p.defaultTools;});
+    recordCodemodeDesired(this.dataDir,enabled);
+  }
   resources(cwd?:string):EditableResource[]{const out=new Map<string,EditableResource>();const roots=this.roots(cwd);const add=(file:string,kind:ResourceKind,scope:'user'|'project',status='discovered',detail='本地文件',editable=true)=>{const id=hash(file+'\0'+kind);out.set(id,{id,path:file,name:path.basename(file)==='SKILL.md'?path.basename(path.dirname(file)):path.basename(file),kind,scope,status,detail,editable:editable&&(!fs.existsSync(file)||fs.statSync(file).isFile())});};
     for(const r of this.host.resources(cwd)){if(!['extensions','skills','prompts'].includes(r.kind))continue;const kind=r.kind as ResourceKind;let paths=[r.path];if(fs.existsSync(r.path)&&fs.statSync(r.path).isDirectory())paths=kind==='extensions'?['index.ts','index.js','index.mjs'].map(n=>path.join(r.path,n)).filter(fs.existsSync):walk(r.path).filter(p=>kind==='skills'?path.basename(p)==='SKILL.md':p.endsWith('.md'));for(const p of paths){const editable=roots.some(x=>p.startsWith(path.join(x.root,kind)+path.sep)&&!p.includes(`${path.sep}node_modules${path.sep}`));add(p,kind,r.scope,r.status,r.detail,editable);}}
     for(const {root,scope}of roots){for(const p of walk(path.join(root,'agents')).filter(p=>p.endsWith('.md')))add(p,'subagents',scope);const file=path.join(root,'AGENTS.md');if(scope==='user'&&fs.existsSync(file))add(file,'instructions',scope);}

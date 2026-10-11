@@ -5,7 +5,7 @@ import path from 'node:path';
  * codemode 开关持久化防抹除（与 packages-repair 同款防御）。
  *
  * 现象：用户在 Desktop 开 codemode（写 pi settings.json 顶层 defaultTools='+codemode'），
- * pi 会话进程退出时整包写回 settings.json 的内存旧副本——若内存副本里没有 defaultTools
+ * pi 会话进程退出时整包写回 settings.json 的内存旧副本——若内存副本没有 defaultTools
  * 段，开关被静默抹掉，重启 Desktop 后 UI 显示关闭（用户「之前一直开着」却反复回到关闭态）。
  *
  * 防御：以 dataDir/pi-desktop.json 的 codemode 布尔为期望值，启动会话前与打开设置页时
@@ -17,29 +17,48 @@ import path from 'node:path';
  */
 export function repairCodemode(dataDir: string, agentDir: string): boolean {
   try {
-    const desired = readJson(path.join(dataDir, 'pi-desktop.json')).codemode;
+    const desired = readDesktopConfig(dataDir).codemode;
     if (desired !== true) return false; // 期望关闭或未记录：不主动干预 pi settings
     const settingsPath = path.join(agentDir, 'settings.json');
-    const value = readJson(settingsPath);
-    if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+    const value = readSettingsDoc(settingsPath);
     const list = Array.isArray(value.defaultTools) ? value.defaultTools.filter((t: unknown) => typeof t === 'string') : [];
     if (list.includes('+codemode')) return false; // 已在位
     list.push('+codemode');
     value.defaultTools = list;
-    fs.writeFileSync(settingsPath, JSON.stringify(value, null, 2) + '\n');
+    atomicWrite(settingsPath, value);
     return true;
   } catch { return false; }
 }
 
-/** 记录期望的 codemode 状态（setCodemode 开关时调，作为防抹除的真理源）。 */
+/** 记录期望的 codemode 状态（setCodemode 开关时调，作为防抹除的真理源）。
+ *  损坏的 pi-desktop.json 不覆盖（保留原文件待人工恢复），仅缺失时新建。 */
 export function recordCodemodeDesired(dataDir: string, enabled: boolean): void {
   const file = path.join(dataDir, 'pi-desktop.json');
-  const value = readJson(file);
+  const value = readDesktopConfig(dataDir);
   value.codemode = enabled;
-  fs.writeFileSync(file, JSON.stringify(value, null, 2) + '\n');
+  atomicWrite(file, value);
 }
 
-function readJson(file: string): any {
+/** 读 pi-desktop.json：缺失返回 {}；存在但损坏抛错（调用方决定静默还是拒绝）。 */
+function readDesktopConfig(dataDir: string): Record<string, unknown> {
+  const file = path.join(dataDir, 'pi-desktop.json');
   if (!fs.existsSync(file)) return {};
-  try { return JSON.parse(fs.readFileSync(file, 'utf8')) ?? {}; } catch { return {}; }
+  const parsed: unknown = JSON.parse(fs.readFileSync(file, 'utf8'));
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('pi-desktop.json 不是合法对象');
+  return parsed as Record<string, unknown>;
+}
+
+/** 读 settings.json：缺失返回 {}；存在但损坏抛错（绝不静默当空对象覆盖原文件）。 */
+function readSettingsDoc(settingsPath: string): Record<string, unknown> {
+  if (!fs.existsSync(settingsPath)) return {};
+  const parsed: unknown = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('settings.json 不是合法对象');
+  return parsed as Record<string, unknown>;
+}
+
+/** 原子写：tmp + rename，避免并发/中断暴露截断文件（packages-repair 也是非原子，本模块先做对）。 */
+function atomicWrite(file: string, value: unknown): void {
+  const tmp = `${file}.tmp-${process.pid}`;
+  fs.writeFileSync(tmp, JSON.stringify(value, null, 2) + '\n', { mode: 0o600 });
+  fs.renameSync(tmp, file);
 }
