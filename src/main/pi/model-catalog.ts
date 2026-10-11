@@ -7,6 +7,9 @@ import type { PiCatalogModel, PiCatalogProvider, PiModelCatalog, PiModelEditable
  * Read/write view of the local pi model configuration:
  *   <agentDir>/settings.json → default provider / model
  *   <agentDir>/models.json   → custom providers + model definitions
+ *   <agentDir>/models-store.json → dynamically refreshed provider catalogs
+ *     (OAuth logins like antigravity; pi 内核 FileModelsStore 的锁定存储——
+ *     登录流程把模型清单写这里，不写 models.json；Desktop 必须读才能看到)
  *   <agentDir>/auth.json     → provider auth (type/presence only)
  *
  * Secrets (api keys, oauth tokens, custom headers) are never copied into the
@@ -34,6 +37,7 @@ function writeJson(file: string, doc: Record<string, unknown>, secret = false): 
 export function readModelCatalog(agentDir: string): PiModelCatalog {
   const settings = readJson(path.join(agentDir, 'settings.json')) ?? {};
   const modelsDoc = readJson(path.join(agentDir, 'models.json')) ?? {};
+  const storeDoc = readJson(path.join(agentDir, 'models-store.json')) ?? {};
   const auth = readJson(path.join(agentDir, 'auth.json')) ?? {};
 
   const providers: PiCatalogProvider[] = [];
@@ -67,6 +71,40 @@ export function readModelCatalog(agentDir: string): PiModelCatalog {
       api: typeof raw.api === 'string' ? raw.api : undefined,
       auth: typeof raw.apiKey === 'string' && raw.apiKey.length > 0 ? 'api_key' : 'none',
       source: definitions.length ? 'models.json' : 'auth',
+      models,
+    });
+  }
+
+  // 动态刷新的 provider 目录（pi 内核 FileModelsStore → models-store.json）：OAuth 登录的
+  // antigravity 等走这条路径，模型清单只写这里。models.json 的自定义 provider 已先行注册
+  // （seen 去重，静态配置优先覆盖动态目录——与内核「models.json overrides above native」一致）。
+  const storeProviders = (storeDoc.providers ?? storeDoc) as Record<string, unknown>;
+  for (const [id, raw] of Object.entries(storeProviders)) {
+    if (!raw || typeof raw !== 'object' || seen.has(id)) continue;
+    const entry = raw as Record<string, unknown>;
+    const definitions = Array.isArray(entry.models) ? entry.models as Record<string, unknown>[] : [];
+    if (!definitions.length) continue; // 只登记了凭据、无模型清单的条目无展示价值（auth 段已覆盖）
+    seen.add(id);
+    const models: PiCatalogModel[] = definitions.map((m) => ({
+      definition: 'builtin' as const,
+      id: String(m.id ?? ''),
+      name: typeof m.name === 'string' ? m.name : undefined,
+      contextWindow: typeof m.contextWindow === 'number' ? m.contextWindow : undefined,
+      maxTokens: typeof m.maxTokens === 'number' ? m.maxTokens : undefined,
+      reasoning: typeof m.reasoning === 'boolean' ? m.reasoning : undefined,
+      thinkingLevelMap: m.thinkingLevelMap && typeof m.thinkingLevelMap === 'object' ? m.thinkingLevelMap as PiCatalogModel['thinkingLevelMap'] : undefined,
+      samplingParamsByThinkingLevel: m.samplingParamsByThinkingLevel && typeof m.samplingParamsByThinkingLevel === 'object' && !Array.isArray(m.samplingParamsByThinkingLevel) ? m.samplingParamsByThinkingLevel as PiCatalogModel['samplingParamsByThinkingLevel'] : undefined,
+      input: Array.isArray(m.input) ? m.input.filter((v): v is string => v === 'text' || v === 'image') : undefined,
+    })).filter((m) => m.id);
+    providers.push({
+      id,
+      name: typeof entry.name === 'string' ? entry.name : undefined,
+      // store 条目的 baseUrl/api 常只在每个 model 上（pi 动态目录的真实形状），provider 顶层缺失时回退到首个 model
+      baseUrl: typeof entry.baseUrl === 'string' ? entry.baseUrl
+        : definitions.map(m => m.baseUrl).find(b => typeof b === 'string') as string | undefined,
+      api: typeof entry.api === 'string' ? entry.api : definitions.map(m => m.api).find(a => typeof a === 'string') as string | undefined,
+      auth: (auth[id] as { type?: unknown } | undefined)?.type === 'oauth' ? 'oauth' : (auth[id] as { type?: unknown } | undefined)?.type === 'api_key' ? 'api_key' : 'none',
+      source: 'models-store.json',
       models,
     });
   }

@@ -431,7 +431,7 @@ function ModelsPane(props: SettingsProps) {
                     <div className="pi-models-split__id" title={selected.id}>{selected.id}</div>
                     <div className="pi-models-split__ops">
                       {!editable && <span className="pi-models-split__hint">pi 内核管理的模型目录</span>}
-                      {!editable && selected.source === 'auth' && selected.auth !== 'oauth' && props.onSaveProviderAuth && (
+                      {!editable && ['auth', 'models-store.json'].includes(selected.source) && selected.auth !== 'oauth' && props.onSaveProviderAuth && (
                         <button className="pi-btn pi-btn--outline" onClick={() => openAuthEditor(selected)}>
                           {selected.auth === 'api_key' ? '修改 API Key' : '设置 API Key'}
                         </button>
