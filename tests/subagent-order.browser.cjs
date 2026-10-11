@@ -34,7 +34,7 @@ async (page) => {
   let checks = 0;
   const assert = (ok, message) => { if (!ok) throw Error(message); checks++; };
   const order = () => page.locator('.pi-status-agent[data-child-id]').evaluateAll(rows => rows.map(row => row.dataset.childId));
-  const expected = ids => ids.map(i => `call-${i}`);
+  const expected = ids => ids.map(i => `child-${i}`);
   const checkOrder = async ids => {
     await page.waitForFunction(ids => JSON.stringify([...document.querySelectorAll('.pi-status-agent[data-child-id]')].map(el => el.dataset.childId)) === JSON.stringify(ids), expected(ids));
     assert(JSON.stringify(await order()) === JSON.stringify(expected(ids)), `visible order ${ids}`);
@@ -46,7 +46,7 @@ async (page) => {
   await row(7).locator('.pi-status-agent').click();
   await row(0).locator('.pi-status-agent-remove').click();
   assert(JSON.stringify(await page.evaluate(() => opened)) === '["call-7"]', 'moved detail row targets original callId');
-  assert(JSON.stringify(await page.evaluate(() => removed)) === '["call-0"]', 'moved delete row targets original callId without opening detail');
+  assert(JSON.stringify(await page.evaluate(() => removed)) === '["child-0"]', 'moved delete row targets child id without opening detail');
   await page.evaluate(() => orderUpdate(7, { tokens: 100000, messages: [{ role: 'assistant', content: 'progress' }] }));
   await checkOrder([3, 7, 1, 5, 0, 2, 4, 6, 8, 9]);
   await page.evaluate(() => orderUpdate(3, { status: 'completed' }));
@@ -59,10 +59,10 @@ async (page) => {
   await row(3).locator('.pi-status-agent').click();
   await row(3).locator('.pi-status-agent-remove').click();
   assert(JSON.stringify(await page.evaluate(() => opened)) === '["call-7","call-3"]', 'completed moved detail retains callId');
-  assert(JSON.stringify(await page.evaluate(() => removed)) === '["call-0","call-3"]', 'completed moved delete retains callId');
+  assert(JSON.stringify(await page.evaluate(() => removed)) === '["child-0","child-3"]', 'completed moved delete retains child id');
   await page.getByRole('button', { name: '清空已结束的子代理记录' }).click();
   assert(JSON.stringify(await page.evaluate(() => cleared)) === JSON.stringify([expected([0, 2, 3, 4, 6, 8, 9])]), 'bulk targets ended original callIds in source order');
-  assert(JSON.stringify(await page.evaluate(() => orderChildren.map(c => c.callId))) === JSON.stringify(expected([0, 1, 2, 3, 4, 5, 6, 7, 8, 9])), 'source array order never mutated');
+  assert(JSON.stringify(await page.evaluate(() => orderChildren.map(c => c.callId))) === JSON.stringify([0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map(i => `call-${i}`)), 'source array order never mutated');
   await page.locator('.pi-status-rail').screenshot({ path: 'output/playwright/subagent-order.png' });
   assert(errors.length === 0, errors.join('\n'));
   return { checks, errors, order: await order() };
