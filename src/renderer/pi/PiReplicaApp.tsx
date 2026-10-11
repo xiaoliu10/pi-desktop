@@ -243,12 +243,15 @@ export default function PiReplicaApp() {
     void window.localPi!.sidecarBinding(s.selectedKey).then(k => { if (live) setSidecarBindingKey(k ?? null); }).catch(() => {});
     return () => { live = false; };
   }, [s.selectedKey, sidecarOpen]);
-  const sidecarAttention = sidecarBindingKey !== null && s.dialogs.some(d => d.key === sidecarBindingKey);
+  const sidecarAttention = sidecarBindingKey !== null && s.dialogs.some(d => d.key === sidecarBindingKey)
+    && !(s.workbenchOpen && s.workbenchTab === 'aux'); // aux tab 开着时对话可见，顶栏角标无需再提示（review P2）
   const toggleSidecar = () => {
     if (!sidecarOpen && s.selectedKey) {
       setSidecarStartKey(s.selectedKey);
       setSubagentPanel(null); setPlanOpen(false);
-      usePiStore.setState({ workbenchOpen: false });
+      // workbench 的辅助对话 tab 是顶栏面板的替身：aux 开着时收起整个 workbench，
+      // 其余 tab 落回 home——两个入口绝不四栏并排（review P2）。
+      usePiStore.setState(s.workbenchOpen ? (s.workbenchTab === 'aux' ? { workbenchOpen: false } : { workbenchTab: 'home' }) : {});
     }
     setSidecarOpen(open => !open);
   };
@@ -1002,6 +1005,9 @@ export default function PiReplicaApp() {
                 tab={s.workbenchTab}
                 // 不设 key：重挂载会销毁浏览器 webview；预览文件的展开重置由 WorkbenchPanel 内部比对 selectedFile 完成。
                 browserPanel={<BrowserPanel labels={t.browser} />}
+                sidecarPanel={s.selectedKey && s.view === 'chat'
+                  ? <SidecarPanel key={`wb-${s.selectedKey}`} mainKey={s.selectedKey} autoStart={false} onClose={() => usePiStore.setState({ workbenchTab: 'home' })} />
+                  : undefined}
                 diffs={filePreview ? (filePreview.diff ? [filePreview.diff] : []) : reviewDiffs}
                 files={[
                   // review 里的编辑文件都可点选查看完整内容

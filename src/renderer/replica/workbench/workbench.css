@@ -23,6 +23,7 @@
 
 .pireplica .pi-workbench__tabs {
   display: flex;
+  flex-wrap: wrap; /* 四个 tab 在 300px 下限宽度换行，不裁切（review P3-1） */
   align-items: center;
   gap: 4px;
   padding: 12px 12px 10px;
@@ -162,6 +163,82 @@
   max-width: 240px;
 }
 .pireplica .pi-workbench__preview-note { padding: 10px 14px; margin: 0; font-size: 12px; color: var(--pi-text-secondary); border-bottom: 1px solid var(--pi-border); }
+
+/* ZCode 式功能选择页（打开面板的默认落点） */
+.pireplica .pi-workbench__home {
+  padding: 28px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.pireplica .pi-workbench__hometitle {
+  font-weight: 600;
+  color: var(--pi-text);
+  text-align: center;
+}
+
+.pireplica .pi-workbench__homegrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.pireplica .pi-workbench__homecard {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 18px 12px;
+  border: 1px solid var(--pi-border);
+  border-radius: var(--pi-radius-lg, 12px);
+  background: var(--pi-bg-card);
+  text-align: center;
+  transition: border-color .15s ease, background .15s ease;
+}
+
+.pireplica .pi-workbench__homecard:hover,
+.pireplica .pi-workbench__homecard:focus-visible {
+  border-color: var(--pi-accent, var(--pi-text-secondary));
+  background: var(--pi-bg-hover);
+}
+
+.pireplica .pi-workbench__homecard:focus-visible {
+  outline: 2px solid var(--pi-accent, var(--pi-text-secondary));
+  outline-offset: 2px;
+}
+
+.pireplica .pi-workbench__homecardicon {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: var(--pi-bg-active);
+  color: var(--pi-text);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.pireplica .pi-workbench__homecardname {
+  font-weight: 600;
+  color: var(--pi-text);
+  font-size: var(--pi-font-size-sm);
+}
+
+.pireplica .pi-workbench__homecardhint {
+  font-size: 12px;
+  color: var(--pi-text-tertiary);
+  line-height: 1.45;
+}
+
+/* 辅助对话插槽：与浏览器插槽同款稳定定位（keep-alive 只切 display） */
+.pireplica .pi-workbench__auxslot {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.pireplica .pi-workbench__auxslot .pi-sidecar { flex: 1; min-height: 0; border-left: none; width: auto; }
 .pireplica .pi-file-code{display:flex;overflow:auto;max-height:calc(100vh - 230px);font:12px/20px ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--pi-bg);color:var(--pi-text);border:1px solid var(--pi-border);border-radius:8px;margin-top:8px}
 .pireplica .pi-file-code__lines{position:sticky;left:0;flex-shrink:0;user-select:none;text-align:right;padding:12px 10px;min-width:38px;color:var(--pi-text-tertiary);background:var(--pi-bg-sidebar);border-right:1px solid var(--pi-border)}
 .pireplica .pi-file-code__lines .is-focused{color:var(--pi-text);font-weight:700;background:var(--pi-bg-active)}

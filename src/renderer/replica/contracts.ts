@@ -464,7 +464,7 @@ export interface DemoFileDiff {
 // Workbench panel (U06)
 // ---------------------------------------------------------------------------
 
-export type WorkbenchTab = 'review' | 'files' | 'browser';
+export type WorkbenchTab = 'review' | 'files' | 'browser' | 'aux' | 'home';
 
 export interface DemoFileNode {
   path: string;
@@ -490,6 +490,13 @@ export interface WorkbenchProps {
    * opened pages are never reloaded. Preview passes nothing → demo empty state.
    */
   browserPanel?: ReactNode;
+  /**
+   * Production slot: the auxiliary chat panel (pi/SidecarPanel) for the open
+   * session. Same keep-alive contract as browserPanel — once mounted it stays
+   * mounted across tab switches so the conversation never resets. Absent when
+   * no session is selected → the aux tab falls back to a hint empty state.
+   */
+  sidecarPanel?: ReactNode;
   onToggle: () => void;
   onSelectTab: (tab: WorkbenchTab) => void;
   onSelectFile: (path: string | null) => void;
@@ -523,6 +530,12 @@ export interface WorkbenchLabels {
   review: string;
   files: string;
   browser: string;
+  auxiliary: string;
+  homeTitle: string;
+  homeReview: string;
+  homeFiles: string;
+  homeBrowser: string;
+  homeAuxiliary: string;
   close: string;
   emptyReview: string;
   emptyReviewHint: string;

@@ -8,7 +8,7 @@ import { FileCodeViewer } from './FileCodeViewer';
 
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import type { WorkbenchProps } from '../contracts';
+import type { WorkbenchProps, WorkbenchTab } from '../contracts';
 import { Icon } from '../Icons';
 import { FileIcon } from '../FileIcon';
 import { DiffBlock } from '../chat/ChatView';
@@ -34,7 +34,10 @@ export function WorkbenchPanel(props: WorkbenchProps) {
   // 浏览器 tab 打开过一次后常挂载（display:none 隐藏），切换 tab / 收起面板都不销毁 webview。
   const browserStarted = useRef(false);
   if (props.open && props.tab === 'browser' && props.browserPanel) browserStarted.current = true;
-  if (!props.open && !browserStarted.current) return null;
+  // 辅助对话插槽同款 keep-alive：对话状态（绑定/草稿/滚动）跨 tab 切换与面板收起保留。
+  const auxStarted = useRef(false);
+  if (props.open && props.tab === 'aux' && props.sidecarPanel) auxStarted.current = true;
+  if (!props.open && !browserStarted.current && !auxStarted.current) return null;
   const selected = props.files.find((f) => f.path === props.selectedFile) ?? null;
 
   return (
@@ -45,6 +48,7 @@ export function WorkbenchPanel(props: WorkbenchProps) {
             ['review', props.labels.review, 'diff'],
             ['files', props.labels.files, 'folder'],
             ['browser', props.labels.browser, 'globe'],
+            ['aux', props.labels.auxiliary, 'chat'],
           ] as const
         ).map(([tab, label, icon]) => (
           <button
@@ -63,7 +67,8 @@ export function WorkbenchPanel(props: WorkbenchProps) {
         </button>
       </header>
 
-      <div className="pi-workbench__body" style={props.tab === 'browser' && props.browserPanel ? { display: 'none' } : undefined}>
+      {props.tab === 'home' && <WorkbenchHome labels={props.labels} hasAuxiliary={Boolean(props.sidecarPanel)} onPick={props.onSelectTab} />}
+      <div className="pi-workbench__body" style={props.tab === 'browser' && props.browserPanel || props.tab === 'aux' && props.sidecarPanel || props.tab === 'home' ? { display: 'none' } : undefined}>
         {props.note && <p className="pi-workbench__preview-note">{props.note}</p>}
         {props.tab === 'review' && (
           <>
@@ -137,12 +142,22 @@ export function WorkbenchPanel(props: WorkbenchProps) {
         {props.tab === 'browser' && !props.browserPanel && (
           <Empty icon="globe" title={props.labels.emptyBrowser} hint={props.labels.emptyBrowserHint} />
         )}
+
+        {props.tab === 'aux' && !props.sidecarPanel && (
+          <Empty icon="chat" title={props.labels.auxiliary} hint={props.labels.homeAuxiliary} />
+        )}
       </div>
 
       {/* 稳定位置的浏览器插槽：切换 tab 只改 display，webview 不重挂载。 */}
       {browserStarted.current && props.browserPanel && (
         <div className="pi-workbench__browserslot" style={{ display: props.tab === 'browser' ? 'flex' : 'none' }}>
           {props.browserPanel}
+        </div>
+      )}
+      {/* 辅助对话插槽：同款 keep-alive，对话状态跨 tab/收起保留。 */}
+      {auxStarted.current && props.sidecarPanel && (
+        <div className="pi-workbench__auxslot" style={{ display: props.tab === 'aux' ? 'flex' : 'none' }}>
+          {props.sidecarPanel}
         </div>
       )}
       {lightbox && props.image && createPortal(
@@ -158,7 +173,33 @@ export function WorkbenchPanel(props: WorkbenchProps) {
   );
 }
 
-function Empty({ icon, title, hint }: { icon: 'diff' | 'folder' | 'globe'; title: string; hint: string }) {
+/** ZCode 式功能选择页：面板打开的默认落点，四张卡片进入各自 tab。 */
+function WorkbenchHome({ labels, hasAuxiliary, onPick }: {
+  labels: WorkbenchProps['labels'];
+  hasAuxiliary: boolean;
+  onPick: (tab: WorkbenchTab) => void;
+}) {
+  const cards = [
+    { tab: 'review' as const, icon: 'diff' as const, title: labels.review, hint: labels.homeReview },
+    { tab: 'files' as const, icon: 'folder' as const, title: labels.files, hint: labels.homeFiles },
+    { tab: 'browser' as const, icon: 'globe' as const, title: labels.browser, hint: labels.homeBrowser },
+    ...(hasAuxiliary ? [{ tab: 'aux' as const, icon: 'chat' as const, title: labels.auxiliary, hint: labels.homeAuxiliary }] : []),
+  ];
+  return <div className="pi-workbench__home" role="group" aria-label={labels.homeTitle}>
+    <div className="pi-workbench__hometitle">{labels.homeTitle}</div>
+    <div className="pi-workbench__homegrid">
+      {cards.map(card => (
+        <button key={card.tab} className="pi-workbench__homecard" onClick={() => onPick(card.tab)}>
+          <span className="pi-workbench__homecardicon"><Icon name={card.icon} size={20} /></span>
+          <span className="pi-workbench__homecardname">{card.title}</span>
+          <span className="pi-workbench__homecardhint">{card.hint}</span>
+        </button>
+      ))}
+    </div>
+  </div>;
+}
+
+function Empty({ icon, title, hint }: { icon: 'diff' | 'folder' | 'globe' | 'chat'; title: string; hint: string }) {
   return (
     <div className="pi-workbench__empty">
       <span className="pi-workbench__emptyicon">

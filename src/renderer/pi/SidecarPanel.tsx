@@ -23,6 +23,9 @@ export function SidecarPanel({ mainKey, autoStart, onClose }: { mainKey: string;
   const [error, setError] = useState<string>();
   const [historyError, setHistoryError] = useState<string>();
   const [draft, setDraft] = useState(() => { try { return localStorage.getItem(`pi.sidecarDraft:${mainKey}`) ?? ''; } catch { return ''; } });
+  // 同一 mainKey 可能有两个面板实例（顶栏面板 + workbench 内嵌 tab）。草稿以 localStorage
+  // 为唯一真理源：onChange 即写；实例重新可见（面板切换/tab 切回/窗口聚焦）时以存储值
+  // 重同步本地 state——否则后打开的实例会拿陈旧草稿覆盖新草稿（review P1 实证丢输入）。
   const [answer, setAnswer] = useState('');
   const alive = useRef(true), ensuring = useRef(false);
   const scroll = useRef<HTMLDivElement>(null), follow = useRef(true);
@@ -31,7 +34,37 @@ export function SidecarPanel({ mainKey, autoStart, onClose }: { mainKey: string;
   const dialog = s.dialogs.find(d => d.key === key);
   useEffect(() => { setAnswer(String(dialog?.request.prefill ?? '')); }, [dialog?.generation, dialog?.request.id]);
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
-  useEffect(() => { try { localStorage.setItem(`pi.sidecarDraft:${mainKey}`, draft); } catch { /* Draft storage is best effort. */ } }, [mainKey, draft]);
+  useEffect(() => {
+    try {
+      localStorage.setItem(`pi.sidecarDraft:${mainKey}`, draft);
+      // 同页另一面板实例即时同步（原生 storage 事件不覆盖同文档写入方）。
+      window.dispatchEvent(new StorageEvent('storage', { key: `pi.sidecarDraft:${mainKey}` }));
+    } catch { /* Draft storage is best effort. */ }
+  }, [mainKey, draft]);
+  // 草稿以 localStorage 为唯一真理源；resync 同值 no-op（输入中不被存储旧值清掉）。
+  const resyncDraft = useCallback(() => {
+    try {
+      const stored = localStorage.getItem(`pi.sidecarDraft:${mainKey}`) ?? '';
+      setDraft(prev => prev === stored ? prev : stored);
+    } catch { /* best effort */ }
+  }, [mainKey]);
+  useEffect(() => {
+    const onStorage = (e: StorageEvent) => { if (e.key === `pi.sidecarDraft:${mainKey}`) resyncDraft(); };
+    // 原生 storage 事件只跨文档；同页的另一个面板实例（顶栏 ↔ workbench 内嵌）由写入方
+    // 手动派发同名事件同步。textarea 聚焦不做 resync——fill/键入的 focus 会抢先清输入。
+    window.addEventListener('storage', onStorage);
+    return () => { window.removeEventListener('storage', onStorage); };
+  }, [mainKey, resyncDraft]);
+  // 实例重新可见（顶栏面板 ↔ workbench aux tab 的 display 切换）时以存储值重同步，
+  // 否则 keep-alive 实例拿陈旧草稿继续编辑会无痕覆盖另一实例的最新输入（review P1）。
+  const asideRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const el = asideRef.current;
+    if (!el || typeof IntersectionObserver === 'undefined') return;
+    const observer = new IntersectionObserver(entry => { if (entry[0]?.isIntersecting) resyncDraft(); });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [resyncDraft]);
 
   const ensure = useCallback(async () => {
     if (ensuring.current) return;
@@ -108,7 +141,7 @@ export function SidecarPanel({ mainKey, autoStart, onClose }: { mainKey: string;
     catch (e) { if (alive.current) setError(String((e as Error).message ?? e)); }
   };
 
-  return <aside className="pi-sidecar" aria-label={t.title} data-sidecar-key={key}>
+  return <aside ref={asideRef} className="pi-sidecar" aria-label={t.title} data-sidecar-key={key}>
     <header><strong><Icon name="chat" size={16} />{t.title}</strong><button className="pi-iconbtn" aria-label={t.close} onClick={onClose}><Icon name="x" size={16} /></button></header>
     <small className="pi-sidecar__hint">{t.hint}</small>
     <div className="pi-sidecar__messages" ref={scroll} onScroll={e => { const el = e.currentTarget; follow.current = el.scrollHeight - el.clientHeight - el.scrollTop < 48; }}>
