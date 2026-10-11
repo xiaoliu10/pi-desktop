@@ -1,7 +1,7 @@
 import { contextPrompt, parseContextPrompt, type ContextItem, type ThinkingLevel } from '../../shared/composer';
 import { closeTransientPopovers } from '../replica/popovers';
 import { projectSubagents } from './subagents';
-import { dismissibleSubagentCalls } from './subagent-dismissal';
+import { dismissibleSubagentIds } from './subagent-dismissal';
 import { applyAssistantStreamDelta } from './stream-delta';
 import { modelErrorPart } from './model-error';
 import { nextModelRetryState } from './model-retry';
@@ -1724,20 +1724,21 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
       prewarmInFlight.set(key, p);
       void p.finally(() => prewarmInFlight.delete(key));
     },
-    dismissSubagent: (callId) => get().dismissFinishedSubagents([callId]),
-    dismissFinishedSubagents: (callIds) => {
+    dismissSubagent: (childId) => get().dismissFinishedSubagents([childId]),
+    dismissFinishedSubagents: (childIds) => {
       const s = get();
       const key = s.selectedKey;
-      if (!key || !callIds.length) return;
+      if (!key || !childIds.length) return;
       const messages = sentConversationMessages(s.history?.branch ?? [], s.live[key], s.toolProgress[key], (s.sends ?? []).filter(send => send.key === key), s.compactionAfter[key]);
       const run = currentRun(s);
       const parentRunning = Boolean(run && ['starting', 'running', 'stopping'].includes(run.status));
       const children = projectSubagents(messages, parentRunning, s.recoveredSubagents);
-      const allowed = new Set(dismissibleSubagentCalls(children));
+      const allowed = new Set(dismissibleSubagentIds(children));
       // Revalidate against the latest selected-session state, not the rendered row.
-      // A shared callId must not hide a running/queued sibling.
+      // Child-level ids (`callId:index`) can never hide a running/queued sibling;
+      // legacy persisted entries hold whole callIds and stay matched by the render filter.
       const existing = s.subagentDismissed ?? s.desktopPreferences?.subagentDismissed?.[key] ?? [];
-      const finished = callIds.filter(id => allowed.has(id) && !existing.includes(id));
+      const finished = childIds.filter(id => allowed.has(id) && !existing.includes(id));
       if (!finished.length) return;
       const dismissed = [...new Set([...existing, ...finished])];
       set({ subagentDismissed: dismissed });

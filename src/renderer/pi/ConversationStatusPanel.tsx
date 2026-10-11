@@ -4,7 +4,7 @@ import type { ChatMessage } from '../replica/contracts';
 import type { GitStatus } from '../../shared/conversation-status';
 import type { PiSessionStats } from '../../shared/pi';
 import type { SubagentChild } from './subagents';
-import { dismissibleSubagentCalls } from './subagent-dismissal';
+import { dismissibleSubagentIds } from './subagent-dismissal';
 import { conversationPlan } from './conversation-plan';
 import './conversation-status.css';
 
@@ -45,14 +45,15 @@ export function ConversationStatusPanel({cwd,messages,running,stats,onReview,onR
   // ZCode 终端区的可观测口径：正在执行的 shell 命令数（来自对话流中的运行中 bash 工具步骤）。
   const runningCommands=useMemo(()=>messages.reduce((n,m)=>n+m.parts.filter(p=>p.kind==='tool'&&p.status==='running'&&['bash','run_command'].includes(p.tool)).length,0),[messages]);
   const runningAgents=(subagents??[]).filter(child=>child.status==='running'||child.status==='queued').length;
-  const dismissibleCalls=dismissibleSubagentCalls(subagents??[]);
+  const dismissibleCalls=dismissibleSubagentIds(subagents??[]);
   // Presentation only: stable within each category, with fresh status on every render.
   // Copy before sorting so counters, dismissal IDs and other consumers keep source order.
   const visibleSubagents=[...(subagents??[])].sort((a,b)=>subagentPriority(a)-subagentPriority(b));
   const rail=useRef<HTMLElement>(null);
-  const focusAfterDismiss=(callIds:string[])=>{
+  const focusAfterDismiss=(childIds:string[])=>{
     // Move focus before the clicked control unmounts (keyboard and touch alike).
-    const next=Array.from(rail.current?.querySelectorAll<HTMLButtonElement>('.pi-status-agent[data-call-id]')??[]).find(button=>!callIds.includes(button.dataset.callId!));
+    // Child-level ids (`callId:index`) match the rail rows' data-child-id.
+    const next=Array.from(rail.current?.querySelectorAll<HTMLButtonElement>('.pi-status-agent[data-child-id]')??[]).find(button=>!childIds.includes(button.dataset.childId!));
     (next??rail.current?.querySelector<HTMLButtonElement>('header button'))?.focus();
   };
   useEffect(()=>{
@@ -113,12 +114,12 @@ export function ConversationStatusPanel({cwd,messages,running,stats,onReview,onR
             const meta=SUBAGENT_STATUS[child.status]??SUBAGENT_STATUS.unknown;
             const isLive=child.status==='running'||child.status==='queued';
             return <li key={child.id} className="pi-status-agent-row">
-              <button type="button" data-call-id={child.callId} className={`pi-status-agent ${isLive?'is-running':''}`} onClick={()=>onOpenSubagent(child.callId)} title={`${child.agent}${child.task?` · ${child.task}`:''}（点击查看执行情况）`}>
+              <button type="button" data-child-id={child.id} className={`pi-status-agent ${isLive?'is-running':''}`} onClick={()=>onOpenSubagent(child.callId)} title={`${child.agent}${child.task?` · ${child.task}`:''}（点击查看执行情况）`}>
                 <Icon name={meta.icon} size={13}/>
                 <span>{child.task||child.agent}</span>
                 <em>{meta.label}</em>
               </button>
-              {onDismissSubagent&&dismissibleCalls.includes(child.callId)&&<button type="button" className="pi-status-agent-remove" title="从列表移除（不删除会话文件）" aria-label={`从列表移除：${child.task||child.agent}`} onClick={()=>{focusAfterDismiss([child.callId]);onDismissSubagent(child.callId);}}><Icon name="x" size={13}/></button>}
+              {onDismissSubagent&&dismissibleCalls.includes(child.id)&&<button type="button" className="pi-status-agent-remove" title="从列表移除（不删除会话文件）" aria-label={`从列表移除：${child.task||child.agent}`} onClick={()=>{focusAfterDismiss([child.id]);onDismissSubagent(child.id);}}><Icon name="x" size={13}/></button>}
             </li>;
           })}</ol>
         </div>}

@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { ConversationStatusPanel } from '../src/renderer/pi/ConversationStatusPanel';
-import { dismissibleSubagentCalls } from '../src/renderer/pi/subagent-dismissal';
+import { dismissibleSubagentIds } from '../src/renderer/pi/subagent-dismissal';
 import { projectSubagents, type ChildState, type SubagentChild } from '../src/renderer/pi/subagents';
 import { registerSubagentAdapter } from '../src/renderer/pi/subagent-registry';
 import { sentConversationMessages, usePiStore } from '../src/renderer/pi/adapter';
@@ -39,7 +39,7 @@ afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); vi.unstubAllGlobals()
 const visible = () => {
   const s = usePiStore.getState(), key = s.selectedKey!;
   const dismissed = s.subagentDismissed ?? s.desktopPreferences?.subagentDismissed?.[key] ?? [];
-  return projectSubagents(sentConversationMessages(s.history?.branch ?? [], s.live[key], s.toolProgress[key], []), false, s.recoveredSubagents).filter(c => !dismissed.includes(c.callId));
+  return projectSubagents(sentConversationMessages(s.history?.branch ?? [], s.live[key], s.toolProgress[key], []), false, s.recoveredSubagents).filter(c => !dismissed.includes(c.id) && !dismissed.includes(c.callId));
 };
 
 describe('task board finished-only dismissal', () => {
@@ -51,51 +51,60 @@ describe('task board finished-only dismissal', () => {
     expect(html).toContain(finished ? '1 已结束' : '1 运行 · 0 已结束');
     if (finished) expect(html).toMatch(/<\/button><button type="button" class="pi-status-agent-remove"/);
   });
-  it('blocks an entire shared call while a running/queued sibling remains', () => {
+
+  it('removes a single failed child while its sibling keeps running (was: whole call locked)', () => {
     const children = [child('completed', 'chain'), child('running', 'chain'), child('failed', 'parallel'), child('queued', 'parallel'), child('completed', 'done'), child('failed', 'done')];
-    expect(dismissibleSubagentCalls(children)).toEqual(['done']);
+    // Child-level granularity: every ended child is individually removable — a
+    // running/queued sibling no longer locks the ended rows of the same call.
+    expect(dismissibleSubagentIds(children)).toEqual(['chain:completed', 'parallel:failed', 'done:completed', 'done:failed']);
     usePiStore.setState({ history: history(children) });
-    usePiStore.getState().dismissFinishedSubagents(['chain', 'parallel', 'done', 'missing']);
-    expect(usePiStore.getState().subagentDismissed).toEqual(['done']);
-    expect(visible().map(c => c.callId)).toEqual(['chain', 'chain', 'parallel', 'parallel']);
+    usePiStore.getState().dismissFinishedSubagents(['chain:completed', 'parallel:failed', 'done:completed', 'missing']);
+    expect(usePiStore.getState().subagentDismissed).toEqual(['chain:completed', 'parallel:failed', 'done:completed']);
+    const left = visible();
+    expect(left.map(c => c.id)).toEqual(['chain:running', 'parallel:queued', 'done:failed']); // live siblings untouched, unlisted row kept
+  });
+  it('legacy whole-callId entries keep hiding the entire call (backward compatible)', () => {
+    usePiStore.setState({ subagentDismissed: ['done'] });
+    usePiStore.setState({ history: history([child('completed', 'done'), child('failed', 'done'), child('running', 'chain')]) });
+    expect(visible().map(c => c.callId)).toEqual(['chain']); // 旧条目按 callId 匹配整调用
   });
   it('single removal persists only ended records, leaves source history and run untouched', () => {
     const before = usePiStore.getState();
     const source = path.join(root, 'source.jsonl'); fs.writeFileSync(source, JSON.stringify(before.history));
-    usePiStore.getState().dismissSubagent('running');
-    usePiStore.getState().dismissSubagent('queued');
+    usePiStore.getState().dismissSubagent('running:running');
+    usePiStore.getState().dismissSubagent('queued:queued');
     usePiStore.getState().dismissSubagent('missing');
     expect(api.saveDesktopSettings).not.toHaveBeenCalled();
-    usePiStore.getState().dismissSubagent('completed');
-    usePiStore.getState().dismissSubagent('completed');
+    usePiStore.getState().dismissSubagent('completed:completed');
+    usePiStore.getState().dismissSubagent('completed:completed');
     expect(api.saveDesktopSettings).toHaveBeenCalledTimes(1);
-    expect(service.preferences().subagentDismissed).toEqual({ a: ['completed'], b: ['keep-hidden'] });
+    expect(service.preferences().subagentDismissed).toEqual({ a: ['completed:completed'], b: ['keep-hidden'] });
     expect(visible()).toHaveLength(7);
     expect(usePiStore.getState().history).toBe(before.history);
     expect(usePiStore.getState().runs).toBe(before.runs);
     expect(fs.readFileSync(source, 'utf8')).toBe(JSON.stringify(before.history));
   });
   it('bulk intersects current-session records, is idempotent, and never removes live children', () => {
-    usePiStore.getState().dismissFinishedSubagents([...statuses, 'other-session-only', 'completed']);
-    expect(usePiStore.getState().subagentDismissed).toEqual(statuses.slice(2));
+    usePiStore.getState().dismissFinishedSubagents([...statuses.map(s => `${s}:${s}`), 'other-session-only']);
+    expect(usePiStore.getState().subagentDismissed).toEqual(statuses.slice(2).map(s => `${s}:${s}`));
     expect(visible().map(c => c.status)).toEqual(['running', 'queued']);
     expect(service.preferences().subagentDismissed?.b).toEqual(['keep-hidden']);
-    usePiStore.getState().dismissFinishedSubagents(statuses);
+    usePiStore.getState().dismissFinishedSubagents(statuses.map(s => `${s}:${s}`));
     expect(api.saveDesktopSettings).toHaveBeenCalledTimes(1);
   });
   it('revalidates a finished row which became live before its click', () => {
     usePiStore.setState({ history: history([child('running', 'completed')]) });
-    usePiStore.getState().dismissSubagent('completed');
+    usePiStore.getState().dismissSubagent('completed:completed');
     expect(api.saveDesktopSettings).not.toHaveBeenCalled();
   });
   it('restores hidden IDs across history refresh, switching, and settings-service restart', async () => {
-    usePiStore.getState().dismissSubagent('completed');
+    usePiStore.getState().dismissSubagent('completed:completed');
     usePiStore.getState().selectSession('b');
     expect(usePiStore.getState().subagentDismissed).toEqual(['keep-hidden']);
     await vi.advanceTimersByTimeAsync(500);
     expect(visible().some(c => c.callId === 'completed')).toBe(true);
     // Same callId in b is unaffected; stale a-only ids cannot be dismissed in b.
-    usePiStore.getState().dismissSubagent('a-only');
+    usePiStore.getState().dismissSubagent('a-only:0');
     expect(service.preferences().subagentDismissed?.b).toEqual(['keep-hidden']);
     usePiStore.getState().selectSession('a');
     await vi.advanceTimersByTimeAsync(500);
@@ -108,8 +117,8 @@ describe('task board finished-only dismissal', () => {
   it('also persists recovered-only records without changing snapshots', () => {
     const recovered = [{ callId: 'disk-only', status: 'interrupted' }];
     usePiStore.setState({ recoveredSubagents: recovered });
-    usePiStore.getState().dismissSubagent('disk-only');
-    expect(service.preferences().subagentDismissed?.a).toEqual(['disk-only']);
+    usePiStore.getState().dismissSubagent('disk-only:0');
+    expect(service.preferences().subagentDismissed?.a).toEqual(['disk-only:0']);
     expect(usePiStore.getState().recoveredSubagents).toBe(recovered);
     expect(visible().some(c => c.callId === 'disk-only')).toBe(false);
   });
@@ -133,10 +142,10 @@ describe('task board finished-only dismissal', () => {
       recover([{ callId: 'late-disk', status: 'interrupted' }]);
       await vi.advanceTimersByTimeAsync(0);
       expect(usePiStore.getState().recoveredSubagents).toHaveLength(mode === 'current' ? 1 : 0);
-      usePiStore.getState().dismissSubagent('late-disk');
+      usePiStore.getState().dismissSubagent('late-disk:0');
       expect(service.preferences().subagentDismissed?.b).toEqual(['keep-hidden']);
     }
-    expect(service.preferences().subagentDismissed?.a).toEqual(['late-disk']);
+    expect(service.preferences().subagentDismissed?.a).toEqual(['late-disk:0']);
   });
   it('wires board actions to the existing store callbacks', () => {
     const app = fs.readFileSync(new URL('../src/renderer/pi/PiReplicaApp.tsx', import.meta.url), 'utf8');
