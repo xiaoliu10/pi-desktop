@@ -59,6 +59,14 @@ export class PiBackend {
     return [...run.dialogs.values()].map(d => ({ generation: run.view.generation, request: d.request }));
   }
   runs() { return [...this.active.values()].map(x => x.view); }
+  /** Locate even an invalid owned file, so a retained binding fails closed instead of being replaced. */
+  ownedSessionPath(key: string): string | undefined {
+    if (!fs.existsSync(this.ownedRoot)) return undefined;
+    return fs.readdirSync(this.ownedRoot, { withFileTypes: true })
+      .filter(entry => entry.isFile() && !entry.isSymbolicLink() && entry.name.endsWith('.jsonl'))
+      .map(entry => path.join(this.ownedRoot, entry.name))
+      .find(file => fileKey(file) === key);
+  }
   sessionContext(key: string): { cwd: string; trustProject: boolean } | undefined {
     const run = this.active.get(key) ?? [...this.active.values()].find(r => r.input.origin === key);
     return run ? { cwd: run.input.cwd, trustProject: run.input.trustProject } : undefined;
@@ -83,6 +91,11 @@ export class PiBackend {
       const attached = this.active.get(origin) ?? [...this.active.values()].find(r => canonical(resolveContinuation(map, r.input.file)) === continued);
       if (attached) return attached.view;
     }
+    // 源目录校验先于驱逐：延续一个目录已失效的会话绝不能先 close 无辜会话（review P2-1）。
+    if (input.sourceKey) {
+      try { if (!cwd || !fs.statSync(cwd).isDirectory()) throw new Error('no dir'); }
+      catch { throw new Error('源项目目录已失效；仍可只读查看历史。'); }
+    }
     if (this.active.size >= MAX_SESSIONS) {
       // 满员时不直接拒绝：自动断开最久空闲的会话腾位（历史在 session 文件里无损，点开即重连）。
       // 只选真正无状态的会话：idle 且无排队/无待确认对话框/无停止与重试不确定态/无已分发任务——
@@ -96,6 +109,8 @@ export class PiBackend {
       if (!victim) throw new Error(`最多同时连接 ${MAX_SESSIONS} 个会话，且都在运行或等待交互；请稍后再试。`);
       this.close(victim.view.key); // UI 静默移除断开态（renderer 对本机主动断开不渲染错误条），点开即重连
     }
+    try { if (!cwd || !path.isAbsolute(cwd) || !fs.statSync(cwd).isDirectory()) throw new Error('项目目录不存在，请选择有效目录。'); }
+    catch (error) { if (error instanceof Error && error.message.includes('目录')) throw error; throw new Error('项目目录不存在，请选择有效目录。'); }
     fs.mkdirSync(this.ownedRoot, { recursive: true });
     this.ownedRoot = fs.realpathSync(this.ownedRoot);
     if (input.sourceKey) {
@@ -124,8 +139,10 @@ export class PiBackend {
       }
     } else {
       const id = randomUUID(); file = path.join(this.ownedRoot, `${input.sidecarOf !== undefined ? 'sidecar_' : ''}${Date.now()}_${id}.jsonl`);
+      // pi lazily creates new files on the first conversation message. Auxiliary chats
+      // need a resumable empty history before ensure returns; main sessions stay lazy.
+      if (input.sidecarOf !== undefined) fs.writeFileSync(file, JSON.stringify({ type: 'session', version: 3, id, timestamp: new Date().toISOString(), cwd }) + '\n', { flag: 'wx', mode: 0o600 });
     }
-    if (!cwd || !path.isAbsolute(cwd) || !fs.statSync(cwd).isDirectory()) throw new Error('项目目录不存在，请选择有效目录。');
     return this.launch({ cwd, file, origin, sidecarOf: input.sidecarOf, trustProject: input.trustProject, permission: input.permission, executionMode: input.executionMode, systemPrompt: input.systemPrompt, tools: input.tools, model: input.model });
   }
   private contextRequests = new WeakMap<Running, number>();
