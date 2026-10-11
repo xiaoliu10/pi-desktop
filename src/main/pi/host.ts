@@ -8,6 +8,7 @@ import { readModelCatalog, mergeModelCatalog, writeDefaultModel, writeModelProvi
 import { UsageStatsService } from './usage-stats';
 import { SessionIndex } from './session-index';
 import { PiBackend } from './backend';
+import { SidecarService } from './sidecar-service';
 import { resourceCatalog } from './resource-catalog';
 import { listInstalledPackages, searchMarket, installPackage, registerPackage, packageCovers as packageCoversImpl } from './pi-packages';
 import { workspaceReview } from './workspace-review';
@@ -18,6 +19,7 @@ export class PiHost {
   accounts = new PiAccounts(()=>this.environment.agentDir);
   index: SessionIndex;
   backend: PiBackend;
+  sidecar: SidecarService;
   private resourcesTimer?: ReturnType<typeof setInterval>;
   private usage = new UsageStatsService(() => this.index.scan());
   constructor(dataDir: string, private policyPath: string, private emit: (e: PiEvent) => void, private sharedSkillsDir?: string) {
@@ -27,6 +29,7 @@ export class PiHost {
     const owned = path.join(this.environment.agentDir, 'sessions', 'desktop');
     this.index = new SessionIndex([...new Set([...this.environment.sessionDirs, owned])], owned);
     this.backend = new PiBackend(this.environment, this.index, owned, policyPath, emit, this.dataDir);
+    this.sidecar = new SidecarService(this.backend, this.index, this.dataDir, emit);
     this.index.start(() => emit({ type: 'sessions-changed' }));
     let stamp = '';
     this.resourcesTimer = setInterval(() => {
@@ -53,6 +56,7 @@ export class PiHost {
     const owned = path.join(this.environment.agentDir, 'sessions', 'desktop');
     this.index = new SessionIndex([...new Set([...this.environment.sessionDirs, owned])], owned);
     this.backend = new PiBackend(this.environment, this.index, owned, this.policyPath, this.emit, this.dataDir);
+    this.sidecar = new SidecarService(this.backend, this.index, this.dataDir, this.emit);
     this.index.start(() => this.emit({ type: 'sessions-changed' })); this.emit({ type: 'sessions-changed' });
     return this.environment;
   }

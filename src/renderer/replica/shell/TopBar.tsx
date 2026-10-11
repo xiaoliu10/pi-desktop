@@ -26,6 +26,11 @@ export function TopBar(props: TopBarProps) {
         <button className="pi-iconbtn" onClick={props.onOpenSearch} aria-label={props.labels.search} title={props.labels.search}>
           <Icon name="search" />
         </button>
+        {props.sidecar && (
+          <button className={`pi-iconbtn${props.sidecar.attention ? ' pi-iconbtn--attention' : ''}`} onClick={props.sidecar.onToggle} aria-label={props.sidecar.title} title={props.sidecar.title} aria-pressed={props.sidecar.open}>
+            <Icon name="chat" />
+          </button>
+        )}
         {props.onToggleTerminal && (
           <button
             className="pi-iconbtn"

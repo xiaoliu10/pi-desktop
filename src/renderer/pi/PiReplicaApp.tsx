@@ -1,4 +1,5 @@
 import { SubagentPanel } from './SubagentPanel';
+import { SidecarPanel, sidecarLabelsFor } from './SidecarPanel';
 import { projectSubagents, SubagentNavigation } from './subagents';
 import { AccountLoginDialog } from './AccountLoginDialog';
 import { ConversationStatusPanel } from './ConversationStatusPanel';
@@ -232,6 +233,25 @@ export default function PiReplicaApp() {
   // 自动化“立即运行”的乐观气泡：点击瞬间进对话，真实消息回显后自动让位。
   const launchPrompt = automationLaunchPrompt(s, messages.some(m => m.role === 'user'));
   const [subagentPanel,setSubagentPanel]=useState<{callId?:string}|null>(null);
+  const [sidecarOpen, setSidecarOpen] = useState(false);
+  const [sidecarStartKey, setSidecarStartKey] = useState<string | null>(null);
+  // 副驾待确认角标：绑定会话挂起 dialog（权限/提问）时，即使面板关着也可见（P2-3）。
+  const [sidecarBindingKey, setSidecarBindingKey] = useState<string | null>(null);
+  useEffect(() => {
+    let live = true;
+    if (!s.selectedKey || !sidecarOpen) { setSidecarBindingKey(null); return; }
+    void window.localPi!.sidecarBinding(s.selectedKey).then(k => { if (live) setSidecarBindingKey(k ?? null); }).catch(() => {});
+    return () => { live = false; };
+  }, [s.selectedKey, sidecarOpen]);
+  const sidecarAttention = sidecarBindingKey !== null && s.dialogs.some(d => d.key === sidecarBindingKey);
+  const toggleSidecar = () => {
+    if (!sidecarOpen && s.selectedKey) {
+      setSidecarStartKey(s.selectedKey);
+      setSubagentPanel(null); setPlanOpen(false);
+      usePiStore.setState({ workbenchOpen: false });
+    }
+    setSidecarOpen(open => !open);
+  };
   const parentRunning=Boolean(run&&['starting','running','stopping'].includes(run.status));
   // 兜底：任何入口（导航回放/启动恢复）没把 subagentDismissed 初始化时，直接读持久化偏好，
   // 防止已清空的子代理重进又出现。
@@ -245,7 +265,8 @@ export default function PiReplicaApp() {
   useEffect(()=>{if(terminalOpen)setTerminalStarted(true);},[terminalOpen]);
   useEffect(()=>{setSubagentPanel(null);setPlanOpen(false);},[s.selectedKey]);
   // 文件面板与子代理面板共用右侧栏：文件面板变为打开时覆盖收起子代理面板，避免四栏并排过挤
-  useEffect(()=>{ if (s.workbenchOpen) setSubagentPanel(p=>(p?null:p)); },[s.workbenchOpen]);
+  useEffect(()=>{ if (s.workbenchOpen) { setSubagentPanel(p=>(p?null:p)); setSidecarOpen(false); } },[s.workbenchOpen]);
+  useEffect(() => { if (subagentPanel || planOpen) setSidecarOpen(false); }, [subagentPanel, planOpen]);
   const [planSnapshots,setPlanSnapshots]=useState<Record<string,string>>(()=>{try{return JSON.parse(localStorage.getItem('pi-plan-snapshots')||'{}') as Record<string,string>;}catch{return {};}});
   const livePlan=run?.accessMode==='plan'?planDocument(messages):null;
   useEffect(()=>{
@@ -402,6 +423,7 @@ export default function PiReplicaApp() {
   const [sidebarWidth, setSidebarWidth, resetSidebarWidth] = usePanelWidth('pi.sidebarWidth', 366, 220, 520);
   const [workbenchWidth, setWorkbenchWidth, resetWorkbenchWidth] = usePanelWidth('pi.workbenchWidth', 415, 300, 700);
   // 右侧三个互叠的侧板（子代理/计划/终端）同样可拖宽，ZCode 侧板均带 col-resize。
+  const [sidecarWidth, setSidecarWidth, resetSidecarWidth] = usePanelWidth('pi.sidecarWidth', 380, 300, 720);
   const [subagentWidth, setSubagentWidth, resetSubagentWidth] = usePanelWidth('pi.subagentWidth', 440, 300, 720);
   const [planWidth, setPlanWidth, resetPlanWidth] = usePanelWidth('pi.planWidth', 480, 320, 720);
   const [terminalHeight, setTerminalHeight, resetTerminalHeight] = usePanelWidth('pi.terminalHeight', 300, 160, 640);
@@ -711,7 +733,7 @@ export default function PiReplicaApp() {
     <SubagentNavigation.Provider value={callId=>{setSubagentPanel({callId});usePiStore.setState({workbenchOpen:false});}}>
     <div
       className={rootClass}
-      style={{ height: '100vh', fontSize: `${s.fontScale}%`, ...(fontFamily ? { fontFamily } : {}), '--pi-sidebar-width': `${sidebarWidth}px`, '--pi-workbench-width': `${workbenchWidth}px`, '--pi-subagent-width': `${subagentWidth}px`, '--pi-plan-width': `${planWidth}px`, '--pi-terminal-height': `${terminalHeight}px` } as React.CSSProperties}
+      style={{ height: '100vh', fontSize: `${s.fontScale}%`, ...(fontFamily ? { fontFamily } : {}), '--pi-sidebar-width': `${sidebarWidth}px`, '--pi-workbench-width': `${workbenchWidth}px`, '--pi-sidecar-width': `${sidecarWidth}px`, '--pi-subagent-width': `${subagentWidth}px`, '--pi-plan-width': `${planWidth}px`, '--pi-terminal-height': `${terminalHeight}px` } as React.CSSProperties}
       data-pi-ready={s.env ? 'true' : undefined}
     >
       {loginProvider&&<AccountLoginDialog provider={loginProvider} onClose={()=>setLoginProvider(null)} onDone={s.loadCatalog}/>}
@@ -873,6 +895,7 @@ export default function PiReplicaApp() {
             {showTopBar && (
               <TopBar
                 title={title || 'PI Desktop'}
+                sidecar={s.selectedKey && s.view === 'chat' ? { open: sidecarOpen, onToggle: toggleSidecar, title: sidecarLabelsFor(s.lang).title, attention: sidecarAttention } : undefined}
                 labels={t.topbar}
                 onExpandSidebar={s.sidebarCollapsed ? s.toggleSidebar : undefined}
                 onNewSession={s.startNewSession}
@@ -962,11 +985,15 @@ export default function PiReplicaApp() {
               )}
               {s.view === 'automations' && <AutomationsPage projects={[...new Set([...(s.desktopPreferences?.projects.map(p=>p.path)||[]),...s.sessions.map(session=>session.cwd)])]} models={(s.catalog?.providers||[]).flatMap(p=>p.models.map(m=>({id:`${p.id}/${m.id}`,name:`${p.id} / ${m.name||m.id}`})))} onOpenSession={key=>s.selectSession(key)} onRunTask={task=>s.runAutomationNow(task)} />}
               {s.view === 'plugins' && pluginsContent}
+              {sidecarOpen && s.selectedKey && s.view === 'chat' && <>
+                <ResizeHandle side="right" width={sidecarWidth} min={300} max={720} onChange={setSidecarWidth} onReset={resetSidecarWidth} label={sidecarLabelsFor(s.lang).title} />
+                <SidecarPanel key={s.selectedKey} mainKey={s.selectedKey} autoStart={sidecarStartKey === s.selectedKey} onClose={() => setSidecarOpen(false)} />
+              </>}
               {subagentPanel && s.view==='chat' && <ResizeHandle side="right" width={subagentWidth} min={300} max={720} onChange={setSubagentWidth} onReset={resetSubagentWidth} label="子代理面板宽度" />}
               {subagentPanel && s.view==='chat' && <SubagentPanel key={`${s.selectedKey}:${subagentPanel.callId||''}`} children={subagents} initialCall={subagentPanel.callId} parentRunning={parentRunning} onClose={()=>setSubagentPanel(null)} onStop={s.stop}/>}
               {s.view==='chat' && planOpen && <ResizeHandle side="right" width={planWidth} min={320} max={720} onChange={setPlanWidth} onReset={resetPlanWidth} label="计划面板宽度" />}
               {s.view==='chat' && planOpen && <PlanViewer key={s.selectedKey||'draft'} doc={planDoc} checklist={planChecklist} lang={s.lang} running={Boolean(run&&['running','stopping'].includes(run.status))} planMode={run?.accessMode==='plan'} onClose={()=>setPlanOpen(false)} onExecute={s.executePlan}/>}
-              {s.view === 'chat' && !s.workbenchOpen && !subagentPanel && !planOpen && <ConversationStatusPanel key={s.selectedKey || 'draft'} cwd={cwd} messages={messages} running={Boolean(run && ['running','stopping'].includes(run.status))} stats={run?.stats} onReview={()=>{setFilePreview(null);s.selectWorkbenchTab('review');}} onRequest={text=>{s.setDraftText(s.draftText ? `${s.draftText}\n\n${text}` : text);}} onOpenPlan={()=>setPlanOpen(true)} planAvailable={Boolean(planDoc||planChecklist.length)} planTitle={planDoc?.title} subagents={subagents} onOpenSubagent={callId=>setSubagentPanel({callId})} onDismissSubagent={s.dismissSubagent} onDismissFinishedSubagents={s.dismissFinishedSubagents} onOpenTerminal={()=>setTerminalOpen(true)} terminalOpen={terminalOpen} />}
+              {s.view === 'chat' && !sidecarOpen && !s.workbenchOpen && !subagentPanel && !planOpen && <ConversationStatusPanel key={s.selectedKey || 'draft'} cwd={cwd} messages={messages} running={Boolean(run && ['running','stopping'].includes(run.status))} stats={run?.stats} onReview={()=>{setFilePreview(null);s.selectWorkbenchTab('review');}} onRequest={text=>{s.setDraftText(s.draftText ? `${s.draftText}\n\n${text}` : text);}} onOpenPlan={()=>setPlanOpen(true)} planAvailable={Boolean(planDoc||planChecklist.length)} planTitle={planDoc?.title} subagents={subagents} onOpenSubagent={callId=>setSubagentPanel({callId})} onDismissSubagent={s.dismissSubagent} onDismissFinishedSubagents={s.dismissFinishedSubagents} onOpenTerminal={()=>setTerminalOpen(true)} terminalOpen={terminalOpen} />}
               {s.workbenchOpen && (s.view === 'chat' || s.view === 'home') && <ResizeHandle side="right" width={workbenchWidth} min={300} max={700} onChange={setWorkbenchWidth} onReset={resetWorkbenchWidth} label="工作面板宽度" />}
               <WorkbenchPanel
                 cwd={cwd}
@@ -1378,7 +1405,7 @@ function ConnectionPane() {
       <h2 className="pi-settings__blocktitle" style={{ marginTop: 22 }}>
         {zh ? '桌面会话连接' : 'Desktop runs'}
       </h2>
-      {s.runs.map((r) => (
+      {s.runs.filter(r => r.sidecarOf === undefined).map((r) => (
         <div className="pi-settingrow pi-settingrow--card" key={r.key}>
           <div className="pi-settingrow__text">
             <div className="pi-settingrow__title pi-mono">{r.cwd}</div>

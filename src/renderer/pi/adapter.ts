@@ -508,13 +508,13 @@ export function buildPiSidebar(
   const hidden = new Set(preferences?.hiddenProjects ?? []);
   const registered = new Map((preferences?.projects ?? []).map((p) => [p.path, p]));
   const order = new Map((preferences?.projects ?? []).map((p, index) => [p.path, index]));
-  runs = runs.filter((r) => !archived.has(r.key));
+  runs = runs.filter((r) => r.sidecarOf === undefined && !/[\\/]sidecar_[^\\/]+\.jsonl$/.test(r.file) && !archived.has(r.key));
   const runByKey = new Map(runs.map((r) => [r.key, r]));
   const byCwd = new Map<string, PiSession[]>();
   for (const s of sessions) {
     // Subagent / fork 内部会话（parentSession 非空）不进用户会话列表：
     // pi 的 subagent 子会话与父会话同目录，会被索引扫出并伪装成新会话。
-    if (s.parentSession) continue;
+    if (s.parentSession || s.sidecarOf !== undefined) continue;
     const list = byCwd.get(s.cwd) ?? [];
     // Archive-only discovered projects still belong in the sidebar.
     if (!archived.has(s.key)) list.push(s);
@@ -1161,6 +1161,9 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
       return;
     }
     if (type === 'message_start' && (raw.message as any)?.role === 'user') {
+      // 副驾对话不走 optimistic-send 链（面板自渲染历史流）：否则每轮在 sends 留一条
+      // received 基线，且孤儿清算被 selectedKey 守卫短路，条目确定性累积。
+      if (state.runs.find(r => r.key === key)?.sidecarOf !== undefined) { void refreshHistory(); return; }
       const message = raw.message as Record<string, unknown>;
       const messageIdentity = userMessageIdentity(message);
       const text = contentText(message.content);
@@ -1372,13 +1375,13 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
     }
     if (type === 'auto_retry_start' || type === 'auto_retry_end') return;
     if (type === 'compaction_start') {
-      pushNotification({ kind: 'info', title: 'pi 正在压缩上下文', time: '刚刚' });
+      if (!state.runs.some(r => r.key === key && r.sidecarOf !== undefined)) pushNotification({ kind: 'info', title: 'pi 正在压缩上下文', time: '刚刚' });
       return;
     }
     if (type === 'extension_error') {
       const message = `扩展错误：${clean(raw.error ?? raw.message)}`;
       set({ error: message, errorKey: key });
-      pushNotification({ kind: 'error', title: message, time: '刚刚' });
+      if (!state.runs.some(r => r.key === key && r.sidecarOf !== undefined)) pushNotification({ kind: 'error', title: message, time: '刚刚' });
     }
   };
 
@@ -1553,7 +1556,7 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
               set({ retrying: { ...get().retrying, [event.run.key]: null } });
             }
             // 任务真正开始/停止/出错后，发送空窗的即时计时完成使命
-            if (['running', 'stopping', 'error'].includes(event.run.status)) set({ sentAt: undefined });
+            if (state.sentAt?.key === event.run.key && ['running', 'stopping', 'error'].includes(event.run.status)) set({ sentAt: undefined });
             // 后端假 running 自愈（get_state 核实后拉直）及一切「run 事件代替 agent_settled 报完结」：
             // run 从运行态翻 idle 时按 agent_settled 同语义收尾（清发送计时、刷历史、撤孤儿气泡、
             // 退休工具步骤）。正常流里 rpc agent_settled 已触发过一次，两处均幂等可叠加。
@@ -1600,7 +1603,7 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
                 ],
               });
             } else if (r.method === 'notify') {
-              pushNotification({ kind: 'info', title: clean(r.message) || 'pi 通知', time: '刚刚' });
+              if (!state.runs.some(run => run.key === event.key && run.sidecarOf !== undefined)) pushNotification({ kind: 'info', title: clean(r.message) || 'pi 通知', time: '刚刚' });
             } else if (r.method === 'set_editor_text') {
               if (state.selectedKey === event.key) set({ draftText: String(r.text ?? '') });
             } else if (r.method === 'setTitle') {
