@@ -23,10 +23,10 @@ export class PiHost {
   sidecar: SidecarService;
   private resourcesTimer?: ReturnType<typeof setInterval>;
   private usage = new UsageStatsService(() => this.index.scan());
-  constructor(dataDir: string, private policyPath: string, private emit: (e: PiEvent) => void, private sharedSkillsDir?: string) {
+  constructor(dataDir: string, private policyPath: string, private emit: (e: PiEvent) => void, private sharedSkillsDir?: string, private appVersion?: string) {
     this.dataDir = dataDir;
     try { this.preferences = JSON.parse(fs.readFileSync(path.join(dataDir, 'pi-desktop.json'), 'utf8')); } catch { this.preferences = {}; }
-    this.environment = discoverPi(this.preferences);
+    this.environment = this.withAppVersion(discoverPi(this.preferences));
     const owned = path.join(this.environment.agentDir, 'sessions', 'desktop');
     this.index = new SessionIndex([...new Set([...this.environment.sessionDirs, owned])], owned);
     this.backend = new PiBackend(this.environment, this.index, owned, policyPath, emit, this.dataDir);
@@ -53,7 +53,7 @@ export class PiHost {
     const target = path.join(this.dataDir, 'pi-desktop.json');
     fs.writeFileSync(target + '.tmp', JSON.stringify(this.preferences, null, 2), { mode: 0o600 }); fs.renameSync(target + '.tmp', target);
     this.accounts.dispose(); this.backend.dispose(); this.index.close();
-    this.environment = discoverPi(this.preferences);
+    this.environment = this.withAppVersion(discoverPi(this.preferences));
     const owned = path.join(this.environment.agentDir, 'sessions', 'desktop');
     this.index = new SessionIndex([...new Set([...this.environment.sessionDirs, owned])], owned);
     this.backend = new PiBackend(this.environment, this.index, owned, this.policyPath, this.emit, this.dataDir);
@@ -63,9 +63,11 @@ export class PiHost {
   }
   /** Re-discover the pi runtime after an upgrade, without changing saved preferences. */
   refreshEnvironment(): PiEnvironment {
-    this.environment = discoverPi(this.preferences);
+    this.environment = this.withAppVersion(discoverPi(this.preferences));
     return this.environment;
   }
+  /** 注入 Desktop 应用版本（discoverPi 不持有 electron app 引用）。 */
+  private withAppVersion(env: PiEnvironment): PiEnvironment { if (this.appVersion) env.desktopVersion = this.appVersion; return env; }
   /** Run `pi update self` against the discovered local CLI so its version can catch up to the
    *  bundled/runtime range. Returns captured output; the caller re-fetches environment after. */
   async upgradeLocalPi(): Promise<{ exitCode: number; stdout: string; stderr: string }> {
