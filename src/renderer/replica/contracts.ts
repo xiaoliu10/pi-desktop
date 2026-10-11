@@ -381,6 +381,10 @@ export interface ChatViewProps {
   onRefreshProcess?: () => Promise<boolean>;
   runTiming?: { startedAt: number; endedAt?: number };
   messages: ChatMessage[];
+  /** 会话身份（selectedKey）：变化即切换会话/会话重载——视口无条件贴底到最新消息，
+   *  跟随状态（followingRef）随之重置。keep-alive 同实例下没有别的信号能区分
+   *  「同一会话内容增长」与「换了一整个会话」。 */
+  conversationKey?: string | null;
   running: boolean;
   queued: number;
   queue?: {text: string; behavior: 'steer' | 'followUp'; images?: PiImage[]}[];
