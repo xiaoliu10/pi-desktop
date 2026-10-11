@@ -8,6 +8,8 @@ export type PiRuntimeMode = 'auto' | 'bundled' | 'system' | 'custom';
 export interface PiPreferences { runtime?: PiRuntimeMode; executable?: string; agentDir?: string; sessionDirs?: string[] }
 export interface PiEnvironment {
   runtime?: PiRuntimeMode; requestedRuntime?: PiRuntimeMode; launchArgs?: string[]; customExecutable?: string; fallback?: boolean;
+  /** Desktop 应用版本（app.getVersion()），侧栏底部展示用。 */
+  desktopVersion?: string;
   executable: string | null; version: string | null; supported: boolean; agentDir: string; sessionDirs: string[]; diagnostics: string[];
   /** The local CLI pi version (PATH discovery), even when desktop runs the bundled copy. Drives the sync banner. */
   systemVersion?: string | null;
