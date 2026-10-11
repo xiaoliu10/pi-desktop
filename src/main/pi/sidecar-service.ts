@@ -1,0 +1,97 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import type { PiEvent, PiRun } from '../../shared/pi';
+import type { PiBackend } from './backend';
+import type { SessionIndex } from './session-index';
+
+/** One retained, independently persisted conversation per main session. */
+export class SidecarService {
+  private bindings = new Map<string, string>();
+  private pending = new Map<string, Promise<PiRun>>();
+  private readonly mapFile: string;
+
+  constructor(private backend: PiBackend, private index: SessionIndex, private dataDir: string, private onEvent: (e: PiEvent) => void) {
+    this.mapFile = path.join(dataDir, 'sidecar-map.json');
+    try {
+      const value: unknown = JSON.parse(fs.readFileSync(this.mapFile, 'utf8'));
+      if (value && typeof value === 'object' && !Array.isArray(value)) {
+        for (const [main, sidecar] of Object.entries(value)) {
+          if (main && typeof sidecar === 'string' && sidecar) this.bindings.set(main, sidecar);
+        }
+      }
+    } catch { /* Missing or corrupt mapping never prevents application startup. */ }
+  }
+
+  bindingOf(mainKey: string): string | undefined {
+    if (typeof mainKey !== 'string' || !mainKey) throw new Error('主会话无效');
+    return this.bindings.get(mainKey);
+  }
+
+  ensure(mainKey: string): Promise<PiRun> {
+    this.bindingOf(mainKey); // Validate before looking up an in-flight launch.
+    const pending = this.pending.get(mainKey);
+    if (pending) return pending;
+    const task = this.connect(mainKey).finally(() => this.pending.delete(mainKey));
+    this.pending.set(mainKey, task);
+    return task;
+  }
+
+  // 并发不变量：`await backend.connect` 是 connect() 里唯一的 await 点，其后的
+  // copy-on-write 读旧快照→写回全同步——两个 mainKey 并发 ensure 不会互相覆盖。
+  // 若在此函数里新增 await，必须改为在写回处重新合并最新 bindings。
+  private async connect(mainKey: string): Promise<PiRun> {
+    const bound = this.bindings.get(mainKey);
+    // 绑定指向的文件被外部删除（手动清理/同步冲突）→ 可修复失效：断开（可能仍活着的）旧 run
+    // —— fd 还在时追加写孤儿 inode，关闭即丢 —— 清绑定按新建继续。key 是哈希，需经
+    // 活跃 run 或索引解析回真实路径再判存在性。文件存在但读失败（oversized 等）→ fail closed。
+    if (bound) {
+      const boundPath = this.backend.runs().find(r => r.key === bound)?.file
+        ?? this.index.scan(true).find(s => s.key === bound)?.path;
+      if (boundPath === undefined || !fs.existsSync(boundPath)) {
+        for (const r of this.backend.runs()) if (r.key === bound) this.backend.close(r.key);
+        const next = new Map(this.bindings);
+        next.delete(mainKey);
+        this.persist(next);
+        this.bindings = next;
+        return this.connect(mainKey);
+      }
+    }
+    const active = bound && this.backend.runs().find(r => r.key === bound);
+    if (active) return active;
+    const context = this.backend.sessionContext(mainKey);
+    const cwd = context?.cwd ?? this.index.history(mainKey).session.cwd;
+    const input = { cwd, trustProject: context?.trustProject ?? false, permission: 'ask' as const, tools: ['read'], sidecarOf: mainKey };
+    let resume: string | undefined;
+    if (bound) {
+      // Fail closed on a stale/corrupt binding: never resume a main or external file.
+      const session = this.index.history(bound).session;
+      if (!session.owned || session.sidecarOf === undefined) throw new Error('副驾绑定无效，请检查 sidecar-map.json');
+      resume = bound;
+    }
+    const run = await this.backend.connect({ ...input, ...(resume ? { sourceKey: resume } : {}) });
+    const next = new Map(this.bindings);
+    next.set(mainKey, run.key);
+    try {
+      this.persist(next);
+    } catch (error) {
+      this.backend.close(run.key);
+      throw error;
+    }
+    this.bindings = next;
+    this.onEvent({ type: 'sessions-changed' });
+    return run;
+  }
+
+  /** 原子写绑定表：tmp 先删（'wx' 保证 mode 落在新建文件上，陈旧 .tmp 不残留）+ rename。 */
+  private persist(next: Map<string, string>): void {
+    fs.mkdirSync(this.dataDir, { recursive: true });
+    fs.rmSync(this.mapFile + '.tmp', { force: true });
+    fs.writeFileSync(this.mapFile + '.tmp', JSON.stringify(Object.fromEntries(next), null, 2) + '\n', { flag: 'wx', mode: 0o600 });
+    fs.renameSync(this.mapFile + '.tmp', this.mapFile);
+  }
+
+  async send(mainKey: string, text: string): Promise<void> {
+    const run = await this.ensure(mainKey);
+    await this.backend.prompt(run.key, text, 'followUp');
+  }
+}

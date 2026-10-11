@@ -130,6 +130,7 @@ export interface TopBarProps {
   terminalOpen?: boolean;
   /** 顶栏「打开方式」分割按钮插槽（pi 集成传入；demo 预览不传）。 */
   openWith?: ReactNode;
+  sidecar?: { open: boolean; onToggle: () => void; title: string; /** 副驾会话有挂起的权限/提问对话框（面板关着也提示） */ attention?: boolean };
 }
 
 export interface TopBarLabels {

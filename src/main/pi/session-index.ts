@@ -59,7 +59,7 @@ export class SessionIndex {
     const title = typeof first === 'string' ? first : Array.isArray(first) ? first.filter(b => b.type === 'text').map(b => b.text).join(' ') : '';
     const name = [...entries].reverse().find(e => e.type === 'session_info' && typeof e.name === 'string')?.name;
     const parents = new Set(entries.map(e => e.parentId));
-    const session: PiSession = { key, id: header.id, path: file, cwd: header.cwd, name: String(name || title || '未命名 pi 会话').slice(0, 180), updatedAt: stat.mtimeMs, size: stat.size, warnings, owned: file.startsWith(canonical(this.ownedRoot) + path.sep), parentSession: typeof header.parentSession === 'string' ? header.parentSession : undefined };
+    const session: PiSession = { key, id: header.id, path: file, cwd: header.cwd, name: String(name || title || '未命名 pi 会话').slice(0, 180), updatedAt: stat.mtimeMs, size: stat.size, warnings, owned: file.startsWith(canonical(this.ownedRoot) + path.sep), parentSession: typeof header.parentSession === 'string' ? header.parentSession : undefined, sidecarOf: path.basename(file).startsWith('sidecar_') ? '' : undefined };
     this.cache.set(key, { stamp, history: { session, entries, branch, leaves: entries.filter(e => e.id && !parents.has(e.id)).map(e => e.id!), leafId: branch.at(-1)?.id || null, syncedAt: Date.now() } });
     this.dirty.delete(key);
   }
@@ -74,7 +74,7 @@ export class SessionIndex {
       changed?.();
     }, 1500);
   }
-  scan(): PiSession[] {
+  scan(includeSidecars = false): PiSession[] {
     const files = new Set<string>();
     const walk = (dir: string, depth = 0) => {
       if (depth > 8) return;
@@ -113,7 +113,7 @@ export class SessionIndex {
           if (!stub || !stamped) continue;
           const { stat, stamp } = stamped;
           const degraded = {
-            session: { key, id: String(stub.header.id ?? key), path: file, cwd: String(stub.header.cwd ?? path.dirname(file)), name: String(stub.firstUserText || '未命名 pi 会话').slice(0, 180), updatedAt: stat.mtimeMs, size: stat.size, warnings: [err.message], owned: file.startsWith(canonical(this.ownedRoot) + path.sep), parentSession: typeof stub.header.parentSession === 'string' ? stub.header.parentSession : undefined },
+            session: { key, id: String(stub.header.id ?? key), path: file, cwd: String(stub.header.cwd ?? path.dirname(file)), name: String(stub.firstUserText || '未命名 pi 会话').slice(0, 180), updatedAt: stat.mtimeMs, size: stat.size, warnings: [err.message], owned: file.startsWith(canonical(this.ownedRoot) + path.sep), parentSession: typeof stub.header.parentSession === 'string' ? stub.header.parentSession : undefined, sidecarOf: path.basename(file).startsWith('sidecar_') ? '' : undefined },
             entries: [], branch: [], leaves: [], leafId: null, syncedAt: Date.now(),
           };
           this.oversized.add(degraded);
@@ -124,7 +124,7 @@ export class SessionIndex {
         if (old) old.history.session.warnings = [(err as Error).message];
       }
     }
-    return [...this.cache.values()].map(x => x.history.session).sort((a, b) => b.updatedAt - a.updatedAt);
+    return [...this.cache.values()].map(x => x.history.session).filter(s => includeSidecars || s.sidecarOf === undefined).sort((a, b) => b.updatedAt - a.updatedAt);
   }
   history(key: string, leaf?: string): PiHistory {
     this.scan();
@@ -142,10 +142,10 @@ export class SessionIndex {
   start(changed: () => void) {
     this.close();
     const signature = (sessions: PiSession[]) => sessions.map(s => `${s.key}:${s.size}:${s.updatedAt}:${s.warnings?.length ?? 0}`).join('|');
-    let last = signature(this.scan());
+    let last = signature(this.scan(true));
     const check = () => {
       try {
-        const next = signature(this.scan());
+        const next = signature(this.scan(true));
         if (next !== last) { last = next; changed(); }
       } catch { /* retry on next poll */ }
       if (this.dirty.size) this.scheduleSettle(changed);
