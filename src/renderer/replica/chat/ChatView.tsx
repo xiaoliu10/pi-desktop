@@ -759,9 +759,6 @@ export const ChatView = memo(function ChatView(props: ChatViewProps) {
     setShowJump(false);
     if (listRef.current) listRef.current.scrollTop = listRef.current.scrollHeight;
   }, [props.conversationKey]);
-  // 首帧消息到达（history IPC 返回）后再贴一次：切会话瞬间列表还是旧内容/空，
-  // 新消息渲染完成后 ResizeObserver 的 follow 只在 following=true 时贴底——已重置。
-  const lastTurnKeyRef = useRef('');
   const seenScrollRequests = useRef(new Set<string>());
   useLayoutEffect(() => {
     if (!props.scrollRequest || !listRef.current || seenScrollRequests.current.has(props.scrollRequest)) return;

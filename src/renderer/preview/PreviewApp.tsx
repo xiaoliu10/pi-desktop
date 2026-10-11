@@ -250,7 +250,7 @@ export function PreviewApp() {
                       )}
                     </div>
                   )}
-                  <ChatView messages={s.messages[s.activeSessionId ?? ''] ?? []} running={s.running} queued={s.queued} demo labels={t.chat} onJumpToMessage={() => {}} />
+                  <ChatView messages={s.messages[s.activeSessionId ?? ''] ?? []} conversationKey={s.activeSessionId} running={s.running} queued={s.queued} demo labels={t.chat} onJumpToMessage={() => {}} />
                   <div style={{ padding: '0 24px 20px' }}>{composer}</div>
                 </div>
               )}
