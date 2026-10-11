@@ -670,7 +670,8 @@ export default function PiReplicaApp() {
     modelCount: p.models.length,
     isDefault: s.catalog?.defaultProvider === p.id,
     enabled: true,
-    source: p.source, auth:p.auth, loginAvailable:p.loginAvailable,
+    source: p.source,
+        originExtension: p.originExtension, auth:p.auth, loginAvailable:p.loginAvailable,
     models: p.models.map((m) => ({ ...m })),
   }));
   const parseModelLine = (line: string) => line.split('\n').flatMap((raw) => {

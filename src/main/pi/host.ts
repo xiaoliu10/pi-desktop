@@ -5,6 +5,7 @@ import path from 'node:path';
 import type { PiEnvironment, PiEvent, PiModelProviderDraft, PiPreferences } from '../../shared/pi';
 import { discoverPi, expand } from './environment';
 import { readModelCatalog, mergeModelCatalog, writeDefaultModel, writeModelProvider, removeModelProvider, writeProviderApiKey } from './model-catalog';
+import { mergeRuntimeProviders, packagesFromSettings, runtimeModelsFromRuns } from './provider-registry';
 import { UsageStatsService } from './usage-stats';
 import { SessionIndex } from './session-index';
 import { PiBackend } from './backend';
@@ -98,15 +99,25 @@ export class PiHost {
   }
   private scanNotify() { this.emit({ type: 'resources-changed' }); }
   async modelCatalog() {
+    // Provider 适配层：native 目录 + 静态文件之外，把扩展 registerProvider 的运行时模型
+    // （get_available_models，任一活跃会话即权威快照）并入目录——不落盘的扩展 provider 只有这条通道可见。
+    const runtimeModels = runtimeModelsFromRuns(this.backend.runs());
+    const packages = this.settingsPackages();
     try {
       const native=await this.accounts.catalog();
       // Read local configuration AFTER the worker returns: a concurrent save must win.
-      return mergeModelCatalog(readModelCatalog(this.environment.agentDir), native);
+      return mergeRuntimeProviders(mergeModelCatalog(readModelCatalog(this.environment.agentDir), native), runtimeModels, packages);
     }catch(e){
-      const catalog=readModelCatalog(this.environment.agentDir);
+      const catalog=mergeRuntimeProviders(readModelCatalog(this.environment.agentDir), runtimeModels, packages);
       catalog.warning=e instanceof Error?e.message:String(e);
       return catalog;
     }
+  }
+  /** settings.json packages（字符串/{source} 双形态，扩展来源徽标推断用）。 */
+  private settingsPackages(): string[] {
+    try {
+      return packagesFromSettings(JSON.parse(fs.readFileSync(path.join(this.environment.agentDir, 'settings.json'), 'utf8')));
+    } catch { return []; }
   }
   modelDefaultSave(input: { provider?: string; model?: string }) { return writeDefaultModel(this.environment.agentDir, input); }
   modelProviderSave(provider: PiModelProviderDraft) { return writeModelProvider(this.environment.agentDir, provider); }
