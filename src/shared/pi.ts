@@ -240,7 +240,7 @@ export interface UpdateStatus {
 // ---------------------------------------------------------------------------
 
 export type PiModelEditableField = 'name' | 'contextWindow' | 'maxTokens' | 'reasoning' | 'input' | 'thinkingLevelMap' | 'samplingParamsByThinkingLevel';
-export interface PiCatalogModel { definition?: 'custom' | 'override'; thinkingLevelMap?: Partial<Record<'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max', string | null>>;
+export interface PiCatalogModel { /** custom=models.json 自定义 / override=models.json 覆盖 / builtin=models-store.json 动态目录 */ definition?: 'custom' | 'override' | 'builtin'; thinkingLevelMap?: Partial<Record<'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max', string | null>>;
   /** Per-level sampling params (pi 1.0.2+), e.g. {"temperature":0.7}; mirrors models-config schema. */
   samplingParamsByThinkingLevel?: Partial<Record<'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max', Record<string, unknown>>>; id: string; name?: string; contextWindow?: number; maxTokens?: number; reasoning?: boolean; input?: string[] }
 export interface PiCatalogImageModel { id: string; name?: string }
@@ -253,7 +253,7 @@ export interface PiCatalogProvider {
   /** How this provider authenticates — presence only, never the secret. */
   auth: 'api_key' | 'oauth' | 'none';
   /** Where the provider definition comes from. */
-  source: 'models.json' | 'auth';
+  source: 'models.json' | 'models-store.json' | 'auth';
   models: PiCatalogModel[];
   /** Image (text-to-image) models; absent when the runtime predates pi 0.99. */
   imageModels?: PiCatalogImageModel[];

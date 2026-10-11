@@ -29,7 +29,11 @@
     "test:watch": "vitest",
     "smoke": "PI_SMOKE=1 electron .",
     "dist": "pnpm runtime:prepare && pnpm build && electron-builder && node scripts/sync-release.mjs",
-    "runtime:prepare": "node scripts/prepare-runtime.mjs"
+    "runtime:prepare": "node scripts/prepare-runtime.mjs",
+    "check:package": "node scripts/check-package-json.mjs",
+    "pretypecheck": "node scripts/check-package-json.mjs",
+    "pretest": "node scripts/check-package-json.mjs",
+    "prebuild": "node scripts/check-package-json.mjs"
   },
   "dependencies": {
     "@xterm/addon-fit": "^0.11.0",

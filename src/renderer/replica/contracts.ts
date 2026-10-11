@@ -698,8 +698,9 @@ export interface ProviderCardData {
   modelCount: number;
   isDefault: boolean;
   enabled: boolean;
-  /** Where the provider definition comes from; 'auth' entries are read-only (pi sign-in). */
-  source: 'models.json' | 'auth';
+  /** Where the provider definition comes from; 'auth' entries are read-only (pi sign-in),
+   *  'models-store.json' entries are dynamically refreshed catalogs (OAuth logins like antigravity). */
+  source: 'models.json' | 'models-store.json' | 'auth';
   /** Model rows for the detail pane (id / display name / reasoning). */
   models: import("../../shared/pi").PiCatalogModel[];
 }

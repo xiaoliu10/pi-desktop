@@ -249,3 +249,53 @@ describe('P08 provider API key (auth.json, shared with pi CLI)', () => {
     expect(() => writeProviderApiKey(dir, { id: 'bad id!', apiKey: 'sk-x' })).toThrow('供应商 ID');
   });
 });
+
+describe('models-store.json dynamic catalogs (antigravity)', () => {
+  const antigravityEntry = {
+    models: [
+      {
+        id: 'gemini-3.8-flash', name: 'Gemini 3.8 Flash (Antigravity)', reasoning: true,
+        thinkingLevelMap: { off: null, low: 'low', medium: 'medium', high: 'high' },
+        input: ['text', 'image'], cost: { input: 0.1, output: 0.4 }, contextWindow: 1048576, maxTokens: 65536,
+        api: 'antigravity-api', provider: 'antigravity', baseUrl: 'https://daily-cloudcode-pa.googleapis.com',
+      },
+    ],
+  };
+
+  it('reads OAuth-refreshed provider catalogs the CLI also sees', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-catalog-store-'));
+    fs.writeFileSync(path.join(dir, 'settings.json'), JSON.stringify({}));
+    fs.writeFileSync(path.join(dir, 'auth.json'), JSON.stringify({ antigravity: { type: 'oauth' } }));
+    fs.writeFileSync(path.join(dir, 'models-store.json'), JSON.stringify({ antigravity: antigravityEntry }));
+    const catalog = readModelCatalog(dir);
+    const ag = catalog.providers.find((p) => p.id === 'antigravity');
+    expect(ag, 'antigravity must be visible to Desktop').toBeDefined();
+    expect(ag!.source).toBe('models-store.json');
+    expect(ag!.auth).toBe('oauth');
+    expect(ag!.baseUrl).toBe('https://daily-cloudcode-pa.googleapis.com');
+    expect(ag!.models[0]).toMatchObject({ id: 'gemini-3.8-flash', definition: 'builtin', contextWindow: 1048576, reasoning: true });
+    expect(ag!.models[0].thinkingLevelMap).toEqual({ off: null, low: 'low', medium: 'medium', high: 'high' });
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('lets a models.json definition win over the dynamic catalog', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-catalog-store2-'));
+    fs.writeFileSync(path.join(dir, 'settings.json'), JSON.stringify({}));
+    fs.writeFileSync(path.join(dir, 'models.json'), JSON.stringify({ providers: { antigravity: { name: 'My AG', api: 'openai-completions', models: [{ id: 'my-model', contextWindow: 4096 }] } } }));
+    fs.writeFileSync(path.join(dir, 'models-store.json'), JSON.stringify({ antigravity: antigravityEntry }));
+    const ag = readModelCatalog(dir).providers.find((p) => p.id === 'antigravity')!;
+    expect(ag.source).toBe('models.json');
+    expect(ag.models.map((m) => m.id)).toEqual(['my-model']);
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('tolerates a malformed models-store.json and stores with no models', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-catalog-store3-'));
+    fs.writeFileSync(path.join(dir, 'settings.json'), JSON.stringify({}));
+    fs.writeFileSync(path.join(dir, 'models-store.json'), '{not json');
+    expect(readModelCatalog(dir).providers).toEqual([]);
+    fs.writeFileSync(path.join(dir, 'models-store.json'), JSON.stringify({ antigravity: { providers: [] }, other: null, 'no-models': {} }));
+    expect(readModelCatalog(dir).providers).toEqual([]);
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+});

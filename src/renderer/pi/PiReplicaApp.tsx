@@ -823,7 +823,7 @@ export default function PiReplicaApp() {
             if(originalId&&!provider.models.some(m=>m.id===originalId))throw new Error('模型已被移除，请刷新后重试。');
             if(provider.models.some(m=>m.id===model.id&&m.id!==originalId))throw new Error('该模型 ID 已存在。');
             const current = provider.models.find(m=>m.id===originalId);
-            await window.localPi!.modelProviderSave({id:providerId,baseUrl:'',models:[model],modelEdit:{originalId,kind:originalId ? current?.definition ?? (provider.source==='models.json' ? 'custom' : 'override') : 'custom',fields}});
+            await window.localPi!.modelProviderSave({id:providerId,baseUrl:'',models:[model],modelEdit:{originalId,kind:originalId ? (current?.definition === 'custom' ? 'custom' : 'override') : 'custom',fields}});
             await s.loadCatalog();
             s.notify({kind:'success',title:'模型配置已保存',body:'已写入 pi 的 models.json；新建或重载会话生效，正在运行的会话仍使用原配置。',time:'刚刚'});
           }}
