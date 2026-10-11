@@ -33,7 +33,7 @@ export function ConversationStatusPanel({cwd,messages,running,stats,onReview,onR
   /** 子代理执行列表（ZCode 智能体区）：点击行在右侧打开对应执行面板。 */
   subagents?:SubagentChild[]; onOpenSubagent?:(callId?:string)=>void;
   /** 仅隐藏当前会话已结束的列表记录，不删除源会话。 */
-  onDismissSubagent?:(callId:string)=>void; onDismissFinishedSubagents?:(callIds:string[])=>void;
+  onDismissSubagent?:(childId:string)=>void; onDismissFinishedSubagents?:(childIds:string[])=>void;
   /** 内置终端入口与状态（ZCode 终端区）。 */
   onOpenTerminal?:()=>void; terminalOpen?:boolean;
 }) {

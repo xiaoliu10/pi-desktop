@@ -33,13 +33,13 @@ async (page) => {
   await page.locator('.pi-status-agent-row').first().waitFor();
   let checks = 0;
   const assert = (ok, message) => { if (!ok) throw Error(message); checks++; };
-  const order = () => page.locator('.pi-status-agent[data-call-id]').evaluateAll(rows => rows.map(row => row.dataset.callId));
+  const order = () => page.locator('.pi-status-agent[data-child-id]').evaluateAll(rows => rows.map(row => row.dataset.childId));
   const expected = ids => ids.map(i => `call-${i}`);
   const checkOrder = async ids => {
-    await page.waitForFunction(ids => JSON.stringify([...document.querySelectorAll('.pi-status-agent[data-call-id]')].map(el => el.dataset.callId)) === JSON.stringify(ids), expected(ids));
+    await page.waitForFunction(ids => JSON.stringify([...document.querySelectorAll('.pi-status-agent[data-child-id]')].map(el => el.dataset.childId)) === JSON.stringify(ids), expected(ids));
     assert(JSON.stringify(await order()) === JSON.stringify(expected(ids)), `visible order ${ids}`);
   };
-  const row = i => page.locator(`.pi-status-agent-row:has([data-call-id="call-${i}"])`);
+  const row = i => page.locator(`.pi-status-agent-row:has([data-child-id="child-${i}"])`);
   await checkOrder([3, 7, 1, 5, 0, 2, 4, 6, 8, 9]);
   assert(await page.getByText('4 运行 · 6 已结束', { exact: true }).count() === 1, 'counts unaffected by sort');
   assert(await page.locator('.pi-status-agent-remove').count() === 6, 'only ended rows removable');

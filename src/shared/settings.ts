@@ -37,7 +37,7 @@ export interface DesktopPreferences {
   openWithApp?: string;
   /** 自动项目记忆总结与召回（Desktop 记忆衔接层）。 */
   memoryAssist?: boolean;
-  /** 已从子代理目录清理掉的 callId（按会话持久化，避免重进又出现）。 */
+  /** 已从子代理目录清理掉的记录：child id（callId:index，0.1.17 起）与旧版整 callId（≤0.1.16）混存，渲染过滤按 id 与 callId 双匹配（按会话持久化，重装/清偏好后恢复显示）。 */
   subagentDismissed?: Record<string, string[]>;
 }
 export const ARCHIVE_RETENTION_DAYS = [7, 30, 90] as const;

@@ -123,7 +123,7 @@ describe('状态面板终端/子代理区（ZCode 智能体/终端区同位复�
   });
 
 
-    it('keeps shared-call live protection after rows move apart in the visible order', () => {
+  it('offers per-child removal even when a live sibling shares the call', () => {
     const html = boardMarkup([
       child({ id: 'chain:ended', callId: 'chain', status: 'completed', task: 'protected ended sibling' }),
       child({ id: 'done', callId: 'done', status: 'failed', task: 'removable' }),
