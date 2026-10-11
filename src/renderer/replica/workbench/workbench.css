@@ -23,6 +23,7 @@
 
 .pireplica .pi-workbench__tabs {
   display: flex;
+  flex-wrap: wrap; /* 四个 tab 在 300px 下限宽度换行，不裁切（review P3-1） */
   align-items: center;
   gap: 4px;
   padding: 12px 12px 10px;
@@ -196,9 +197,15 @@
   transition: border-color .15s ease, background .15s ease;
 }
 
-.pireplica .pi-workbench__homecard:hover {
+.pireplica .pi-workbench__homecard:hover,
+.pireplica .pi-workbench__homecard:focus-visible {
   border-color: var(--pi-accent, var(--pi-text-secondary));
   background: var(--pi-bg-hover);
+}
+
+.pireplica .pi-workbench__homecard:focus-visible {
+  outline: 2px solid var(--pi-accent, var(--pi-text-secondary));
+  outline-offset: 2px;
 }
 
 .pireplica .pi-workbench__homecardicon {

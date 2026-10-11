@@ -185,11 +185,11 @@ function WorkbenchHome({ labels, hasAuxiliary, onPick }: {
     { tab: 'browser' as const, icon: 'globe' as const, title: labels.browser, hint: labels.homeBrowser },
     ...(hasAuxiliary ? [{ tab: 'aux' as const, icon: 'chat' as const, title: labels.auxiliary, hint: labels.homeAuxiliary }] : []),
   ];
-  return <div className="pi-workbench__home" role="menu" aria-label={labels.homeTitle}>
+  return <div className="pi-workbench__home" role="group" aria-label={labels.homeTitle}>
     <div className="pi-workbench__hometitle">{labels.homeTitle}</div>
     <div className="pi-workbench__homegrid">
       {cards.map(card => (
-        <button key={card.tab} role="menuitem" className="pi-workbench__homecard" onClick={() => onPick(card.tab)}>
+        <button key={card.tab} className="pi-workbench__homecard" onClick={() => onPick(card.tab)}>
           <span className="pi-workbench__homecardicon"><Icon name={card.icon} size={20} /></span>
           <span className="pi-workbench__homecardname">{card.title}</span>
           <span className="pi-workbench__homecardhint">{card.hint}</span>
