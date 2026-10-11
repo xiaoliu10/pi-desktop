@@ -701,7 +701,9 @@ export class PiBackend {
     }
     try {
       const answer = await run.client.request('prompt', { message: text, streamingBehavior: behavior, ...(images?.length ? {images} : {}) }, 300_000) as { disposition?: string } | undefined;
-      const disposition = answer?.disposition ?? 'started';
+      // 白名单：问题 runtime 乱回 disposition 时不误撤正常发送（老 runtime 无字段 → started）
+      const rawDisposition = answer?.disposition;
+      const disposition = rawDisposition === 'handled' || rawDisposition === 'queued' ? rawDisposition : 'started';
       if (disposition === 'handled') {
         // pi 对 / 开头的输入先执行扩展命令（如 /plan 是无参 toggle）并把全部参数吞掉：
         // disposition='handled' 意味着不会有任何 run/事件——若这是运行中排队发送，乐观队列

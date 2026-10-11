@@ -139,3 +139,37 @@ describe('backend prompt returns pi disposition', () => {
     expect(disposition).toBe('started'); // fake-pi 对未知消息回 ok({}) → 默认 started
   });
 });
+
+describe('handled with a running send (queued optimistic entry)', () => {
+  it('withdraws the optimistic queue entry and pending badge, restores the draft in the owning session', async () => {
+    usePiStore.setState({ runs: [{ ...run, status: 'running', queue: [], pending: 0 }] });
+    const prompt = deferred<string | undefined>();
+    api.prompt.mockReturnValueOnce(prompt.promise);
+    usePiStore.getState().send('/plan 运行中发的命令');
+    const queuedState = usePiStore.getState();
+    const target = queuedState.runs.find(r => r.key === run.key)!;
+    expect(target.pending ?? 0).toBe(1); // 乐观队列条目已入列
+    prompt.resolve('handled');
+    await vi.advanceTimersByTimeAsync(50);
+    const after = usePiStore.getState();
+    const view = after.runs.find(r => r.key === run.key)!;
+    expect(view.queue ?? []).toHaveLength(0); // 乐观条目撤下（不会等 queue_update）
+    expect(view.pending ?? 0).toBe(0);
+    expect(after.draftText).toBe('/plan 运行中发的命令'); // 归属会话恢复草稿
+  });
+
+  it('never overwrites another session draft the user is typing into', async () => {
+    usePiStore.setState({ runs: [run], sends: [], draftText: '', contextItems: [], sentAt: undefined });
+    const prompt = deferred<string | undefined>();
+    api.prompt.mockReturnValueOnce(prompt.promise);
+    usePiStore.getState().send('/plan 会话A的命令');
+    // await 期间用户切到会话 B 并开始打字
+    usePiStore.setState({ selectedKey: 'other-session', draftText: '用户正在B会话输入' });
+    prompt.resolve('handled');
+    await vi.advanceTimersByTimeAsync(50);
+    const after = usePiStore.getState();
+    expect(after.draftText).toBe('用户正在B会话输入'); // B 草稿不被覆写
+    expect(after.notifications.some(n => n.title.includes('/plan'))).toBe(true); // 提示仍给出
+    usePiStore.setState({ selectedKey: run.key });
+  });
+});

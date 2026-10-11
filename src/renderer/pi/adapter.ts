@@ -1861,17 +1861,26 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
           if (disposition === 'handled') {
             // pi 的扩展命令（如 /plan 无参 toggle）吞掉全部文字且不产生任何 run 事件——
             // 不收场的话乐观气泡 + 计时器会永远挂着（用户看到「只有计时器没有过程」）。
-            const now = get();
+            // 撤队口径与 catch 路径逐字一致（includes 守卫 + queue.length 权威重算）。
+            const current = get();
             set({
-              sends: now.sends?.filter(s => s.id !== send.id),
-              ...(now.sentAt?.key === run.key && now.sentAt.at === send.at ? { sentAt: undefined } : {}),
-              ...(now.pendingPromptAt === send.at ? { pendingPrompt: undefined, pendingPromptAt: undefined } : {}),
-              ...(queuedItem ? { runs: now.runs.map(r => r.key !== run.key ? r : { ...r, queue: (r.queue ?? []).filter(q => q !== queuedItem), pending: Math.max(0, (r.pending ?? 1) - 1) } ) } : {}),
+              sends: current.sends?.filter(s => s.id !== send.id || !!s.confirmedId),
+              ...(current.sentAt?.key === run.key && current.sentAt.at === send.at ? { sentAt: undefined } : {}),
+              ...(current.pendingPromptAt === send.at ? { pendingPrompt: undefined, pendingPromptAt: undefined } : {}),
+              ...(queuedItem ? { runs: current.runs.map(r => {
+                if (r.key !== run.key || !r.queue?.includes(queuedItem!)) return r;
+                const queue = r.queue.filter(q => q !== queuedItem);
+                return { ...r, queue, pending: queue.length };
+              }) } : {}),
             });
-            // 文字退回输入框供修改（命令本身已生效，例如 plan 模式已切换）
-            const owner = composerKeyOf(get());
-            if (owner !== null && !composerDrafts.has(owner)) stashComposerDraft(owner, { text, items: [] });
-            set({ draftText: text, contextItems: [] });
+            // 草稿恢复对齐 catch 三重守卫：只还给归属会话、不覆盖用户新输入、附件一并还原。
+            // await 期间用户切走时 stash 给原 owner，绝不写当前选中的其它会话。
+            const restoreOwner = targetKey ?? sentOwner;
+            if (restoreOwner !== null && composerKeyOf(current) === restoreOwner && !current.draftText && !current.contextItems.length) {
+              set({ draftText: text, contextItems: state.contextItems });
+            } else if (restoreOwner !== null && !composerDrafts.has(restoreOwner)) {
+              stashComposerDraft(restoreOwner, { text, items: state.contextItems });
+            }
             pushNotification({ kind: 'info', title: `已执行命令「${text.trim().split(/\s+/)[0]}」；命令参数不会作为消息发送，文字已退回输入框`, time: '刚刚' });
             return;
           }
