@@ -65,6 +65,8 @@ function handle(r) {
  case 'prompt':
   promptLog.push({message:r.message, behavior:r.streamingBehavior, images:r.images ?? null});
   if(r.message === '/failprompt') return send({type:'response',id:r.id,success:false,error:'injected prompt failure'});
+  // disposition='handled'：扩展命令吞掉全部文字，无 run 无事件（pi /plan toggle 真实语义）
+  if(r.message.startsWith('/swallow')) return ok({disposition:'handled'});
   if(r.message === '/crash') return process.exit(7);
   if(r.message === '/dialog') { pendingUi=r; send({type:'extension_ui_request',id:'dialog',method:'confirm',title:'Confirm?'}); return; }
   if(r.message === '/long') { ok({}); streaming=true; send({type:'agent_start'}); return; }
