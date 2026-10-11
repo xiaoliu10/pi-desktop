@@ -46,7 +46,8 @@ export class SidecarService {
     // 活跃 run 或索引解析回真实路径再判存在性。文件存在但读失败（oversized 等）→ fail closed。
     if (bound) {
       const boundPath = this.backend.runs().find(r => r.key === bound)?.file
-        ?? this.index.scan(true).find(s => s.key === bound)?.path;
+        ?? this.index.scan(true).find(s => s.key === bound)?.path
+        ?? this.backend.ownedSessionPath(bound);
       if (boundPath === undefined || !fs.existsSync(boundPath)) {
         for (const r of this.backend.runs()) if (r.key === bound) this.backend.close(r.key);
         const next = new Map(this.bindings);
@@ -65,7 +66,7 @@ export class SidecarService {
     if (bound) {
       // Fail closed on a stale/corrupt binding: never resume a main or external file.
       const session = this.index.history(bound).session;
-      if (!session.owned || session.sidecarOf === undefined) throw new Error('副驾绑定无效，请检查 sidecar-map.json');
+      if (!session.owned || session.sidecarOf === undefined) throw new Error('辅助对话绑定无效，请检查 sidecar-map.json');
       resume = bound;
     }
     const run = await this.backend.connect({ ...input, ...(resume ? { sourceKey: resume } : {}) });

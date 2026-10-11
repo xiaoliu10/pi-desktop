@@ -13,7 +13,7 @@ afterEach(() => {
   indexes.splice(0).forEach(i => i.close());
   roots.splice(0).forEach(p => fs.rmSync(p, { recursive: true, force: true }));
 });
-function setup() {
+function setup(lazy = false) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-sidecar-mvp-')); roots.push(root);
   const owned = path.join(root, 'desktop'), data = path.join(root, 'data'); fs.mkdirSync(owned);
   const main = path.join(owned, 'sidecar-mvp-main.jsonl');
@@ -21,12 +21,59 @@ function setup() {
   const index = new SessionIndex([owned], owned); indexes.push(index);
   const events: PiEvent[] = [];
   const emit = (e: PiEvent) => events.push(structuredClone(e));
-  const backend = new PiBackend({ executable: path.resolve('tests/fixtures/fake-pi.mjs'), supported: true, version: '0.85.1', agentDir: root, sessionDirs: [owned], diagnostics: [] }, index, owned, path.resolve('extensions/desktop-policy/index.mjs'), emit, data);
+  const backend = new PiBackend({ executable: lazy ? process.execPath : path.resolve('tests/fixtures/fake-pi.mjs'), ...(lazy ? { launchArgs: [path.resolve('tests/fixtures/lazy-pi.mjs')] } : {}), supported: true, version: '0.85.1', agentDir: root, sessionDirs: [owned], diagnostics: [] }, index, owned, path.resolve('extensions/desktop-policy/index.mjs'), emit, data);
   backends.push(backend);
   return { root, owned, data, index, events, backend, mainKey: fileKey(main), service: new SidecarService(backend, index, data, emit), emit };
 }
 
 describe('retained sidecar service', () => {
+  it('makes empty history immediately readable and keeps repeated ensures on the same generation with a lazy runtime', async () => {
+    const { service, backend, mainKey, index, root } = setup(true);
+    const connect = vi.spyOn(backend, 'connect');
+    const first = await service.ensure(mainKey);
+    const raw = fs.readFileSync(first.file, 'utf8');
+    const header = JSON.parse(raw);
+    expect(header).toEqual({ type: 'session', version: 3, id: expect.any(String), timestamp: expect.any(String), cwd: root });
+    expect(header.id).toMatch(/^[\da-f]{8}-[\da-f]{4}-4[\da-f]{3}-[89ab][\da-f]{3}-[\da-f]{12}$/i);
+    expect(Number.isFinite(Date.parse(header.timestamp))).toBe(true);
+    expect(raw.endsWith('\n')).toBe(true);
+    if (process.platform !== 'win32') expect(fs.statSync(first.file).mode & 0o777).toBe(0o600);
+    expect(index.history(first.key)).toMatchObject({ entries: [], branch: [], leaves: [], leafId: null });
+    expect((await service.ensure(mainKey)).generation).toBe(first.generation);
+    expect(connect).toHaveBeenCalledTimes(1);
+    expect(backend.runs()).toHaveLength(1);
+    expect(index.scan().map(s => s.key)).toEqual([mainKey]);
+    expect(fs.readFileSync(first.file, 'utf8')).toBe(raw);
+  });
+
+  it('resumes the exact empty file and persisted binding after a backend/index restart', async () => {
+    const { service, backend, mainKey, data, owned, root, index, emit } = setup(true);
+    const first = await service.ensure(mainKey);
+    const raw = fs.readFileSync(first.file, 'utf8');
+    backend.dispose(); index.close();
+    const restartedIndex = new SessionIndex([owned], owned); indexes.push(restartedIndex);
+    const restartedBackend = new PiBackend({ executable: process.execPath, launchArgs: [path.resolve('tests/fixtures/lazy-pi.mjs')], supported: true, agentDir: root, sessionDirs: [owned], diagnostics: [] }, restartedIndex, owned, path.resolve('extensions/desktop-policy/index.mjs'), emit, data);
+    backends.push(restartedBackend);
+    const restored = new SidecarService(restartedBackend, restartedIndex, data, emit);
+    expect(restored.bindingOf(mainKey)).toBe(first.key);
+    const second = await restored.ensure(mainKey);
+    expect(second.key).toBe(first.key);
+    expect(second.file).toBe(first.file);
+    expect(second.generation).not.toBe(first.generation);
+    expect(restartedIndex.history(second.key)).toMatchObject({ entries: [], branch: [], leafId: null });
+    expect(fs.readFileSync(second.file, 'utf8')).toBe(raw);
+    expect((await restored.ensure(mainKey)).generation).toBe(second.generation);
+  });
+
+  it('leaves new main sessions lazy and does not persist an invalid auxiliary project', async () => {
+    const { backend, root, owned, mainKey } = setup(true);
+    const main = await backend.connect({ cwd: root, trustProject: false, permission: 'ask' });
+    expect(fs.existsSync(main.file)).toBe(false);
+    const files = fs.readdirSync(owned);
+    await expect(backend.connect({ cwd: 'relative', sidecarOf: mainKey, trustProject: false, permission: 'ask', tools: ['read'] })).rejects.toThrow('项目目录不存在');
+    expect(fs.readdirSync(owned)).toEqual(files);
+  });
+
   it('creates read-only ask sessions, persists bindings and reuses active connections', async () => {
     const { service, backend, mainKey, data, root, index, events } = setup();
     const connect = vi.spyOn(backend, 'connect');
@@ -141,13 +188,28 @@ describe('sidecar eviction & closed isolation (review fixes)', () => {
     expect(closed && closed.type === 'closed' && closed.sidecarOf).toBe(mainKey);
   });
 
-  it('repairs a binding whose sidecar file was deleted externally', async () => {
-    const { service, mainKey } = setup();
+  it.each([false, true])('repairs an externally deleted binding with a lazy runtime (lazy=%s)', async lazy => {
+    const { service, mainKey, index } = setup(lazy);
     const first = await service.ensure(mainKey);
     fs.rmSync(first.file, { force: true }); // 手动清理/同步冲突：绑定指向的文件没了（key 是哈希，file 才是路径）
     const second = await service.ensure(mainKey);
     expect(second.key).not.toBe(first.key);
     expect(path.basename(second.file).startsWith('sidecar_')).toBe(true);
     expect(service.bindingOf(mainKey)).toBe(second.key);
+    expect(index.history(second.key).branch).toEqual([]);
+  });
+
+  it.each(['{broken\n', '{"type":"session","id":42,"cwd":"/tmp"}\n'])('rejects a non-readable bound file without replacing it: %s', async raw => {
+    const { service, backend, mainKey, index, data, emit } = setup(true);
+    const first = await service.ensure(mainKey);
+    backend.close(first.key);
+    fs.writeFileSync(first.file, raw);
+    const restartedIndex = new SessionIndex(index.roots, path.dirname(first.file)); indexes.push(restartedIndex);
+    const restored = new SidecarService(backend, restartedIndex, data, emit);
+    const connect = vi.spyOn(backend, 'connect');
+    await expect(restored.ensure(mainKey)).rejects.toThrow('会话不存在');
+    expect(connect).not.toHaveBeenCalled();
+    expect(restored.bindingOf(mainKey)).toBe(first.key);
+    expect(fs.readFileSync(first.file, 'utf8')).toBe(raw);
   });
 });
