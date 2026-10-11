@@ -17,8 +17,19 @@ import path from 'node:path';
  */
 export function repairCodemode(dataDir: string, agentDir: string): boolean {
   try {
-    const desired = readDesktopConfig(dataDir).codemode;
-    if (desired !== true) return false; // 期望关闭或未记录：不主动干预 pi settings
+    const config = readDesktopConfig(dataDir);
+    let desired = config.codemode;
+    // 旧用户迁移：期望字段缺失（本 PR 之前的版本不记录），但 settings 当前已开着
+    // codemode（用户「之前一直开着」）——首次见到时把现状记录为期望，否则 settings
+    // 被 pi 抹掉后无期望可自愈（正是用户报告的「重启后关闭」根因）。
+    if (desired === undefined) {
+      try {
+        const settings = readSettingsDoc(path.join(agentDir, 'settings.json'));
+        desired = Array.isArray(settings.defaultTools) && (settings.defaultTools as unknown[]).includes('+codemode') ? true : false;
+      } catch { /* settings 损坏时按关闭迁移（不覆盖原文件） */ }
+      if (desired !== undefined) { config.codemode = desired; atomicWrite(path.join(dataDir, 'pi-desktop.json'), config); }
+    }
+    if (desired !== true) return false; // 期望关闭或迁移为关闭：不主动干预 pi settings
     const settingsPath = path.join(agentDir, 'settings.json');
     const value = readSettingsDoc(settingsPath);
     const list = Array.isArray(value.defaultTools) ? value.defaultTools.filter((t: unknown) => typeof t === 'string') : [];

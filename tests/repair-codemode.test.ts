@@ -144,3 +144,64 @@ describe('settings-service first snapshot reflects repair (review P2)', () => {
     host.dispose();
   });
 });
+
+describe('legacy user migration (review #4)', () => {
+  it('records the desired state when settings already has +codemode but pi-desktop.json has no codemode field', () => {
+    const { data, agent } = setup();
+    writeDesktop(data, { piPackages: ['npm:pi-memory'] }); // 无 codemode 字段（旧版本不记录）
+    writeSettings(agent, { defaultTools: ['+codemode'] }); // 用户之前一直开着
+    expect(repairCodemode(data, agent)).toBe(false); // 已在位，本次不补
+    // 但迁移已把期望写入 pi-desktop.json
+    expect(JSON.parse(fs.readFileSync(path.join(data, 'pi-desktop.json'), 'utf8')).codemode).toBe(true);
+  });
+
+  it('migrates to false (not auto-enable) when settings has no +codemode', () => {
+    const { data, agent } = setup();
+    writeDesktop(data, { piPackages: [] });
+    writeSettings(agent, { defaultTools: ['+memory'] });
+    expect(repairCodemode(data, agent)).toBe(false);
+    expect(JSON.parse(fs.readFileSync(path.join(data, 'pi-desktop.json'), 'utf8')).codemode).toBe(false);
+  });
+
+  it('after migration, a subsequent pi-wipeout self-heals', () => {
+    const { data, agent } = setup();
+    writeDesktop(data, { piPackages: [] });
+    writeSettings(agent, { defaultTools: ['+codemode'] });
+    repairCodemode(data, agent); // 迁移记录期望 true
+    // 模拟 pi 退出抹掉 defaultTools
+    writeSettings(agent, { theme: 'light', defaultProvider: 'ccr' });
+    expect(repairCodemode(data, agent)).toBe(true); // 自愈补回
+    expect(JSON.parse(fs.readFileSync(path.join(agent, 'settings.json'), 'utf8')).defaultTools).toEqual(['+codemode']);
+  });
+});
+
+describe('host.configure corrupt-document protection (review #2)', () => {
+  it('refuses to overwrite a corrupt pi-desktop.json', async () => {
+    vi.resetModules();
+    const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'codemode-cfg-'))); roots.push(root);
+    const data = path.join(root, 'data'); fs.mkdirSync(data);
+    const corrupt = '{"piPackages":["npm:pi-memory"],'; // 截断
+    fs.writeFileSync(path.join(data, 'pi-desktop.json'), corrupt);
+    const { PiHost } = await import('../src/main/pi/host');
+    const host = new PiHost(data, path.resolve('extensions/desktop-policy/index.mjs'), () => {}, undefined, '0.1.16');
+    expect(() => host.configure({ runtime: 'bundled', agentDir: path.join(root, 'agent') })).toThrow(/损坏/);
+    // 原文件字节未变
+    expect(fs.readFileSync(path.join(data, 'pi-desktop.json'), 'utf8')).toBe(corrupt);
+    host.dispose();
+  });
+
+  it('configure preserves codemode/piPackages when merging a valid document', async () => {
+    vi.resetModules();
+    const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'codemode-cfg2-'))); roots.push(root);
+    const data = path.join(root, 'data'); fs.mkdirSync(data);
+    fs.writeFileSync(path.join(data, 'pi-desktop.json'), JSON.stringify({ codemode: true, piPackages: ['npm:pi-memory'] }));
+    const { PiHost } = await import('../src/main/pi/host');
+    const host = new PiHost(data, path.resolve('extensions/desktop-policy/index.mjs'), () => {}, undefined, '0.1.16');
+    host.configure({ runtime: 'bundled', agentDir: path.join(root, 'agent') });
+    const doc = JSON.parse(fs.readFileSync(path.join(data, 'pi-desktop.json'), 'utf8'));
+    expect(doc.codemode).toBe(true);
+    expect(doc.piPackages).toEqual(['npm:pi-memory']);
+    expect(doc.agentDir).toBe(path.join(root, 'agent'));
+    host.dispose();
+  });
+});
