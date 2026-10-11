@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { guessExtensionFor, mergeRuntimeProviders, runtimeModelsFromRuns } from '../src/main/pi/provider-registry';
+import { guessExtensionFor, mergeRuntimeProviders, packagesFromSettings, runtimeModelsFromRuns } from '../src/main/pi/provider-registry';
 import type { PiModel, PiModelCatalog } from '../src/shared/pi';
 
 const model = (id: string, provider: string, name = id): PiModel => ({ id, name, provider });
@@ -55,18 +55,43 @@ describe('mergeRuntimeProviders', () => {
     expect(catalog.providers).toEqual([]);
   });
 
-  it('prefers a running snapshot over idle ones', () => {
+  it('unions models across runs (project-level extensions make snapshots differ)', () => {
     const runs = [
-      { status: 'idle', models: [model('old', 'prov-a')] },
-      { status: 'running', models: [model('fresh', 'prov-b')] },
+      { status: 'idle', models: [model('only-a', 'prov-a'), model('shared', 'prov-a')] },
+      { status: 'running', models: [model('shared', 'prov-a'), model('only-b', 'prov-b')] },
     ];
     const catalog = mergeRuntimeProviders(emptyCatalog(), runtimeModelsFromRuns(runs));
-    expect(catalog.providers.map(p => p.id)).toEqual(['prov-b']);
+    const a = catalog.providers.find(p => p.id === 'prov-a')!;
+    const b = catalog.providers.find(p => p.id === 'prov-b')!;
+    expect(a.models.map(m => m.id)).toEqual(['only-a', 'shared']);
+    expect(b.models.map(m => m.id)).toEqual(['only-b']);
+  });
+
+  it('deduplicates identical models repeated across snapshots', () => {
+    const catalog = mergeRuntimeProviders(emptyCatalog(), [model('dup', 'prov'), model('dup', 'prov')]);
+    expect(catalog.providers[0].models).toHaveLength(1);
   });
 
   it('returns the catalog untouched when no run has models', () => {
     const catalog = emptyCatalog();
     expect(runtimeModelsFromRuns([{ status: 'running', models: [] }])).toBeUndefined();
     expect(mergeRuntimeProviders(catalog, runtimeModelsFromRuns([{ status: 'running', models: [] }]))).toBe(catalog);
+  });
+});
+
+describe('packagesFromSettings', () => {
+  it('accepts both string and {source} forms', () => {
+    expect(packagesFromSettings({ packages: ['npm:pi-antigravity', { source: 'npm:pi-memory' }, { other: 1 }, 42] })).toEqual(['npm:pi-antigravity', 'npm:pi-memory']);
+    expect(packagesFromSettings(undefined)).toEqual([]);
+    expect(packagesFromSettings({ packages: 'not-array' })).toEqual([]);
+  });
+
+  it('guesses extension from object-form package entries', () => {
+    expect(guessExtensionFor('antigravity', packagesFromSettings({ packages: [{ source: 'npm:pi-antigravity' }] }))).toBe('pi-antigravity');
+  });
+
+  it('prefers exact pi-<id> over looser prefix matches', () => {
+    expect(guessExtensionFor('antigravity', ['pi-antigravity-extra', 'pi-antigravity'])).toBe('pi-antigravity');
+    expect(guessExtensionFor('antigravity-extra', ['pi-antigravity', 'pi-antigravity-extra'])).toBe('pi-antigravity-extra');
   });
 });

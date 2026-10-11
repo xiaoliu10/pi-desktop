@@ -9,17 +9,33 @@ import type { PiCatalogModel, PiCatalogProvider, PiModel, PiModelCatalog } from 
  */
 
 /**
+ * settings.json packages 的字符串形态提取（pi 两种形态都写：字符串或 {source}，
+ * 与 official-subagent/third-party-ask 同款兼容）。
+ */
+export function packagesFromSettings(settings: unknown): string[] {
+  const list = (settings as { packages?: unknown } | null | undefined)?.packages;
+  if (!Array.isArray(list)) return [];
+  return list.map(entry => {
+    if (typeof entry === 'string') return entry;
+    if (entry && typeof entry === 'object') {
+      const source = (entry as { source?: unknown }).source;
+      if (typeof source === 'string') return source;
+    }
+    return '';
+  }).filter(Boolean);
+}
+
+/**
  * 推断 provider 来自哪个扩展包：settings packages 的 npm:pi-<id> 与 provider id
  * 的朴素对应（pi-antigravity → antigravity）。纯展示用途（来源徽标），猜错无副作用。
+ * 两段式：先精确 pi-<id>，再前缀 pi-<id>-*（避免 pi-antigravity 抢先命中
+ * provider=antigravity-extra 这类前缀包含关系）。
  */
 export function guessExtensionFor(providerId: string, packages: string[]): string | undefined {
-  for (const spec of packages) {
-    const raw = typeof spec === 'string' ? spec.replace(/^npm:/, '') : '';
-    if (!raw) continue;
-    // npm:pi-antigravity@^1.0 → 去掉版本段（scoped @scope/pkg@1.0 的首段 @scope 保留）
-    const name = raw.split('/').map(seg => seg.startsWith('@') ? seg : seg.split('@')[0]).join('/');
-    if (name === `pi-${providerId}` || name.startsWith(`pi-${providerId}-`)) return name;
-  }
+  const normalize = (spec: string) => spec.replace(/^npm:/, '').split('/').map(seg => seg.startsWith('@') ? seg : seg.split('@')[0]).join('/');
+  const names = packages.map(normalize).filter(Boolean);
+  for (const name of names) if (name === `pi-${providerId}`) return name;
+  for (const name of names) if (name.startsWith(`pi-${providerId}-`)) return name;
   return undefined;
 }
 
@@ -33,8 +49,12 @@ export function guessExtensionFor(providerId: string, packages: string[]): strin
 export function mergeRuntimeProviders(catalog: PiModelCatalog, runtimeModels: PiModel[] | undefined, packages: string[] = []): PiModelCatalog {
   if (!runtimeModels?.length) return catalog;
   const byProvider = new Map<string, PiModel[]>();
+  const seenModel = new Set<string>();
   for (const m of runtimeModels) {
     if (!m?.provider || !m.id) continue;
+    const dedupe = `${m.provider}::${m.id}`;
+    if (seenModel.has(dedupe)) continue;
+    seenModel.add(dedupe);
     const list = byProvider.get(m.provider) ?? [];
     list.push(m);
     byProvider.set(m.provider, list);
@@ -72,10 +92,22 @@ function runtimeToCatalogModel(m: PiModel): PiCatalogModel {
   };
 }
 
-/** 收集当前可用于目录合并的运行时模型：优先最近活跃的 run（同 agentDir 同配置，任一即可）。 */
+/**
+ * 收集当前可用于目录合并的运行时模型：跨 run 取**并集**（按 provider+id 去重）。
+ * 「同 agentDir 同配置」不成立——项目级扩展（<cwd>/.pi）让不同 run 注册的 provider
+ * 集合可能不同，单快照会让目录随「哪个 run 被采样」非确定漂移。
+ */
 export function runtimeModelsFromRuns(runs: Array<{ models: PiModel[]; status: string }>): PiModel[] | undefined {
-  const withModels = runs.filter(r => r.models.length > 0);
-  if (!withModels.length) return undefined;
-  const running = withModels.find(r => r.status === 'running') ?? withModels[0];
-  return running.models;
+  const seen = new Set<string>();
+  const union: PiModel[] = [];
+  for (const run of runs) {
+    for (const m of run.models) {
+      if (!m?.provider || !m.id) continue;
+      const dedupe = `${m.provider}::${m.id}`;
+      if (seen.has(dedupe)) continue;
+      seen.add(dedupe);
+      union.push(m);
+    }
+  }
+  return union.length ? union : undefined;
 }

@@ -5,7 +5,7 @@ import path from 'node:path';
 import type { PiEnvironment, PiEvent, PiModelProviderDraft, PiPreferences } from '../../shared/pi';
 import { discoverPi, expand } from './environment';
 import { readModelCatalog, mergeModelCatalog, writeDefaultModel, writeModelProvider, removeModelProvider, writeProviderApiKey } from './model-catalog';
-import { mergeRuntimeProviders, runtimeModelsFromRuns } from './provider-registry';
+import { mergeRuntimeProviders, packagesFromSettings, runtimeModelsFromRuns } from './provider-registry';
 import { UsageStatsService } from './usage-stats';
 import { SessionIndex } from './session-index';
 import { PiBackend } from './backend';
@@ -113,11 +113,10 @@ export class PiHost {
       return catalog;
     }
   }
-  /** settings.json packages 的字符串形态（扩展来源徽标推断用）。 */
+  /** settings.json packages（字符串/{source} 双形态，扩展来源徽标推断用）。 */
   private settingsPackages(): string[] {
     try {
-      const settings = JSON.parse(fs.readFileSync(path.join(this.environment.agentDir, 'settings.json'), 'utf8'));
-      return Array.isArray(settings.packages) ? settings.packages.filter((s: unknown): s is string => typeof s === 'string') : [];
+      return packagesFromSettings(JSON.parse(fs.readFileSync(path.join(this.environment.agentDir, 'settings.json'), 'utf8')));
     } catch { return []; }
   }
   modelDefaultSave(input: { provider?: string; model?: string }) { return writeDefaultModel(this.environment.agentDir, input); }
