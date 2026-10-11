@@ -343,6 +343,11 @@
 .pireplica .pi-sidebar__version {
   font-size: var(--pi-font-size-sm);
   color: var(--pi-text-tertiary);
+  /* 两段版本（Desktop x · pi y）并排，窄侧栏时省略号优先保 pi 段 */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
 }
 
 /* narrow viewports: sidebar slides under content */
