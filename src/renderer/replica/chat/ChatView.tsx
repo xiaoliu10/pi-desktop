@@ -747,6 +747,18 @@ export const ChatView = memo(function ChatView(props: ChatViewProps) {
     };
   }, []);
 
+  // 切换会话/会话重载：新会话的历史可能还走在路上（props.messages 仍是旧会话），
+  // 这里先无条件贴底当前内容并把 following 重置为 true——旧会话里用户滚离底部的
+  // 状态绝不能带到新会话（用户报告：每次进来都在最早位置，要手动点定位）。
+  // 内容后续到达时由下方 lastTurnKey 的 useLayoutEffect 与 ResizeObserver 继续贴底。
+  const conversationKeyRef = useRef(props.conversationKey);
+  useLayoutEffect(() => {
+    if (conversationKeyRef.current === props.conversationKey) return;
+    conversationKeyRef.current = props.conversationKey;
+    followingRef.current = true;
+    setShowJump(false);
+    if (listRef.current) listRef.current.scrollTop = listRef.current.scrollHeight;
+  }, [props.conversationKey]);
   const seenScrollRequests = useRef(new Set<string>());
   useLayoutEffect(() => {
     if (!props.scrollRequest || !listRef.current || seenScrollRequests.current.has(props.scrollRequest)) return;
