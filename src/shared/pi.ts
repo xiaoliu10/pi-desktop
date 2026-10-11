@@ -253,7 +253,9 @@ export interface PiCatalogProvider {
   /** How this provider authenticates — presence only, never the secret. */
   auth: 'api_key' | 'oauth' | 'none';
   /** Where the provider definition comes from. */
-  source: 'models.json' | 'models-store.json' | 'auth';
+  source: 'models.json' | 'models-store.json' | 'runtime' | 'auth';
+  /** 来源扩展包名（如 pi-antigravity）：provider 由扩展 registerProvider 注册时的展示徽标。 */
+  originExtension?: string;
   models: PiCatalogModel[];
   /** Image (text-to-image) models; absent when the runtime predates pi 0.99. */
   imageModels?: PiCatalogImageModel[];

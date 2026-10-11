@@ -700,7 +700,9 @@ export interface ProviderCardData {
   enabled: boolean;
   /** Where the provider definition comes from; 'auth' entries are read-only (pi sign-in),
    *  'models-store.json' entries are dynamically refreshed catalogs (OAuth logins like antigravity). */
-  source: 'models.json' | 'models-store.json' | 'auth';
+  source: 'models.json' | 'models-store.json' | 'runtime' | 'auth';
+  /** 来源扩展包名（provider 由扩展 registerProvider 注册时的徽标）。 */
+  originExtension?: string;
   /** Model rows for the detail pane (id / display name / reasoning). */
   models: import("../../shared/pi").PiCatalogModel[];
 }

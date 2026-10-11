@@ -413,7 +413,7 @@ function ModelsPane(props: SettingsProps) {
                     {p.name}
                     {p.isDefault && <span className="pi-marketcard__verified pi-settingrow__default">{L.defaultBadge}</span>}
                   </span>
-                  <span className="pi-models-split__meta">{p.modelCount} models{p.loginAvailable ? (p.auth==='oauth'?' · 套餐已登录':' · 可登录套餐'):p.auth==='api_key'?' · API Key':''}</span>
+                  <span className="pi-models-split__meta">{p.modelCount} models{p.loginAvailable ? (p.auth==='oauth'?' · 套餐已登录':' · 可登录套餐'):p.auth==='api_key'?' · API Key':''}{p.originExtension ? ` · ${p.originExtension}` : ''}</span>
                   {/* 同名供应商（如多个 CCR）靠 id 区分，对齐模型选择列表的编号展示 */}
                   <span className="pi-models-split__id" title={p.id}>{p.id}</span>
                 </button>
@@ -427,10 +427,12 @@ function ModelsPane(props: SettingsProps) {
                     <div className="pi-models-split__title">
                       {selected.name}
                       {selected.isDefault && <span className="pi-marketcard__verified pi-settingrow__default">{L.defaultBadge}</span>}
+                      {selected.source === 'runtime' && <span className="pi-marketcard__verified pi-settingrow__default" title={selected.originExtension ? `来自扩展 ${selected.originExtension}` : '由扩展在运行时注册'}>扩展</span>}
+                      {selected.source === 'models-store.json' && selected.originExtension && <span className="pi-marketcard__verified pi-settingrow__default" title={`来自扩展 ${selected.originExtension}`}>扩展</span>}
                     </div>
                     <div className="pi-models-split__id" title={selected.id}>{selected.id}</div>
                     <div className="pi-models-split__ops">
-                      {!editable && <span className="pi-models-split__hint">pi 内核管理的模型目录</span>}
+                      {!editable && <span className="pi-models-split__hint">{selected.source === 'runtime' ? '扩展在运行时注册的模型目录（只读）' : 'pi 内核管理的模型目录'}</span>}
                       {!editable && ['auth', 'models-store.json'].includes(selected.source) && selected.auth !== 'oauth' && props.onSaveProviderAuth && (
                         <button className="pi-btn pi-btn--outline" onClick={() => openAuthEditor(selected)}>
                           {selected.auth === 'api_key' ? '修改 API Key' : '设置 API Key'}
