@@ -11,7 +11,11 @@ export interface SubagentAdapter {
   id: string;
   /** Check whether a tool part's details belong to this adapter's format. */
   detect(part: ToolPart): boolean;
-  /** Extract child subagent states from the tool part. */
+  /** Extract child subagent states from the tool part.
+   *  Contract: children must be position-stable across incremental updates —
+   *  dismissal persists `${callId}:${index}`, so a results array that reorders
+   *  or compacts would misalign hidden rows. The official extension satisfies
+   *  this (parallel preallocates per-task slots, chain appends). */
   parse(part: ToolPart, parentRunning: boolean): SubagentChild[];
 }
 

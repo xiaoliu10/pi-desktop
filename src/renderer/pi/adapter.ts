@@ -1,7 +1,7 @@
 import { contextPrompt, parseContextPrompt, type ContextItem, type ThinkingLevel } from '../../shared/composer';
 import { closeTransientPopovers } from '../replica/popovers';
 import { projectSubagents } from './subagents';
-import { dismissibleSubagentCalls } from './subagent-dismissal';
+import { dismissibleSubagentIds } from './subagent-dismissal';
 import { applyAssistantStreamDelta } from './stream-delta';
 import { modelErrorPart } from './model-error';
 import { nextModelRetryState } from './model-retry';
@@ -774,7 +774,7 @@ export interface PiReplicaState {
   sentAt?: { key: string; at: number };
   /** 父会话重启后从磁盘恢复的子代理进度（扩展在 onUpdate 时持久化的快照）。 */
   recoveredSubagents?: Array<{ callId: string; status: string; details?: unknown; error?: string; startedAt?: number; updatedAt?: number }>;
-  /** 已被用户从子代理目录移除的 callId（仅当前会话内存态，切会话清空）。 */
+  /** 已被用户从子代理目录移除的记录：child id（callId:index）与旧版整 callId 混存（渲染过滤双匹配兼容）（仅当前会话内存态，切会话清空）。 */
   subagentDismissed?: string[];
   /** pi 全局 settings.json 的 AI 默认值（通用设置页内联展示与保存）。 */
   aiSettings?: import('../../shared/settings').SettingsSnapshot['ai'];
@@ -830,8 +830,8 @@ export interface PiReplicaActions {
   selectSession: (key: string) => void;
   /** 后台预热连接：打开会话即启动 pi 进程，发送时不再等「正在准备任务…」。失败静默。 */
   prewarmSession: (key: string) => void;
-  dismissSubagent: (callId: string) => void;
-  dismissFinishedSubagents: (callIds: string[]) => void;
+  dismissSubagent: (childId: string) => void;
+  dismissFinishedSubagents: (childIds: string[]) => void;
   setSessionArchived: (key: string, archived: boolean) => Promise<boolean>;
   /** 删除归档会话（文件进系统废纸篓）：成功后从归档列表与会话索引移除。 */
   deleteArchivedSession: (key: string) => Promise<boolean>;
@@ -1724,20 +1724,21 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
       prewarmInFlight.set(key, p);
       void p.finally(() => prewarmInFlight.delete(key));
     },
-    dismissSubagent: (callId) => get().dismissFinishedSubagents([callId]),
-    dismissFinishedSubagents: (callIds) => {
+    dismissSubagent: (childId) => get().dismissFinishedSubagents([childId]),
+    dismissFinishedSubagents: (childIds) => {
       const s = get();
       const key = s.selectedKey;
-      if (!key || !callIds.length) return;
+      if (!key || !childIds.length) return;
       const messages = sentConversationMessages(s.history?.branch ?? [], s.live[key], s.toolProgress[key], (s.sends ?? []).filter(send => send.key === key), s.compactionAfter[key]);
       const run = currentRun(s);
       const parentRunning = Boolean(run && ['starting', 'running', 'stopping'].includes(run.status));
       const children = projectSubagents(messages, parentRunning, s.recoveredSubagents);
-      const allowed = new Set(dismissibleSubagentCalls(children));
+      const allowed = new Set(dismissibleSubagentIds(children));
       // Revalidate against the latest selected-session state, not the rendered row.
-      // A shared callId must not hide a running/queued sibling.
+      // Child-level ids (`callId:index`) can never hide a running/queued sibling;
+      // legacy persisted entries hold whole callIds and stay matched by the render filter.
       const existing = s.subagentDismissed ?? s.desktopPreferences?.subagentDismissed?.[key] ?? [];
-      const finished = callIds.filter(id => allowed.has(id) && !existing.includes(id));
+      const finished = childIds.filter(id => allowed.has(id) && !existing.includes(id));
       if (!finished.length) return;
       const dismissed = [...new Set([...existing, ...finished])];
       set({ subagentDismissed: dismissed });
