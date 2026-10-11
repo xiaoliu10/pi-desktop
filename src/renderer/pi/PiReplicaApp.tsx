@@ -1002,6 +1002,9 @@ export default function PiReplicaApp() {
                 tab={s.workbenchTab}
                 // 不设 key：重挂载会销毁浏览器 webview；预览文件的展开重置由 WorkbenchPanel 内部比对 selectedFile 完成。
                 browserPanel={<BrowserPanel labels={t.browser} />}
+                sidecarPanel={s.selectedKey && s.view === 'chat'
+                  ? <SidecarPanel key={`wb-${s.selectedKey}`} mainKey={s.selectedKey} autoStart={false} onClose={() => usePiStore.setState({ workbenchTab: 'home' })} />
+                  : undefined}
                 diffs={filePreview ? (filePreview.diff ? [filePreview.diff] : []) : reviewDiffs}
                 files={[
                   // review 里的编辑文件都可点选查看完整内容
