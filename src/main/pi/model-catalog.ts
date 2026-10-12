@@ -250,7 +250,8 @@ export function writeModelProvider(agentDir: string, draft: PiModelProviderDraft
     }
     if (model.compat !== undefined) {
       const compat = model.compat;
-      if (!compat || Array.isArray(compat) || typeof compat !== 'object' || Object.entries(compat).some(([k,v]) => !k || (typeof v !== 'boolean' && typeof v !== 'string'))) throw new Error('compat 无效：必须为对象，值为布尔或字符串');
+      // 只校验容器与亲和两键；未知键（含 pi schema 的嵌套成员如 allowedFallbackModels）原样透传，由 pi 运行时校验。
+      if (!compat || Array.isArray(compat) || typeof compat !== 'object') throw new Error('compat 无效：必须为对象');
       if (compat.sendSessionAffinityHeaders !== undefined && typeof compat.sendSessionAffinityHeaders !== 'boolean') throw new Error('compat.sendSessionAffinityHeaders 必须为布尔');
       if (compat.sessionAffinityFormat !== undefined && !['openrouter','openai','openai-nosession'].includes(String(compat.sessionAffinityFormat))) throw new Error('compat.sessionAffinityFormat 只支持 openrouter / openai / openai-nosession');
     }
@@ -330,7 +331,7 @@ export function writeModelProvider(agentDir: string, draft: PiModelProviderDraft
       if (m.compat !== undefined) entry.compat = m.compat;
       else if (Object.hasOwn(m, 'compat')) delete entry.compat;
       // Explicit Desktop edits must also update the runtime's topmost config layer.
-      const fields = editableFields.filter(key => m[key] !== undefined || (key === 'thinkingLevelMap' || key === 'samplingParamsByThinkingLevel') && Object.hasOwn(m, key));
+      const fields = editableFields.filter(key => m[key] !== undefined || (key === 'thinkingLevelMap' || key === 'samplingParamsByThinkingLevel' || key === 'compat') && Object.hasOwn(m, key));
       const override = patchModel(overrides[m.id] ?? {}, m, fields);
       validateLimits({ ...entry, ...override });
       if (Object.keys(override).length) overrides[m.id] = override; else delete overrides[m.id];

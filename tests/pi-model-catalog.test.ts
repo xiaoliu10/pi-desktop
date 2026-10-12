@@ -326,6 +326,16 @@ describe('session affinity (compat) persistence', () => {
     fs.rmSync(dir, { recursive: true, force: true });
   });
 
+  it('passes nested compat members through untouched (pi schema owns them)', () => {
+    const dir = makeAgentDir();
+    // pi ProviderCompatSchema 允许嵌套成员（allowedFallbackModels 等）；Desktop 逐值校验会误杀真实模型（如 anthropic/claude-fable-5）
+    const compat = { allowedFallbackModels: [{ provider: 'anthropic', model: 'claude-fable-5' }], sendSessionAffinityHeaders: true };
+    writeModelProvider(dir, { id: 'nested', baseUrl: 'https://n.example.com/v1', models: [{ id: 'm1', compat }] });
+    const stored = JSON.parse(fs.readFileSync(path.join(dir, 'models.json'), 'utf8'));
+    expect(stored.providers['nested'].models[0].compat).toEqual(compat);
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
   it('rejects malformed compat without touching models.json', () => {
     const dir = makeAgentDir();
     writeModelProvider(dir, { id: 'aff2', baseUrl: 'https://aff2.example.com/v1', models: [{ id: 'm1' }] });

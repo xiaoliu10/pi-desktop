@@ -71,7 +71,7 @@ export function ModelMetadataDialog({model, others, adding, onClose, onSave}: {
             {([['default','默认','不发送会话亲和头'],['openrouter','OpenRouter 格式','发送 x-session-id，OpenRouter 及兼容网关用'],['anthropic','Anthropic 格式','发送 x-session-affinity，Anthropic 原生会话路由']] as const).map(([value,label,desc])=>
               <button key={value} type="button" role="radio" aria-checked={draft.sessionAffinity===value} title={desc} onClick={()=>patch({sessionAffinity:value as SessionAffinity})}>{label}</button>)}
           </div>
-          <small>{draft.sessionAffinity==='default' ? '不发送会话亲和头（pi 默认；OpenRouter 供应商自动开启，无需配置）。' : '开启后每次请求携带会话 ID，供应商把同一会话路由到同一上游，提升缓存命中。仅对 Anthropic 协议（anthropic-messages）的模型生效。'}</small>
+          <small>{draft.sessionAffinity==='default' ? '不发送会话亲和头（pi 默认；OpenRouter 供应商自动开启，无需配置）。' : '开启后每次请求携带会话 ID，供应商把同一会话路由到同一上游，提升缓存命中。对 Anthropic 与 OpenAI Completions 协议的模型生效；未指定格式时 pi 按供应商自动判定。'}</small>
           </section>
         </div>
         <p className="pi-providerform__hint">留空的参数使用 pi 默认值。能力声明应与服务商提供的模型一致。</p>
