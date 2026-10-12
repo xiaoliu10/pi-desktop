@@ -3,6 +3,7 @@ import { Icon } from '../replica/Icons';
 import type { ChatMessage } from '../replica/contracts';
 import type { GitStatus } from '../../shared/conversation-status';
 import type { PiSessionStats } from '../../shared/pi';
+import { cacheHitRateFromTotals } from '../../shared/context-details';
 import type { SubagentChild } from './subagents';
 import { dismissibleSubagentIds } from './subagent-dismissal';
 import { conversationPlan } from './conversation-plan';
@@ -10,6 +11,8 @@ import './conversation-status.css';
 
 /** 1234→1.2k, 1234567→1.23M —— 状态栏紧凑数字。 */
 const fmtTokens = (n: number): string => n >= 1e6 ? `${(n / 1e6).toFixed(2)}M` : n >= 1e3 ? `${(n / 1e3).toFixed(1)}k` : String(n);
+/** 百分比/速率统一口径：有限非负值保留一位小数，未知（null/NaN/负数）显示 —。 */
+const fmtRate = (n: number | null | undefined, unit: string): string => n != null && Number.isFinite(n) && n >= 0 ? `${n.toFixed(1)}${unit}` : '—';
 
 const SUBAGENT_STATUS: Record<SubagentChild['status'], { label: string; icon: 'refresh' | 'check-circle' | 'warning' | 'circle' }> = {
   running: { label: '运行中', icon: 'refresh' },
@@ -24,8 +27,12 @@ const SUBAGENT_STATUS: Record<SubagentChild['status'], { label: string; icon: 'r
 
 const subagentPriority = (child: SubagentChild): number => child.status === 'running' ? 0 : child.status === 'queued' ? 1 : 2;
 
-export function ConversationStatusPanel({cwd,messages,running,stats,onReview,onRequest,onOpenPlan,planAvailable,planTitle,subagents,onOpenSubagent,onDismissSubagent,onDismissFinishedSubagents,onOpenTerminal,terminalOpen}: {
+export function ConversationStatusPanel({cwd,messages,running,stats,contextUsage,outputPerformance,onReview,onRequest,onOpenPlan,planAvailable,planTitle,subagents,onOpenSubagent,onDismissSubagent,onDismissFinishedSubagents,onOpenTerminal,terminalOpen}: {
   cwd?:string; messages:ChatMessage[]; running:boolean; stats?:PiSessionStats; onReview:()=>void; onRequest:(text:string)=>void;
+  /** 上下文占用（与顶栏 ContextUsageChip 同源）：供会话统计的「上下文占用 %」列。 */
+  contextUsage?:import('./ContextUsage').ContextUsage | null;
+  /** 输出速度采样快照（当前连接内有效完成调用累计）；undefined=断开/重连/未完成调用，显示 —。 */
+  outputPerformance?:import('../../shared/pi').PiRun['outputPerformance'];
   /** 计划查看器入口（ZCode 状态面板 sessionPlans 区的同位复刻）。 */
   onOpenPlan?:()=>void; planAvailable?:boolean;
   /** 计划标题（首个 H1/首行）：「计划」区点击行在右侧打开计划全文。 */
@@ -42,6 +49,11 @@ export function ConversationStatusPanel({cwd,messages,running,stats,onReview,onR
   const [revision,setRevision]=useState(0);
   const [collapsed,setCollapsed]=useState(()=>localStorage.getItem('pi-status-collapsed')==='true' || window.innerWidth<760);
   const [menu,setMenu]=useState(false);  const plan=useMemo(()=>conversationPlan(messages),[messages]);
+  // 会话统计的三列口径：缓存命中率复用共享 cacheHitRateFromTotals（与上下文详情同源），
+  // 上下文占用复用顶栏 ContextUsageChip 规则（tokens/contextWindow，缺失显示 —）。
+  const cacheHitRate=useMemo(()=>cacheHitRateFromTotals(stats?.tokens),[stats]);
+  const contextPercent=contextUsage&&contextUsage.tokens!=null&&Number.isFinite(contextUsage.tokens)&&contextUsage.tokens>=0&&Number.isFinite(contextUsage.contextWindow)&&contextUsage.contextWindow>0?contextUsage.tokens/contextUsage.contextWindow*100:null;
+  const outputSpeed=outputPerformance&&Number.isFinite(outputPerformance.tokens)&&outputPerformance.tokens>=0&&Number.isFinite(outputPerformance.ms)&&outputPerformance.ms>0&&Number.isInteger(outputPerformance.calls)&&outputPerformance.calls>0?outputPerformance.tokens/outputPerformance.ms*1000:null;
   // ZCode 终端区的可观测口径：正在执行的 shell 命令数（来自对话流中的运行中 bash 工具步骤）。
   const runningCommands=useMemo(()=>messages.reduce((n,m)=>n+m.parts.filter(p=>p.kind==='tool'&&p.status==='running'&&['bash','run_command'].includes(p.tool)).length,0),[messages]);
   const runningAgents=(subagents??[]).filter(child=>child.status==='running'||child.status==='queued').length;
@@ -132,6 +144,13 @@ export function ConversationStatusPanel({cwd,messages,running,stats,onReview,onR
             {stats.cost!==undefined&&Number.isFinite(stats.cost)&&<div><small>费用</small><b>${stats.cost<0.01&&stats.cost>0?stats.cost.toFixed(4):stats.cost.toFixed(2)}</b></div>}
             {stats.totalMessages!==undefined&&<div><small>消息</small><b>{stats.totalMessages}</b></div>}
             {stats.toolCalls!==undefined&&<div><small>工具调用</small><b>{stats.toolCalls}</b></div>}
+          </div>
+          {/* 独立三列一行：输出速度 / 缓存命中率 / 上下文占用。用独立 grid 承载，
+              上面费用/消息/工具调用的条件缺失不会让这三列错位。口径见各 title。 */}
+          <div className="pi-status-statgrid pi-status-statgrid--rates">
+            <div title="输出速度：包含思考 token，以当前连接有效完成调用（含 length 截断）的累计输出 token ÷ 累计输出耗时计算。耗时从首个非空 text/thinking/toolcall delta 到调用结束，排除首 token 等待、工具与审批等待；错误/中止、无用量、无法配对的调用不计入。"><small>输出速度</small><b>{fmtRate(outputSpeed,' t/s')}</b></div>
+            <div title="缓存命中率：cacheRead ÷ (input + cacheRead + cacheWrite) × 100%。口径与上下文详情一致，只依赖会话 token 分布。"><small>缓存命中率</small><b>{fmtRate(cacheHitRate,'%')}</b></div>
+            <div title="上下文占用：当前会话已用 token ÷ 模型窗口容量。是会话上下文估算，非累计 token 消耗。"><small>上下文占用</small><b>{fmtRate(contextPercent,'%')}</b></div>
           </div>
         </div>}
         {planAvailable&&onOpenPlan&&<div className="pi-status-agents">
