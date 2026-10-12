@@ -242,10 +242,12 @@ export interface UpdateStatus {
 // Read-only model catalog (pi configuration, secrets stripped server-side).
 // ---------------------------------------------------------------------------
 
-export type PiModelEditableField = 'name' | 'contextWindow' | 'maxTokens' | 'reasoning' | 'input' | 'thinkingLevelMap' | 'samplingParamsByThinkingLevel';
+export type PiModelEditableField = 'name' | 'contextWindow' | 'maxTokens' | 'reasoning' | 'input' | 'thinkingLevelMap' | 'samplingParamsByThinkingLevel' | 'compat';
 export interface PiCatalogModel { /** custom=models.json 自定义 / override=models.json 覆盖 / builtin=models-store.json 动态目录 */ definition?: 'custom' | 'override' | 'builtin'; thinkingLevelMap?: Partial<Record<'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max', string | null>>;
   /** Per-level sampling params (pi 1.0.2+), e.g. {"temperature":0.7}; mirrors models-config schema. */
-  samplingParamsByThinkingLevel?: Partial<Record<'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max', Record<string, unknown>>>; id: string; name?: string; contextWindow?: number; maxTokens?: number; reasoning?: boolean; input?: string[] }
+  samplingParamsByThinkingLevel?: Partial<Record<'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max', Record<string, unknown>>>;
+  /** pi models-config CompatSchema 透传。Desktop 只编辑 sendSessionAffinityHeaders / sessionAffinityFormat 两键（会话亲和），未知键原样保留交给 pi 校验。 */
+  compat?: Record<string, unknown>; id: string; name?: string; contextWindow?: number; maxTokens?: number; reasoning?: boolean; input?: string[] }
 export interface PiCatalogImageModel { id: string; name?: string }
 export interface PiCatalogProvider {
   loginAvailable?: boolean;

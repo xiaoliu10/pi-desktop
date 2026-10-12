@@ -299,3 +299,42 @@ describe('models-store.json dynamic catalogs (antigravity)', () => {
     fs.rmSync(dir, { recursive: true, force: true });
   });
 });
+
+describe('session affinity (compat) persistence', () => {
+  it('writes compat through create and modelEdit override, preserving unknown keys', () => {
+    const dir = makeAgentDir();
+    // create 分支：compat 落到 provider.models[]，未知键透传
+    writeModelProvider(dir, {
+      id: 'aff-relay', baseUrl: 'https://aff.example.com/v1', api: 'openai-completions',
+      models: [{ id: 'm1', compat: { sendSessionAffinityHeaders: true, sessionAffinityFormat: 'openrouter', supportsReasoningEffort: true } }],
+    });
+    const stored = JSON.parse(fs.readFileSync(path.join(dir, 'models.json'), 'utf8'));
+    expect(stored.providers['aff-relay'].models[0].compat).toEqual({ sendSessionAffinityHeaders: true, sessionAffinityFormat: 'openrouter', supportsReasoningEffort: true });
+    // modelEdit override 分支：compat 进 modelOverrides 层
+    const catalog = writeModelProvider(dir, {
+      id: 'aff-relay', baseUrl: '', models: [{ id: 'm1', compat: { sendSessionAffinityHeaders: true } }],
+      modelEdit: { originalId: 'm1', kind: 'override', fields: ['compat'] },
+    });
+    const after = JSON.parse(fs.readFileSync(path.join(dir, 'models.json'), 'utf8'));
+    expect(after.providers['aff-relay'].modelOverrides.m1.compat).toEqual({ sendSessionAffinityHeaders: true });
+    expect(catalog.providers.find((p) => p.id === 'aff-relay')?.models[0].compat).toEqual({ sendSessionAffinityHeaders: true });
+    // 清除：compat undefined + fields 显式含 compat → override 层与定义层都不再带
+    writeModelProvider(dir, { id: 'aff-relay', baseUrl: '', models: [{ id: 'm1', compat: undefined }], modelEdit: { originalId: 'm1', kind: 'override', fields: ['compat'] } });
+    const cleared = JSON.parse(fs.readFileSync(path.join(dir, 'models.json'), 'utf8'));
+    // 覆盖层 compat 清空后整个 m1 覆盖条目被移除（空覆盖不落盘）
+    expect(cleared.providers['aff-relay'].modelOverrides?.m1).toBeUndefined();
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('rejects malformed compat without touching models.json', () => {
+    const dir = makeAgentDir();
+    writeModelProvider(dir, { id: 'aff2', baseUrl: 'https://aff2.example.com/v1', models: [{ id: 'm1' }] });
+    const before = fs.readFileSync(path.join(dir, 'models.json'), 'utf8');
+    const edit = (model: Record<string, unknown>) => ({ id: 'aff2', baseUrl: '', models: [model], modelEdit: { originalId: 'm1', kind: 'override' as const, fields: ['compat' as const] } });
+    expect(() => writeModelProvider(dir, edit({ id: 'm1', compat: [1, 2] as unknown as Record<string, unknown> }))).toThrow('compat');
+    expect(() => writeModelProvider(dir, edit({ id: 'm1', compat: { sendSessionAffinityHeaders: 'yes' } }))).toThrow('compat');
+    expect(() => writeModelProvider(dir, edit({ id: 'm1', compat: { sessionAffinityFormat: 'nginx' } }))).toThrow('sessionAffinityFormat');
+    expect(fs.readFileSync(path.join(dir, 'models.json'), 'utf8')).toBe(before);
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+});

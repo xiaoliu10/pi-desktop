@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import type { PiCatalogModel, PiModelEditableField } from '../../../shared/pi';
 import { Icon } from '../Icons';
-import { commitModelDraft, createModelDraft, type ModelDraft } from './model-draft';
+import { commitModelDraft, createModelDraft, type ModelDraft, type SessionAffinity } from './model-draft';
 import { availableLevelsOf, parseLevelMap, SamplingParamsEditor, ThinkingLevelChips } from './thinking-level-chips';
 
 /** Interaction adapted from ZCode ProviderModelMetadataDialog / ModelEditorAdvanced.
@@ -29,13 +29,13 @@ export function ModelMetadataDialog({model, others, adding, onClose, onSave}: {
   const close=()=>{if(!savingRef.current)onClose();};
   const save=async()=>{
     if(savingRef.current || composing.current)return;
-    const result=commitModelDraft(draft,others);
+    const result=commitModelDraft(draft,others,adding?undefined:model);
     if('field' in result){setError(result);if(result.field==='thinkingLevelMap'||result.field==='samplingParams')setAdvanced(true);return;}
     savingRef.current=true;setSaving(true);setError(null);
     // Only changed fields are sent for an existing model. In particular, a name edit
     // cannot replay stale discovery metadata over a concurrently edited context limit.
-    const initial = commitModelDraft(createModelDraft(model), []);
-    const keys: PiModelEditableField[] = ['name','contextWindow','maxTokens','reasoning','input','thinkingLevelMap','samplingParamsByThinkingLevel'];
+    const initial = commitModelDraft(createModelDraft(model), [], model);
+    const keys: PiModelEditableField[] = ['name','contextWindow','maxTokens','reasoning','input','thinkingLevelMap','samplingParamsByThinkingLevel','compat'];
     const fields = adding || 'field' in initial ? keys : keys.filter(key => JSON.stringify(result.model[key]) !== JSON.stringify(initial.model[key]));
     try{await onSave(result.model,fields);onClose();}
     catch(e){setError({message:e instanceof Error?e.message:String(e)});}
@@ -66,6 +66,12 @@ export function ModelMetadataDialog({model, others, adding, onClose, onSave}: {
           <section><h3>推理参数映射</h3>
             <SamplingParamsEditor value={draft.samplingParams} error={error?.field==='samplingParams'} availableLevels={levelsForSampling}
               onChange={json=>patch({samplingParams:json})}/>
+          </section>
+          <section><h3>会话亲和</h3><div className="pi-model-options" role="radiogroup" aria-label="会话亲和">
+            {([['default','默认','不发送会话亲和头'],['openrouter','OpenRouter 格式','发送 x-session-id，OpenRouter 及兼容网关用'],['anthropic','Anthropic 格式','发送 x-session-affinity，Anthropic 原生会话路由']] as const).map(([value,label,desc])=>
+              <button key={value} type="button" role="radio" aria-checked={draft.sessionAffinity===value} title={desc} onClick={()=>patch({sessionAffinity:value as SessionAffinity})}>{label}</button>)}
+          </div>
+          <small>{draft.sessionAffinity==='default' ? '不发送会话亲和头（pi 默认；OpenRouter 供应商自动开启，无需配置）。' : '开启后每次请求携带会话 ID，供应商把同一会话路由到同一上游，提升缓存命中。仅对 Anthropic 协议（anthropic-messages）的模型生效。'}</small>
           </section>
         </div>
         <p className="pi-providerform__hint">留空的参数使用 pi 默认值。能力声明应与服务商提供的模型一致。</p>
