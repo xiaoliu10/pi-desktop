@@ -175,6 +175,8 @@ describe('RemoteServer (LAN remote control)', () => {
     expect(html).toContain('id="imgInput"');   // 图片选择（移动端发图）
     expect(html).toContain('id="imgChips"');   // 已选图片预览 chips
     expect(html).toContain('desktopVersion');  // 连接行展示桌面版本号
+    expect(html).toContain('think-body');       // 思考折叠气泡（流式不再全文铺开）
+    expect(html).toContain('展开思考过程');
     const nope = await fetch(`${base}/whatever?token=${status.token}`);
     expect(nope.status).toBe(404);
   });

@@ -706,8 +706,10 @@ function thinkBubble(text, streaming) {
   const t = String(text ?? '');
   const who = streaming ? '思考中…' : '已思考';
   const summary = streaming ? escapeHtml(t.slice(-80)) : '展开思考过程（' + t.length + ' 字）';
+  const MAX_THINK_CHARS = 20000;
+  const body = t.length > MAX_THINK_CHARS ? t.slice(0, MAX_THINK_CHARS) + '\\n…（已截断，完整内容见桌面端）' : t;
   return '<div class="msg think"><div class="who">' + who + '（' + t.length + ' 字）</div>'
-    + '<details><summary>' + summary + '</summary><div class="think-body">' + escapeHtml(t) + '</div></details></div>';
+    + '<details><summary>' + summary + '</summary><div class="think-body">' + escapeHtml(body) + '</div></details></div>';
 }
 function textOf(content) {
   if (typeof content === 'string') return content;
@@ -748,6 +750,8 @@ function applyDelta(delta) {
 }
 function renderLive() {
   const old = document.getElementById('live');
+  // 每个 delta 都重建 #live，<details> 的展开状态需手动延续（否则流式期间手动展开会被立即拍扁）。
+  const wasThinkOpen = old ? !!old.querySelector('.msg.think details')?.open : false;
   if (old) old.remove();
   if (!liveBlocks || !liveBlocks.length) return;
   // 思考折叠：长思考（GLM high 档动辄数千字）不再全文铺开，只留一行状态 + 可展开详情；
@@ -762,6 +766,7 @@ function renderLive() {
   if (!html) return;
   const div = document.createElement('div');
   div.id = 'live'; div.innerHTML = html;
+  if (wasThinkOpen) { const d = div.querySelector('.msg.think details'); if (d) d.open = true; }
   document.getElementById('feed').appendChild(div);
   window.scrollTo(0, document.body.scrollHeight);
 }
