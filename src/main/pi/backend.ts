@@ -14,6 +14,7 @@ import { clearMemoryEnv, memorySessionEnv } from './memory-bridge';
 import { repairPackages } from './packages-repair';
 import { repairCodemode } from './repair-codemode';
 import { RetryGroups } from './retry-groups';
+import { OutputPerformanceTracker } from './output-performance';
 import { loadContinuations, recordContinuation, resolveContinuation, saveContinuations } from './session-continuations';
 /** prompt 出栈前登记的图片 sidecar：pi 的 queue_update 只回文本，权威队列到达后
  *  按 文本+behavior+出现次序 把图接回。at 用于过期清理（暂存一直未被任何 queue_update
@@ -38,7 +39,7 @@ const STUCK_WATCHDOG_INTERVAL_MS = 30_000;
  *  满员时 connect 自动断开最久空闲的会话腾位（历史无损，点开即重连），全繁忙才拒绝。 */
 const MAX_SESSIONS = 12;
 type QueuedInput = NonNullable<PiRun['queue']>[number];
-interface Running { recheckTimer?: ReturnType<typeof setTimeout>; stopQueueSnapshot?: QueuedInput[]; settlement?: { token: string; timer: ReturnType<typeof setTimeout> }; activity: number; /** 假 running 自愈用：全部 pi 事件计数与最近事件时刻 */ eventCount: number; lastEventAt: number; verifying?: boolean; promptSequence: number; retryUncertain: boolean; stopUnconfirmed: boolean; retry: RetryGroups; retryReady: boolean; retryEntryId?: string; deferredQueue: QueuedInput[]; stopEpoch: number; policyReady: boolean; client: PiRpcClient; view: PiRun; input: { cwd: string; trustProject: boolean; permission: AccessMode; executionMode?: Exclude<AccessMode, 'plan'>; file: string; origin: string; sidecarOf?: string; systemPrompt?: string; tools?: string[]; model?: string }; dialogs: Map<string, { timer?: ReturnType<typeof setTimeout>; method: string; request: PiUiRequest }>; /** 第三方 ask 插件在供题（desktop-ask 未随会话加载）——事件层把其原生问卷桥接成桌面卡片。 */ thirdPartyAsk: boolean; /** tool_execution_start 暂存的问卷入参：首个原生 UI 请求到达即消费；校验失败直接 end 时由 end 清理。 */ pendingAskArgs?: { toolCallId: string; questions: AskBridgeQuestion[] }; /** 活动问卷桥：卡片已下发，后续原生请求按 plan 自动应答。 */ askBridge?: AskBridgeState; queueImages: StagedQueueImage[] }
+interface Running { recheckTimer?: ReturnType<typeof setTimeout>; stopQueueSnapshot?: QueuedInput[]; settlement?: { token: string; timer: ReturnType<typeof setTimeout> }; activity: number; /** 假 running 自愈用：全部 pi 事件计数与最近事件时刻 */ eventCount: number; lastEventAt: number; verifying?: boolean; promptSequence: number; retryUncertain: boolean; stopUnconfirmed: boolean; retry: RetryGroups; retryReady: boolean; retryEntryId?: string; deferredQueue: QueuedInput[]; stopEpoch: number; policyReady: boolean; client: PiRpcClient; view: PiRun; input: { cwd: string; trustProject: boolean; permission: AccessMode; executionMode?: Exclude<AccessMode, 'plan'>; file: string; origin: string; sidecarOf?: string; systemPrompt?: string; tools?: string[]; model?: string }; dialogs: Map<string, { timer?: ReturnType<typeof setTimeout>; method: string; request: PiUiRequest }>; /** 第三方 ask 插件在供题（desktop-ask 未随会话加载）——事件层把其原生问卷桥接成桌面卡片。 */ thirdPartyAsk: boolean; /** 输出速度采样器（当前连接内有效完成调用；launch 新建 → 断开/重连从零，历史不回推）。 */ outputPerformance: OutputPerformanceTracker; /** tool_execution_start 暂存的问卷入参：首个原生 UI 请求到达即消费；校验失败直接 end 时由 end 清理。 */ pendingAskArgs?: { toolCallId: string; questions: AskBridgeQuestion[] }; /** 活动问卷桥：卡片已下发，后续原生请求按 plan 自动应答。 */ askBridge?: AskBridgeState; queueImages: StagedQueueImage[] }
 export class PiBackend {
   private active = new Map<string, Running>();
   private watchdog: ReturnType<typeof setInterval> | undefined;
@@ -283,7 +284,7 @@ export class PiBackend {
       fs.appendFile(rpcLogPath, `[${new Date().toISOString()}] ${String(message)}\n`, () => { /* 落盘失败不影响主流程 */ });
     });
     const view: PiRun = { sidecarOf: input.sidecarOf, accessMode: input.permission, executionMode: input.permission === 'plan' ? input.executionMode ?? 'ask' : input.permission, key, generation, cwd: input.cwd, file: input.file, status: 'starting', models: [], commands: [], pending: 0 };
-    const run: Running = { activity: 0, eventCount: 0, lastEventAt: Date.now(), promptSequence: 0, retryUncertain: false, stopUnconfirmed: false, retry: undefined!, retryReady: false, deferredQueue: [], stopEpoch: 0, policyReady: false, thirdPartyAsk: thirdPartyAsk.detected, client, view, input, dialogs: new Map(), queueImages: [] };
+    const run: Running = { activity: 0, eventCount: 0, lastEventAt: Date.now(), promptSequence: 0, retryUncertain: false, stopUnconfirmed: false, retry: undefined!, retryReady: false, deferredQueue: [], stopEpoch: 0, policyReady: false, thirdPartyAsk: thirdPartyAsk.detected, outputPerformance: new OutputPerformanceTracker(generation), client, view, input, dialogs: new Map(), queueImages: [] };
     run.retry = new RetryGroups(state => {
       view.retryGroup = state;
       if (state?.error) {
@@ -304,6 +305,7 @@ export class PiBackend {
       this.clearSettlement(run); run.retry.dispose(); ++run.stopEpoch;
       if (view.timing && view.timing.endedAt === undefined) view.timing = { ...view.timing, endedAt: Date.now() };
       view.status = 'error';
+      run.outputPerformance.clear(); view.outputPerformance = undefined;
       const stderr = client.stderrDetail();
       // 红条归因：generic「已退出」只作兑底，已知因果故障优先展示；close() 自身也发
       // SIGTERM，本机主动断开不得表述成系统/外部杀进程。只含故障类别，不泄露 prompt/env。
@@ -403,6 +405,7 @@ export class PiBackend {
   private forceSettle(run: Running) {
     const key = run.view.key;
     if (this.active.get(key) !== run || run.view.status !== 'running') return;
+    run.outputPerformance.clear();
     // 结算丢失同样打击重试链：组状态机只认 agent_settled，不补发就永远停在
     // phase='running'（横幅永续"等待模型响应"）。按 pi 已空闲的事实补发合成结算，
     // 让它按 lastOutcome 走完（completed/failed/exhausted→waiting）。若判为中间态
@@ -429,6 +432,12 @@ export class PiBackend {
     if (this.active.get(run.view.key) !== run) return;
     run.eventCount++; run.lastEventAt = Date.now();
     const { key, generation } = run.view;
+    // Completion updates piggyback on the existing run emit; deltas only sample locally.
+    // Stopping fences late starts as well as late completions after abort.
+    if (run.view.status !== 'stopping' && !run.stopUnconfirmed) {
+      const outputPerformance = run.outputPerformance.observe(event, generation);
+      if (outputPerformance) run.view.outputPerformance = outputPerformance;
+    }
     if (event.type === 'extension_ui_request') {
       const req = event as unknown as PiUiRequest;
       if (req.method === 'input' && req.title === 'desktop-automation') {
@@ -791,6 +800,7 @@ export class PiBackend {
     this.clearSettlement(run);
     run.retry.cancel(); run.retryEntryId = undefined; // cancel timer before the first RPC/await
     run.stopUnconfirmed = true;
+    run.outputPerformance.clear(); // abort：中止路径可能没有 message_end，未决采样不能悬空到下一轮
     const deferred = [...run.deferredQueue];
     const snapshot = run.stopQueueSnapshot ?? [...(run.view.queue ?? [])];
     run.view.status = 'stopping'; this.emit({ type: 'run', run: { ...run.view } });
