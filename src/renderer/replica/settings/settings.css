@@ -661,6 +661,16 @@
 .pi-sampling small { color: var(--pi-text-secondary); line-height: 1.6; }
 /* 勾选项：真实复选框——15px 方框，选中深底白勾（用户明确要求可见的多选框，不走纯 ✓ 文本） */
 .pi-model-options button { border: 0; background: transparent; color: var(--pi-text); display: inline-flex; align-items: center; gap: 8px; border-radius: 6px; padding: 4px 0; cursor: pointer; font-size: var(--pi-font-size-md); }
+/* 会话亲和 radio：与勾选项共用 .pi-model-options 容器，但必须有可点的视觉形态——
+ 纯文字三选一（默认 / OpenRouter 格式 / Anthropic 格式）此前无边框无背景，
+ 用户完全看不出这些文字是按钮（实测反馈）。改为 ZCode 式分段单选胶囊：
+ 描边胶囊 + 选中态深底，与 pi-level-chip 同语言。 */
+.pi-model-options--radio { gap: 8px; }
+.pi-model-options--radio button { border: 1px solid var(--pi-border-strong); background: var(--pi-bg); border-radius: 10px; padding: 9px 14px; font-size: var(--pi-font-size-sm, 13px); line-height: 1; transition: background-color .12s ease, border-color .12s ease, color .12s ease; }
+.pi-model-options--radio button>small { display: block; margin-top: 5px; font-size: 11.5px; line-height: 1.45; font-weight: 400; opacity: .72; text-align: left; white-space: normal; max-width: 22em; }
+.pi-model-options--radio button:hover { border-color: var(--pi-text); background: var(--pi-bg-active); }
+.pi-model-options--radio button[aria-checked=true] { background: var(--pi-accent); border-color: var(--pi-accent); color: var(--pi-text-on-accent); }
+.pi-model-options--radio button:focus-visible { outline: 2px solid var(--pi-accent); outline-offset: 2px; }
 .pi-model-checkbox { width: 15px; height: 15px; border-radius: 4px; border: 1px solid var(--pi-border-strong); background: var(--pi-bg); display: inline-flex; align-items: center; justify-content: center; flex: none; color: transparent; }
 .pi-model-options button[aria-checked=true] .pi-model-checkbox { background: var(--pi-accent); border-color: var(--pi-accent); color: var(--pi-text-on-accent); }
 .pi-model-options button[aria-disabled=true] { cursor: default; color: var(--pi-text-secondary); }
