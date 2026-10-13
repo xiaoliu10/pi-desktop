@@ -37,6 +37,9 @@ import type { PiEvent } from '../shared/pi';
 const APP_ICON = path.join(app.getAppPath(), 'resources/icon.png');
 const remote = new RemoteServer({
   sessions: () => host.index.scan(),
+  // 与桌面侧栏同口径：归档会话、已移除/隐藏项目不在手机端出现（手机端项目视图按 cwd 聚合，漏过滤等于「已归档删除的项目又能展示」）。
+  archivedSessions: () => archive.list(),
+  hiddenProjects: () => settings.preferences().hiddenProjects,
   runs: () => host.backend.runs().filter(r => r.sidecarOf === undefined), // 副驾不出现在手机端会话列表（可被误 stop/误路由）
   history: key => {
     try { return host.index.history(key); } catch { return null; }

@@ -26,6 +26,10 @@ export type RemoteDialogResponse = { id: string; value?: string; confirmed?: boo
 /** Data source the server renders — the same host the desktop UI uses. */
 export interface RemoteDataProvider {
   sessions(): PiSession[];
+  /** 已归档会话 key（桌面侧 archive.list()）：与桌面侧栏一致，手机端不展示。 */
+  archivedSessions?(): string[];
+  /** 已移除/隐藏项目路径（桌面侧 hiddenProjects）：与桌面侧栏一致，手机端不展示。 */
+  hiddenProjects?(): string[];
   runs(): PiRun[];
   history(key: string): PiHistoryLite | null;
   version(): string | null;
@@ -233,9 +237,13 @@ export class RemoteServer {
           res.end(viewerPage());
           return;
         case '/api/state':
+          // 归档索引损坏时 archive.list() 会 throw：远程页没有 UI 承接错误，
+          // 降级为「不过滤」保证页面可用，而不是让整个 /api/state 变 500。
+          const archived = (() => { try { return this.data.archivedSessions?.(); } catch { return undefined; } })();
+          const hidden = (() => { try { return this.data.hiddenProjects?.(); } catch { return undefined; } })();
           this.json(res, 200, {
             version: this.data.version(),
-            sessions: lightSessions(this.data.sessions()),
+            sessions: lightSessions(this.data.sessions(), archived, hidden),
             runs: lightRuns(this.data.runs(), (key) => this.data.pendingDialogs(key)),
           });
           return;
@@ -269,8 +277,12 @@ export class RemoteServer {
   }
 }
 
-function lightSessions(sessions: PiSession[]) {
+/** 与桌面侧栏同口径过滤：归档会话与已移除项目不出现在手机端（否则「已归档删除」的项目又能刷出来）。 */
+function lightSessions(sessions: PiSession[], archivedKeys?: string[], hiddenProjects?: string[]) {
+  const archived = new Set(archivedKeys ?? []);
+  const hidden = new Set((hiddenProjects ?? []).map(h => String(h)));
   return sessions
+    .filter(s => !archived.has(s.key) && !hidden.has(s.cwd))
     .map((s) => ({ key: s.key, name: s.name, cwd: s.cwd, updatedAt: s.updatedAt, owned: s.owned }))
     .sort((a, b) => b.updatedAt - a.updatedAt)
     .slice(0, 200);

@@ -92,6 +92,30 @@ describe('RemoteServer (LAN remote control)', () => {
     expect((await fetch(`${base}/api/history?session=nope&token=${status.token}`)).status).toBe(404);
   });
 
+  it('hides archived sessions and hidden projects from /api/state (matches desktop sidebar)', async () => {
+    const { status, base } = await start();
+    // 手机端项目视图按 cwd 聚合：不过滤归档会话/已移除项目，等于「已归档删除的项目又能展示」。
+    (provider as unknown as { archivedSessions: () => string[] }).archivedSessions = () => ['k1'];
+    (provider as unknown as { hiddenProjects: () => string[] }).hiddenProjects = () => ['/hidden'];
+    const sessions = [
+      ...provider.sessions(),
+      { key: 'k3', id: '3', path: '/tmp/hidden/x.jsonl', cwd: '/hidden', name: '已移除项目会话', updatedAt: 99, size: 1, warnings: [], owned: false },
+    ];
+    (provider as unknown as { sessions: () => typeof sessions }).sessions = () => sessions;
+    const state = (await (await fetch(`${base}/api/state?token=${status.token}`)).json()) as { sessions: Array<{ key: string }> };
+    expect(state.sessions.map((s) => s.key)).toEqual(['k2']); // k1 归档、k3 隐藏项目
+  });
+
+  it('degrades to unfiltered state when archive index is corrupt (no 500)', async () => {
+    const { status, base } = await start();
+    // archive.list() 索引损坏时抛错：远程页无 UI 承接，必须降级为不过滤而非整个 /api/state 变 500。
+    (provider as unknown as { archivedSessions: () => string[] }).archivedSessions = () => { throw new Error('归档索引损坏'); };
+    const res = await fetch(`${base}/api/state?token=${status.token}`);
+    expect(res.status).toBe(200);
+    const state = (await res.json()) as { sessions: Array<{ key: string }> };
+    expect(state.sessions.map((s) => s.key)).toEqual(['k2', 'k1']); // 降级：不过滤，页面仍可用
+  });
+
   it('POST /api/prompt queues the message through the provider', async () => {
     const { status, base } = await start();
     const res = await postJson(base, '/api/prompt', status.token, { key: 'k1', text: '修个 bug' });
