@@ -10,8 +10,11 @@ const PI_MIN_VERSION = '0.85.1';
 /** Exclusive upper bound for external CLI compatibility. Versions at or above this
  *  are rejected and fall back to bundled when available. Review per release.
  *  0.99.x/1.0.0 已核对 RPC 命令/事件面全兼容（docs/pi-0.99-adaptation.md，1.0.0 bundle 拆 chunks 无碍）；
- *  上界让位给下一个大版本。 */
-const PI_MAX_TESTED = '1.1.0';
+ *  1.2.0 已核对：RPC 命令集 33 个与 1.1.0 逐一相同、事件面（extension_error/extension_ui_request/
+ *  response/user_bash）无增减、Desktop 依赖的 13 个命令签名不变（prompt/set_model/
+ *  get_available_thinking_levels 等）；实测捆绑 1.2.0 六命令 RPC 冒烟全通。
+ *  上界是**排他**的（compareVersion < 0），故设为 1.3.0 表示「已测到 1.2.x」。 */
+const PI_MAX_TESTED = '1.3.0';
 
 /** pi ≥0.99 内置原生 MCP（builtin:mcp，读同一份 mcp.json）：desktop 的 mcp-bridge 必须
  *  让位，否则同一服务器双连接、工具双注册。backend 以 PI_DESKTOP_PI_VERSION 注入运行时版本。 */

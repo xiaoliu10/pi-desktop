@@ -6,6 +6,7 @@ README 只保留最近版本摘要；本文件为完整记录。
 ## [Unreleased]
 
 ### 新功能
+- **内置 pi 运行时升级 1.1.0 → 1.2.0**：捆绑 runtime 与本地 CLI 兼容窗口同步放宽。升级前已核对协议面：RPC 命令集 33 个与 1.1.0 逐一相同、事件面（extension_error / extension_ui_request / response / user_bash）无增减、Desktop 依赖的 13 个命令签名不变；升级后捆绑 1.2.0 六命令 RPC 冒烟实测全通。
 - **手机端支持发送截图**：远程页新增图片附件（相册/拍摄，png/jpeg/webp/gif，最多 10 张、编码后总量 10 MiB），随消息发给模型；连接行显示桌面端版本号，切回前台自动刷新。
 
 ### 修复
