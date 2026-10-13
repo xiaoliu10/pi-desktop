@@ -453,6 +453,10 @@ export function viewerPage(): string {
   .msg .who { font-size:11px; color:var(--sub); margin-bottom:4px; }
   .msg.tool { color:var(--sub); font-size:13px; }
   .msg.think { color:var(--sub); font-size:13px; font-style:italic; }
+  .msg.think details { margin-top:2px; }
+  .msg.think summary { color:var(--sub); cursor:pointer; font-size:12px; font-style:normal; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .msg.think summary:hover { color:var(--text); }
+  .think-body { white-space:pre-wrap; font-style:normal; margin-top:6px; max-height:50vh; overflow:auto; border-top:1px dashed var(--line); padding-top:6px; }
   .msg.err { color:var(--danger); border-color:var(--danger); }
   .composer { position:fixed; left:0; right:0; bottom:0; z-index:3; background:var(--card); border-top:1px solid var(--line); padding:8px 10px calc(8px + env(safe-area-inset-bottom)); display:flex; flex-direction:column; gap:6px; align-items:stretch; }
   .composer-row { display:flex; gap:8px; align-items:flex-end; }
@@ -680,6 +684,7 @@ function render(entries) {
       if (typeof m.content === 'string') out.push(bubble('助手', m.content, ''));
       else if (Array.isArray(m.content)) for (const b of m.content) {
         if (b && b.type === 'text' && b.text) out.push(bubble('助手', b.text, ''));
+        else if (b && b.type === 'thinking' && b.thinking) out.push(thinkBubble(b.thinking, false));
         else if (b && b.type === 'toolCall') out.push(bubble('工具 · ' + (b.name || 'tool'), previewArgs(b.arguments), 'tool'));
       }
       if (m.errorMessage) out.push(bubble('错误', m.errorMessage, 'err'));
@@ -695,6 +700,14 @@ function render(entries) {
 }
 function bubble(who, text, cls) {
   return '<div class="msg ' + cls + '"><div class="who">' + escapeHtml(who) + '</div>' + escapeHtml(String(text ?? '')).slice(0, 8000) + '</div>';
+}
+/** 思考折叠气泡：流式中只留一行状态 + 最新片段预览（默认收起，点开看全文），完成后折叠为「已思考」。 */
+function thinkBubble(text, streaming) {
+  const t = String(text ?? '');
+  const who = streaming ? '思考中…' : '已思考';
+  const summary = streaming ? escapeHtml(t.slice(-80)) : '展开思考过程（' + t.length + ' 字）';
+  return '<div class="msg think"><div class="who">' + who + '（' + t.length + ' 字）</div>'
+    + '<details><summary>' + summary + '</summary><div class="think-body">' + escapeHtml(t) + '</div></details></div>';
 }
 function textOf(content) {
   if (typeof content === 'string') return content;
@@ -737,12 +750,15 @@ function renderLive() {
   const old = document.getElementById('live');
   if (old) old.remove();
   if (!liveBlocks || !liveBlocks.length) return;
-  let html = '';
+  // 思考折叠：长思考（GLM high 档动辄数千字）不再全文铺开，只留一行状态 + 可展开详情；
+  // 正文一旦开始输出，思考自动降为「已思考」，不再与正文抢屏。
+  let thinkText = '', hasText = false, html = '';
   for (const b of liveBlocks) {
-    if (b.type === 'text' && b.text) html += bubble('助手', b.text, '');
-    else if (b.type === 'thinking' && b.thinking) html += bubble('思考', b.thinking, 'think');
+    if (b.type === 'text' && b.text) { hasText = true; html += bubble('助手', b.text, ''); }
+    else if (b.type === 'thinking' && b.thinking) thinkText += String(b.thinking);
     else if (b.type === 'toolCall') html += bubble('工具 · ' + (b.name || 'tool'), previewArgs(b.arguments || b._argsRaw), 'tool');
   }
+  if (thinkText) html = thinkBubble(thinkText, !hasText) + html;
   if (!html) return;
   const div = document.createElement('div');
   div.id = 'live'; div.innerHTML = html;
