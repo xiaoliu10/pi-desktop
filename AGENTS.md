@@ -19,8 +19,8 @@
   待发版 PR 在 OPEN 状态排队，发版时按排队顺序统一合入。
 - **等对话队列的所有问题处理完之后，统一发一个版本**：确认队列清空或用户明确说
   「发布 / 打包 / 同步版本」时，执行一次
-  `pnpm build && npx electron-builder --dir && node scripts/sync-release.mjs --force`，
-  同步前先 `ps` 确认实例代际。
+  `pnpm build && npx electron-builder --dir && node scripts/sync-release.mjs --force &&
+  node scripts/prune-dist.mjs`，同步前先 `ps` 确认实例代际。
 - 例外：用户明确要求立即同步验证某个修复时照做。
 
 ## 发版检查清单（统一发版时逐项执行，缺一不可）
@@ -32,11 +32,15 @@
    同步插入新版本行（HTML 表格格式），保持最近 10 个版本以内，并核对「完整记录见 CHANGELOG.md」链接。
 4. **文档提交先行**：以上 1–3 作为独立 docs/chore 提交进 main 后再打包（保证 asar 外文档与包一致）。
 5. **打包同步**：`ps` 确认运行实例代际 → `pnpm build && npx electron-builder --dir &&
-   node scripts/sync-release.mjs --force`（electron-builder 输出在 `dist/mac-arm64`，
-   `release/` 由 sync-release 写入——验证要看对目录）。
-6. **asar 验证**：`LC_ALL=C grep -ac "<本版关键字符串>" release/mac-arm64/"PI Desktop.app"/Contents/Resources/app.asar`
+   node scripts/sync-release.mjs --force && node scripts/prune-dist.mjs`
+   （electron-builder 输出在 `dist/mac-arm64`，`release/` 由 sync-release 写入——验证要看对目录）。
+6. **dist 只留当前版本包**：dist 下的安装包产物按当前版本号（`package.json` version）只保留一个版本，
+   旧版本每次打包后清理（`node scripts/prune-dist.mjs`，已接进 `pnpm dist` 与上面第 5 步命令串）。
+   细则：`latest*.yml` 恒保留（electron-builder 更新描述，每次打包重写）、`builder-debug.yml` 删除；
+   `dist/{main,renderer,shared,preload}` 是构建中间产物不清；`dist/mac-arm64` 由 sync-release 负责删除。
+7. **asar 验证**：`LC_ALL=C grep -ac "<本版关键字符串>" release/mac-arm64/"PI Desktop.app"/Contents/Resources/app.asar`
    （grep 运行时字符串；压缩后变量名会被混淆，选 CSS 类名或中文 UI 文案）。
-7. **提醒重启**：同步完成后告知用户 ⌘Q 重启生效。
+8. **提醒重启**：同步完成后告知用户 ⌘Q 重启生效。
 
 ## PR 流程约定
 
