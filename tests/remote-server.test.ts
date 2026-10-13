@@ -106,6 +106,16 @@ describe('RemoteServer (LAN remote control)', () => {
     expect(state.sessions.map((s) => s.key)).toEqual(['k2']); // k1 归档、k3 隐藏项目
   });
 
+  it('degrades to unfiltered state when archive index is corrupt (no 500)', async () => {
+    const { status, base } = await start();
+    // archive.list() 索引损坏时抛错：远程页无 UI 承接，必须降级为不过滤而非整个 /api/state 变 500。
+    (provider as unknown as { archivedSessions: () => string[] }).archivedSessions = () => { throw new Error('归档索引损坏'); };
+    const res = await fetch(`${base}/api/state?token=${status.token}`);
+    expect(res.status).toBe(200);
+    const state = (await res.json()) as { sessions: Array<{ key: string }> };
+    expect(state.sessions.map((s) => s.key)).toEqual(['k2', 'k1']); // 降级：不过滤，页面仍可用
+  });
+
   it('POST /api/prompt queues the message through the provider', async () => {
     const { status, base } = await start();
     const res = await postJson(base, '/api/prompt', status.token, { key: 'k1', text: '修个 bug' });

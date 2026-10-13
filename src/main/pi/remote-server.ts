@@ -237,9 +237,13 @@ export class RemoteServer {
           res.end(viewerPage());
           return;
         case '/api/state':
+          // 归档索引损坏时 archive.list() 会 throw：远程页没有 UI 承接错误，
+          // 降级为「不过滤」保证页面可用，而不是让整个 /api/state 变 500。
+          const archived = (() => { try { return this.data.archivedSessions?.(); } catch { return undefined; } })();
+          const hidden = (() => { try { return this.data.hiddenProjects?.(); } catch { return undefined; } })();
           this.json(res, 200, {
             version: this.data.version(),
-            sessions: lightSessions(this.data.sessions(), this.data.archivedSessions?.(), this.data.hiddenProjects?.()),
+            sessions: lightSessions(this.data.sessions(), archived, hidden),
             runs: lightRuns(this.data.runs(), (key) => this.data.pendingDialogs(key)),
           });
           return;
