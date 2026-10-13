@@ -911,7 +911,7 @@ async function loadHistory() {
 // ---- SSE：run 状态 / 审批 / 流式增量 ----
 function listen() {
   const es = new EventSource('/api/events?token=' + TOKEN);
-  es.onopen = () => { document.getElementById('conn').textContent = '实时同步中'; if (!chatView) projectsPill(); };
+  es.onopen = () => { document.getElementById('conn').textContent = '实时同步中'; if (!chatView) { projectsPill(); loadState(); } };
   es.onerror = () => { es.close(); document.getElementById('conn').textContent = '连接断开，重试中…'; clearTimeout(reconnectTimer); reconnectTimer = setTimeout(listen, 3000); };
   es.onmessage = (ev) => {
     let msg; try { msg = JSON.parse(ev.data); } catch { return; }
