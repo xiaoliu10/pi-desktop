@@ -622,7 +622,7 @@ app.on('second-instance',()=>{if(mainWindow&&!mainWindow.isDestroyed()){if(mainW
 void app.whenReady().then(() => {
   if(!primaryInstance)return;
   const policy = app.isPackaged ? path.join(process.resourcesPath, 'desktop-policy/index.mjs') : path.join(app.getAppPath(), 'extensions/desktop-policy/index.mjs');
-  host = new PiHost(app.getPath('userData'), policy, broadcast, process.env.PI_SMOKE_SETTINGS ? path.join(app.getPath('userData'), 'shared-skills') : undefined);
+  host = new PiHost(app.getPath('userData'), policy, broadcast, process.env.PI_SMOKE_SETTINGS ? path.join(app.getPath('userData'), 'shared-skills') : undefined, app.getVersion());
   // 内置资源：办公技能（pptx/docx/xlsx/pdf）+ 提示词模板（/周报、/报错定位等，
   // 同步进 <agentDir>/prompts 被 pi 转成斜杠命令）。打包取 extraResources，dev 取仓库 resources。
   // 必须在 PiHost 构造之后：environment（含 agentDir 偏好覆盖）在构造期急切解析。
