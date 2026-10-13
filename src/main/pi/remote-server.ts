@@ -12,6 +12,8 @@ import http from 'node:http';
 import crypto from 'node:crypto';
 import os from 'node:os';
 import type { PiEntry, PiEvent, PiRun, PiSession, PiUiRequest } from '../../shared/pi';
+import type { PiImage } from '../../shared/composer';
+import { RemoteVisibility } from './remote-visibility';
 
 export interface RemoteStatus {
   running: boolean;
@@ -33,8 +35,10 @@ export interface RemoteDataProvider {
   runs(): PiRun[];
   history(key: string): PiHistoryLite | null;
   version(): string | null;
+  /** Desktop 应用自身版本（app.getVersion()）：让手机端能分辨连的是哪个版本的桌面。 */
+  desktopVersion?(): string;
   /** 写操作：全部委托 PiBackend（与桌面 IPC 同款校验与并发语义）。 */
-  prompt(key: string, text: string): Promise<void> | void;
+  prompt(key: string, text: string, images?: PiImage[]): Promise<void> | void;
   stop(key: string): Promise<void> | void;
   respond(key: string, generation: string, response: RemoteDialogResponse): void;
   /** 待审批快照：页面刷新后据此恢复审批卡片。 */
@@ -50,14 +54,32 @@ const MAX_BODY_BYTES = 64 * 1024;
 /** 超限 body 也读完才回 400（见 readBody），这是中途放弃读取的硬顶。 */
 const MAX_HARD_BODY_BYTES = 8 * 1024 * 1024;
 const MAX_PROMPT_CHARS = 200_000;
+// 仅 /api/prompt 放宽 body 顶：截图直传要走既有 backend 图片口径（总量 ≤10MiB
+// base64）+ 文本/JSON 开销，11 MiB 软顶、12 MiB 硬顶；其余路径维持 64KiB。
+const MAX_PROMPT_BODY_BYTES = 11 * 1024 * 1024;
+const MAX_PROMPT_HARD_BODY_BYTES = 12 * 1024 * 1024;
+// 远程图片校验与 backend.prompt 同口径（数量/MIME/总长），在服务端提前把关，
+// 非法请求不触达 backend；数据只能随请求体而来，绝不读文件路径或拉取 URL。
+const REMOTE_IMAGE_MIMES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
+const MAX_REMOTE_IMAGES = 10;
+const MAX_REMOTE_IMAGE_BASE64_TOTAL = 10 * 1024 * 1024;
 
 export class RemoteServer {
   private server: http.Server | null = null;
   private token = '';
   private port = 0;
   private sseClients = new Set<http.ServerResponse>();
+  /** /api/state、/api/history 与 SSE 事件共用的可见性口径（remote-visibility.ts）。 */
+  private readonly visibility: RemoteVisibility;
 
-  constructor(private readonly data: RemoteDataProvider) {}
+  constructor(private readonly data: RemoteDataProvider) {
+    this.visibility = new RemoteVisibility({
+      sessions: () => this.data.sessions(),
+      runs: () => this.data.runs(),
+      archivedSessions: () => this.data.archivedSessions?.(),
+      hiddenProjects: () => this.data.hiddenProjects?.(),
+    });
+  }
 
   get running(): boolean {
     return this.server !== null;
@@ -66,6 +88,13 @@ export class RemoteServer {
   /** Live events from the pi host are fanned out to connected viewers. */
   publish(event: PiEvent): void {
     if (!this.sseClients.size) return;
+    if (event.type === 'sessions-changed') {
+      // 归档/移除项目等可见性输入已变化：先失效缓存，让后续事件按新口径过滤
+      // （项目在查看器打开期间被归档/移除也即时生效）。
+      this.visibility.invalidate();
+    } else if (!this.eventVisible(event)) {
+      return; // 已移除项目 / 内部会话的事件不得让记录在手机端重现
+    }
     const payload = `data: ${JSON.stringify(event)}\n\n`;
     for (const res of this.sseClients) {
       try {
@@ -73,6 +102,26 @@ export class RemoteServer {
       } catch {
         this.sseClients.delete(res);
       }
+    }
+  }
+
+  /** SSE 事件级可见性：判断自身出错时放行（fail-open），绝不阻断事件链路。 */
+  private eventVisible(event: PiEvent): boolean {
+    try {
+      const visible = this.visibility.snapshot(); // TTL 缓存：流式事件高频，不做每条磁盘 IO
+      switch (event.type) {
+        case 'run':
+          return visible.runVisible(event.run);
+        case 'ui':
+        case 'rpc':
+        case 'closed':
+        case 'compaction-record':
+          return visible.keyVisible(event.key);
+        default:
+          return true; // sessions-changed / resources-changed 等广播型事件照发
+      }
+    } catch {
+      return true;
     }
   }
 
@@ -130,26 +179,27 @@ export class RemoteServer {
     return false;
   }
 
-  private readBody(req: http.IncomingMessage): Promise<string> {
+  private readBody(req: http.IncomingMessage, limits: { soft: number; hard: number }): Promise<{ raw: string; bytes: number }> {
     return new Promise((resolve, reject) => {
       const chunks: Buffer[] = [];
       let size = 0;
       let overflow = false;
       req.on('data', (chunk: Buffer) => {
         size += chunk.length;
-        if (size > MAX_BODY_BYTES) {
+        if (size > limits.soft) {
           // 超限后继续把 body 读完再拒（边读边 destroy 会让客户端拿到
           // ECONNRESET 而不是 400 响应）；只丢弃内容，硬顶防恶意灌流。
           overflow = true;
           chunks.length = 0;
-          if (size > MAX_HARD_BODY_BYTES) { req.destroy(); reject(new Error('请求体过大')); }
+          if (size > limits.hard) { req.destroy(); reject(new Error('请求体过大')); }
           return;
         }
         chunks.push(chunk);
       });
       req.on('end', () => {
         if (overflow) { reject(new Error('请求体过大')); return; }
-        resolve(Buffer.concat(chunks).toString('utf8'));
+        const buffer = Buffer.concat(chunks);
+        resolve({ raw: buffer.toString('utf8'), bytes: buffer.length });
       });
       req.on('error', reject);
     });
@@ -171,9 +221,15 @@ export class RemoteServer {
       return;
     }
     let body: Record<string, unknown>;
+    let rawBytes = 0;
     try {
-      const raw = await this.readBody(req);
-      body = JSON.parse(raw || '{}') as Record<string, unknown>;
+      // 鉴权已在 handle() 里先行完成；这里才读 body。只有 /api/prompt 允许带图的大 body，其余路径维持 64KiB。
+      const limits = path === '/api/prompt'
+        ? { soft: MAX_PROMPT_BODY_BYTES, hard: MAX_PROMPT_HARD_BODY_BYTES }
+        : { soft: MAX_BODY_BYTES, hard: MAX_HARD_BODY_BYTES };
+      const read = await this.readBody(req, limits);
+      rawBytes = read.bytes;
+      body = JSON.parse(read.raw || '{}') as Record<string, unknown>;
       if (!body || typeof body !== 'object' || Array.isArray(body)) throw new Error('请求体必须是 JSON 对象');
     } catch (e) {
       this.json(res, 400, { error: String((e as Error).message || e) });
@@ -181,10 +237,25 @@ export class RemoteServer {
     }
     try {
       if (path === '/api/prompt') {
-        const key = body.key, text = body.text;
+        const key = body.key;
         if (!this.isRun(key)) { this.json(res, 404, { error: '会话未连接' }); return; }
-        if (typeof text !== 'string' || !text.trim() || text.length > MAX_PROMPT_CHARS) { this.json(res, 400, { error: '消息为空或超过 200000 字符' }); return; }
-        await this.data.prompt(key, text);
+        // 图片先行校验（形状/MIME/canonical base64/数量/总长），非法不触达 backend；
+        // 归一化成 backend 期望的精确形状 {type:'image',mimeType,data}。
+        let images: PiImage[];
+        try {
+          images = normalizeRemoteImages(body.images);
+        } catch (e) {
+          this.json(res, 400, { error: String((e as Error).message || e) });
+          return;
+        }
+        // 无图请求维持既有 64KiB body 顶（含老的超长文本拒绝口径）；带图时文本仍
+        // 受 200k 字符限制。纯图片发送允许不带 text（桌面端同场景会补说明文字，
+        // 空文本的最终校验口径在 backend）。
+        const text = typeof body.text === 'string' ? body.text : '';
+        if ((!images.length && !text.trim()) || text.length > MAX_PROMPT_CHARS) { this.json(res, 400, { error: '消息为空或超过 200000 字符' }); return; }
+        if (!images.length && rawBytes > MAX_BODY_BYTES) { this.json(res, 400, { error: '请求体过大' }); return; }
+        if (images.length) await this.data.prompt(key, text, images);
+        else await this.data.prompt(key, text); // 无图保持既有两参调用形状
         this.json(res, 200, { ok: true });
         return;
       }
@@ -236,20 +307,25 @@ export class RemoteServer {
           res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
           res.end(viewerPage());
           return;
-        case '/api/state':
-          // 归档索引损坏时 archive.list() 会 throw：远程页没有 UI 承接错误，
-          // 降级为「不过滤」保证页面可用，而不是让整个 /api/state 变 500。
-          const archived = (() => { try { return this.data.archivedSessions?.(); } catch { return undefined; } })();
-          const hidden = (() => { try { return this.data.hiddenProjects?.(); } catch { return undefined; } })();
+        case '/api/state': {
+          // 归档索引损坏等异常在 RemoteVisibility 内部降级为「不过滤」，保证页面可用
+          // 而不是让整个 /api/state 变 500。偏好是动态的：每次强制现算，不读缓存。
+          const visible = this.visibility.snapshot(true);
           this.json(res, 200, {
             version: this.data.version(),
-            sessions: lightSessions(this.data.sessions(), archived, hidden),
-            runs: lightRuns(this.data.runs(), (key) => this.data.pendingDialogs(key)),
+            desktopVersion: this.data.desktopVersion?.() ?? null,
+            sessions: lightSessions(this.data.sessions().filter(s => visible.sessionVisible(s))),
+            runs: lightRuns(this.data.runs().filter(r => visible.runVisible(r)), (key) => this.data.pendingDialogs(key)),
           });
           return;
+        }
         case '/api/history': {
           const key = url.searchParams.get('session') ?? '';
-          const history = key ? this.data.history(key) : null;
+          // 与 /api/state 同口径的可见性守卫：已归档 / 已移除项目 / 内部会话的逐条
+          // 历史不能因为拿到 key 就在手机端读出来；404 与「会话不存在」同形，不泄露
+          // 存在性。索引损坏时 snapshot 内部同样降级为不过滤（恢复页面可用）。
+          const readable = !!key && this.visibility.snapshot(true).keyVisible(key);
+          const history = readable ? this.data.history(key) : null;
           res.writeHead(history ? 200 : 404, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
           res.end(JSON.stringify(history ? { branch: history.branch } : { error: 'unknown session' }));
           return;
@@ -277,15 +353,47 @@ export class RemoteServer {
   }
 }
 
-/** 与桌面侧栏同口径过滤：归档会话与已移除项目不出现在手机端（否则「已归档删除」的项目又能刷出来）。 */
-function lightSessions(sessions: PiSession[], archivedKeys?: string[], hiddenProjects?: string[]) {
-  const archived = new Set(archivedKeys ?? []);
-  const hidden = new Set((hiddenProjects ?? []).map(h => String(h)));
+/** 手机端列表投影：与桌面侧栏同口径的过滤（归档/隐藏项目/内部会话）已由 VisibilitySnapshot 完成，这里只做裁剪与排序。 */
+function lightSessions(sessions: PiSession[]) {
   return sessions
-    .filter(s => !archived.has(s.key) && !hidden.has(s.cwd))
     .map((s) => ({ key: s.key, name: s.name, cwd: s.cwd, updatedAt: s.updatedAt, owned: s.owned }))
     .sort((a, b) => b.updatedAt - a.updatedAt)
     .slice(0, 200);
+}
+
+function isCanonicalBase64(data: string): boolean {
+  // 严格 canonical base64：字母表受限、长度 4 的倍数、padding 位置正确，且
+  // Node 重编码后与原文逐字一致（「AB==」这类尾位非零的编码会被拒）。
+  if (!data.length || data.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(data)) return false;
+  return Buffer.from(data, 'base64').toString('base64') === data;
+}
+
+/**
+ * 校验并规范化远程 prompt 的图片数组。只接受随请求体而来的内联数据：
+ * 每张必须是对象（type 若给必须是 'image'）、受支持 MIME、严格 canonical base64；
+ * 未知字段（url/path/file 等）一律拒绝 —— 服务器绝不读文件路径或拉取远程 URL。
+ * 数量 ≤10、base64 总长 ≤10MiB，与 backend.prompt 的既有口径一致。
+ */
+function normalizeRemoteImages(input: unknown): PiImage[] {
+  if (input === undefined) return [];
+  if (!Array.isArray(input)) throw new Error('图片格式无效');
+  if (input.length > MAX_REMOTE_IMAGES) throw new Error(`一次最多添加 ${MAX_REMOTE_IMAGES} 张图片`);
+  const out: PiImage[] = [];
+  let total = 0;
+  for (const item of input) {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) throw new Error('图片格式无效');
+    const record = item as Record<string, unknown>;
+    for (const field of Object.keys(record)) {
+      if (field !== 'type' && field !== 'mimeType' && field !== 'data') throw new Error(`图片字段无效：${field}`);
+    }
+    if (record.type !== undefined && record.type !== 'image') throw new Error('图片格式无效');
+    if (typeof record.mimeType !== 'string' || !REMOTE_IMAGE_MIMES.has(record.mimeType)) throw new Error('不支持的图片格式');
+    if (typeof record.data !== 'string' || !isCanonicalBase64(record.data)) throw new Error('图片数据必须是有效的 base64');
+    total += record.data.length;
+    if (total > MAX_REMOTE_IMAGE_BASE64_TOTAL) throw new Error('图片总大小超过 10 MiB，请减少图片');
+    out.push({ type: 'image', mimeType: record.mimeType, data: record.data });
+  }
+  return out;
 }
 
 function lightRuns(runs: PiRun[], dialogs: (key: string) => Array<{ generation: string; request: PiUiRequest }> = () => []) {
@@ -315,7 +423,7 @@ export function viewerPage(): string {
   .pill.live { color:#0a7d33; border-color:#0a7d3355; }
   .pill.err { color:var(--danger); border-color:var(--danger); }
   .stopbtn { flex-shrink:0; border:1px solid var(--danger); color:var(--danger); background:none; border-radius:8px; font-size:12px; padding:5px 10px; display:none; }
-  main { padding:14px 14px 120px; }
+  main { padding:14px 14px 150px; }
   .notice { background:var(--chip); border-radius:12px; padding:12px 14px; font-size:13px; color:var(--sub); margin-bottom:18px; }
   .sect-head { display:flex; align-items:center; gap:10px; margin:2px 2px 2px; }
   .sect-head h2 { font-size:17px; margin:0; flex:1; }
@@ -346,7 +454,16 @@ export function viewerPage(): string {
   .msg.tool { color:var(--sub); font-size:13px; }
   .msg.think { color:var(--sub); font-size:13px; font-style:italic; }
   .msg.err { color:var(--danger); border-color:var(--danger); }
-  .composer { position:fixed; left:0; right:0; bottom:0; z-index:3; background:var(--card); border-top:1px solid var(--line); padding:8px 10px calc(8px + env(safe-area-inset-bottom)); display:flex; gap:8px; align-items:flex-end; }
+  .composer { position:fixed; left:0; right:0; bottom:0; z-index:3; background:var(--card); border-top:1px solid var(--line); padding:8px 10px calc(8px + env(safe-area-inset-bottom)); display:flex; flex-direction:column; gap:6px; align-items:stretch; }
+  .composer-row { display:flex; gap:8px; align-items:flex-end; }
+  .imgbtn { flex-shrink:0; border:1px solid var(--line); background:var(--bg); color:var(--text); border-radius:10px; font-size:17px; line-height:1; padding:10px 11px; cursor:pointer; user-select:none; -webkit-user-select:none; }
+  .imgbtn[aria-disabled="true"] { opacity:.4; pointer-events:none; }
+  .img-chips { display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
+  .chip { display:inline-flex; align-items:center; gap:6px; background:var(--chip); border:1px solid var(--line); border-radius:99px; padding:4px 6px 4px 10px; font-size:12px; max-width:100%; }
+  .chip .chip-name { max-width:110px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .chip .chip-size { color:var(--sub); font-size:11px; flex-shrink:0; }
+  .chip-x { border:0; background:none; color:var(--sub); font-size:13px; line-height:1; padding:2px 4px; cursor:pointer; }
+  .chips-total { font-size:11px; color:var(--sub); }
   .composer textarea { flex:1; resize:none; border:1px solid var(--line); background:var(--bg); color:var(--text); border-radius:10px; padding:9px 10px; font:inherit; font-size:14px; max-height:120px; min-height:38px; }
   .composer textarea:disabled { opacity:.5; }
   .sendbtn { flex-shrink:0; border:0; background:var(--accent); color:var(--bg); border-radius:10px; font-size:14px; padding:9px 16px; }
@@ -392,8 +509,13 @@ export function viewerPage(): string {
 </main>
 <div class="dialogs" id="dialogs" hidden></div>
 <form class="composer" id="composer" hidden>
-  <textarea id="input" rows="1" placeholder="连接桌面端后可发送…" disabled></textarea>
-  <button class="sendbtn" id="send" type="submit" disabled>发送</button>
+  <div class="img-chips" id="imgChips" hidden></div>
+  <div class="composer-row">
+    <input type="file" id="imgInput" accept="image/png,image/jpeg,image/webp,image/gif" multiple hidden>
+    <label class="imgbtn" id="imgBtn" for="imgInput" aria-label="添加图片">&#128247;</label>
+    <textarea id="input" rows="1" placeholder="连接桌面端后可发送…" disabled></textarea>
+    <button class="sendbtn" id="send" type="submit" disabled>发送</button>
+  </div>
 </form>
 <div class="conn" id="conn"></div>
 <script>
@@ -410,7 +532,8 @@ let chatView = false;
 let dialogs = new Map();
 // 流式打字机：当前会话正在拼装的助手消息块（等价桌面 stream-delta）。
 let liveBlocks = null;
-// 乐观发送：POST 成功但历史尚未回显的用户消息。
+// 乐观发送：POST 成功但历史尚未回显的用户消息。match 用于与历史文本对账（回显后
+// 移除），display 是气泡文案（带图时首行加「📷 n 张」）。
 let optimistic = [];
 let lastEntries = [];
 
@@ -537,6 +660,9 @@ function renderComposer() {
   const ta = document.getElementById('input'), btn = document.getElementById('send');
   const ok = !!mine;
   ta.disabled = !ok; btn.disabled = !ok;
+  // 附件按钮随输入框一起禁用（未连接/已停止接收的会话不给发图）。
+  document.getElementById('imgInput').disabled = !ok;
+  document.getElementById('imgBtn').setAttribute('aria-disabled', ok ? 'false' : 'true');
   ta.placeholder = ok ? '发消息…（Enter 发送，Shift+Enter 换行）' : '该会话未连接（在桌面端打开后可发送）';
 }
 
@@ -562,8 +688,8 @@ function render(entries) {
       if (t) out.push(bubble('结果', t, 'tool'));
     }
   }
-  optimistic = optimistic.filter(t => !seenUser.has(t));
-  for (const t of optimistic) out.push(bubble('用户', t, 'user pending'));
+  optimistic = optimistic.filter(o => !seenUser.has(o.match));
+  for (const o of optimistic) out.push(bubble('用户', o.display, 'user pending'));
   feed.innerHTML = out.length ? out.join('') : '<div class="empty">这个会话还没有内容</div>';
   window.scrollTo(0, document.body.scrollHeight);
 }
@@ -752,7 +878,8 @@ async function loadState() {
     stateLoaded = true;
     seedDialogs(s);
     document.getElementById('projSearch').disabled = false;
-    document.getElementById('conn').textContent = '已连接 · pi ' + (s.version || '');
+    // 同时给出桌面应用版本与 pi 运行时版本，方便远程排查「连的是哪一代桌面」。
+    document.getElementById('conn').textContent = '已连接' + (s.desktopVersion ? ' · Desktop ' + s.desktopVersion : '') + ' · pi ' + (s.version || '');
     if (chatView) { // 对话视图：刷当前项目 select 选择器 + 历史
       const sel = document.getElementById('session');
       const cur = current;
@@ -822,13 +949,98 @@ function debouncedHistory() { clearTimeout(histTimer); histTimer = setTimeout(lo
 const ta = document.getElementById('input');
 ta.addEventListener('input', () => { ta.style.height = 'auto'; ta.style.height = Math.min(ta.scrollHeight, 120) + 'px'; });
 ta.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); document.getElementById('composer').requestSubmit(); } });
+// ---- 图片附件：选择 → dataURL → raw base64（数量/MIME/总长与 /api/prompt 服务端同口径） ----
+const IMG_MIMES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif'];
+const MAX_IMGS = 10;
+const MAX_IMG_TOTAL = 10 * 1024 * 1024; // base64 总长 ≤10MiB，与服务端一致
+let pendingImages = []; // { name, size, mimeType, data }；File 元数据仅本地 chip 展示，不随请求发送
+const imgInput = document.getElementById('imgInput');
+imgInput.addEventListener('change', () => {
+  const files = Array.prototype.slice.call(imgInput.files || []);
+  imgInput.value = ''; // 立即重置，允许再次选择同一个文件
+  addImages(files);
+});
+function addImages(files) {
+  const msgs = [];
+  const candidates = [];
+  for (const f of files) {
+    if (pendingImages.length + candidates.length >= MAX_IMGS) { msgs.push('一次最多添加 ' + MAX_IMGS + ' 张图片'); break; }
+    const mime = String(f.type || '').toLowerCase();
+    if (IMG_MIMES.indexOf(mime) < 0) { msgs.push('不支持的图片格式：' + (f.name || '未知文件')); continue; }
+    candidates.push(f);
+  }
+  if (!candidates.length) { renderImgChips(); if (msgs.length) document.getElementById('conn').textContent = msgs.join('；'); return; }
+  let remaining = candidates.length, over = false;
+  const done = () => { renderImgChips(); if (msgs.length) document.getElementById('conn').textContent = msgs.join('；'); };
+  for (const f of candidates) {
+    const reader = new FileReader();
+    reader.onload = () => {
+      remaining--;
+      const raw = String(reader.result || '');
+      const m = /^data:[^;,]*;base64,/.exec(raw); // 去掉 dataURL 前缀，只留 raw base64
+      const data = m ? raw.slice(m[0].length) : '';
+      if (!over) {
+        const total = pendingImages.reduce((a, im) => a + im.data.length, 0) + data.length;
+        if (total > MAX_IMG_TOTAL) { over = true; msgs.push('图片总大小超过 10 MiB，请减少图片'); }
+        else pendingImages.push({ name: f.name, size: f.size, mimeType: String(f.type || '').toLowerCase(), data });
+      }
+      if (!remaining) done();
+    };
+    reader.onerror = () => { remaining--; msgs.push('图片读取失败：' + (f.name || '')); if (!remaining) done(); };
+    reader.readAsDataURL(f);
+  }
+}
+function fmtBytes(n) {
+  if (n >= 1024 * 1024) return (n / 1024 / 1024).toFixed(1) + ' MB';
+  if (n >= 1024) return Math.round(n / 1024) + ' KB';
+  return n + ' B';
+}
+function renderImgChips() {
+  const box = document.getElementById('imgChips');
+  if (!pendingImages.length) { box.hidden = true; box.innerHTML = ''; return; }
+  const total = pendingImages.reduce((a, im) => a + im.data.length, 0);
+  let html = '';
+  pendingImages.forEach((im, i) => {
+    html += '<span class="chip">&#128247; <span class="chip-name">' + escapeHtml(im.name || '图片') + '</span>'
+      + '<span class="chip-size">' + fmtBytes(im.size || 0) + '</span>'
+      + '<button type="button" class="chip-x" data-rm="' + i + '" aria-label="移除图片">&#10005;</button></span>';
+  });
+  html += '<span class="chips-total">' + pendingImages.length + ' 张 · 编码后 ' + fmtBytes(total) + ' / 10 MB</span>';
+  box.innerHTML = html;
+  box.hidden = false;
+}
+document.getElementById('imgChips').addEventListener('click', e => {
+  const b = e.target.closest('[data-rm]');
+  if (!b) return;
+  pendingImages.splice(Number(b.getAttribute('data-rm')), 1);
+  renderImgChips();
+});
 document.getElementById('composer').addEventListener('submit', e => {
   e.preventDefault();
   const text = ta.value.trim();
-  if (!text || !current) return;
-  post('/api/prompt', { key: current, text })
-    .then(() => { optimistic.push(text); ta.value = ''; ta.style.height = 'auto'; render(null); document.getElementById('conn').textContent = '已发送'; })
+  if (!current) return;
+  const imgs = pendingImages.map(im => ({ type: 'image', mimeType: im.mimeType, data: im.data }));
+  // 服务端允许纯图请求，但 backend 会拒空文本：与桌面同口径补说明文字。
+  const sent = imgs.length && !text ? '请查看所附文件。' : text;
+  if (!sent) return;
+  const body = { key: current, text: sent };
+  if (imgs.length) body.images = imgs;
+  post('/api/prompt', body)
+    .then(() => {
+      optimistic.push({ match: sent, display: imgs.length ? ('📷 ' + imgs.length + ' 张' + (text ? '\\n' + text : '')) : text });
+      ta.value = ''; ta.style.height = 'auto';
+      pendingImages = []; renderImgChips();
+      render(null);
+      document.getElementById('conn').textContent = '已发送';
+    })
     .catch(err => { document.getElementById('conn').textContent = '发送失败：' + String(err.message || err); });
+});
+// ---- 回前台刷新：移除/归档的项目无需等 SSE（chat 视图，防抖 500ms） ----
+let visTimer = null;
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState !== 'visible' || !chatView) return;
+  clearTimeout(visTimer);
+  visTimer = setTimeout(loadState, 500);
 });
 document.getElementById('stopbtn').addEventListener('click', () => {
   if (!current) return;

@@ -172,6 +172,9 @@ describe('RemoteServer (LAN remote control)', () => {
     expect(html).toContain('stopbtn');         // 停止按钮
     expect(html).toContain('applyDelta');      // 流式打字机
     expect(html).toContain('/api/respond');    // 审批卡片提交
+    expect(html).toContain('id="imgInput"');   // 图片选择（移动端发图）
+    expect(html).toContain('id="imgChips"');   // 已选图片预览 chips
+    expect(html).toContain('desktopVersion');  // 连接行展示桌面版本号
     const nope = await fetch(`${base}/whatever?token=${status.token}`);
     expect(nope.status).toBe(404);
   });
@@ -196,5 +199,202 @@ describe('RemoteServer (LAN remote control)', () => {
     controller.abort();
     const after = await server.stop();
     expect(after.running).toBe(false);
+  });
+});
+
+// ---- 可见性与图片上传（server half of fix/mobile-visibility-and-images） ----
+
+describe('RemoteServer visibility & image uploads', () => {
+  let server: RemoteServer;
+  let provider: RemoteDataProvider;
+
+  beforeEach(() => {
+    provider = makeProvider();
+    server = new RemoteServer(provider);
+  });
+  afterEach(async () => {
+    await server.stop();
+  });
+
+  const start = async () => {
+    const status = await server.start(0);
+    return { status, base: `http://127.0.0.1:${status.port}` };
+  };
+  const postJson = (base: string, path: string, token: string | undefined, body: unknown) =>
+    fetch(`${base}${path}${token === undefined ? '' : `?token=${token}`}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+  const getState = async (base: string, token: string) =>
+    (await (await fetch(`${base}/api/state?token=${token}`)).json()) as {
+      desktopVersion?: string | null;
+      sessions: Array<{ key: string }>;
+      runs: Array<{ key: string }>;
+    };
+  const hello64 = Buffer.from('hello').toString('base64'); // canonical base64 样例
+
+  it('filters internal sessions and stale/internal runs from /api/state, exposes desktopVersion', async () => {
+    const { status, base } = await start();
+    (provider as unknown as { archivedSessions: () => string[] }).archivedSessions = () => ['k1'];
+    (provider as unknown as { desktopVersion: () => string }).desktopVersion = () => '0.1.18-test';
+    const withInternal = [...provider.sessions(),
+      { key: 'k-sub', id: '3', path: '/tmp/sub.jsonl', cwd: '/tmp', name: 'subagent 内部会话', updatedAt: 40, size: 1, warnings: [], owned: false, parentSession: '/tmp/a.jsonl' },
+      { key: 'k-side', id: '4', path: '/tmp/side.jsonl', cwd: '/tmp', name: '副驾', updatedAt: 41, size: 1, warnings: [], owned: false, sidecarOf: '' },
+    ];
+    provider.sessions = () => withInternal;
+    const staleRuns = [
+      { key: 'k1', generation: 'g1', cwd: '/tmp', file: '/tmp/a.jsonl', status: 'idle', models: [], commands: [], pending: 0 }, // 已归档 → 陈旧 run 不重现
+      { key: 'k2', generation: 'g2', cwd: '/tmp', file: '/tmp/b.jsonl', status: 'idle', models: [], commands: [], pending: 0 },
+      { key: 'k-sub', generation: 'g3', cwd: '/tmp', file: '/tmp/sub.jsonl', status: 'running', models: [], commands: [], pending: 0 }, // 内部会话的 run
+      { key: 'k9', generation: 'g4', cwd: '/tmp', file: '/tmp/side2.jsonl', status: 'running', models: [], commands: [], pending: 0, sidecarOf: 'k2' }, // 副驾 run
+    ];
+    provider.runs = () => staleRuns;
+    const state = await getState(base, status.token);
+    expect(state.desktopVersion).toBe('0.1.18-test');
+    expect(state.sessions.map((s) => s.key)).toEqual(['k2', 'k1'].filter(k => k !== 'k1'));
+    expect(state.runs.map((r) => r.key)).toEqual(['k2']);
+  });
+
+  it('desktopVersion is null when the provider does not supply it (old servers stay parseable)', async () => {
+    const { status, base } = await start();
+    const state = await getState(base, status.token);
+    expect(state.desktopVersion).toBeNull();
+  });
+
+  it('guards /api/history with the same visibility; corrupt archive index degrades to readable', async () => {
+    const { status, base } = await start();
+    const grab = async (key: string) => (await fetch(`${base}/api/history?session=${key}&token=${status.token}`)).status;
+    (provider as unknown as { archivedSessions: () => string[] }).archivedSessions = () => ['k1'];
+    (provider as unknown as { hiddenProjects: () => string[] }).hiddenProjects = () => ['/gone'];
+    const withGone = [...provider.sessions(), { key: 'k-gone', id: '5', path: '/tmp/g.jsonl', cwd: '/gone', name: '已移除项目', updatedAt: 50, size: 1, warnings: [], owned: false }];
+    provider.sessions = () => withGone;
+    const liteHistory = (key: string) => (key === 'k1' || key === 'k2'
+      ? { session: {}, entries: [], branch: [{ type: 'message', id: 'e1', message: { role: 'user', content: '你好' } }], leaves: [], leafId: null, syncedAt: 0 }
+      : null);
+    provider.history = liteHistory;
+    expect(await grab('k1')).toBe(404); // 已归档：拿到 key 也不能读逐条历史
+    expect(await grab('k-gone')).toBe(404); // 已移除项目
+    expect(await grab('k2')).toBe(200);
+    // 未知会话仍是 404 同形，不泄露存在性。
+    expect(await grab('nope')).toBe(404);
+    // 归档索引损坏：降级为不过滤（可读），而不是 500。
+    (provider as unknown as { archivedSessions: () => string[] }).archivedSessions = () => { throw new Error('归档索引损坏'); };
+    expect(await grab('k1')).toBe(200);
+  });
+
+  it('filters SSE run/ui/rpc events for hidden/archived/internal records; sessions-changed always passes and refreshes the visibility input', async () => {
+    const { status } = await start();
+    (provider as unknown as { hiddenProjects: () => string[] }).hiddenProjects = () => ['/hidden'];
+    const withHidden = [...provider.sessions(),
+      { key: 'k-hid', id: '6', path: '/tmp/h.jsonl', cwd: '/hidden', name: '已移除项目会话', updatedAt: 60, size: 1, warnings: [], owned: false },
+      { key: 'k-sub', id: '7', path: '/tmp/s.jsonl', cwd: '/tmp', name: '内部', updatedAt: 61, size: 1, warnings: [], owned: false, parentSession: '/tmp/a.jsonl' },
+    ];
+    provider.sessions = () => withHidden;
+    const runsWithHidden = [...provider.runs(),
+      { key: 'k-hid', generation: 'gh', cwd: '/hidden', file: '/tmp/h.jsonl', status: 'running', models: [], commands: [], pending: 0 },
+    ];
+    provider.runs = () => runsWithHidden;
+    const url = `http://127.0.0.1:${status.port}/api/events?token=${status.token}`;
+    const controller = new AbortController();
+    const res = await fetch(url, { signal: controller.signal, headers: { accept: 'text/event-stream' } });
+    const reader = res.body!.getReader();
+    const decode = (chunk: ReadableStreamReadResult<Uint8Array>) => new TextDecoder().decode(chunk.value ?? new Uint8Array());
+    expect(decode(await reader.read())).toContain('hello');
+    const runEvent = (key: string, cwd: string) => ({ type: 'run' as const, run: { key, generation: 'g', cwd, file: '/x.jsonl', status: 'running' as const, models: [], commands: [], pending: 0 } });
+    // 已移除项目的 run/ui/rpc 事件一律被滤掉；随后发出的可见事件（k1）先行到达，证明被滤事件没有漏网。
+    server.publish(runEvent('k-hid', '/hidden'));
+    server.publish({ type: 'ui', key: 'k-hid', generation: 'gh', request: { id: 'req-h', method: 'confirm', title: '审批' } });
+    server.publish({ type: 'rpc', key: 'k-sub', generation: 'g', event: { type: 'message_update' } });
+    server.publish(runEvent('k1', '/tmp'));
+    const marker = decode(await reader.read());
+    expect(marker).toContain('"type":"run"');
+    expect(marker).toContain('k1');
+    expect(marker).not.toContain('k-hid');
+    expect(marker).not.toContain('req-h');
+    expect(marker).not.toContain('k-sub');
+    // 查看器打开期间项目被恢复可见（动态偏好）：sessions-changed 先行（总是转发 + 失效缓存），
+    // 之后同一条 run 事件按新口径放行。
+    (provider as unknown as { hiddenProjects: () => string[] }).hiddenProjects = () => [];
+    server.publish({ type: 'sessions-changed' });
+    expect(decode(await reader.read())).toContain('sessions-changed');
+    server.publish(runEvent('k-hid', '/hidden'));
+    expect(decode(await reader.read())).toContain('k-hid');
+    // 反向：会话被归档后，其 ui 事件也不得重现（stop/respond 不受影响，只是不再展示）。
+    (provider as unknown as { archivedSessions: () => string[] }).archivedSessions = () => ['k1'];
+    server.publish({ type: 'sessions-changed' });
+    await reader.read();
+    server.publish({ type: 'ui', key: 'k1', generation: 'g1', request: { id: 'req-1', method: 'confirm', title: '审批' } });
+    server.publish({ type: 'ui', key: 'k2', generation: 'g2', request: { id: 'req-2', method: 'confirm', title: '审批' } });
+    const last = decode(await reader.read());
+    expect(last).toContain('req-2');
+    expect(last).not.toContain('req-1');
+    controller.abort();
+  });
+
+  it('forwards image-only and image+text prompts with normalized shape', async () => {
+    const { status, base } = await start();
+    const ok = await postJson(base, '/api/prompt', status.token, { key: 'k1', images: [{ mimeType: 'image/png', data: hello64 }] });
+    expect(ok.status).toBe(200); // 纯图片发送允许不带 text
+    expect(provider.prompt).toHaveBeenCalledWith('k1', '', [{ type: 'image', mimeType: 'image/png', data: hello64 }]);
+    const withText = await postJson(base, '/api/prompt', status.token, { key: 'k1', text: '看截图', images: [{ type: 'image', mimeType: 'image/jpeg', data: hello64 }] });
+    expect(withText.status).toBe(200);
+    expect(provider.prompt).toHaveBeenCalledWith('k1', '看截图', [{ type: 'image', mimeType: 'image/jpeg', data: hello64 }]);
+  });
+
+  it('rejects invalid image MIME/base64/shape/extra fields/count without dispatching to the backend', async () => {
+    const { status, base } = await start();
+    const bad: unknown[] = [
+      { key: 'k1', text: 'hi', images: [{ type: 'image', mimeType: 'image/bmp', data: hello64 }] }, // MIME 不在白名单
+      { key: 'k1', text: 'hi', images: [{ type: 'image', mimeType: 'image/png', data: 'aGVsbG8' }] }, // 缺 padding
+      { key: 'k1', text: 'hi', images: [{ type: 'image', mimeType: 'image/png', data: 'AB==' }] }, // 非canonical 尾位
+      { key: 'k1', text: 'hi', images: [{ type: 'image', mimeType: 'image/png', data: 'aGVs bG8=' }] }, // 非法字符
+      { key: 'k1', text: 'hi', images: [{ type: 'image', mimeType: 'image/png', data: '' }] }, // 空 data
+      { key: 'k1', text: 'hi', images: 'nope' }, // 不是数组
+      { key: 'k1', text: 'hi', images: [null] },
+      { key: 'k1', text: 'hi', images: [{ data: hello64 }] }, // 缺 mimeType
+      { key: 'k1', text: 'hi', images: [{ type: 'photo', mimeType: 'image/png', data: hello64 }] }, // type 非法
+      { key: 'k1', text: 'hi', images: [{ mimeType: 'image/png', data: hello64, url: 'http://evil/x.png' }] }, // 未知字段（不拉 URL）
+      { key: 'k1', text: 'hi', images: [{ mimeType: 'image/png', data: hello64, path: '/etc/passwd' }] }, // 未知字段（不读路径）
+      { key: 'k1', text: 'hi', images: Array.from({ length: 11 }, () => ({ mimeType: 'image/png', data: hello64 })) }, // 超数量
+    ];
+    for (const body of bad) {
+      const res = await postJson(base, '/api/prompt', status.token, body);
+      expect(res.status).toBe(400);
+    }
+    expect(provider.prompt).not.toHaveBeenCalled();
+  });
+
+  it('enforces the 10MiB total base64 budget and the ~11MiB prompt body cap without dispatch', async () => {
+    const { status, base } = await start();
+    // 总长超 10MiB（body 仍 <11MiB 软顶，走到图片校验层）。
+    const huge = 'A'.repeat(10 * 1024 * 1024 + 4);
+    const overTotal = await postJson(base, '/api/prompt', status.token, { key: 'k1', text: 'hi', images: [{ mimeType: 'image/png', data: huge }] });
+    expect(overTotal.status).toBe(400);
+    expect(((await overTotal.json()) as { error: string }).error).toContain('10 MiB');
+    // body 超 11MiB 软顶：读 body 阶段就拒。
+    const overBody = await postJson(base, '/api/prompt', status.token, { key: 'k1', text: 'hi', images: [{ mimeType: 'image/png', data: 'A'.repeat(11 * 1024 * 1024) }] });
+    expect(overBody.status).toBe(400);
+    expect(((await overBody.json()) as { error: string }).error).toContain('请求体过大');
+    expect(provider.prompt).not.toHaveBeenCalled();
+  }, 30_000);
+
+  it('keeps the 64KiB body cap for text-only prompts and other POST paths', async () => {
+    const { status, base } = await start();
+    // 无图 >64KiB body 依旧拒绝（既有口径）。
+    expect((await postJson(base, '/api/prompt', status.token, { key: 'k1', text: 'x'.repeat(70 * 1024) })).status).toBe(400);
+    // 其他 POST 路径不受 11MiB 放宽影响。
+    expect((await postJson(base, '/api/stop', status.token, { key: 'k1', pad: 'x'.repeat(70 * 1024) })).status).toBe(400);
+    expect(provider.stop).not.toHaveBeenCalled();
+    expect(provider.prompt).not.toHaveBeenCalled();
+  });
+
+  it('rejects oversized image+text prompts at the 200k char limit and enforces auth before reading bodies', async () => {
+    const { status, base } = await start();
+    expect((await postJson(base, '/api/prompt', status.token, { key: 'k1', text: 'x'.repeat(200_001), images: [{ mimeType: 'image/png', data: hello64 }] })).status).toBe(400);
+    // 未授权的大 body：鉴权先行，不进入读取/校验。
+    const noAuth = await fetch(`${base}/api/prompt`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ key: 'k1', text: 'hi', images: [{ mimeType: 'image/png', data: hello64 }] }) });
+    expect(noAuth.status).toBe(401);
+    expect(provider.prompt).not.toHaveBeenCalled();
   });
 });
