@@ -45,8 +45,10 @@ const remote = new RemoteServer({
     try { return host.index.history(key); } catch { return null; }
   },
   version: () => host.environment.version,
-  // 写操作直转 backend：与桌面 IPC 同一套校验（会话连接、generation、可发送状态）。
-  prompt: async (key, text) => { await host.backend.prompt(key, text, 'followUp'); },
+  // Desktop 应用自身版本：手机端据它分辨连的是哪个版本的桌面（与 pi 内核版本分开显示）。
+  desktopVersion: () => app.getVersion(),
+  // 写操作直转 backend：与桌面 IPC 同一套校验（会话连接、generation、可发送状态、图片数量/MIME/总长）。
+  prompt: async (key, text, images) => { await host.backend.prompt(key, text, 'followUp', images); },
   stop: key => host.backend.stop(key),
   respond: (key, generation, response) => host.backend.respond(key, generation, response),
   pendingDialogs: key => host.backend.pendingDialogs(key),
@@ -156,7 +158,9 @@ function registerIpc() {
   handle('mcpSave', input => settings.mcpSave(input));
   handle('mcpConfig', (id, cwd) => settings.mcpConfig(id, cwd));
   handle('mcpTest', (id, cwd) => settings.mcpTest(id, cwd));
-  handle('projectSave', value => settings.projectSave(value));
+  // projectSave 会改 hiddenProjects（移除项目即隐藏）：成功后广播 sessions-changed，
+  // 让手机端查看器立刻按新口径刷新（归档路径早已广播，移除项目此前没有）。
+  handle('projectSave', value => { settings.projectSave(value); broadcast({ type: 'sessions-changed' }); });
   const knownProject = (cwd:string) => {
     if(typeof cwd!=='string'||!path.isAbsolute(cwd))throw new Error('项目路径无效');
     const real=canonical(cwd);
