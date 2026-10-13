@@ -85,6 +85,11 @@ import '../replica/tokens.css';
 // 放在 AutomationsPage 模块里会在 tokens 之前注入，「保存任务」等按钮文字贴边（实测坐实）。
 import './automations.css';
 
+/** 侧栏底部两段版本号：Desktop 在前（PR #89 意图）；desktopVersion 缺失时降级单段 pi 版本。 */
+export function sidebarVersionLabel(env?: { version?: string | null; desktopVersion?: string } | null): string {
+  return env?.desktopVersion ? `Desktop ${env.desktopVersion} · pi ${env?.version ?? '未发现'}` : `pi ${env?.version ?? '未发现'}`;
+}
+
 function labelsFor(lang: 'en' | 'zh') {
   const t = replicaLabels(lang);
   if (lang === 'zh') {
@@ -209,6 +214,9 @@ export default function PiReplicaApp() {
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
   }, [s]);
+
+  // 侧栏底部两段版本号：Desktop 在前，desktopVersion 缺失时降级单段 pi 版本。
+  const versionLabel = sidebarVersionLabel(s.env);
 
   const sidebar = useMemo(() => {
     const result = buildPiSidebar(s.sessions, s.runs, s.expandedProjects, s.renames, s.desktopPreferences, s.archivedKeys);
@@ -857,7 +865,7 @@ export default function PiReplicaApp() {
             temporarySessions={sidebar.temporary}
             activeSessionId={s.view === 'chat' || s.view === 'home' ? s.selectedKey : null}
             collapsed={s.sidebarCollapsed}
-            version={`pi ${s.env?.version ?? '未发现'}`}
+            version={versionLabel}
             updateBadge={updateStatus?.available && updateStatus.latest
               ? {
                   version: updateStatus.latest,
