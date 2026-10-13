@@ -22,6 +22,8 @@
 /* 会话统计（tokens/费用/消息数）网格 */
 .pi-status-stats { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--pi-border, rgba(0,0,0,.08)); }
 .pi-status-statgrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px 10px; margin-top: 6px; }
+/* 输出速度/缓存命中率/上下文占用的独立一行：与上一行 token 网格保持同三列样式。 */
+.pi-status-statgrid--rates { margin-top: 8px; }
 .pi-status-statgrid > div { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
 .pi-status-statgrid small { color: var(--pi-text-tertiary, #8a8a8a); font-size: 10px; }
 .pi-status-statgrid b { font-size: 12px; font-variant-numeric: tabular-nums; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
