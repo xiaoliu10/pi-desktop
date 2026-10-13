@@ -26,6 +26,10 @@ export type RemoteDialogResponse = { id: string; value?: string; confirmed?: boo
 /** Data source the server renders — the same host the desktop UI uses. */
 export interface RemoteDataProvider {
   sessions(): PiSession[];
+  /** 已归档会话 key（桌面侧 archive.list()）：与桌面侧栏一致，手机端不展示。 */
+  archivedSessions?(): string[];
+  /** 已移除/隐藏项目路径（桌面侧 hiddenProjects）：与桌面侧栏一致，手机端不展示。 */
+  hiddenProjects?(): string[];
   runs(): PiRun[];
   history(key: string): PiHistoryLite | null;
   version(): string | null;
@@ -235,7 +239,7 @@ export class RemoteServer {
         case '/api/state':
           this.json(res, 200, {
             version: this.data.version(),
-            sessions: lightSessions(this.data.sessions()),
+            sessions: lightSessions(this.data.sessions(), this.data.archivedSessions?.(), this.data.hiddenProjects?.()),
             runs: lightRuns(this.data.runs(), (key) => this.data.pendingDialogs(key)),
           });
           return;
@@ -269,8 +273,12 @@ export class RemoteServer {
   }
 }
 
-function lightSessions(sessions: PiSession[]) {
+/** 与桌面侧栏同口径过滤：归档会话与已移除项目不出现在手机端（否则「已归档删除」的项目又能刷出来）。 */
+function lightSessions(sessions: PiSession[], archivedKeys?: string[], hiddenProjects?: string[]) {
+  const archived = new Set(archivedKeys ?? []);
+  const hidden = new Set((hiddenProjects ?? []).map(h => String(h)));
   return sessions
+    .filter(s => !archived.has(s.key) && !hidden.has(s.cwd))
     .map((s) => ({ key: s.key, name: s.name, cwd: s.cwd, updatedAt: s.updatedAt, owned: s.owned }))
     .sort((a, b) => b.updatedAt - a.updatedAt)
     .slice(0, 200);
