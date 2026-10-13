@@ -62,6 +62,7 @@ export function readModelCatalog(agentDir: string): PiModelCatalog {
           reasoning: typeof m.reasoning === 'boolean' ? m.reasoning : undefined,
           thinkingLevelMap: m.thinkingLevelMap && typeof m.thinkingLevelMap === 'object' ? m.thinkingLevelMap as PiCatalogModel['thinkingLevelMap'] : undefined,
           samplingParamsByThinkingLevel: m.samplingParamsByThinkingLevel && typeof m.samplingParamsByThinkingLevel === 'object' && !Array.isArray(m.samplingParamsByThinkingLevel) ? m.samplingParamsByThinkingLevel as PiCatalogModel['samplingParamsByThinkingLevel'] : undefined,
+          compat: m.compat && typeof m.compat === 'object' && !Array.isArray(m.compat) ? m.compat as PiCatalogModel['compat'] : undefined,
           input: Array.isArray(m.input) ? m.input.filter((v): v is string => v === 'text' || v === 'image') : undefined,
         })).filter((m) => m.id);
     providers.push({
@@ -94,6 +95,7 @@ export function readModelCatalog(agentDir: string): PiModelCatalog {
       reasoning: typeof m.reasoning === 'boolean' ? m.reasoning : undefined,
       thinkingLevelMap: m.thinkingLevelMap && typeof m.thinkingLevelMap === 'object' ? m.thinkingLevelMap as PiCatalogModel['thinkingLevelMap'] : undefined,
       samplingParamsByThinkingLevel: m.samplingParamsByThinkingLevel && typeof m.samplingParamsByThinkingLevel === 'object' && !Array.isArray(m.samplingParamsByThinkingLevel) ? m.samplingParamsByThinkingLevel as PiCatalogModel['samplingParamsByThinkingLevel'] : undefined,
+      compat: m.compat && typeof m.compat === 'object' && !Array.isArray(m.compat) ? m.compat as PiCatalogModel['compat'] : undefined,
       input: Array.isArray(m.input) ? m.input.filter((v): v is string => v === 'text' || v === 'image') : undefined,
     })).filter((m) => m.id);
     providers.push({
@@ -169,7 +171,7 @@ export function writeProviderApiKey(agentDir: string, input: { id: string; apiKe
   return readModelCatalog(agentDir);
 }
 
-const editableFields: PiModelEditableField[] = ['name', 'contextWindow', 'maxTokens', 'reasoning', 'input', 'thinkingLevelMap', 'samplingParamsByThinkingLevel'];
+const editableFields: PiModelEditableField[] = ['name', 'contextWindow', 'maxTokens', 'reasoning', 'input', 'thinkingLevelMap', 'samplingParamsByThinkingLevel', 'compat'];
 
 /** Missing/unreadable/malformed are not equivalent when saving a secret-bearing file. */
 function readModelsForWrite(file: string): Record<string, unknown> {
@@ -246,6 +248,13 @@ export function writeModelProvider(agentDir: string, draft: PiModelProviderDraft
       const params = model.samplingParamsByThinkingLevel;
       if (!params || Array.isArray(params) || typeof params !== 'object' || Object.entries(params).some(([k,v]) => !['off','minimal','low','medium','high','xhigh','max'].includes(k) || !v || Array.isArray(v) || typeof v !== 'object')) throw new Error('推理参数映射无效：键为 pi 思考等级，值为参数对象');
     }
+    if (model.compat !== undefined) {
+      const compat = model.compat;
+      // 只校验容器与亲和两键；未知键（含 pi schema 的嵌套成员如 allowedFallbackModels）原样透传，由 pi 运行时校验。
+      if (!compat || Array.isArray(compat) || typeof compat !== 'object') throw new Error('compat 无效：必须为对象');
+      if (compat.sendSessionAffinityHeaders !== undefined && typeof compat.sendSessionAffinityHeaders !== 'boolean') throw new Error('compat.sendSessionAffinityHeaders 必须为布尔');
+      if (compat.sessionAffinityFormat !== undefined && !['openrouter','openai','openai-nosession'].includes(String(compat.sessionAffinityFormat))) throw new Error('compat.sessionAffinityFormat 只支持 openrouter / openai / openai-nosession');
+    }
     return model;
   });
   if (!models.length) throw new Error('至少需要一个模型');
@@ -319,8 +328,10 @@ export function writeModelProvider(agentDir: string, draft: PiModelProviderDraft
       else if (Object.hasOwn(m, 'thinkingLevelMap')) delete entry.thinkingLevelMap;
       if (m.samplingParamsByThinkingLevel !== undefined) entry.samplingParamsByThinkingLevel = m.samplingParamsByThinkingLevel;
       else if (Object.hasOwn(m, 'samplingParamsByThinkingLevel')) delete entry.samplingParamsByThinkingLevel;
+      if (m.compat !== undefined) entry.compat = m.compat;
+      else if (Object.hasOwn(m, 'compat')) delete entry.compat;
       // Explicit Desktop edits must also update the runtime's topmost config layer.
-      const fields = editableFields.filter(key => m[key] !== undefined || (key === 'thinkingLevelMap' || key === 'samplingParamsByThinkingLevel') && Object.hasOwn(m, key));
+      const fields = editableFields.filter(key => m[key] !== undefined || (key === 'thinkingLevelMap' || key === 'samplingParamsByThinkingLevel' || key === 'compat') && Object.hasOwn(m, key));
       const override = patchModel(overrides[m.id] ?? {}, m, fields);
       validateLimits({ ...entry, ...override });
       if (Object.keys(override).length) overrides[m.id] = override; else delete overrides[m.id];

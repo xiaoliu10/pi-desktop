@@ -24,3 +24,33 @@ describe('model metadata draft transactions',()=>{
     expect(commitModelDraft({...draft,samplingParams:'{"high":{"temperature":0.7}}'},[])).toMatchObject({model:{samplingParamsByThinkingLevel:{high:{temperature:0.7}}}});
   });
 });
+
+describe('session affinity (compat) draft',()=>{
+  it('reads the three states from model.compat',()=>{
+    expect(createModelDraft({id:'m'}).sessionAffinity).toBe('default');
+    expect(createModelDraft({id:'m',compat:{sendSessionAffinityHeaders:true}}).sessionAffinity).toBe('anthropic');
+    expect(createModelDraft({id:'m',compat:{sendSessionAffinityHeaders:true,sessionAffinityFormat:'openrouter'}}).sessionAffinity).toBe('openrouter');
+    // 显式 false（例如 OpenRouter 供应商想关掉自动开启）也读作 default
+    expect(createModelDraft({id:'m',compat:{sendSessionAffinityHeaders:false,sessionAffinityFormat:'openrouter'}}).sessionAffinity).toBe('default');
+  });
+  it('writes compat per state and preserves unknown compat keys',()=>{
+    const base=createModelDraft({id:'m',compat:{supportsReasoningEffort:true}});
+    const openrouter=commitModelDraft({...base,sessionAffinity:'openrouter'},[],{id:'m',compat:{supportsReasoningEffort:true}});
+    expect(openrouter).toMatchObject({model:{compat:{sendSessionAffinityHeaders:true,sessionAffinityFormat:'openrouter',supportsReasoningEffort:true}}});
+    const anthropic=commitModelDraft({...base,sessionAffinity:'anthropic'},[],{id:'m',compat:{}});
+    expect(anthropic).toMatchObject({model:{compat:{sendSessionAffinityHeaders:true}}});
+    expect((anthropic as Extract<typeof anthropic,{model:unknown}>).model.compat!.sessionAffinityFormat).toBeUndefined();
+    // default：去掉亲和两键；只剩未知键时保留 compat，全空则 undefined
+    const offKeep=commitModelDraft({...base,sessionAffinity:'default'},[],{id:'m',compat:{sendSessionAffinityHeaders:true,sessionAffinityFormat:'openrouter',supportsReasoningEffort:true}});
+    expect(offKeep).toMatchObject({model:{compat:{supportsReasoningEffort:true}}});
+    expect((offKeep as Extract<typeof offKeep,{model:unknown}>).model.compat!.sendSessionAffinityHeaders).toBeUndefined();
+    const offEmpty=commitModelDraft({...createModelDraft({id:'m',compat:{sendSessionAffinityHeaders:true}}),sessionAffinity:'default'},[],{id:'m',compat:{sendSessionAffinityHeaders:true}});
+    expect((offEmpty as Extract<typeof offEmpty,{model:unknown}>).model.compat).toBeUndefined();
+  });
+  it('does not emit compat when nothing changed (no-op save stays sparse)',()=>{
+    const model={id:'m',compat:{sendSessionAffinityHeaders:true,sessionAffinityFormat:'openrouter'} as Record<string,unknown>};
+    const result=commitModelDraft(createModelDraft(model),[],model);
+    const initial=commitModelDraft(createModelDraft(model),[],model);
+    expect(JSON.stringify(result.model.compat)).toBe(JSON.stringify(initial.model.compat));
+  });
+});
