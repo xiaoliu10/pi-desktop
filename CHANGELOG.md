@@ -3,6 +3,11 @@
 所有重要变更记录在本文件。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 README 只保留最近版本摘要；本文件为完整记录。
 
+## [Unreleased]
+
+### 修复
+- 侧栏底部版本号显示「Desktop X · pi Y」两段：#89 只落了数据层与样式，桌面应用版本从未真正显示出来；本修复补上 renderer 展示与 main 进程的 app.getVersion() 接线，并附防回归测试。
+
 ## [0.1.17] - 2026-10-13
 
 ### 新功能
