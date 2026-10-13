@@ -748,6 +748,18 @@ function applyDelta(delta) {
   else if (type === 'toolcall_end') { const tc = delta.toolCall; if (tc && typeof tc === 'object') liveBlocks[index] = Object.assign({}, tc); }
   return type === 'done' || type === 'error';
 }
+// 页面抖动治理：思考/正文 delta 高频重建 + 每 delta 强制滚底会让页面不停跳动。
+// 1) renderLive 节流 250ms；2) 仅当用户停留在底部附近（或刚发送消息）才自动滚底，
+// 上滑阅读时不再被强行拉回；滚回底部即恢复跟随。
+let follow = true, lastLiveRender = 0, liveTimer = null;
+function nearBottom() { return document.body.scrollHeight - (window.scrollY || 0) - window.innerHeight < 120; }
+window.addEventListener('scroll', () => { follow = nearBottom(); }, { passive: true });
+function scrollFollow() { if (follow || nearBottom()) window.scrollTo(0, document.body.scrollHeight); }
+function renderLiveThrottled() {
+  const now = Date.now();
+  if (now - lastLiveRender >= 250) { lastLiveRender = now; renderLive(); return; }
+  if (!liveTimer) liveTimer = setTimeout(() => { liveTimer = null; lastLiveRender = Date.now(); renderLive(); }, 250);
+}
 function renderLive() {
   const old = document.getElementById('live');
   // 每个 delta 都重建 #live，<details> 的展开状态需手动延续（否则流式期间手动展开会被立即拍扁）。
@@ -766,9 +778,10 @@ function renderLive() {
   if (!html) return;
   const div = document.createElement('div');
   div.id = 'live'; div.innerHTML = html;
-  if (wasThinkOpen) { const d = div.querySelector('.msg.think details'); if (d) d.open = true; }
+  const wasOpen = old ? !!old.querySelector('details')?.open : false;
+  if (wasThinkOpen || wasOpen) { const d = div.querySelector('details'); if (d) d.open = true; }
   document.getElementById('feed').appendChild(div);
-  window.scrollTo(0, document.body.scrollHeight);
+  scrollFollow();
 }
 // ---- 审批卡片 ----
 function renderDialog() {
@@ -952,7 +965,7 @@ function listen() {
       const t = msg.event && msg.event.type;
       if (t === 'message_update' && msg.event.assistantMessageEvent) {
         const ended = applyDelta(msg.event.assistantMessageEvent);
-        renderLive();
+        renderLiveThrottled();
         if (ended) { liveBlocks = null; renderLive(); debouncedHistory(); }
       } else if (t === 'message_end' || t === 'agent_settled' || t === 'auto_retry_start' || t === 'compaction_start') {
         liveBlocks = null; renderLive(); debouncedHistory();
@@ -1038,6 +1051,7 @@ document.getElementById('imgChips').addEventListener('click', e => {
 });
 document.getElementById('composer').addEventListener('submit', e => {
   e.preventDefault();
+  follow = true; // 发送后恢复自动跟随
   const text = ta.value.trim();
   if (!current) return;
   const imgs = pendingImages.map(im => ({ type: 'image', mimeType: im.mimeType, data: im.data }));
