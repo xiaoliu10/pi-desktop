@@ -1,6 +1,7 @@
 # pi 0.99.x 适配方案
 
 > **P0 已落地（2026-09-30）**：版本闸门 0.100.0、桥版本门（PI_DESKTOP_PI_VERSION 注入 + ≥0.99 整体让位）、mcp.json 迁移（mcpMigrate：覆盖层折叠/imports 物化/per-entry enabled/首次备份 .bak-pre099）、ChatView `mcp__server__tool` 展示、mcpSave 原生 enabled 语义（导入分支删除，物化后即普通条目）。
+> **1.2.0 增量已落地（2026-10-13）**：闸门放宽到 [0.85.1, 1.3.0)（1.2.0 核对：RPC 命令集 33 个与 1.1.0 逐一相同、事件面 extension_error/extension_ui_request/response/user_bash 无增减、Desktop 依赖的 13 个命令签名不变；捆绑 1.2.0 六命令 RPC 冒烟实测全通）；内置运行时 retarget 1.1.0→1.2.0（pi-runtime 依赖 + package-lock 重生成 + runtime.json）；pi-environment.test.ts 的窗口断言同步（1.2.0/1.2.1 accept、1.3.0 reject，本机 CLI 走 runtime:'system'）。**注意 PI_MAX_TESTED 是排他上界**：设为「下一个大版本」才覆盖已测的 1.2.x。
 > **1.0.0 增量已落地（2026-10-02）**：闸门放宽到 [0.85.1, 1.1.0)（1.0.0 bundle 拆 chunks 目录，RPC 冒烟 get_state/get_available_models/set_model 与 0.99.x 逐字节同语义）；PR #9 内置运行时 retarget 0.99.1→1.0.0（连带带入 0.99.2：MCP 后台连接不阻塞首条消息、长会话提速、Z.AI CN 超限识别修复）；**generateImages 桌面化**（account-worker `generate` 操作 → `imageGenerate` IPC → 模型菜单「图像生成」区块 → 生图模式直连 ModelRuntime.generateImages，产物为本地时间线卡片不入会话历史；catalog 新增 `imageModels` 字段，mergeModelCatalog 同步到既有 provider；实测 openrouter 报 57 个图像模型）。
 > **沙箱实测（pi 0.99.1 RPC + mcp list）**：同一份 mcp.json 被原生读取；未知 per-entry 字段（custom 等）与未知顶层键均容忍不报错；`enabled:false` 条目静默跳过；坏条目经 `extension_ui_request` notify 报告（desktop 可显示）；`pi mcp list` 确认 connected + 工具暴露（mcp__probe__echo）。
 > 待办：P1（mcp_servers_change 状态行）、P2（截断提示、codemode 开关、模型目录刷新按钮）。真实生图调用（花额度）未实测，链路以单测+browser 夹具覆盖。
