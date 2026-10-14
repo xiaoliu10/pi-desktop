@@ -106,6 +106,13 @@ const messageCache = new Map<string, ChatMessage>();
 // 同一份 Promise，避免同一会话并发两次 connect 各自 spawn 一个 pi 进程。
 const prewarmInFlight = new Map<string, Promise<void>>();
 
+/** 内核会把 /skill: 展开成 <skill>…</skill> 全文、goal 扩展把确认协议整块注入为 user 消息——
+ *  这些是给模型的上下文，但人不需要通读：渲染层按此分类折叠（投影时打标，正文原样保留）。 */
+export function classifyUserMeta(text: string): 'skill' | 'protocol' | undefined {
+  if (text.startsWith('<skill name="') && text.includes('</skill>')) return 'skill';
+  if (text.startsWith('[GOAL CONFIRMATION') || text.startsWith('[PI GOAL ACTIVE') || text.includes('<goal_topic>')) return 'protocol';
+  return undefined;
+}
 function modelOutcome(m: Record<string, unknown>): ChatMessage['modelOutcome'] {
   if (m.stopReason === 'error' || m.errorMessage) return 'error';
   if (m.stopReason === 'aborted') return 'aborted';
@@ -152,7 +159,7 @@ export function historyToMessages(branch: PiEntry[], compactionAfter?: Compactio
       const content = m.content;
       if (role === 'user') {
         const text = contentText(content);
-        push(entry, id, () => ({ id, timestamp, role: 'user', parts: [{ kind: 'text', id: `${id}-t`, text }, ...(Array.isArray(content) ? content.flatMap((b: any, i: number): MessagePart[] => b.type === 'image' && typeof b.data === 'string' && /^image\/(png|jpeg|webp|gif)$/.test(b.mimeType) ? [{kind:'image',id:`${id}-image-${i}`,data:b.data,mimeType:b.mimeType}] : []) : [])] }));
+        push(entry, id, () => ({ id, timestamp, role: 'user', meta: classifyUserMeta(text), parts: [{ kind: 'text', id: `${id}-t`, text }, ...(Array.isArray(content) ? content.flatMap((b: any, i: number): MessagePart[] => b.type === 'image' && typeof b.data === 'string' && /^image\/(png|jpeg|webp|gif)$/.test(b.mimeType) ? [{kind:'image',id:`${id}-image-${i}`,data:b.data,mimeType:b.mimeType}] : []) : [])] }));
         return;
       }
       if (role === 'assistant') {

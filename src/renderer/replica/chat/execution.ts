@@ -10,6 +10,8 @@ export interface ChatTurn {
   endedAt?: number;
   id: string;
   role: 'user' | 'assistant';
+  /** 内核注入的元消息（技能全文/goal 协议）标记，渲染层折叠。 */
+  meta?: 'skill' | 'protocol';
   messageIds: string[];
   /** Ordered segments: tools/thinking runs interleaved with visible text. */
   segments: ChatSegment[];
@@ -56,7 +58,7 @@ export function executionTurns(messages: ChatMessage[]): ChatTurn[] {
       const message = group.members[0]!;
       const userHit = turnCache.get(group.id);
       if (userHit && userHit.count === 1 && userHit.first === message && userHit.last === message) { turns.push(userHit.turn); continue; }
-      const turn: ChatTurn = { id: group.id, role: 'user', messageIds: [message.id], segments: [{ kind: 'text', parts: message.parts }], liveSegments: [{ kind: 'text', parts: message.parts }], steps: [], answer: message.parts };
+      const turn: ChatTurn = { id: group.id, role: 'user', meta: message.meta, messageIds: [message.id], segments: [{ kind: 'text', parts: message.parts }], liveSegments: [{ kind: 'text', parts: message.parts }], steps: [], answer: message.parts };
       turnCache.set(group.id, { count: 1, first: message, last: message, turn });
       turns.push(turn);
       continue;

@@ -614,7 +614,12 @@ export const TurnArticle = memo(function TurnArticle({ m, liveTurn, retrying, su
                 <button className="pi-btn pi-btn--ghost" onClick={() => setEditing(false)}>{labels.cancel}</button>
               </div>
             </div>
-            : <UserMessageParts parts={m.answer} labels={labels} onOpenToolFile={onOpenToolFile} onDownloadImage={onDownloadImage} />}
+            : m.meta
+              ? <details className="pi-msg__meta" data-meta={m.meta}>
+                  <summary>{m.meta === 'skill' ? (zh ? '🧩 技能内容（已折叠，点开查看全文）' : '🧩 Skill content (folded)') : (zh ? '⚙️ Goal 确认协议（已折叠）' : '⚙️ Goal protocol (folded)')}</summary>
+                  <div className="pi-msg__bubble"><MessageParts parts={m.answer} labels={labels} onOpenToolFile={onOpenToolFile} /></div>
+                </details>
+              : <UserMessageParts parts={m.answer} labels={labels} onOpenToolFile={onOpenToolFile} onDownloadImage={onDownloadImage} />}
           {!editing && (userText || onEditUser) && (
             <div className="pi-msg__actions">
               {userText && <button type="button" className="pi-msg__action" title={copied ? labels.copied : labels.copyMessage} aria-label={labels.copyMessage} onClick={() => void copy()}>{copied ? <><Icon name="check" size={13} /><span>{labels.copied}</span></> : <Icon name="copy" size={13} />}</button>}
