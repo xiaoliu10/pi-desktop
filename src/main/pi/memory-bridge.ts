@@ -25,6 +25,7 @@ export const KNOWN_MEMORY_PLUGINS: ReadonlyArray<{ name: string; label: string }
   { name: 'pi-memory-evolution', label: 'Memory Evolution' },
   { name: '@samfp/pi-memory', label: 'Samfp Memory' },
   { name: '@yandy0725/pi-memory', label: 'Filesystem Memory' },
+  { name: 'pi-scoped-memory', label: 'Scoped Memory' },
   { name: '@fradser/pi-memory', label: 'Fradser Memory' },
 ];
 
