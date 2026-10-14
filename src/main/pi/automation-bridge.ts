@@ -17,7 +17,7 @@ const ALIAS: Record<string, ExecPermission> = { ask: 'ask', autoedit: 'autoEdit'
 
 /** 注入每个 desktop 会话系统提示的调度守则：工具描述 alone 不够——模型在长对话惯性里
  *  会沿用「sleep 等待」等会话内手段（2026-10-04 真实案例：发版任务被 ssh sleep 方案绕过）。 */
-export const SCHEDULE_GUIDANCE = '定时/周期任务：当用户要求在特定时间或按周期执行任务（例如「今晚 22:00 发布」「每天 9 点检查」「今天 12:00-13:00 窗口发版」），必须使用 desktop_schedule 工具创建 Desktop 定时任务——任务由 Desktop 调度器在全新会话中执行，不依赖当前会话存活。不要用 sleep、后台轮询或服务器端定时器在会话内等待未来时间点（会话退出即丢失）；把到点要执行的完整操作写成自包含的任务 prompt。';
+export const SCHEDULE_GUIDANCE = '定时/周期任务：当用户要求在特定时间或按周期执行任务（例如「今晚 22:00 发布」「每天 9 点检查」「今天 12:00-13:00 窗口发版」），必须使用 desktop_schedule 工具创建 Desktop 定时任务——任务由 Desktop 调度器到点在项目会话中执行，不依赖当前会话存活。不要用 sleep、后台轮询或服务器端定时器在会话内等待未来时间点（会话退出即丢失）；把到点要执行的完整操作写成自包含的任务 prompt。';
 
 /** Agent-facing scheduled-task bridge: the desktop_schedule tool encodes its request
  *  into a reserved ui.input payload; the backend hands it here. Tasks land in

@@ -69,14 +69,25 @@ it('reuse mode (default): prefers a live session, then the most recent project s
  expect(h2b.backend.connect).not.toHaveBeenCalledWith(expect.objectContaining({sourceKey:'k0'}));
  expect(h2b.backend.close).toHaveBeenCalledWith('run-1');
 
- // 2c) busy live run（running）不复用：步骤归因会错位 → 新建隔离
+ // 2c) busy live run（running）：投递进该会话排队（单次触发单投递，不另开新会话）；
+ // 步骤结算只认本步骤回合——用户自己回合的 settle 不得误结算排队中的步骤
  const h2c=setup();
  (h2c.backend as unknown as { runs: unknown }).runs = vi.fn(() => [{ key: 'busy-1', cwd: h2c.root, status: 'running', timing: { startedAt: 1 } }]);
  const w2c=h2c.workflow();h2c.service.runWorkflow({id:w2c.id,cwd:h2c.root,args:{target:'Y3'},permission:'ask'});
- await vi.waitFor(()=>expect(h2c.backend.prompt).toHaveBeenCalledTimes(1));h2c.settle('run-1');
- expect(h2c.backend.connect).toHaveBeenCalledWith(expect.objectContaining({cwd:expect.any(String)})); // 新建而非复用 busy
- await vi.waitFor(()=>expect(h2c.backend.prompt).toHaveBeenCalledTimes(2));h2c.settle('run-1');
+ await vi.waitFor(()=>expect(h2c.backend.prompt).toHaveBeenCalledTimes(1));
+ expect(h2c.backend.connect).not.toHaveBeenCalled(); // 不另开新会话
+ expect(h2c.backend.prompt.mock.calls[0][0]).toBe('busy-1');
+ h2c.settle('busy-1'); // 用户自己回合的 settle：不得误结算
+ await new Promise(r=>setTimeout(r,0));
+ expect(h2c.service.snapshot().runs[0].steps[0].status).toBe('running');
+ expect(h2c.backend.prompt).toHaveBeenCalledTimes(1);
+ // 本步骤 prompt 的 user message_start（文本匹配）到达后才认 settle
+ const arm2c=(n:number)=>h2c.service.onPiEvent({type:'rpc',key:'busy-1',generation:'g',event:{type:'message_start',message:{role:'user',content:h2c.backend.prompt.mock.calls[n][1]}}});
+ arm2c(0);h2c.settle('busy-1');
+ await vi.waitFor(()=>expect(h2c.backend.prompt).toHaveBeenCalledTimes(2));
+ arm2c(1);h2c.settle('busy-1');
  await vi.waitFor(()=>expect(h2c.service.snapshot().runs[0].status).toBe('succeeded'));
+ expect(h2c.backend.connect).not.toHaveBeenCalled();
 
  // 2d) 同 cwd 已有自动化在跑：不再复用（waiter 单槽会互相覆盖）→ 新建隔离
  const h2d=setup();
@@ -88,16 +99,21 @@ it('reuse mode (default): prefers a live session, then the most recent project s
  const wfKey=h2d.service.snapshot().runs.find(r=>r.workflowId===w2d.id)!.sessionKey!;
  expect(wfKey).not.toBe('live-x'); // 没有复用被自动化占用的 key
 
- // 2e) busy 会话的文件恰是「最近会话文件」（活跃对话 mtime 最新）：attached 去重不得架空
- // idle-only guard —— 不走 sourceKey，直接新建隔离
+ // 2e) busy 会话的文件恰是「最近会话文件」（活跃对话 mtime 最新）：仍投递进该 busy 会话
+ // 排队，不走 sourceKey、不新建
  const h2e=setup({ scan: () => [{ key: 'k-owned', path: path.join(h2e.root, 'busy-owned.jsonl'), cwd: h2e.root, updatedAt: Date.now(), name: 'busy-owned', size: 10, parentSession: undefined, owned: true }] });
  (h2e.backend as unknown as { runs: unknown }).runs = vi.fn(() => [{ key: 'busy-attached', cwd: h2e.root, status: 'running', timing: { startedAt: 1 } }]);
  const w2e=h2e.workflow();h2e.service.runWorkflow({id:w2e.id,cwd:h2e.root,args:{target:'Y5'},permission:'ask'});
- await vi.waitFor(()=>expect(h2e.backend.prompt).toHaveBeenCalledTimes(1));h2e.settle('run-1');
- await vi.waitFor(()=>expect(h2e.backend.prompt).toHaveBeenCalledTimes(2));h2e.settle('run-1');
+ await vi.waitFor(()=>expect(h2e.backend.prompt).toHaveBeenCalledTimes(1));
+ expect(h2e.backend.connect).not.toHaveBeenCalled();
+ expect(h2e.backend.prompt.mock.calls[0][0]).toBe('busy-attached');
+ const arm2e=(n:number)=>h2e.service.onPiEvent({type:'rpc',key:'busy-attached',generation:'g',event:{type:'message_start',message:{role:'user',content:h2e.backend.prompt.mock.calls[n][1]}}});
+ arm2e(0);h2e.settle('busy-attached');
+ await vi.waitFor(()=>expect(h2e.backend.prompt).toHaveBeenCalledTimes(2));
+ arm2e(1);h2e.settle('busy-attached');
  await vi.waitFor(()=>expect(h2e.service.snapshot().runs[0].status).toBe('succeeded'));
- expect(h2e.backend.connect).not.toHaveBeenCalledWith(expect.objectContaining({sourceKey:'k-owned'}));
- expect(h2e.service.snapshot().runs[0].sessionKey).not.toBe('busy-attached');
+ expect(h2e.service.snapshot().runs[0].sessionKey).toBe('busy-attached');
+ expect(h2e.service.snapshot().runs[0].reusedSession).toBe(true);
 
  // 3) fresh：任务显式选「独立新会话」→ runTask 端到端新建并回收（P0-1 回归）
  const h3=setup();
@@ -110,6 +126,28 @@ it('reuse mode (default): prefers a live session, then the most recent project s
  expect(h3.backend.close).toHaveBeenCalledWith('run-1'); // 自己新建的会话照旧回收
 });
 
+it('busy 原会话 + 定时触发：只向用户会话投递一次（双执行回归），重复触发记 skipped',async()=>{
+ const h=setup();
+ (h.backend as unknown as {runs:unknown}).runs=vi.fn(()=>[{key:'user-1',cwd:h.root,status:'running',timing:{startedAt:1}}]);
+ const task=h.task();h.advance(61000);h.service.tick();
+ await vi.waitFor(()=>expect(h.backend.prompt).toHaveBeenCalledTimes(1));
+ // 目标明确：投递进用户正在用的 busy 会话，没有新建「自动化：…」会话
+ expect(h.backend.prompt.mock.calls[0][0]).toBe('user-1');
+ expect(h.backend.connect).not.toHaveBeenCalled();
+ // 用户自己回合的 settle 不误结算排队中的步骤（run 保持 live，重复入口被 guard 挡住）
+ h.settle('user-1');await new Promise(r=>setTimeout(r,0));
+ expect(h.service.snapshot().runs[0].status).toBe('running');
+ // 同一窗口的重复触发被去重：run 仍 live → 手动抛错 / 定时记 skipped，均不二次投递
+ expect(()=>h.service.runTask(task.id)).toThrow('已有运行');
+ h.advance(60000);h.service.tick();
+ expect(h.backend.prompt).toHaveBeenCalledTimes(1);
+ expect(h.service.snapshot().runs.some(r=>r.status==='skipped')).toBe(true);
+ // 本步骤回合开始（user message_start 文本匹配）后 settle 才生效
+ h.service.onPiEvent({type:'rpc',key:'user-1',generation:'g',event:{type:'message_start',message:{role:'user',content:h.backend.prompt.mock.calls[0][1]}}});
+ h.settle('user-1');
+ await vi.waitFor(()=>expect(h.service.snapshot().runs.find(r=>r.sessionKey==='user-1')?.status).toBe('succeeded'));
+ expect(h.backend.prompt).toHaveBeenCalledTimes(1);
+});
 it('claims scheduled occurrences once, blocks overlap, and retains phase-aligned interval times',async()=>{
  const h=setup(),task=h.task();h.advance(61000);h.service.tick();h.service.tick();await vi.waitFor(()=>expect(h.backend.prompt).toHaveBeenCalledTimes(1));
  expect(h.service.snapshot().tasks[0].nextRunAt).toBe(Date.parse('2026-09-21T00:02:00Z'));
