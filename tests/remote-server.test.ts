@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest';
-import { RemoteServer, type RemoteDataProvider } from '../src/main/pi/remote-server';
+import { RemoteServer, type RemoteDataProvider, historyWindow, viewerPage } from '../src/main/pi/remote-server';
 import type { PiHistory } from '../src/shared/pi';
 
 function makeProvider(): RemoteDataProvider {
@@ -398,5 +398,184 @@ describe('RemoteServer visibility & image uploads', () => {
     const noAuth = await fetch(`${base}/api/prompt`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ key: 'k1', text: 'hi', images: [{ mimeType: 'image/png', data: hello64 }] }) });
     expect(noAuth.status).toBe(401);
     expect(provider.prompt).not.toHaveBeenCalled();
+  });
+});
+
+// ---- 历史懒加载（fix/mobile-history-lazy-load） ---- //
+// /api/history tail 模式：默认最近 50 条 + hasMore + before 游标；?before=N 翻更早一页。
+// 可见性守卫在 tail 模式下同样生效；viewerPage emitted script 必须能被 new Function 解析
+// （防止 \n 陷阱：模板内 emitted JS 字符串未闭合会 SyntaxError）。
+
+describe('RemoteServer history lazy-load (tail paging)', () => {
+  describe('historyWindow (pure paging helper)', () => {
+    it('returns the last page by default with hasMore + start cursor', () => {
+      expect(historyWindow(120, null)).toEqual({ start: 70, end: 120, hasMore: true });
+      expect(historyWindow(120, null)).toEqual({ start: 70, end: 120, hasMore: true });
+    });
+    it('returns the full short branch with hasMore=false when len <= page', () => {
+      expect(historyWindow(0, null)).toEqual({ start: 0, end: 0, hasMore: false });
+      expect(historyWindow(30, null)).toEqual({ start: 0, end: 30, hasMore: false });
+      expect(historyWindow(50, null)).toEqual({ start: 0, end: 50, hasMore: false });
+    });
+    it('marks the 50/51 boundary: exactly 50 has no more, 51 starts a second page', () => {
+      expect(historyWindow(50, null).hasMore).toBe(false);
+      const w = historyWindow(51, null);
+      expect(w).toEqual({ start: 1, end: 51, hasMore: true });
+    });
+    it('pages older entries with before=N: end=clamp(N), start=max(0,end-page)', () => {
+      // before=70 → [20,70)
+      expect(historyWindow(120, '70')).toEqual({ start: 20, end: 70, hasMore: true });
+      // before=20 → [0,20), 没有更早
+      expect(historyWindow(120, '20')).toEqual({ start: 0, end: 20, hasMore: false });
+      // before=0 → 空页，没有更早
+      expect(historyWindow(120, '0')).toEqual({ start: 0, end: 0, hasMore: false });
+    });
+    it('clamps out-of-range before and treats non-numeric / empty before as default tail', () => {
+      // before 超过 len → end=clamp=len → 同默认 tail
+      expect(historyWindow(120, '200')).toEqual({ start: 70, end: 120, hasMore: true });
+      // before 负数 → end=0 → 空页
+      expect(historyWindow(120, '-5')).toEqual({ start: 0, end: 0, hasMore: false });
+      // 非数值 → 视作缺省（默认 tail），不当 0 读出空页
+      expect(historyWindow(120, 'abc')).toEqual({ start: 70, end: 120, hasMore: true });
+      // 空串 → 视作缺省
+      expect(historyWindow(120, '')).toEqual({ start: 70, end: 120, hasMore: true });
+      // null → 默认 tail
+      expect(historyWindow(120, null)).toEqual({ start: 70, end: 120, hasMore: true });
+    });
+    it('honors a custom page size', () => {
+      expect(historyWindow(120, null, 10)).toEqual({ start: 110, end: 120, hasMore: true });
+      expect(historyWindow(120, '20', 10)).toEqual({ start: 10, end: 20, hasMore: true });
+    });
+    it('guards against non-finite / negative len', () => {
+      expect(historyWindow(Number.NaN, null)).toEqual({ start: 0, end: 0, hasMore: false });
+      expect(historyWindow(-3, null)).toEqual({ start: 0, end: 0, hasMore: false });
+    });
+  });
+
+  let server: RemoteServer;
+  let provider: RemoteDataProvider;
+
+  beforeEach(() => {
+    provider = makeProvider();
+    server = new RemoteServer(provider);
+  });
+  afterEach(async () => { await server.stop(); });
+
+  const start = async () => {
+    const status = await server.start(0);
+    return { status, base: `http://127.0.0.1:${status.port}` };
+  };
+  // 120 条消息的分支：偶数 user、奇数 assistant，id=e0..e119。
+  const bigBranch = () => Array.from({ length: 120 }, (_, i) => ({
+    type: 'message' as const, id: 'e' + i, message: { role: i % 2 ? 'assistant' : 'user', content: 'msg-' + i },
+  }));
+  const bigHistory = (key: string) => (key === 'k1'
+    ? ({ session: {}, entries: [], branch: bigBranch(), leaves: [], leafId: null, syncedAt: 0 } as unknown as PiHistory)
+    : null);
+  const getHistory = async (base: string, token: string, query: string) =>
+    (await (await fetch(`${base}/api/history?session=k1&${query}&token=${token}`)).json()) as {
+      branch: Array<{ id: string; message: { role: string; content: string } }>;
+      hasMore: boolean;
+      before: number;
+    };
+
+  it('serves only the last 50 entries by default with hasMore + before cursor', async () => {
+    const { status, base } = await start();
+    provider.history = bigHistory;
+    const h = await getHistory(base, status.token, '');
+    expect(h.branch).toHaveLength(50);
+    expect(h.branch[0].id).toBe('e70');
+    expect(h.branch[49].id).toBe('e119');
+    expect(h.hasMore).toBe(true);
+    expect(h.before).toBe(70); // 本页起始索引 = 取下一页更早历史的游标
+  });
+
+  it('pages older entries with ?before and reports the next cursor + hasMore boundary', async () => {
+    const { status, base } = await start();
+    provider.history = bigHistory;
+    const h1 = await getHistory(base, status.token, 'before=70');
+    expect(h1.branch).toHaveLength(50); // [20..69]
+    expect(h1.branch[0].id).toBe('e20');
+    expect(h1.branch[49].id).toBe('e69');
+    expect(h1.hasMore).toBe(true);
+    expect(h1.before).toBe(20);
+    const h2 = await getHistory(base, status.token, 'before=20');
+    expect(h2.branch).toHaveLength(20); // [0..19]
+    expect(h2.branch[0].id).toBe('e0');
+    expect(h2.branch[19].id).toBe('e19');
+    expect(h2.hasMore).toBe(false);
+    expect(h2.before).toBe(0);
+  });
+
+  it('returns hasMore=false for a short branch (<= page) and an empty page for before=0', async () => {
+    const { status, base } = await start();
+    provider.history = (key) => (key === 'k1'
+      ? ({ session: {}, entries: [], branch: bigBranch().slice(0, 50), leaves: [], leafId: null, syncedAt: 0 } as unknown as PiHistory)
+      : null);
+    const h = await getHistory(base, status.token, '');
+    expect(h.branch).toHaveLength(50);
+    expect(h.hasMore).toBe(false);
+    expect(h.before).toBe(0);
+    // before=0 → 空页（index 0 之前没有条目）
+    const empty = await getHistory(base, status.token, 'before=0');
+    expect(empty.branch).toHaveLength(0);
+    expect(empty.hasMore).toBe(false);
+    expect(empty.before).toBe(0);
+  });
+
+  it('clamps out-of-range / non-numeric before the same as the pure helper', async () => {
+    const { status, base } = await start();
+    provider.history = bigHistory;
+    // before=200 → 同默认 tail
+    const over = await getHistory(base, status.token, 'before=200');
+    expect(over.branch).toHaveLength(50);
+    expect(over.branch[0].id).toBe('e70');
+    expect(over.hasMore).toBe(true);
+    // before=-5 → 空页
+    const neg = await getHistory(base, status.token, 'before=-5');
+    expect(neg.branch).toHaveLength(0);
+    expect(neg.hasMore).toBe(false);
+    // 非数值 → 默认 tail（不当 0 读空页）
+    const nan = await getHistory(base, status.token, 'before=abc');
+    expect(nan.branch).toHaveLength(50);
+    expect(nan.branch[0].id).toBe('e70');
+  });
+
+  it('still guards visibility in tail mode: archived / hidden / unknown → 404; corrupt index degrades to readable', async () => {
+    const { status, base } = await start();
+    provider.history = bigHistory;
+    const grab = async (key: string, query: string) =>
+      (await fetch(`${base}/api/history?session=${key}&${query}&token=${status.token}`)).status;
+    // 归档会话：即使带 before 游标也 404（同形，不泄露存在性）
+    (provider as unknown as { archivedSessions: () => string[] }).archivedSessions = () => ['k1'];
+    expect(await grab('k1', '')).toBe(404);
+    expect(await grab('k1', 'before=70')).toBe(404);
+    // 已移除项目
+    (provider as unknown as { archivedSessions: () => string[] }).archivedSessions = () => [];
+    (provider as unknown as { hiddenProjects: () => string[] }).hiddenProjects = () => ['/tmp'];
+    expect(await grab('k1', '')).toBe(404);
+    expect(await grab('k1', 'before=70')).toBe(404);
+    // 未知会话
+    (provider as unknown as { hiddenProjects: () => string[] }).hiddenProjects = () => [];
+    expect(await grab('nope', '')).toBe(404);
+    expect(await grab('nope', 'before=70')).toBe(404);
+    // 可见会话 tail + before 都可读
+    expect(await grab('k1', '')).toBe(200);
+    expect(await grab('k1', 'before=70')).toBe(200);
+    // 归档索引损坏 → 降级为不过滤（可读），而不是 500
+    (provider as unknown as { archivedSessions: () => string[] }).archivedSessions = () => { throw new Error('归档索引损坏'); };
+    expect(await grab('k1', '')).toBe(200);
+    expect(await grab('k1', 'before=70')).toBe(200);
+  });
+});
+
+describe('viewerPage emitted script (\\n-template守卫)', () => {
+  it('parses as a function body — catches emitted JS strings left open by a \\n in the template', () => {
+    const html = viewerPage();
+    const m = html.match(/<script>([\s\S]*)<\/script>/);
+    expect(m).not.toBeNull();
+    // new Function 只解析不执行：emitted 脚本里若 \\n 被编译成真换行导致字符串未闭合，
+    // 这里会抛 SyntaxError。模板内 emitted JS 字符串的 \\n 转义必须双反斜杠。
+    expect(() => new Function(m![1])).not.toThrow();
   });
 });

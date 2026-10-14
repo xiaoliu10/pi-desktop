@@ -51,6 +51,9 @@ export interface PiHistoryLite {
 
 const MAX_SSE_CLIENTS = 8;
 const MAX_BODY_BYTES = 64 * 1024;
+/** /api/history tail 懒加载每页条数：移动端进会话/回合结束只拉最近一页，
+ * 上滑到顶按 ?before 游标翻更早的一页（避免 151MB 大会话全量重拉）。 */
+const HISTORY_PAGE_SIZE = 50;
 /** 超限 body 也读完才回 400（见 readBody），这是中途放弃读取的硬顶。 */
 const MAX_HARD_BODY_BYTES = 8 * 1024 * 1024;
 const MAX_PROMPT_CHARS = 200_000;
@@ -321,13 +324,23 @@ export class RemoteServer {
         }
         case '/api/history': {
           const key = url.searchParams.get('session') ?? '';
-          // 与 /api/state 同口径的可见性守卫：已归档 / 已移除项目 / 内部会话的逐条
-          // 历史不能因为拿到 key 就在手机端读出来；404 与「会话不存在」同形，不泄露
-          // 存在性。索引损坏时 snapshot 内部同样降级为不过滤（恢复页面可用）。
+          // 与 /api/state 同口径的可见性守卫（不变）：已归档 / 已移除项目 / 内部会话的
+          // 逐条历史不能因为拿到 key 就在手机端读出来；404 与「会话不存在」同形，不
+          // 泄露存在性。索引损坏时 snapshot 内部降级为不过滤（恢复页面可用）。
           const readable = !!key && this.visibility.snapshot(true).keyVisible(key);
           const history = readable ? this.data.history(key) : null;
-          res.writeHead(history ? 200 : 404, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
-          res.end(JSON.stringify(history ? { branch: history.branch } : { error: 'unknown session' }));
+          if (!history) {
+            res.writeHead(404, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
+            res.end(JSON.stringify({ error: 'unknown session' }));
+            return;
+          }
+          // tail 懒加载：默认只回最近 HISTORY_PAGE_SIZE 条 + hasMore + before（分支内
+          // 索引游标）；?before=N 取 N 之前更早的一页。游标即本页起始索引，前端据此
+          // prepend 更早消息。可见性守卫在 tail 模式下同样生效（不可见会话 404）。
+          const branch = history.branch ?? [];
+          const win = historyWindow(branch.length, url.searchParams.get('before'));
+          res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
+          res.end(JSON.stringify({ branch: branch.slice(win.start, win.end), hasMore: win.hasMore, before: win.start }));
           return;
         }
         case '/api/events': {
@@ -359,6 +372,25 @@ function lightSessions(sessions: PiSession[]) {
     .map((s) => ({ key: s.key, name: s.name, cwd: s.cwd, updatedAt: s.updatedAt, owned: s.owned }))
     .sort((a, b) => b.updatedAt - a.updatedAt)
     .slice(0, 200);
+}
+
+/**
+ * /api/history tail 分页窗口：返回 [start, end) 与「是否还有更早」标记。
+ *  - 不带 before：取分支末尾最近 page 条（默认最近 50）。
+ *  - before=N：取 N 之前的 page 条（更早的一页），end 先 clamp 到 [0, len]。
+ *  非数值 / 空字符串 before 视作缺省（默认 tail），避免把脏参当 0 读出空页。
+ *  返回的 start 同时是「取下一页更早历史」要用的游标（?before=start）。纯函数，
+ *  便于直接单测；HTTP 层与可见性守卫在其外包裹。
+ */
+export function historyWindow(len: number, beforeParam: string | null, page = HISTORY_PAGE_SIZE): { start: number; end: number; hasMore: boolean } {
+  const total = Number.isFinite(len) && len > 0 ? Math.floor(len) : 0;
+  let end = total;
+  if (beforeParam !== null && beforeParam !== '') {
+    const n = Number(beforeParam);
+    if (Number.isFinite(n)) end = Math.max(0, Math.min(total, Math.floor(n)));
+  }
+  const start = Math.max(0, end - page);
+  return { start, end, hasMore: start > 0 };
 }
 
 function isCanonicalBase64(data: string): boolean {
@@ -485,6 +517,8 @@ export function viewerPage(): string {
   .dlg-row .dlg-ghost { border:1px solid var(--line); background:none; color:var(--text); border-radius:10px; padding:10px 14px; font:inherit; font-size:14px; }
   .dialog-card input, .dialog-card textarea { width:100%; border:1px solid var(--line); background:var(--bg); color:var(--text); border-radius:10px; padding:10px; font:inherit; font-size:14px; }
   .ask-multi { font-size:11px; color:var(--sub); margin-left:6px; }
+  .loadolder { display:block; margin:0 auto 12px; border:1px solid var(--line); background:var(--card); color:var(--text); border-radius:99px; padding:7px 18px; font:inherit; font-size:13px; }
+  .loadolder:disabled { opacity:.5; }
 </style>
 </head>
 <body>
@@ -539,7 +573,12 @@ let liveBlocks = null;
 // 乐观发送：POST 成功但历史尚未回显的用户消息。match 用于与历史文本对账（回显后
 // 移除），display 是气泡文案（带图时首行加「📷 n 张」）。
 let optimistic = [];
-let lastEntries = [];
+// 历史懒加载：viewPages 按分支内绝对索引存放已加载条目（默认只拉最近 50 条，
+// 上滑到顶点「加载更早」用 before 游标 prepend 更早的一页）。回合结束 / 切会话
+// 只重拉 tail；olderCursor 随会话切换重置。
+let viewPages = new Map();
+let olderCursor = null;     // 「加载更早」下一页游标（分支内索引；null = 没有更早）
+let olderLoading = false;  // 「加载更早」防重入
 
 function escapeHtml(s) { return String(s).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
 
@@ -617,7 +656,7 @@ function projectsPill() {
 }
 function showChat(key, focusInput) {
   chatView = true;
-  current = key; liveBlocks = null; optimistic = []; lastEntries = [];
+  current = key; liveBlocks = null; optimistic = []; resetHistoryState();
   document.getElementById('projects').hidden = true;
   document.getElementById('chat').hidden = false;
   document.getElementById('composer').hidden = false;
@@ -638,8 +677,11 @@ function showChat(key, focusInput) {
 }
 document.getElementById('back').addEventListener('click', showProjects);
 document.getElementById('session').addEventListener('change', e => {
-  current = e.target.value; liveBlocks = null; optimistic = []; lastEntries = [];
+  current = e.target.value; liveBlocks = null; optimistic = []; resetHistoryState();
   loadHistory(); renderDialog(); renderComposer(); statusPill();
+});// 「加载更早」按钮在 feed 顶部，render 重建 innerHTML 后仍是同 id；用事件代理接住点击。
+document.getElementById('feed').addEventListener('click', e => {
+  if (e.target.id === 'loadOlder') loadOlder();
 });
 function statusPill() {
   const el = document.getElementById('status');
@@ -671,13 +713,16 @@ function renderComposer() {
 }
 
 // ---- 历史渲染 + 乐观气泡 ----
-function render(entries) {
-  if (Array.isArray(entries)) lastEntries = entries;
+// entries 形参保留兼容（乐观发送路径传 null）；渲染源是 viewPages（懒加载窗口，
+// 按分支内绝对索引排序）。opts.preserve=true 时不自动滚底（「加载更早」prepend 后由调用方做滚动位置补偿）。
+function render(entries, opts) {
   const feed = document.getElementById('feed');
+  const idxs = viewPages.size ? Array.from(viewPages.keys()).sort((a, b) => a - b) : [];
   const out = [];
   const seenUser = new Set();
-  for (const e of lastEntries) {
-    if (e.type !== 'message' || !e.message) continue;
+  for (const i of idxs) {
+    const e = viewPages.get(i);
+    if (!e || e.type !== 'message' || !e.message) continue;
     const m = e.message, role = m.role || '';
     if (role === 'user') { const t = textOf(m.content); seenUser.add(t); out.push(bubble('用户', t, 'user')); }
     else if (role === 'assistant') {
@@ -695,8 +740,12 @@ function render(entries) {
   }
   optimistic = optimistic.filter(o => !seenUser.has(o.match));
   for (const o of optimistic) out.push(bubble('用户', o.display, 'user pending'));
-  feed.innerHTML = out.length ? out.join('') : '<div class="empty">这个会话还没有内容</div>';
-  window.scrollTo(0, document.body.scrollHeight);
+  // 有更早历史且视图非空时，顶部渲染「加载更早」按钮（防重入期间禁用）。
+  const btn = (olderCursor !== null && idxs.length)
+    ? '<button class="loadolder" id="loadOlder"' + (olderLoading ? ' disabled' : '') + '>加载更早</button>'
+    : '';
+  feed.innerHTML = btn + (out.length ? out.join('') : '<div class="empty">这个会话还没有内容</div>');
+  if (!opts || !opts.preserve) window.scrollTo(0, document.body.scrollHeight);
 }
 function bubble(who, text, cls) {
   return '<div class="msg ' + cls + '"><div class="who">' + escapeHtml(who) + '</div>' + escapeHtml(String(text ?? '')).slice(0, 8000) + '</div>';
@@ -936,10 +985,49 @@ async function loadState() {
     document.getElementById('projList').innerHTML = '<div class="empty">无法连接桌面端（二维码可能已失效，请回桌面端重新扫码）</div>';
   }
 }
+// 重置懒加载状态：会话切换 / 离开会话时调用，游标与已加载窗口一并清空。
+function resetHistoryState() { viewPages = new Map(); olderCursor = null; olderLoading = false; }
 async function loadHistory() {
-  if (!current) { document.getElementById('feed').innerHTML = '<div class="empty">还没有会话</div>'; return; }
-  try { const h = await api('/api/history?session=' + encodeURIComponent(current)); render(h.branch || []); }
-  catch (e) { document.getElementById('feed').innerHTML = '<div class="empty">无法读取会话</div>'; }
+  if (!current) { document.getElementById('feed').innerHTML = '<div class="empty">还没有会话</div>'; resetHistoryState(); return; }
+  try {
+    // 只拉 tail（最近一页）：151MB 大会话不再全量重拉。返回 before = 本页起始索引，
+    // 即「加载更早」要用的游标。回合结束 / 切会话 / 回前台都走这里。
+    const h = await api('/api/history?session=' + encodeURIComponent(current));
+    const page = Array.isArray(h.branch) ? h.branch : [];
+    const start = Number(h.before) || 0;
+    viewPages = new Map();
+    for (let i = 0; i < page.length; i++) viewPages.set(start + i, page[i]);
+    olderCursor = h.hasMore ? start : null;
+    render(null);
+  } catch (e) { document.getElementById('feed').innerHTML = '<div class="empty">无法读取会话</div>'; }
+}
+// 上滑到顶点「加载更早」：用 before 游标取更早一页，prepend 进视图并补偿滚动位置
+// （记录 scrollHeight 差值，让用户视口内容视觉上不动）。防重入。
+async function loadOlder() {
+  if (!current || olderLoading || olderCursor === null) return;
+  olderLoading = true;
+  const btn = document.getElementById('loadOlder');
+  if (btn) { btn.disabled = true; btn.textContent = '加载中…'; }
+  try {
+    const h = await api('/api/history?session=' + encodeURIComponent(current) + '&before=' + olderCursor);
+    const page = Array.isArray(h.branch) ? h.branch : [];
+    const start = Number(h.before) || 0;
+    const prevHeight = document.body.scrollHeight;
+    const prevScroll = window.scrollY;
+    // 按绝对索引去重并入（分支 append-only，同索引同条目）：prepend 更早的一页。
+    for (let i = 0; i < page.length; i++) {
+      const idx = start + i;
+      if (!viewPages.has(idx)) viewPages.set(idx, page[i]);
+    }
+    olderCursor = h.hasMore ? start : null;
+    render(null, { preserve: true });
+    // 前置更早消息后，按 scrollHeight 增量补偿滚动位置：视口内容视觉上不动。
+    window.scrollTo(0, prevScroll + (document.body.scrollHeight - prevHeight));
+  } catch (e) {
+    document.getElementById('conn').textContent = '加载更早失败：' + String(e.message || e);
+  } finally {
+    olderLoading = false;
+  }
 }
 
 // ---- SSE：run 状态 / 审批 / 流式增量 ----
