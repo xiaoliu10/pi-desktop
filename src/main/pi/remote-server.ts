@@ -453,6 +453,10 @@ export function viewerPage(): string {
   .msg .who { font-size:11px; color:var(--sub); margin-bottom:4px; }
   .msg.tool { color:var(--sub); font-size:13px; }
   .msg.think { color:var(--sub); font-size:13px; font-style:italic; }
+  .msg.think details { margin-top:2px; }
+  .msg.think summary { color:var(--sub); cursor:pointer; font-size:12px; font-style:normal; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .msg.think summary:hover { color:var(--text); }
+  .think-body { white-space:pre-wrap; font-style:normal; margin-top:6px; max-height:50vh; overflow:auto; border-top:1px dashed var(--line); padding-top:6px; }
   .msg.err { color:var(--danger); border-color:var(--danger); }
   .composer { position:fixed; left:0; right:0; bottom:0; z-index:3; background:var(--card); border-top:1px solid var(--line); padding:8px 10px calc(8px + env(safe-area-inset-bottom)); display:flex; flex-direction:column; gap:6px; align-items:stretch; }
   .composer-row { display:flex; gap:8px; align-items:flex-end; }
@@ -680,6 +684,7 @@ function render(entries) {
       if (typeof m.content === 'string') out.push(bubble('助手', m.content, ''));
       else if (Array.isArray(m.content)) for (const b of m.content) {
         if (b && b.type === 'text' && b.text) out.push(bubble('助手', b.text, ''));
+        else if (b && b.type === 'thinking' && b.thinking) out.push(thinkBubble(b.thinking, false));
         else if (b && b.type === 'toolCall') out.push(bubble('工具 · ' + (b.name || 'tool'), previewArgs(b.arguments), 'tool'));
       }
       if (m.errorMessage) out.push(bubble('错误', m.errorMessage, 'err'));
@@ -695,6 +700,16 @@ function render(entries) {
 }
 function bubble(who, text, cls) {
   return '<div class="msg ' + cls + '"><div class="who">' + escapeHtml(who) + '</div>' + escapeHtml(String(text ?? '')).slice(0, 8000) + '</div>';
+}
+/** 思考折叠气泡：流式中只留一行状态 + 最新片段预览（默认收起，点开看全文），完成后折叠为「已思考」。 */
+function thinkBubble(text, streaming) {
+  const t = String(text ?? '');
+  const who = streaming ? '思考中…' : '已思考';
+  const summary = streaming ? escapeHtml(t.slice(-80)) : '展开思考过程（' + t.length + ' 字）';
+  const MAX_THINK_CHARS = 20000;
+  const body = t.length > MAX_THINK_CHARS ? t.slice(0, MAX_THINK_CHARS) + '\\n…（已截断，完整内容见桌面端）' : t;
+  return '<div class="msg think"><div class="who">' + who + '（' + t.length + ' 字）</div>'
+    + '<details><summary>' + summary + '</summary><div class="think-body">' + escapeHtml(body) + '</div></details></div>';
 }
 function textOf(content) {
   if (typeof content === 'string') return content;
@@ -733,21 +748,40 @@ function applyDelta(delta) {
   else if (type === 'toolcall_end') { const tc = delta.toolCall; if (tc && typeof tc === 'object') liveBlocks[index] = Object.assign({}, tc); }
   return type === 'done' || type === 'error';
 }
+// 页面抖动治理：思考/正文 delta 高频重建 + 每 delta 强制滚底会让页面不停跳动。
+// 1) renderLive 节流 250ms；2) 仅当用户停留在底部附近（或刚发送消息）才自动滚底，
+// 上滑阅读时不再被强行拉回；滚回底部即恢复跟随。
+let follow = true, lastLiveRender = 0, liveTimer = null;
+function nearBottom() { return document.body.scrollHeight - (window.scrollY || 0) - window.innerHeight < 120; }
+window.addEventListener('scroll', () => { follow = nearBottom(); }, { passive: true });
+function scrollFollow() { if (follow || nearBottom()) window.scrollTo(0, document.body.scrollHeight); }
+function renderLiveThrottled() {
+  const now = Date.now();
+  if (now - lastLiveRender >= 250) { lastLiveRender = now; renderLive(); return; }
+  if (!liveTimer) liveTimer = setTimeout(() => { liveTimer = null; lastLiveRender = Date.now(); renderLive(); }, 250);
+}
 function renderLive() {
   const old = document.getElementById('live');
+  // 每个 delta 都重建 #live，<details> 的展开状态需手动延续（否则流式期间手动展开会被立即拍扁）。
+  const wasThinkOpen = old ? !!old.querySelector('.msg.think details')?.open : false;
   if (old) old.remove();
   if (!liveBlocks || !liveBlocks.length) return;
-  let html = '';
+  // 思考折叠：长思考（GLM high 档动辄数千字）不再全文铺开，只留一行状态 + 可展开详情；
+  // 正文一旦开始输出，思考自动降为「已思考」，不再与正文抢屏。
+  let thinkText = '', hasText = false, html = '';
   for (const b of liveBlocks) {
-    if (b.type === 'text' && b.text) html += bubble('助手', b.text, '');
-    else if (b.type === 'thinking' && b.thinking) html += bubble('思考', b.thinking, 'think');
+    if (b.type === 'text' && b.text) { hasText = true; html += bubble('助手', b.text, ''); }
+    else if (b.type === 'thinking' && b.thinking) thinkText += String(b.thinking);
     else if (b.type === 'toolCall') html += bubble('工具 · ' + (b.name || 'tool'), previewArgs(b.arguments || b._argsRaw), 'tool');
   }
+  if (thinkText) html = thinkBubble(thinkText, !hasText) + html;
   if (!html) return;
   const div = document.createElement('div');
   div.id = 'live'; div.innerHTML = html;
+  const wasOpen = old ? !!old.querySelector('details')?.open : false;
+  if (wasThinkOpen || wasOpen) { const d = div.querySelector('details'); if (d) d.open = true; }
   document.getElementById('feed').appendChild(div);
-  window.scrollTo(0, document.body.scrollHeight);
+  scrollFollow();
 }
 // ---- 审批卡片 ----
 function renderDialog() {
@@ -931,7 +965,7 @@ function listen() {
       const t = msg.event && msg.event.type;
       if (t === 'message_update' && msg.event.assistantMessageEvent) {
         const ended = applyDelta(msg.event.assistantMessageEvent);
-        renderLive();
+        renderLiveThrottled();
         if (ended) { liveBlocks = null; renderLive(); debouncedHistory(); }
       } else if (t === 'message_end' || t === 'agent_settled' || t === 'auto_retry_start' || t === 'compaction_start') {
         liveBlocks = null; renderLive(); debouncedHistory();
@@ -1017,6 +1051,7 @@ document.getElementById('imgChips').addEventListener('click', e => {
 });
 document.getElementById('composer').addEventListener('submit', e => {
   e.preventDefault();
+  follow = true; // 发送后恢复自动跟随
   const text = ta.value.trim();
   if (!current) return;
   const imgs = pendingImages.map(im => ({ type: 'image', mimeType: im.mimeType, data: im.data }));
