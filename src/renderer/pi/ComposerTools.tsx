@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Icon } from '../replica/Icons';
+import type { IconName } from '../replica/Icons';
 import { FileIcon } from '../replica/FileIcon';
 import type { ContextItem, ThinkingLevel } from '../../shared/composer';
 import type { EditableResource } from '../../shared/settings';
@@ -9,7 +10,10 @@ export function ComposerAdd({cwd, disabled, onAdd}: {cwd?: string; disabled: boo
   const [open,setOpen]=useState(false), [tab,setTab]=useState<'all'|'files'|'skills'>('all');
   const [query,setQuery]=useState(''), [files,setFiles]=useState<string[]>([]), [skills,setSkills]=useState<EditableResource[]>([]);
   const [busy,setBusy]=useState(false), [error,setError]=useState('');
-  const root=useRef<HTMLDivElement>(null), trigger=useRef<HTMLButtonElement>(null);
+  // 键盘高亮：↑/↓ 循环移动、Enter 选中；鼠标 hover 与键盘共用同一高亮。
+  const [active,setActive]=useState(0);
+  const root=useRef<HTMLDivElement>(null), trigger=useRef<HTMLButtonElement>(null), listRef=useRef<HTMLDivElement>(null);
+  const listId=useId();
   useEffect(()=>{ if(!open) return; let active=true;
     setError(''); setBusy(true);
     Promise.all([cwd ? window.localPi!.projectFiles(cwd) : Promise.resolve([]),window.localPi!.composerSkills(cwd)])
@@ -18,21 +22,56 @@ export function ComposerAdd({cwd, disabled, onAdd}: {cwd?: string; disabled: boo
     return ()=>{active=false;};
   },[open,cwd]);
   useEffect(()=>{if(!open)return; const click=(e:MouseEvent)=>{if(!root.current?.contains(e.target as Node))setOpen(false);}; const key=(e:KeyboardEvent)=>{if(e.key==='Escape'){setOpen(false);trigger.current?.focus();}};document.addEventListener('mousedown',click);document.addEventListener('keydown',key);return()=>{document.removeEventListener('mousedown',click);document.removeEventListener('keydown',key);};},[open]);
+  // 过滤、切页、重开面板时高亮重置到第一项。
+  useEffect(()=>{setActive(0);},[query,tab,open]);
   const add=async(load:()=>Promise<ContextItem[]>)=>{setBusy(true);setError('');try{const items=await load();onAdd(items);if(items.length){setOpen(false);trigger.current?.focus();}}catch(e){setError(String((e as Error).message));}finally{setBusy(false);}};
   const selectSkill=(skill:EditableResource)=>add(async()=>{const doc=await window.localPi!.resourceRead(skill.id,cwd);return [{id:skill.id,name:skill.name,path:skill.path,kind:'skill',text:doc.text}];});
   const skillHits=skills.filter(r=>(r.name+' '+r.detail).toLowerCase().includes(query.toLowerCase()));
   const fileHits=files.filter(f=>f.toLowerCase().includes(query.toLowerCase()));
+  // 键盘导航的扁平候选表，与列表 DOM 顺序严格一致（含「添加文档/添加项目上下文」动作行）。
+  type OptRow={kind:'option';idx:number;key:string;icon:IconName;text:string;small?:string;disabled?:boolean;run:()=>void};
+  type Row=OptRow|{kind:'heading';key:string;text:string};
+  const rows:Row[]=[]; let optCount=0;
+  const pushOpt=(key:string,icon:IconName,text:string,small:string|undefined,run:()=>void,disableWhenBusy=true)=>{
+    rows.push({kind:'option',idx:optCount++,key,icon,text,small,run,disabled:disableWhenBusy&&busy});
+  };
+  if(tab==='all'&&!query){
+    pushOpt('__docs','attach','添加文档','PDF、Word、Markdown、文本及代码文件',()=>void add(()=>window.localPi!.pickDocuments()));
+    pushOpt('__files','folder','添加项目上下文',cwd || '先在输入框上方选择项目',()=>setTab('files'),false);
+    rows.push({kind:'heading',key:'__heading',text:'本地 pi 技能'});
+  }
+  if(tab==='skills'||tab==='all') for(const skill of skillHits) pushOpt('skill:'+skill.id,'book',skill.name,skill.detail || skill.path,()=>void selectSkill(skill));
+  if(tab==='files'||(tab==='all'&&!!query)) for(const file of fileHits.slice(0,100)) pushOpt('file:'+file,'file',file,undefined,()=>void add(async()=>[await window.localPi!.projectContext(cwd!,file)]));
+  const options=rows.filter((r):r is OptRow=>r.kind==='option');
+  const hi=options.length?Math.min(active,options.length-1):-1;
+  // 高亮项跟随滚动（长列表键盘导航时保持可见）。
+  useEffect(()=>{ if(hi<0)return; listRef.current?.querySelector(`[data-add-idx="${hi}"]`)?.scrollIntoView({block:'nearest'}); },[hi]);
+  const onMenuKey=(e:React.KeyboardEvent<HTMLDivElement>)=>{
+    if(e.key==='ArrowDown'||e.key==='ArrowUp'){
+      if(!options.length)return;
+      e.preventDefault();
+      setActive(i=>(Math.min(i,options.length-1)+(e.key==='ArrowDown'?1:-1)+options.length)%options.length);
+    } else if(e.key==='Enter'){
+      if(e.nativeEvent.isComposing)return; // IME 组词中的 Enter 是选字，不是选中
+      if(e.target instanceof HTMLButtonElement)return; // Tab 聚焦到某行时交给原生 click
+      const opt=options[hi];
+      if(opt&&!opt.disabled){e.preventDefault();opt.run();}
+    }
+    // Escape 走现有 document 级监听（关闭并回焦触发按钮）。
+  };
+  // 真实鼠标移动（movement≠0）才把高亮交给指针；键盘 ↑/↓ 触发 scrollIntoView 产生的合成 mousemove movement=0，忽略以免抢走键盘高亮。
+  const hoverSync=(e:React.MouseEvent<HTMLButtonElement>,idx:number)=>{if(e.nativeEvent.movementX||e.nativeEvent.movementY)setActive(idx);};
   return <div className="pi-add" ref={root}>
     <button ref={trigger} className="pi-iconbtn" aria-label="添加上下文、文档或技能" title="添加上下文、文档或技能" aria-expanded={open} disabled={disabled} onClick={()=>{setOpen(v=>!v);setTab('all');setQuery('');}}><Icon name="plus" /></button>
-    {open && <div className="pi-add__menu" role="dialog" aria-label="添加上下文">
-      <input autoFocus value={query} onChange={e=>setQuery(e.target.value)} placeholder="搜索项目文件或技能…" aria-label="搜索项目文件或技能" />
+    {open && <div className="pi-add__menu" role="dialog" aria-label="添加上下文" onKeyDown={onMenuKey}>
+      <input autoFocus role="combobox" aria-expanded="true" aria-autocomplete="list" aria-controls={listId} aria-activedescendant={hi>=0?`${listId}-opt-${hi}`:undefined} value={query} onChange={e=>setQuery(e.target.value)} placeholder="搜索项目文件或技能…" aria-label="搜索项目文件或技能" />
       <div className="pi-add__tabs"><button aria-pressed={tab==='all'} onClick={()=>setTab('all')}>添加</button><button aria-pressed={tab==='files'} onClick={()=>setTab('files')}>项目上下文</button><button aria-pressed={tab==='skills'} onClick={()=>setTab('skills')}>使用技能</button></div>
       {error && <p role="alert" className="pi-add__error">{error}</p>}
-      <div className="pi-add__list">
-        {tab==='all' && !query && <><button disabled={busy} onClick={()=>void add(()=>window.localPi!.pickDocuments())}><Icon name="attach"/><span>添加文档<small>PDF、Word、Markdown、文本及代码文件</small></span></button><button onClick={()=>setTab('files')}><Icon name="folder"/><span>添加项目上下文<small>{cwd || '先在输入框上方选择项目'}</small></span></button><div className="pi-add__heading">本地 pi 技能</div></>}
+      <div className="pi-add__list" role="listbox" id={listId} ref={listRef} aria-label="候选文件与技能">
         {busy && <p role="status">正在读取…</p>}
-        {(tab==='skills'||tab==='all') && skillHits.map(skill=><button key={skill.id} disabled={busy} onClick={()=>void selectSkill(skill)}><Icon name="book"/><span>{skill.name}<small>{skill.detail || skill.path}</small></span></button>)}
-        {(tab==='files'||(tab==='all'&&!!query)) && fileHits.slice(0,100).map(file=><button key={file} disabled={busy} onClick={()=>void add(async()=>[await window.localPi!.projectContext(cwd!,file)])}><Icon name="file"/><span>{file}</span></button>)}
+        {rows.map(row=>row.kind==='heading'
+          ? <div className="pi-add__heading" key={row.key}>{row.text}</div>
+          : <button key={row.key} role="option" id={`${listId}-opt-${row.idx}`} data-add-idx={row.idx} aria-selected={row.idx===hi} data-active={row.idx===hi?'true':undefined} disabled={row.disabled} onMouseMove={e=>hoverSync(e,row.idx)} onClick={()=>row.run()}><Icon name={row.icon}/><span>{row.text}{row.small?<small>{row.small}</small>:null}</span></button>)}
         {!busy && tab==='files' && !fileHits.length && <p>{cwd?'没有匹配的项目文件。':'请先选择项目目录。'}</p>}
         {!busy && tab!=='files' && !skillHits.length && <p>没有匹配的已启用技能。</p>}
         {tab==='files' && fileHits.length>100 && <p>显示前 100 项，请搜索缩小范围。</p>}
