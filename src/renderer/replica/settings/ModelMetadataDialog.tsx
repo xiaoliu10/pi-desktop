@@ -68,7 +68,7 @@ export function ModelMetadataDialog({model, others, adding, onClose, onSave}: {
               onChange={json=>patch({samplingParams:json})}/>
           </section>
           <section><h3>会话亲和</h3><div className="pi-model-options pi-model-options--radio" role="radiogroup" aria-label="会话亲和">
-            {([['default','默认','不发送会话亲和头'],['openrouter','OpenRouter 格式','发送 x-session-id，OpenRouter 及兼容网关用'],['anthropic','Anthropic 格式','发送 x-session-affinity，Anthropic 原生会话路由']] as const).map(([value,label,desc])=>
+            {([['default','默认','不发送会话亲和头'],['openrouter','OpenRouter','发送 x-session-id，OpenRouter 及兼容网关用'],['anthropic','Anthropic','发送 x-session-affinity，Anthropic 原生会话路由']] as const).map(([value,label,desc])=>
               <button key={value} type="button" role="radio" aria-checked={draft.sessionAffinity===value} title={desc} onClick={()=>patch({sessionAffinity:value as SessionAffinity})}>{label}</button>)}
           </div>
           <small className="pi-model-options__note">{draft.sessionAffinity==='default' ? '不发送会话亲和头（pi 默认；OpenRouter 供应商自动开启，无需配置）。' : '开启后每次请求携带会话 ID，供应商把同一会话路由到同一上游，提升缓存命中。对 Anthropic 与 OpenAI Completions 协议的模型生效；未指定格式时 pi 按供应商自动判定。'}</small>
