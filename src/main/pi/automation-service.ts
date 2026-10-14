@@ -165,6 +165,14 @@ export class AutomationService {
    const m=event.event.message as any;
    // 本步骤 prompt 的 user message_start 出现 = 排队投递的回合真正开始：武装结算并清掉
    // 用户前一回合留下的错误标记（那些错误不属于本步骤）。
+   // 排队中的自动化步骤被用户撤回/改写（queue_update 后 guard.text 不在队列里）：
+   // 该步骤永远不会产生 message_start/agent_settled，waiter 会永挂、任务静默变砖——
+   // 未武装且队列已不含本步骤文本时立即失败结算（review P2-1）。
+   if(event.event.type==='queue_update'&&live(run)){
+    const guard=this.stepGuard.get(key);if(!guard||guard.armed)return;
+    const stillQueued=['steering','followUp'].some(k=>Array.isArray((event.event as any)[k])&&(event.event as any)[k].some((it:any)=>String(typeof it==='string'?it:it?.text??it?.message??'')===guard.text));
+    if(!stillQueued){setTimeout(()=>this.waiters.get(key)?.reject(Error('排队中的自动化步骤已被移除')),0);this.stepGuard.delete(key);}
+   }
    if(event.event.type==='message_start'&&m?.role==='user'){const guard=this.stepGuard.get(key);if(guard&&!guard.armed){const text=typeof m.content==='string'?m.content:Array.isArray(m.content)?m.content.find((c:{type?:string;text?:string})=>c?.type==='text')?.text:undefined;if(text===guard.text){guard.armed=true;this.stepErrors.delete(key);}}}
    if(event.event.type==='message_end'&&m?.role==='assistant'){
     if(['error','aborted'].includes(m.stopReason))this.stepErrors.set(key,m.errorMessage||'模型执行失败或已停止');

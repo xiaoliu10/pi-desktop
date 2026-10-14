@@ -126,6 +126,25 @@ it('reuse mode (default): prefers a live session, then the most recent project s
  expect(h3.backend.close).toHaveBeenCalledWith('run-1'); // 自己新建的会话照旧回收
 });
 
+it('排队中的自动化步骤被用户移除：立即失败结算，不静默挂死',async()=>{
+ const h=setup();
+ (h.backend as unknown as {runs:unknown}).runs=vi.fn(()=>[{key:'user-1',cwd:h.root,status:'running',timing:{startedAt:1}}]);
+ const task=h.task();h.advance(61000);h.service.tick();
+ await vi.waitFor(()=>expect(h.backend.prompt).toHaveBeenCalledTimes(1));
+ const stepText=h.backend.prompt.mock.calls[0][1] as string;
+ // 队列已无本步骤文本（用户撤回/改写）→ waiter 拒绝结算，任务不变砖
+ h.service.onPiEvent({type:'rpc',key:'user-1',generation:'g',event:{type:'queue_update',steering:[],followUp:[]}});
+ await vi.waitFor(()=>expect(h.service.snapshot().runs.some(r=>r.status==='failed')).toBe(true), { timeout: 1000 });
+ // 队列仍含本步骤文本 → 保持未武装、不结算
+ const h2=setup();
+ (h2.backend as unknown as {runs:unknown}).runs=vi.fn(()=>[{key:'user-1',cwd:h2.root,status:'running',timing:{startedAt:1}}]);
+ h2.task();h2.advance(61000);h2.service.tick();
+ await vi.waitFor(()=>expect(h2.backend.prompt).toHaveBeenCalledTimes(1));
+ h2.service.onPiEvent({type:'rpc',key:'user-1',generation:'g',event:{type:'queue_update',steering:[],followUp:[stepText]}});
+ h2.settle('user-1');await new Promise(r=>setTimeout(r,0));
+ expect(h2.service.snapshot().runs[0].status).toBe('running');
+});
+
 it('busy 原会话 + 定时触发：只向用户会话投递一次（双执行回归），重复触发记 skipped',async()=>{
  const h=setup();
  (h.backend as unknown as {runs:unknown}).runs=vi.fn(()=>[{key:'user-1',cwd:h.root,status:'running',timing:{startedAt:1}}]);
