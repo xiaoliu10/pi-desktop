@@ -5,7 +5,7 @@
 [![Release](https://img.shields.io/github/v/release/xiaoliu10/pi-desktop?display_name=tag&sort=semver)](https://github.com/xiaoliu10/pi-desktop/releases/latest)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](./LICENSE)
 [![Electron](https://img.shields.io/badge/Electron-33-47848F?logo=electron&logoColor=white)](https://www.electronjs.org/)
-[![pi](https://img.shields.io/badge/pi-0.85.1%2B-4c1)](https://www.npmjs.com/package/@earendil-works/pi-coding-agent)
+[![pi](https://img.shields.io/badge/pi-0.85.1%20to%20%3C1.3.0-4c1)](https://www.npmjs.com/package/@earendil-works/pi-coding-agent)
 
 **The desktop workbench for the [pi coding agent](https://www.npmjs.com/package/@earendil-works/pi-coding-agent) — see every step, approve every action, and stay in charge.**
 
@@ -52,7 +52,7 @@ pnpm build && pnpm start
 2. Browse any session read-only, then click **Continue in Desktop** to create a continuation copy; the CLI original stays untouched.
 3. Start a new session, pick the project trust and tool permission mode, choose a model, and send your first task.
 
-Verified against pi **0.85.1+ on macOS and Windows**. Unknown versions stay readable but are disabled for execution.
+Verified against pi **0.85.1 up to (not including) 1.3.0 on macOS and Windows** — the bundled runtime ships 1.2.0. Unknown versions stay readable but are disabled for execution; the app falls back to the bundled runtime.
 
 ## How it works
 

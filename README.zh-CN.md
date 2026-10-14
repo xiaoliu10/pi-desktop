@@ -5,7 +5,7 @@
 [![Release](https://img.shields.io/github/v/release/xiaoliu10/pi-desktop?display_name=tag&sort=semver)](https://github.com/xiaoliu10/pi-desktop/releases/latest)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](./LICENSE)
 [![Electron](https://img.shields.io/badge/Electron-33-47848F?logo=electron&logoColor=white)](https://www.electronjs.org/)
-[![pi](https://img.shields.io/badge/pi-0.85.1%2B-4c1)](https://www.npmjs.com/package/@earendil-works/pi-coding-agent)
+[![pi](https://img.shields.io/badge/pi-0.85.1%20to%20%3C1.3.0-4c1)](https://www.npmjs.com/package/@earendil-works/pi-coding-agent)
 
 **[pi 编码代理](https://www.npmjs.com/package/@earendil-works/pi-coding-agent)的桌面工作台——过程全程可见，动作逐个确认，掌控权始终在你手里。**
 
@@ -52,7 +52,7 @@ pnpm build && pnpm start
 2. 任意会话只读浏览；点击「在桌面端继续」创建接续副本，CLI 原件保持不动。
 3. 新建会话，选择项目信任与工具权限模式，挑选模型，发出第一个任务。
 
-已在 macOS 与 Windows 上对 pi **0.85.1+** 完成本地验证。未知版本保持可读但禁止执行。
+已在 macOS 与 Windows 上对 pi **0.85.1 至 1.3.0（不含）** 完成本地验证，内置运行时为 1.2.0。未知版本保持可读但禁止执行，此时回退使用内置运行时。
 
 ## 工作原理
 
