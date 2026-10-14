@@ -36,6 +36,11 @@ export class AutomationService {
  private waiters=new Map<string,{resolve:()=>void;reject:(error:Error)=>void}>();
  private closed=false;
  private stepErrors=new Map<string,string>();
+ /** 步骤结算武装：复用会话排队投递时，只有本步骤 prompt 的 user message_start 出现后才认
+  *  agent_settled——用户自己回合的 settle 不得误结算（#79 的 settle 边界错位由此闭环）。 */
+ private stepGuard=new Map<string,{text:string;armed:boolean}>();
+ /** launch 同步临界区防重入锁（persist→changed 可能同步回调）；运行期去重由 live-run guard 承担。 */
+ private launching=new Set<string>();
  constructor(private file:string,private backend:()=>PiBackend,private index:()=>SessionIndex,private changed:()=>void=()=>{},private now=()=>Date.now()) {
   if(fs.existsSync(file)){const parsed=JSON.parse(fs.readFileSync(file,'utf8'));if(!Array.isArray(parsed.tasks)||!Array.isArray(parsed.workflows)||!Array.isArray(parsed.runs))throw Error('自动化数据格式损坏');this.data=parsed;}
   for(const r of this.data.runs)if(live(r)){r.status='interrupted';r.error='客户端已退出，未自动重放；可查看历史并重新运行。';r.endedAt=this.now();for(const step of r.steps)if(step.status==='running')step.status='stopped';}
@@ -69,6 +74,10 @@ export class AutomationService {
  runWorkflow(input:WorkflowLaunch){const cwd=directory(input.cwd);return this.launch({...input,cwd,workflow:this.workflow(input.id,cwd),trigger:'manual'});}
  private launch(input:{task?:AutomationTask;workflow?:SavedWorkflow;cwd:string;args:Record<string,string>;permission:WorkflowLaunch['permission'];model?:string;thinking?:WorkflowLaunch['thinking'];trigger:'manual'|'schedule';scheduledAt?:number;sessionMode?:'reuse'|'fresh'}){
   if(this.closed)throw Error('自动化服务正在关闭');if(!isAccessMode(input.permission))throw Error('访问模式无效');if(input.thinking&&!THINKING_LEVELS.includes(input.thinking))throw Error('思考等级无效');
+  const lockId=input.task?`task:${input.task.id}`:`workflow:${input.workflow?.id}@${input.cwd}`;
+  if(this.launching.has(lockId))throw Error('已有运行正在执行，不能重复启动');
+  this.launching.add(lockId);
+  try{
   if(this.data.runs.some(r=>live(r)&&(input.task?r.taskId===input.task.id:r.workflowId===input.workflow?.id&&r.cwd===input.cwd)))throw Error('已有运行正在执行，不能重复启动');
   if(this.data.runs.filter(live).length>=3)throw Error('最多同时运行 3 个自动化，请稍后再试');
   const prompts=input.workflow?workflowPrompts(input.workflow,input.args):[input.task!.prompt];
@@ -76,30 +85,32 @@ export class AutomationService {
   this.data.runs.unshift(run);this.data.runs=this.data.runs.filter((r,i)=>i<500||live(r));
   if(input.task){input.task.runCount++;input.task.lastRunAt=this.now();if(input.task.maxRuns&&input.task.runCount>=input.task.maxRuns)input.task.enabled=false;}
   this.persist();void this.execute(run,prompts,input);return structuredClone(run);
+  }finally{this.launching.delete(lockId);}
  }
  /** 解析执行会话：默认复用项目下最近活跃的会话，让任务跑在用户正在对话的上下文里
   *  （此前每次自动化都新起独立会话，任务结论散落在侧栏各处）；fresh 才强制新会话。
-  *  复用必须是 **idle** 会话：步骤完成归因依赖「prompt 后下一个 agent_settled 属于本步骤」，
-  *  复用 busy 会话（或步骤执行期间用户插话排队）都会让 settle 边界错位、步骤状态整体
-  *  偏移——这是已知限制，无数据丢失但结论时序可能提前。同 cwd 已有自动化在跑或存在
-  *  非 idle 会话时同样不复用（waiter 单槽互斥/attached 去重会架空 idle guard），直接新会话。 */
+  *  单次触发只投递到一个会话：同 cwd 有可投递的活跃会话时——running 就按 pi 既定 followUp
+  *  语义排队进该会话（不再静默另开「自动化：…」新会话），干净的 idle 则立即执行。
+  *  排队投递的步骤归因靠 stepGuard：见到本步骤 prompt 的 user message_start 才认 agent_settled。
+  *  会话处于 starting/stopping/error、或 idle 但有待恢复队列/待审批等不可投递状态时回落新建隔离；
+  *  同 cwd 已有自动化在跑同样新建（waiter 单槽互斥）。 */
  private async resolveSession(cwd:string,sessionMode:'reuse'|'fresh'|undefined,config:{permission:WorkflowLaunch['permission'];model?:string},self?:AutomationRun):Promise<{key:string;reused:boolean}>{
   const backend=this.backend();
-  if(sessionMode==='fresh'||this.data.runs.some(r=>live(r)&&r!==self&&r.cwd===cwd)){
-   const session=await backend.connect({cwd,trustProject:false,permission:config.permission,model:config.model});
-   return {key:session.key,reused:false};
-  }
   // macOS /var→/private/var：会话文件 header 的 cwd 未必 realpath 过，归一化后比较
   const target=canonical(cwd);
   const sameCwd=(v:string)=>{try{return canonical(v)===target;}catch{return v===cwd;}};
-  // 只复用 idle 且无排队/无待审批的会话（starting/stopping/waiting/error 一律不复用）
-  const idleRun=backend.runs().filter(r=>r.status==='idle'&&!r.pending&&!r.queue?.length&&sameCwd(r.cwd))
+  if(sessionMode==='fresh'||this.data.runs.some(r=>live(r)&&r!==self&&sameCwd(r.cwd))){
+   const session=await backend.connect({cwd,trustProject:false,permission:config.permission,model:config.model});
+   return {key:session.key,reused:false};
+  }
+  // 可投递 = running（followUp 排队，单投递目标）或干净的 idle（立即执行）；副驾会话排除在外
+  const active=backend.runs().filter(r=>sameCwd(r.cwd)&&!r.sidecarOf);
+  const deliverable=active.filter(r=>r.status==='running'||r.status==='idle'&&!r.pending&&!r.queue?.length&&!backend.hasPendingDialogs(r.key))
     .sort((a,b)=>(b.timing?.endedAt??b.timing?.startedAt??0)-(a.timing?.endedAt??a.timing?.startedAt??0))[0];
-  if(idleRun&&!backend.hasPendingDialogs(idleRun.key))return {key:idleRun.key,reused:true};
-  // 走到这里说明同 cwd 没有 idle run，但可能有 busy run（用户正在对话，文件 mtime 最新、
-  // 恰是最近会话文件）：connect({sourceKey}) 的 attached 去重会直接返回那个 busy run，
-  // 架空 idle-only guard → 步骤归因级联错位。存在任何非 idle run 时直接新建隔离。
-  if(backend.runs().some(r=>sameCwd(r.cwd))){
+  if(deliverable)return {key:deliverable.key,reused:true};
+  // 有活跃会话但都不可投递（starting/stopping/error 或待恢复）：connect({sourceKey}) 的 attached
+  // 去重会直接返回那个会话，架空可投递 guard → 新建隔离。
+  if(active.length){
    const session=await backend.connect({cwd,trustProject:false,permission:config.permission,model:config.model});
    return {key:session.key,reused:false};
   }
@@ -124,8 +135,19 @@ export class AutomationService {
     if(!live(run)||this.closed)break;run.stepIndex=i;run.steps[i].status='running';this.persist();
     let resolve!:()=>void,reject!:(e:Error)=>void;
     const settled=new Promise<void>((yes,no)=>{resolve=yes;reject=no;});settled.catch(()=>{});
-    this.stepErrors.delete(key);this.waiters.set(key,{resolve,reject});
-    try {await backend.prompt(key,automationPromptText(run.name,run.steps[i].name,i+1,prompts.length,prompts[i]),'followUp');await settled;}finally{this.waiters.delete(key);this.stepErrors.delete(key);}
+    const text=automationPromptText(run.name,run.steps[i].name,i+1,prompts.length,prompts[i]);
+    this.stepErrors.delete(key);
+    // 结算武装：fresh 会话所有回合都属于本 run → 立即 armed；复用会话只有确认本步骤 prompt
+    // 已开始（采样到干净 idle 直发 / disposition=started / 见到该文本的 user message_start）
+    // 才认 agent_settled——排队期间用户自己回合的 settle 不得误结算本步骤（双执行温床）。
+    const guard={text,armed:!reused};
+    if(reused){const view=backend.runs().find(r=>r.key===key);guard.armed=!view||view.status==='idle'&&!view.pending&&!view.queue?.length;}
+    this.stepGuard.set(key,guard);this.waiters.set(key,{resolve,reject});
+    try{
+     const disposition=await backend.prompt(key,text,'followUp');
+     if(disposition==='started')guard.armed=true;else if(disposition==='queued')guard.armed=false;
+     await settled;
+    }finally{this.waiters.delete(key);this.stepErrors.delete(key);this.stepGuard.delete(key);}
     if(!live(run))break;run.steps[i].status='succeeded';
    }
    if(live(run))run.status='succeeded';
@@ -141,11 +163,22 @@ export class AutomationService {
   if(event.type==='rpc'){
    if(event.event.type==='tool_execution_start'&&run.status==='waiting'){run.status='running';this.persist();}
    const m=event.event.message as any;
+   // 本步骤 prompt 的 user message_start 出现 = 排队投递的回合真正开始：武装结算并清掉
+   // 用户前一回合留下的错误标记（那些错误不属于本步骤）。
+   // 排队中的自动化步骤被用户撤回/改写（queue_update 后 guard.text 不在队列里）：
+   // 该步骤永远不会产生 message_start/agent_settled，waiter 会永挂、任务静默变砖——
+   // 未武装且队列已不含本步骤文本时立即失败结算（review P2-1）。
+   if(event.event.type==='queue_update'&&live(run)){
+    const guard=this.stepGuard.get(key);if(!guard||guard.armed)return;
+    const stillQueued=['steering','followUp'].some(k=>Array.isArray((event.event as any)[k])&&(event.event as any)[k].some((it:any)=>String(typeof it==='string'?it:it?.text??it?.message??'')===guard.text));
+    if(!stillQueued){setTimeout(()=>this.waiters.get(key)?.reject(Error('排队中的自动化步骤已被移除')),0);this.stepGuard.delete(key);}
+   }
+   if(event.event.type==='message_start'&&m?.role==='user'){const guard=this.stepGuard.get(key);if(guard&&!guard.armed){const text=typeof m.content==='string'?m.content:Array.isArray(m.content)?m.content.find((c:{type?:string;text?:string})=>c?.type==='text')?.text:undefined;if(text===guard.text){guard.armed=true;this.stepErrors.delete(key);}}}
    if(event.event.type==='message_end'&&m?.role==='assistant'){
     if(['error','aborted'].includes(m.stopReason))this.stepErrors.set(key,m.errorMessage||'模型执行失败或已停止');
     else this.stepErrors.delete(key);
    }
-   if(event.event.type==='agent_settled'){const error=this.stepErrors.get(key);if(error)this.waiters.get(key)?.reject(Error(error));else this.waiters.get(key)?.resolve();}
+   if(event.event.type==='agent_settled'){const guard=this.stepGuard.get(key);if(guard&&!guard.armed)return;const error=this.stepErrors.get(key);if(error)this.waiters.get(key)?.reject(Error(error));else this.waiters.get(key)?.resolve();}
   }
   if(event.type==='closed'||event.type==='run'&&event.run.status==='error')this.waiters.get(key)?.reject(Error('pi 运行进程已退出'));
  }

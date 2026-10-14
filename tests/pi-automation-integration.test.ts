@@ -13,7 +13,7 @@ it.skipIf(!process.env.PI_TEST_EXECUTABLE)('executes saved workflow with real pi
  fs.writeFileSync(path.join(agent,'models.json'),JSON.stringify({providers:{'auto-local':{baseUrl:`http://127.0.0.1:${port}/v1`,api:'openai-completions',apiKey:'test-local',models:[{id:'auto-test',name:'Automation test',input:['text'],contextWindow:32000,maxTokens:1000}]}}}));
  const index=new SessionIndex([owned],owned);let automation:AutomationService|undefined;
  const backend=new PiBackend(discoverPi({executable:process.env.PI_TEST_EXECUTABLE,agentDir:agent},{PATH:process.env.PATH}),index,owned,path.resolve('extensions/desktop-policy/index.mjs'),event=>automation?.onPiEvent(event));
- automation=new AutomationService(path.join(root,'automations.json'),()=>backend);
+ automation=new AutomationService(path.join(root,'automations.json'),()=>backend,()=>index);
  try{
   const workflow=automation.saveWorkflow({id:'',name:'Real workflow',description:'',whenToUse:'',scope:'project',cwd:root,parameters:[],steps:[{id:'1',name:'Inspect',prompt:'Inspect step without tools.'},{id:'2',name:'Summarize',prompt:'Summarize prior step without tools.'}],updatedAt:0});
   automation.runWorkflow({id:workflow.id,cwd:root,args:{},permission:'ask',model:'auto-local/auto-test'});
