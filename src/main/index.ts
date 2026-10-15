@@ -329,7 +329,6 @@ function registerIpc() {
   handle('recoverSubagents', (key: string, leaf?: string) => recoverSubagents(host.environment.agentDir, key, host.index, leaf));
   handle('cleanupSubagents', (key: string) => cleanupSubagents(host.environment.agentDir, key));
   // 记忆衔接层：探测 CLI 记忆插件（如 pi-memory），未启用时回退 Desktop 内置桥
-  handle('memoryAssistStatus', (enabled: unknown) => memoryAssistStatus(host.environment.agentDir, Boolean(enabled)));
   const memoryProject = (cwd: unknown) => cwd === undefined || cwd === '' ? undefined : authorizeProjectCwd(cwd,
     [...settings.preferences().projects.map(p => p.path), ...host.index.scan().map(s => s.cwd), ...host.backend.runs().map(r => r.cwd)]);
   const knownMemoryProjects = () => {
@@ -339,6 +338,7 @@ function registerIpc() {
     for (const s of host.index.scan()) if (!known.has(path.resolve(s.cwd))) known.set(path.resolve(s.cwd), path.basename(s.cwd));
     return [...known].map(([p, name]) => ({ path: p, name }));
   };
+  handle('memoryAssistStatus', (enabled: unknown, cwd?: unknown) => memoryAssistStatus(host.environment.agentDir, Boolean(enabled), memoryProject(cwd)));
   handle('memoryList', (cwd: unknown) => listMemoryFiles(host.environment.agentDir, memoryProject(cwd), knownMemoryProjects()));
   handle('memoryMigrateLegacy', (rel: unknown) => migrateLegacyMemoryFile(host.environment.agentDir, rel, knownMemoryProjects()));
   handle('memoryMoveToProject', (rel: unknown, projectPath: unknown) => moveMemoryFileToProject(host.environment.agentDir, rel, projectPath));

@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { clearMemoryEnv, memoryAssistStatus, memorySessionEnv } from '../src/main/pi/memory-bridge';
+import { clearMemoryEnv, memoryAssistStatus, memorySessionEnv, scopedProjectMemoryDir } from '../src/main/pi/memory-bridge';
 
 // Temp dirs only; never touches the real ~/.pi config.
 const dirs: string[] = [];
@@ -102,5 +102,44 @@ describe('memoryAssistStatus hint (project injection scope + search off)', () =>
     expect(status.hint).toContain('未检测到记忆插件');
     expect(status.hint).toContain('无副作用');
     expect(status.hint).toContain('.pi/memory');
+  });
+});
+
+describe('memoryAssistStatus storageKind + projectDir (per-cwd path)', () => {
+  it('non-scoped plugin returns project-local storageKind and .pi/memory projectDir for valid cwd', () => {
+    const agentDir = temp(), project = temp();
+    writeSettings(agentDir, ['npm:pi-memory']);
+    const status = memoryAssistStatus(agentDir, true, project);
+    expect(status.storageKind).toBe('project-local');
+    expect(status.projectDir).toBe(path.join(project, '.pi', 'memory'));
+  });
+  it('scoped plugin returns scoped storageKind and memory-projects/<key> projectDir for valid cwd', () => {
+    const agentDir = temp(), project = temp();
+    writeSettings(agentDir, ['npm:@wengine-ai/pi-scoped-memory']);
+    const status = memoryAssistStatus(agentDir, true, project);
+    expect(status.storageKind).toBe('scoped');
+    expect(status.projectDir).toBe(scopedProjectMemoryDir(agentDir, project));
+    expect(status.hint).toContain('memory-projects');
+  });
+  it('omits projectDir and storageKind remains when no cwd is given (global-only)', () => {
+    const agentDir = temp(), project = temp();
+    writeSettings(agentDir, ['npm:pi-memory']);
+    for (const cwd of [undefined, ''] as const) {
+      const status = memoryAssistStatus(agentDir, true, cwd);
+      expect(status.projectDir).toBeUndefined();
+    }
+  });
+  it('omits projectDir for invalid/missing cwd but storageKind still set', () => {
+    const agentDir = temp();
+    writeSettings(agentDir, ['npm:pi-memory']);
+    const status = memoryAssistStatus(agentDir, true, path.join(agentDir, 'nonexistent'));
+    expect(status.projectDir).toBeUndefined();
+    expect(status.storageKind).toBe('project-local');
+  });
+  it('builtin (no plugin) still returns storageKind=project-local and projectDir for valid cwd', () => {
+    const project = temp();
+    const status = memoryAssistStatus(temp(), true, project);
+    expect(status.storageKind).toBe('project-local');
+    expect(status.projectDir).toBe(path.join(project, '.pi', 'memory'));
   });
 });
