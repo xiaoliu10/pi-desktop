@@ -1,6 +1,7 @@
 /**
  * Desktop 自动摘要。PI_DESKTOP_MEMORY=1 开启；DIR 仅用于无项目会话的全局记忆。
- * 有 CWD 时只追加 <cwd>/.pi/memory/daily/YYYY-MM-DD.md；路径失败绝不回退全局。
+ * 有 CWD 时默认追加 <cwd>/.pi/memory/daily/YYYY-MM-DD.md；SCOPED=1 则写 DIR/daily。
+ * Scoped Memory 的 DIR 由宿主按插件相同项目键指定；路径失败绝不回退全局。
  * 旧全局/截断 slug 文件不迁移、不续写。第三方 memory 工具的召回范围由插件管理。
  * agent_end 后静默 20 秒、至少 4 条消息、单飞行 + 2 分钟冷却；尽力而为，不进对话流。
  */
@@ -59,13 +60,18 @@ function ensureDirectories(anchor, parts) {
   return cursor;
 }
 
-export function appendMemorySummary(dir, cwd, text, now = new Date()) {
+export function appendMemorySummary(dir, cwd, text, now = new Date(), scoped = false) {
   const project = cwd !== undefined && cwd !== '';
   if (project && (typeof cwd !== 'string' || !path.isAbsolute(cwd) || cwd.includes('\0'))) throw new Error('项目路径无效');
   // No mkdir(project) and no global fallback: a moved/missing project must fail closed.
-  const daily = project
-    ? ensureDirectories(cwd, ['.pi', 'memory', 'daily'])
-    : ensureDirectories(path.dirname(path.resolve(dir)), [path.basename(path.resolve(dir)), 'daily']);
+  // A scoped project must still exist; missing projects never fall back to global.
+  if (project && scoped && !fs.statSync(cwd).isDirectory()) throw new Error('项目路径无效');
+  const target = path.resolve(dir);
+  const daily = project && scoped
+    ? ensureDirectories(path.dirname(path.dirname(target)), [path.basename(path.dirname(target)), path.basename(target), 'daily'])
+    : project
+      ? ensureDirectories(cwd, ['.pi', 'memory', 'daily'])
+      : ensureDirectories(path.dirname(target), [path.basename(target), 'daily']);
   const file = path.join(daily, `${now.toISOString().slice(0, 10)}.md`);
   const stamp = now.toISOString().replace('T', ' ').slice(0, 19);
   const entry = [`<!-- ${stamp} [desktop-auto] -->`, '## Turn Summary (auto, desktop)', '', text.trim(), ''].join('\n');
@@ -86,6 +92,7 @@ export default function desktopMemory(pi) {
   if (process.env.PI_DESKTOP_MEMORY !== '1') return;
   const dir = process.env.PI_DESKTOP_MEMORY_DIR || path.join(os.homedir(), '.pi', 'agent', 'memory');
   const cwd = process.env.PI_DESKTOP_MEMORY_CWD;
+  const scoped = process.env.PI_DESKTOP_MEMORY_SCOPED === '1';
   let timer = null;
   let lastRunAt = -Infinity;
   let inFlight = false;
@@ -124,7 +131,7 @@ export default function desktopMemory(pi) {
       ]);
       if (stopped || signal.aborted || !['stop', 'length'].includes(response?.stopReason)) return;
       const summary = (response.content ?? []).filter(c => c.type === 'text').map(c => c.text).join('\n').trim();
-      if (summary) appendMemorySummary(dir, cwd, summary);
+      if (summary) appendMemorySummary(dir, cwd, summary, new Date(), scoped);
     } catch {
       // Best effort only; never redirect failed project writes to shared memory.
     } finally {
