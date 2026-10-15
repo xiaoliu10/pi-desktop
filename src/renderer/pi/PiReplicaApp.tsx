@@ -8,7 +8,7 @@ import { TerminalPanel } from './TerminalPanel';
 import { PlanViewer } from './PlanViewer';
 import { PlanCard } from './PlanCard';
 import { PlanApprovalCard } from './PlanApprovalCard';
-import { planDocument, planFromMarkdown } from './plan-document';
+import { planDocument, planFromMarkdown, planDocumentFromChecklist } from './plan-document';
 import { conversationPlan } from './conversation-plan';
 import { AutomationsPage } from './AutomationsPage';
 import { toolFilePreview } from './tool-file-preview';
@@ -312,6 +312,9 @@ export default function PiReplicaApp() {
   const planApprovalActive=run?.accessMode==='plan'&&run.status==='idle'&&run.planReady&&Boolean(planDoc);
   useEffect(()=>{ if (planApprovalActive) setPlanOpen(true); },[planApprovalActive]);
   const planChecklist=useMemo(()=>conversationPlan(messages),[messages]);
+  // 未走计划模式的会话：任务清单合成为可审阅的计划文档，避免面板空态。
+  const synthesizedPlan=useMemo(()=>!planDoc&&planChecklist.length?planDocumentFromChecklist(planChecklist,s.lang):null,[planDoc,planChecklist,s.lang]);
+  const effectivePlanDoc=planDoc??synthesizedPlan;
   const modelGroups = useMemo(() => run ? groupModels(run) : (s.catalog?.providers ?? []).map(p=>({provider:p.id,models:p.models.map(m=>({id:`${p.id}/${m.id}`,name:m.name || m.id}))})), [run,s.catalog]);
   // 生图：目录里的图像模型（旧运行时目录无 imageModels → 不出生图入口）。
   const imageModels = useMemo(() => (s.catalog?.providers ?? []).flatMap(p => (p.imageModels ?? []).map(m => ({ key: `${p.id}/${m.id}`, provider: p.id, providerName: p.name || p.id, name: m.name || m.id }))), [s.catalog]);
@@ -1018,8 +1021,8 @@ export default function PiReplicaApp() {
               {subagentPanel && s.view==='chat' && <ResizeHandle side="right" width={subagentWidth} min={300} max={720} onChange={setSubagentWidth} onReset={resetSubagentWidth} label="子代理面板宽度" />}
               {subagentPanel && s.view==='chat' && <SubagentPanel key={`${s.selectedKey}:${subagentPanel.callId||''}`} children={subagents} initialCall={subagentPanel.callId} parentRunning={parentRunning} onClose={()=>setSubagentPanel(null)} onStop={s.stop}/>}
               {s.view==='chat' && planOpen && <ResizeHandle side="right" width={planWidth} min={320} max={720} onChange={setPlanWidth} onReset={resetPlanWidth} label="计划面板宽度" />}
-              {s.view==='chat' && planOpen && <PlanViewer key={s.selectedKey||'draft'} doc={planDoc} checklist={planChecklist} lang={s.lang} running={Boolean(run&&['running','stopping'].includes(run.status))} planMode={run?.accessMode==='plan'} onClose={()=>setPlanOpen(false)} onExecute={s.executePlan}/>}
-              {s.view === 'chat' && !sidecarOpen && !s.workbenchOpen && !subagentPanel && !planOpen && <ConversationStatusPanel key={s.selectedKey || 'draft'} cwd={cwd} messages={messages} running={Boolean(run && ['running','stopping'].includes(run.status))} stats={run?.stats} onReview={()=>{setFilePreview(null);s.selectWorkbenchTab('review');}} onRequest={text=>{s.setDraftText(s.draftText ? `${s.draftText}\n\n${text}` : text);}} onOpenPlan={()=>setPlanOpen(true)} planAvailable={Boolean(planDoc||planChecklist.length)} planTitle={planDoc?.title} subagents={subagents} onOpenSubagent={callId=>setSubagentPanel({callId})} onDismissSubagent={s.dismissSubagent} onDismissFinishedSubagents={s.dismissFinishedSubagents} onOpenTerminal={()=>setTerminalOpen(true)} terminalOpen={terminalOpen} contextUsage={run?.contextUsage} outputPerformance={run?.outputPerformance} />}
+              {s.view==='chat' && planOpen && <PlanViewer key={s.selectedKey||'draft'} doc={effectivePlanDoc} synthesized={!planDoc&&!!synthesizedPlan} checklist={planChecklist} lang={s.lang} running={Boolean(run&&['running','stopping'].includes(run.status))} planMode={run?.accessMode==='plan'} onClose={()=>setPlanOpen(false)} onExecute={s.executePlan}/>}
+              {s.view === 'chat' && !sidecarOpen && !s.workbenchOpen && !subagentPanel && !planOpen && <ConversationStatusPanel key={s.selectedKey || 'draft'} cwd={cwd} messages={messages} running={Boolean(run && ['running','stopping'].includes(run.status))} stats={run?.stats} onReview={()=>{setFilePreview(null);s.selectWorkbenchTab('review');}} onRequest={text=>{s.setDraftText(s.draftText ? `${s.draftText}\n\n${text}` : text);}} onOpenPlan={()=>setPlanOpen(true)} planAvailable={Boolean(planDoc||planChecklist.length)} planTitle={effectivePlanDoc?.title} subagents={subagents} onOpenSubagent={callId=>setSubagentPanel({callId})} onDismissSubagent={s.dismissSubagent} onDismissFinishedSubagents={s.dismissFinishedSubagents} onOpenTerminal={()=>setTerminalOpen(true)} terminalOpen={terminalOpen} contextUsage={run?.contextUsage} outputPerformance={run?.outputPerformance} />}
               {s.workbenchOpen && (s.view === 'chat' || s.view === 'home') && <ResizeHandle side="right" width={workbenchWidth} min={300} max={700} onChange={setWorkbenchWidth} onReset={resetWorkbenchWidth} label="工作面板宽度" />}
               <WorkbenchPanel
                 cwd={cwd}
