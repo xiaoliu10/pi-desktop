@@ -1,60 +1,71 @@
 // PI Desktop prompt-cache extension
 //
-// 背景：pi-ai 的 anthropic-messages provider 默认已放 cache_control（system 尾块 /
-// 最后 user|system 消息 / tools 末项 / 转录末条，短 TTL）。Desktop 侧仍缺两块：
-//   1) 第二个断点：长会话里「静态前缀」与「易变尾部」分叉时，单断点容易整段 miss；
-//      Anthropic 允许 ≤4 个显式断点，ZCode 用 system 3 段各一个 + 末尾消息一个。
-//   2) 长 TTL：闲置 >5min 后短 TTL 条目过期（本会话观测约 1/3 非缓存 input 属此类），
-//      `PI_CACHE_RETENTION=long` 可让模型声明 1h（模型 supportsLongCacheRetention）。
+// 背景：pi-ai 的 anthropic-messages provider 默认已在 3 处放 cache_control（短 TTL）：
+//   system 尾块（OAuth 时 system 2 处）、最后一条 user|system 消息、tools 末项（后者
+//   受 supportsCacheControlOnTools 门控）。Desktop 侧补一处读点：agent 循环里每次
+//   请求在「上一请求的 tip」（从尾向前第一条 user 消息的末块，稳态下多为
+//   tool_result 块）也打断点——它命中的正是上一请求刚写入的缓存条目。
 //
-// 做法：在 before_provider_request（payload 已含 provider 组装结果）上补断点。
-// 只动 cache_control 标记，不改任何正文；不认识的 payload 形状原样返回（fail-open）。
-//
-// 开关：
-//   PI_DESKTOP_CACHE=off      完全禁用
-//   其它值（默认）            补第二个断点
-// 长 TTL 不走本扩展：PI_CACHE_RETENTION=long 是 pi 进程级 env，对所有 provider 生效，
-// 而 GLM 兼容口未官方承诺 1h；由用户在设置里显式决定，默认关闭。
+// 门控（任一不满足则原样返回，fail-open）：
+//   - ctx.model.api === 'anthropic-messages'：before_provider_request 对所有 provider
+//     都会触发，而 OpenAI 兼容端点不支持 cache_control（pi-ai 自己只对
+//     cacheControlFormat === 'anthropic' 放标）；给严格校验端点注入未知字段可能 400。
+//   - PI_CACHE_RETENTION !== 'none'：用户显式关缓存时 provider 不放断点，本扩展跟随。
+//   - PI_DESKTOP_CACHE=off：注册期完全禁用。
+// 断点数达 Anthropic 上限(4)不再加；只动 cache_control 标记，不改任何正文。
 
-const MAX_BREAKPOINTS = 4; // Anthropic hard limit; provider already uses up to 4.
+const MAX_BREAKPOINTS = 4; // Anthropic hard limit; provider itself may use up to 4.
+// 与 provider 同款可标记块白名单（anthropic-messages.js 末条打标允许的类型）。
+const MARKABLE_BLOCKS = new Set(['text', 'image', 'tool_result']);
 
-/** 是否需要在 payload 上打标记（无 system/messages 数组的形状不动）。 */
+/** 是否需要在 payload 上打标记（无 messages 数组的形状不动）。 */
 function isAnthropicShaped(payload) {
   return Boolean(payload) && typeof payload === 'object' && Array.isArray(payload.messages);
 }
 
-/** 统计已有断点，避免超过 Anthropic 上限（provider 默认最多放 4 个）。 */
+/**
+ * 统计已有断点，达到 MAX_BREAKPOINTS 即提前停（MB 级载荷避免全量遍历）。
+ * 提前退出时返回值可能小于真实数，但调用方只判 >= MAX。
+ */
 function countBreakpoints(payload) {
-  let count = 0;
+  const state = { count: 0 };
   const walk = (node) => {
-    if (!node || typeof node !== 'object') return;
-    if (Array.isArray(node)) { for (const item of node) walk(item); return; }
-    if (node.cache_control) count += 1;
-    for (const value of Object.values(node)) if (value && typeof value === 'object') walk(value);
+    if (state.count >= MAX_BREAKPOINTS || !node || typeof node !== 'object') return;
+    if (Array.isArray(node)) {
+      for (const item of node) {
+        if (state.count >= MAX_BREAKPOINTS) return;
+        walk(item);
+      }
+      return;
+    }
+    if (node.cache_control) state.count += 1;
+    for (const value of Object.values(node)) {
+      if (state.count >= MAX_BREAKPOINTS) return;
+      if (value && typeof value === 'object') walk(value);
+    }
   };
   walk(payload.system);
   walk(payload.tools);
   walk(payload.messages);
-  return count;
+  return state.count;
 }
 
-const isTextBlock = (block) => Boolean(block) && typeof block === 'object' && typeof block.text === 'string';
-
 /**
- * 在「最后一条可标记消息」上补第二个断点（provider 已标记的是最后一条，这里补的是
- * 更早一个安全位置：倒数第二条 user 消息的最后一个 text 块）。会话短于两条时不动。
- * 已接近上限时不再添加。返回新 payload（不改原对象）。
+ * 在「从尾向前第一条 user 消息」的末块上补断点（该位置即上一请求的 tip，
+ * 稳态 agent 循环下是 tool_result 块——上一请求 provider 打过写断点的位置）。
+ * 候选块不在白名单（text/image/tool_result）时继续向前找；已有断点则不重标。
+ * 会话短于两条、断点已达上限时不动。返回新 payload（不改原对象）。
  */
-export function placeBreakpoints(payload, mode = 'marker') {
-  if (mode === 'off' || !isAnthropicShaped(payload)) return payload;
+export function placeBreakpoints(payload) {
+  if (!isAnthropicShaped(payload)) return payload;
   const messages = payload.messages;
   if (countBreakpoints(payload) >= MAX_BREAKPOINTS) return payload;
-  // 从尾向前找最后一个 user 消息（provider 断点落在最后一条任意角色消息上）。
   for (let index = messages.length - 2; index >= 0; index -= 1) {
     const message = messages[index];
     if (!message || message.role !== 'user' || !Array.isArray(message.content)) continue;
     const block = message.content[message.content.length - 1];
-    if (!isTextBlock(block) || block.cache_control) return payload;
+    if (!block || typeof block !== 'object' || !MARKABLE_BLOCKS.has(block.type)) continue;
+    if (block.cache_control) return payload; // 已有断点不重标（f∘f = f）
     const messages_ = messages.slice();
     const content = message.content.slice();
     content[content.length - 1] = { ...block, cache_control: { type: 'ephemeral' } };
@@ -66,7 +77,16 @@ export function placeBreakpoints(payload, mode = 'marker') {
 
 export default function (pi) {
   if ((process.env.PI_DESKTOP_CACHE || '').trim() === 'off') return;
-  pi.on('before_provider_request', (event) => {
-    try { return placeBreakpoints(event.payload); } catch { /* 标记失败不影响请求 */ }
+  pi.on('before_provider_request', (event, ctx) => {
+    try {
+      // 只对 Anthropic 载荷打标：ctx.model.api 是 pi-ai 选 builder 的同一口径，
+      // OpenAI 兼容载荷（同样有 messages 数组）不支持 cache_control。
+      if (!ctx || !ctx.model || ctx.model.api !== 'anthropic-messages') return undefined;
+      // 与 pi-ai getProviderEnvValue 同源（无 per-provider 前缀）：用户显式关缓存时跟随。
+      if (process.env.PI_CACHE_RETENTION === 'none') return undefined;
+      return placeBreakpoints(event.payload);
+    } catch {
+      return undefined; // 标记失败不影响请求
+    }
   });
 }
