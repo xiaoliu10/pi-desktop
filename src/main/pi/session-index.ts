@@ -25,14 +25,15 @@ export function branchEntries(entries: PiEntry[], leaf?: string): PiEntry[] {
  * <root>/<主会话名>/<childId>/run-N/session.jsonl——路径中第一段等于某主会话目录名
  * （即根下存在同名 <主会话名>.jsonl）时，返回该主会话文件路径。
  */
-function inferParentFromNestedPath(dir: string, rootReal: Set<string>): string | undefined {
+function inferParentFromNestedPath(dir: string, rootReal: Set<string>, files: Map<string, string>): string | undefined {
   let cur = dir;
   for (;;) {
     const parent = path.dirname(cur);
     if (rootReal.has(parent)) {
       // cur 是根下的第一层目录（主会话专属目录）
       const candidate = path.join(parent, path.basename(cur) + '.jsonl');
-      try { return fs.realpathSync(candidate); } catch { return undefined; }
+      if (files.has(candidate)) return candidate;
+      // Overlapping roots may contain a more distant owning session. Keep walking.
     }
     const next = path.dirname(cur);
     if (next === cur) return undefined;
@@ -115,13 +116,20 @@ export class SessionIndex {
     // 按路径判定：凡不在会话根目录顶层、且位于某个主会话专属目录下的，推回其父主会话标记
     // （侧栏与远控的既有 parentSession 过滤随即生效）。
     const rootReal = new Set(this.roots.map(r => { try { return canonical(r); } catch { return r; } }));
+    const previousParents = new Map(this.nestedParents);
+    this.nestedParents.clear();
     for (const [file, dir] of files) {
-      if (rootReal.has(dir)) continue;
-      const parent = inferParentFromNestedPath(dir, rootReal);
+      const parent = inferParentFromNestedPath(dir, rootReal, files);
       if (parent) this.nestedParents.set(file, parent);
     }
-    for (const [key, { history }] of this.cache) if (!files.has(history.session.path)) this.cache.delete(key);
-    for (const file of [...this.nestedParents.keys()]) if (!files.has(file)) this.nestedParents.delete(file);
+    for (const [key, { history }] of this.cache) {
+      const file = history.session.path;
+      // Parent creation/removal changes visibility even when the child file itself is unchanged.
+      if (!files.has(file) || previousParents.get(file) !== this.nestedParents.get(file)) {
+        this.cache.delete(key);
+        this.dirty.delete(key);
+      }
+    }
     for (const file of files.keys()) {
       const key = fileKey(file);
       try {

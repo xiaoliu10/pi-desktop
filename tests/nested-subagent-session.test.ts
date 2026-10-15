@@ -39,6 +39,33 @@ describe('嵌套子会话（pi-subagents async 布局）', () => {
     expect(child.parentSession).toBe(fs.realpathSync(path.join(root, '1791817610336_main.jsonl')));
     expect(all.find(s => path.basename(s.path) === '1791817610336_main.jsonl')?.parentSession).toBeUndefined();
   });
+  it('updates cached parent metadata when the owning file is created and removed', () => {
+    const parent = path.join(root, 'main.jsonl');
+    writeSession(path.join(root, 'main', 'child', 'run-0', 'session.jsonl'), {});
+    const idx = new SessionIndex([root], root);
+    const child = () => idx.scan(true).find(s => s.path.includes('run-0'))!;
+    expect(child().parentSession).toBeUndefined();
+    writeSession(parent, {});
+    expect(child().parentSession).toBe(fs.realpathSync(parent));
+    fs.unlinkSync(parent);
+    expect(child().parentSession).toBeUndefined();
+  });
+  it('finds the owner through overlapping scan roots', () => {
+    writeSession(path.join(root, 'main.jsonl'), {});
+    const childRoot = path.join(root, 'main', 'child', 'run-0');
+    writeSession(path.join(childRoot, 'session.jsonl'), {});
+    const idx = new SessionIndex([root, path.join(root, 'main'), childRoot], root);
+    expect(idx.scan(true).find(s => s.path.includes('run-0'))?.parentSession).toBe(fs.realpathSync(path.join(root, 'main.jsonl')));
+  });
+  it('does not infer an owner from a directory or symlink named .jsonl', () => {
+    writeSession(path.join(root, 'main', 'child', 'session.jsonl'), {});
+    fs.mkdirSync(path.join(root, 'main.jsonl'));
+    const idx = new SessionIndex([root], root);
+    expect(idx.scan(true)[0].parentSession).toBeUndefined();
+    fs.rmdirSync(path.join(root, 'main.jsonl'));
+    fs.symlinkSync(path.join(root, 'main', 'child', 'session.jsonl'), path.join(root, 'main.jsonl'));
+    expect(idx.scan(true)[0].parentSession).toBeUndefined();
+  });
   it('根下无同名主会话的孤立嵌套目录不误标', () => {
     writeSession(path.join(root, 'orphan', 'x', 'session.jsonl'), { cwd: '/w' });
     const idx = new SessionIndex([root], root);
