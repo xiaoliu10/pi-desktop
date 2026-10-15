@@ -1,4 +1,4 @@
-import { workflowDetails } from '../../shared/subagent-workflow';
+import { singleAsyncDetails, workflowDetails } from '../../shared/subagent-workflow';
 import { createContext } from 'react';
 import type { ChatMessage, ToolPart } from '../replica/contracts';
 import { executionTurns, type ChatTurn } from '../replica/chat/execution';
@@ -10,16 +10,17 @@ import { findAdapter } from './subagent-registry';
  * 子代理转录 → 主对话同构轮次：插件上报的 messages 就是 pi 消息对象，
  * 包装成 PiEntry 走同一套 historyToMessages + executionTurns，
  * 从而直接复用 TurnArticle/ToolCard/ExecutionNote 渲染（与主对话完全一致）。
- * turnKey 参与消息 id，避免多个子代理的轮次缓存互相串扰。
+ * turnKey 参与消息 id，避免多个子代理的轮次缓存互相串扰；epoch 参与缓存键：
+ * 滑动尾窗（每次取最近 60 条）里同一下标会变成另一条消息，不换键会命中旧缓存。
  */
-export function subagentTranscriptTurns(messages: SubagentChild['messages'], turnKey: string): ChatTurn[] {
-  const entries = messages.map((message, i) => ({ type: 'message', id: `${turnKey}:${i}`, message }) as unknown as PiEntry);
+export function subagentTranscriptTurns(messages: SubagentChild['messages'], turnKey: string, epoch?: number): ChatTurn[] {
+  const entries = messages.map((message, i) => ({ type: 'message', id: `${turnKey}:${i}`, timestamp: epoch, message }) as unknown as PiEntry);
   return executionTurns(historyToMessages(entries));
 }
 
 export const SubagentNavigation = createContext<((callId?: string) => void) | undefined>(undefined);
 export type ChildState = 'running' | 'queued' | 'completed' | 'failed' | 'interrupted' | 'unknown' | 'skipped' | 'recovered';
-export interface SubagentChild { id: string; callId: string; agent: string; task: string; mode: string; status: ChildState; model?: string; messages: Record<string, unknown>[]; error?: string; tokens?: number; turns?: number; cost?: number; recovered?: boolean }
+export interface SubagentChild { id: string; callId: string; agent: string; task: string; mode: string; status: ChildState; model?: string; messages: Record<string, unknown>[]; error?: string; tokens?: number; turns?: number; cost?: number; recovered?: boolean; /** workflow/async 子任务的插件自有键（childId/'single'）：详情面板据此按需拉子会话转录。 */ childKey?: string }
 
 const obj = (x: unknown): Record<string, any> | undefined => x && typeof x === 'object' && !Array.isArray(x) ? x as Record<string, any> : undefined;
 const text = (x: unknown): string => typeof x === 'string' ? x : '';
@@ -51,9 +52,9 @@ export function projectSubagents(messages: ChatMessage[], parentRunning: boolean
       const callId = part.callId || part.id;
       // A verified async snapshot updates the SAME call, not an extra recovered
       // task. Legacy synchronous results remain authoritative as before.
-      const rec = recovered?.find(r => r.callId === callId && workflowDetails(r.details, callId));
-      const live = workflowDetails(part.resultDetails, callId);
-      const disk = rec && workflowDetails(rec.details, callId);
+      const rec = recovered?.find(r => r.callId === callId && (workflowDetails(r.details, callId) || singleAsyncDetails(r.details, callId)));
+      const live = workflowDetails(part.resultDetails, callId) || singleAsyncDetails(part.resultDetails, callId);
+      const disk = rec && (workflowDetails(rec.details, callId) || singleAsyncDetails(rec.details, callId));
       const useDisk = live && disk && live.runId === disk.runId && (!live.snapshotAt || !disk.snapshotAt || disk.snapshotAt >= live.snapshotAt);
       const source = useDisk ? { ...part, resultDetails: rec!.details } : part;
       const adapter = findAdapter(source);

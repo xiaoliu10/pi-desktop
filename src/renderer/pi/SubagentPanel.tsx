@@ -7,6 +7,10 @@ import { usePiStore } from './adapter';
 import { Icon } from '../replica/Icons';
 import './subagents.css';
 
+/** 转录缓存键版本号：模块级单调递增，同毫秒重复拉取/时钟回拨都不会碰撞。 */
+let transcriptEpochSeq = 0;
+const nextTranscriptEpoch = () => ++transcriptEpochSeq;
+
 const labels: Record<ChildState, string> = {
   running: '执行中', queued: '等待执行', completed: '已完成', failed: '失败',
   interrupted: '已中断', unknown: '状态未确认', skipped: '未执行', recovered: '已从磁盘恢复',
@@ -24,8 +28,8 @@ function StatusIcon({ status }: { status: ChildState }) {
 }
 
 /** 转录直接复用主对话的轮次 UI（ToolCard 工具行 / ExecutionNote 思考行 / 执行过程折叠）。 */
-export function Transcript({ messages, turnKey, live }: { messages: SubagentChild['messages']; turnKey: string; live: boolean }) {
-  const turns = useMemo(() => subagentTranscriptTurns(messages, turnKey), [messages, turnKey]);
+export function Transcript({ messages, turnKey, live, epoch }: { messages: SubagentChild['messages']; turnKey: string; live: boolean; epoch?: number }) {
+  const turns = useMemo(() => subagentTranscriptTurns(messages, turnKey, epoch), [messages, turnKey, epoch]);
   const chatLabels = usePiStore(s => replicaLabels(s.lang).chat);
   return <>{turns.map((turn, i) => <TurnArticle key={turn.id} m={turn} liveTurn={live && i === turns.length - 1} labels={chatLabels} />)}</>;
 }
@@ -40,7 +44,37 @@ export function SubagentPanel({ children, initialCall, onClose, onStop, parentRu
   const active = children.find(c => c.id === selected);
   const transcript = useRef<HTMLDivElement>(null), follow = useRef(true);
   useEffect(() => { follow.current = true; }, [selected]);
-  useEffect(() => { if (follow.current && transcript.current) transcript.current.scrollTop = transcript.current.scrollHeight; }, [selected, active?.messages, active?.status]);
+
+  // 插件不报消息的 workflow/异步子任务：按需拉子会话转录（主进程已验证身份链 +
+  // containment）。单请求在途，完成后再排下轮（慢请求不饿死、也不会乱序覆盖）。
+  const [fetched, setFetched] = useState<Record<string, { messages: Record<string, unknown>[]; truncated: boolean; state: 'loading' | 'ok' | 'error'; epoch: number }>>({});
+  const activeId = active?.id, activeChildKey = active?.childKey, activeCallId = active?.callId, activeStatus = active?.status;
+  const pluginMessages = Boolean(active?.messages.length);
+  useEffect(() => {
+    if (!activeId || !activeChildKey || !activeCallId || pluginMessages || !s.selectedKey) return;
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let inFlight = false;
+    const load = async () => {
+      if (stopped || inFlight) return;
+      inFlight = true;
+      try {
+        const res = await window.localPi?.subagentChildTranscript(s.selectedKey!, activeCallId, activeChildKey);
+        if (stopped) return;
+        setFetched(prev => ({ ...prev, [activeId]: 'error' in res ? { messages: [], truncated: false, state: 'error', epoch: 0 } : { messages: res.messages, truncated: res.truncated, state: 'ok', epoch: nextTranscriptEpoch() } }));
+      } catch {
+        if (!stopped) setFetched(prev => ({ ...prev, [activeId]: { messages: [], truncated: false, state: 'error', epoch: 0 } }));
+      } finally {
+        inFlight = false;
+        if (!stopped && ['running', 'queued'].includes(activeStatus || '')) timer = setTimeout(() => { void load(); }, 3000);
+      }
+    };
+    void load();
+    return () => { stopped = true; if (timer) clearTimeout(timer); };
+  }, [activeId, activeChildKey, activeCallId, activeStatus, pluginMessages, s.selectedKey]);
+  const shown = active ? (active.messages.length ? active.messages : fetched[active.id]?.messages ?? []) : [];
+  const fetchedState = active ? fetched[active.id] : undefined;
+  useEffect(() => { if (follow.current && transcript.current) transcript.current.scrollTop = transcript.current.scrollHeight; }, [selected, shown, active?.status]);
 
   const running = children.filter(c => ['running', 'queued'].includes(c.status));
   const ended = children.filter(c => !['running', 'queued'].includes(c.status));
@@ -73,8 +107,11 @@ export function SubagentPanel({ children, initialCall, onClose, onStop, parentRu
       </div>
       <div className="pi-subagents__transcript" ref={transcript} onScroll={e => { const el = e.currentTarget; follow.current = el.scrollHeight - el.clientHeight - el.scrollTop < 48; }}>
         {active.error && <p className="pi-subagents__error" role="alert">{active.error}</p>}
-        <Transcript messages={active.messages} turnKey={active.id} live={['running', 'queued'].includes(active.status)} />
-        {!active.messages.length && <p className="pi-subagents__empty">{zh ? '插件尚未报告消息。' : 'No messages reported yet.'}</p>}
+        <Transcript messages={shown} turnKey={active.id} epoch={fetchedState?.epoch} live={['running', 'queued'].includes(active.status)} />
+        {!shown.length && (active.childKey
+          ? <p className="pi-subagents__empty">{fetchedState?.state === 'error' ? (zh ? '子会话转录不可用（快照已清理或尚未产生）。' : 'Child transcript unavailable (snapshot cleaned or not produced yet).') : fetchedState?.state === 'ok' ? (zh ? '子会话暂无消息。' : 'No messages in this child session.') : (zh ? '正在读取子会话转录…' : 'Loading child transcript…')}</p>
+          : <p className="pi-subagents__empty">{zh ? '插件尚未报告消息。' : 'No messages reported yet.'}</p>)}
+        {fetchedState?.truncated && shown.length > 0 && <p className="pi-subagents__empty">{zh ? '仅显示最近消息，更早内容已省略。' : 'Showing recent messages only; older content omitted.'}</p>}
         {/* Activity is owned by child state, never by transcript presence or parent activity. */}
         {['running', 'queued'].includes(active.status) && <div className="pi-subagents__working" role="status">
           <Spinner /><span>{zh ? '正在工作' : 'Working'}{active.status === 'queued' ? (zh ? ' · 等待执行' : ' · Waiting to start') : ''}</span>
@@ -125,7 +162,7 @@ export function SubagentPanel({ children, initialCall, onClose, onStop, parentRu
     </>}
 
     <footer>
-      <small>{zh ? '只读展示插件报告的消息；历史记录缺失时不推测运行结果。' : 'Read-only display of plugin-reported messages; missing history is not inferred.'}</small>
+      <small>{zh ? '只读展示插件消息或子会话转录；历史记录缺失时不推测运行结果。' : 'Read-only display of plugin messages or the child session transcript; missing history is not inferred.'}</small>
       {parentRunning && children.some(c => ['running', 'queued'].includes(c.status)) && <button className="pi-btn pi-btn--outline" onClick={onStop}>{zh ? '停止主任务及其子代理' : 'Stop main task and subagents'}</button>}
     </footer>
   </aside>;
