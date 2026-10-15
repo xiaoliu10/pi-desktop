@@ -1,4 +1,5 @@
 import type { ChatMessage } from '../replica/contracts';
+import type { PlanItem } from '../../shared/conversation-status';
 
 /**
  * 计划查看器的数据源（复刻 ZCode planToolCall.ts 的职责）。
@@ -35,6 +36,32 @@ export function planDocumentTitle(markdown: string, fallback = '计划'): string
 /** 由快照 markdown 还原文档（会话切走 / 执行模式 / 重启后的兜底展示）。 */
 export function planFromMarkdown(markdown: string, fallback = '计划'): PlanDocument {
   return { title: planDocumentTitle(markdown, fallback), markdown };
+}
+
+/** 未走计划模式的会话：把任务清单合成为一份可审阅的计划文档（md 表格，
+ *  像预约页 / md 文档一样整页展示状态+计划项），替代「暂无计划文档」的空态。
+ *  只使用清单自身数据（step+status），不虚构任何明细。 */
+export function planDocumentFromChecklist(checklist: PlanItem[], lang: 'zh' | 'en' = 'zh'): PlanDocument | null {
+  if (!checklist.length) return null;
+  const zh = lang === 'zh';
+  const done = checklist.filter((item) => item.status === 'completed').length;
+  const statusCell: Record<PlanItem['status'], string> = {
+    completed: zh ? '✅ 已完成' : '✅ completed',
+    in_progress: zh ? '🔄 进行中' : '🔄 in progress',
+    pending: zh ? '⬜ 待处理' : '⬜ pending',
+  };
+  const cell = (step: string) => step.replace(/\\/g, '\\\\').replace(/\|/g, '\\|').replace(/\r?\n/g, ' ');
+  const title = zh ? '任务计划' : 'Task plan';
+  const markdown = [
+    `# ${title}`,
+    '',
+    zh ? `进度：${done}/${checklist.length} 已完成` : `Progress: ${done}/${checklist.length} completed`,
+    '',
+    zh ? '| 状态 | 计划项 |' : '| Status | Plan item |',
+    '| --- | --- |',
+    ...checklist.map((item) => `| ${statusCell[item.status]} | ${cell(item.step)} |`),
+  ].join('\n');
+  return { title, markdown };
 }
 
 function assistantText(message: ChatMessage): string {
