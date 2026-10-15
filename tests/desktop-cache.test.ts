@@ -75,6 +75,12 @@ describe('placeBreakpoints：补断点位置', () => {
     expect(marked(after.messages[1].content[0])).toBe(false); // thinking 不打标
     expect(marked(after.messages[0].content[0])).toBe(true); // 继续向前找到 first
   });
+  it('向前超过 MAX_LOOKBACK(4) 条不可标记消息时放弃，原样返回', () => {
+    // 6 条 user 消息全部末块为 thinking：候选从 length-2 起最多向前 4 步，够不到 first
+    const bad = () => ({ role: 'user', content: [{ type: 'thinking', thinking: 'x' }] });
+    const before = payload({ messages: [userMsg('first'), bad(), bad(), bad(), bad(), bad(), userMsg('last')] });
+    expect(placeBreakpoints(before)).toBe(before);
+  });
   it('少于两条消息时不动', () => {
     const before = payload({ messages: [userMsg('only')] });
     expect(placeBreakpoints(before)).toBe(before);
@@ -162,6 +168,26 @@ describe('扩展接线与门控', () => {
       expect(handlers.before_provider_request({ type: 'before_provider_request', payload: body }, anthropicCtx())).toBeUndefined();
       expect(marked(body.messages[0].content[0])).toBe(false);
     } finally { if (previous === undefined) delete process.env.PI_CACHE_RETENTION; else process.env.PI_CACHE_RETENTION = previous; }
+  });
+  it('PI_CACHE_RETENTION=long 时新断点跟随 1h TTL（与 provider 末条同长，前短后长合法）', () => {
+    const handlers = register();
+    const previous = process.env.PI_CACHE_RETENTION;
+    process.env.PI_CACHE_RETENTION = 'long';
+    const body = payload({ messages: [userMsg('first'), userMsg('second')] });
+    try {
+      const result = handlers.before_provider_request({ type: 'before_provider_request', payload: body }, anthropicCtx()) as any;
+      expect(result.messages[0].content[0].cache_control).toEqual({ type: 'ephemeral', ttl: '1h' });
+    } finally { if (previous === undefined) delete process.env.PI_CACHE_RETENTION; else process.env.PI_CACHE_RETENTION = previous; }
+  });
+  it('默认（未设 RETENTION）新断点为短 TTL', () => {
+    const handlers = register();
+    const previous = process.env.PI_CACHE_RETENTION;
+    delete process.env.PI_CACHE_RETENTION;
+    const body = payload({ messages: [userMsg('first'), userMsg('second')] });
+    try {
+      const result = handlers.before_provider_request({ type: 'before_provider_request', payload: body }, anthropicCtx()) as any;
+      expect(result.messages[0].content[0].cache_control).toEqual(EPHEMERAL);
+    } finally { if (previous !== undefined) process.env.PI_CACHE_RETENTION = previous; }
   });
   it('handler 抛错不外泄（真实逼出异常：messages getter throw）', () => {
     const handlers = register();

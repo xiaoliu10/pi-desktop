@@ -10,13 +10,17 @@
 //   - ctx.model.api === 'anthropic-messages'：before_provider_request 对所有 provider
 //     都会触发，而 OpenAI 兼容端点不支持 cache_control（pi-ai 自己只对
 //     cacheControlFormat === 'anthropic' 放标）；给严格校验端点注入未知字段可能 400。
-//   - PI_CACHE_RETENTION !== 'none'：用户显式关缓存时 provider 不放断点，本扩展跟随。
+//   - PI_CACHE_RETENTION=none：用户要求不缓存时不额外加标（本仓库打包的 pi-ai 1.2.0
+//     只识别 long，none 并不关闭 provider 原生断点——这是本扩展的防御性跟随）。
 //   - PI_DESKTOP_CACHE=off：注册期完全禁用。
 // 断点数达 Anthropic 上限(4)不再加；只动 cache_control 标记，不改任何正文。
 
 const MAX_BREAKPOINTS = 4; // Anthropic hard limit; provider itself may use up to 4.
 // 与 provider 同款可标记块白名单（anthropic-messages.js 末条打标允许的类型）。
 const MARKABLE_BLOCKS = new Set(['text', 'image', 'tool_result']);
+// 从尾向前找候选的步数上限：超过则本轮放弃（罕见长 assistant 链下继续向前，只会把
+// 断点退到很早的位置、收益退化为部分命中——不如不标，留给 provider 默认断点）。
+const MAX_LOOKBACK = 4;
 
 /** 是否需要在 payload 上打标记（无 messages 数组的形状不动）。 */
 function isAnthropicShaped(payload) {
@@ -51,16 +55,25 @@ function countBreakpoints(payload) {
 }
 
 /**
+ * 新断点的 cache_control：PI_CACHE_RETENTION=long 时跟随 1h TTL（与 provider 末条
+ * 一致），否则短 TTL——保证「前短后长」顺序（Anthropic 禁止前长后短）。
+ */
+function breakpointControl() {
+  return process.env.PI_CACHE_RETENTION === 'long' ? { type: 'ephemeral', ttl: '1h' } : { type: 'ephemeral' };
+}
+
+/**
  * 在「从尾向前第一条 user 消息」的末块上补断点（该位置即上一请求的 tip，
  * 稳态 agent 循环下是 tool_result 块——上一请求 provider 打过写断点的位置）。
  * 候选块不在白名单（text/image/tool_result）时继续向前找；已有断点则不重标。
- * 会话短于两条、断点已达上限时不动。返回新 payload（不改原对象）。
+ * 会话短于两条、向前超过 MAX_LOOKBACK 条、断点已达上限时不动。
+ * 返回新 payload（不改原对象）。
  */
 export function placeBreakpoints(payload) {
   if (!isAnthropicShaped(payload)) return payload;
   const messages = payload.messages;
   if (countBreakpoints(payload) >= MAX_BREAKPOINTS) return payload;
-  for (let index = messages.length - 2; index >= 0; index -= 1) {
+  for (let index = messages.length - 2, steps = 0; index >= 0 && steps < MAX_LOOKBACK; index -= 1, steps += 1) {
     const message = messages[index];
     if (!message || message.role !== 'user' || !Array.isArray(message.content)) continue;
     const block = message.content[message.content.length - 1];
@@ -68,7 +81,7 @@ export function placeBreakpoints(payload) {
     if (block.cache_control) return payload; // 已有断点不重标（f∘f = f）
     const messages_ = messages.slice();
     const content = message.content.slice();
-    content[content.length - 1] = { ...block, cache_control: { type: 'ephemeral' } };
+    content[content.length - 1] = { ...block, cache_control: breakpointControl() };
     messages_[index] = { ...message, content };
     return { ...payload, messages: messages_ };
   }
@@ -82,7 +95,7 @@ export default function (pi) {
       // 只对 Anthropic 载荷打标：ctx.model.api 是 pi-ai 选 builder 的同一口径，
       // OpenAI 兼容载荷（同样有 messages 数组）不支持 cache_control。
       if (!ctx || !ctx.model || ctx.model.api !== 'anthropic-messages') return undefined;
-      // 与 pi-ai getProviderEnvValue 同源（无 per-provider 前缀）：用户显式关缓存时跟随。
+      // 与 pi-ai getProviderEnvValue 同源（无 per-provider 前缀）：用户要求不缓存时不额外加标。
       if (process.env.PI_CACHE_RETENTION === 'none') return undefined;
       return placeBreakpoints(event.payload);
     } catch {
