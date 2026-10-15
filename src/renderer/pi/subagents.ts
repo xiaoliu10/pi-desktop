@@ -19,7 +19,7 @@ export function subagentTranscriptTurns(messages: SubagentChild['messages'], tur
 
 export const SubagentNavigation = createContext<((callId?: string) => void) | undefined>(undefined);
 export type ChildState = 'running' | 'queued' | 'completed' | 'failed' | 'interrupted' | 'unknown' | 'skipped' | 'recovered';
-export interface SubagentChild { id: string; callId: string; agent: string; task: string; mode: string; status: ChildState; model?: string; messages: Record<string, unknown>[]; error?: string; tokens?: number; turns?: number; cost?: number; recovered?: boolean }
+export interface SubagentChild { id: string; callId: string; agent: string; task: string; mode: string; status: ChildState; model?: string; messages: Record<string, unknown>[]; error?: string; tokens?: number; turns?: number; cost?: number; recovered?: boolean; /** workflow/async 子任务的插件自有键（childId/'single'）：详情面板据此按需拉子会话转录。 */ childKey?: string }
 
 const obj = (x: unknown): Record<string, any> | undefined => x && typeof x === 'object' && !Array.isArray(x) ? x as Record<string, any> : undefined;
 const text = (x: unknown): string => typeof x === 'string' ? x : '';

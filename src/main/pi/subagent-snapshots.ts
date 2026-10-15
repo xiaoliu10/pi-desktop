@@ -148,3 +148,33 @@ export async function workflowSnapshots(history: PiHistory, persisted: SubagentS
   }
   return output;
 }
+
+/** Resolve a child run's session file through the SAME validated pointer chain as
+ *  workflowSnapshots (containment + identity + time). Returns undefined on any
+ *  mismatch; the caller must still containment-check the path against the trusted
+ *  sessions root before reading. Never returns filesystem pointers to the renderer. */
+export async function childSessionPointer(history: PiHistory, persisted: SubagentSnapshot[], callId: string, childId: string, root = subagentAsyncRoot(), now = Date.now()): Promise<string | undefined> {
+  if (!workflowId(callId) || !workflowId(childId)) return undefined;
+  const pointer = pointers(history, persisted).find(p => p.callId === callId);
+  if (!pointer) return undefined;
+  const d = obj(pointer.details)!;
+  const runId = d.runId;
+  if (!workflowId(runId)) return undefined;
+  const validTime = (s: any) => Number.isFinite(s.startedAt) && Number.isFinite(s.lastUpdate) && s.lastUpdate >= s.startedAt && s.lastUpdate <= now + 60_000 && (!pointer.startedAt || s.startedAt >= pointer.startedAt - 60_000);
+  try {
+    const expectedDir = path.join(root, runId);
+    if (typeof d.asyncDir !== 'string' || path.resolve(d.asyncDir) !== path.resolve(expectedDir) || (d.asyncId !== undefined && d.asyncId !== runId)) return undefined;
+    const status = await readSnapshotJson(root, path.join(expectedDir, 'status.json'));
+    if (status.runId !== runId || status.sessionId !== history.session.path || !validTime(status)) return undefined;
+    if (singleAsyncDetails(d, callId)) {
+      if (status.mode !== 'single' || (status.toolCallId !== undefined && status.toolCallId !== callId) || childId !== 'single') return undefined;
+      return typeof status.sessionFile === 'string' ? status.sessionFile : undefined;
+    }
+    if (status.mode !== 'workflow' || status.toolCallId !== callId || !workflowDetails(status, callId)) return undefined;
+    const row = workflowRows(status).find(r => r.childId === childId);
+    if (!row || !workflowId(row.runId)) return undefined;
+    const s = await readSnapshotJson(root, path.join(root, row.runId, 'status.json'));
+    if (s.runId !== row.runId || s.sessionId !== history.session.path || s.parentWorkflowRunId !== runId || s.workflowKey !== childId || !validTime(s) || s.startedAt < status.startedAt) return undefined;
+    return typeof s.sessionFile === 'string' ? s.sessionFile : undefined;
+  } catch { return undefined; }
+}

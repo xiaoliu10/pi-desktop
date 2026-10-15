@@ -2,8 +2,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { readSnapshotJson, subagentAsyncRoot, workflowSnapshots, type SubagentSnapshot } from '../src/main/pi/subagent-snapshots';
-import { recoverSubagents } from '../src/main/pi/official-subagent';
+import { childSessionPointer, readSnapshotJson, subagentAsyncRoot, workflowSnapshots, type SubagentSnapshot } from '../src/main/pi/subagent-snapshots';
+import { recoverSubagents, subagentChildTranscript } from '../src/main/pi/official-subagent';
 import { workflowDetails } from '../src/shared/subagent-workflow';
 import type { PiHistory } from '../src/shared/pi';
 
@@ -238,6 +238,109 @@ describe('recoverSubagents dedupe (single-async legacy shadowing)', () => {
     const recovered = await recoverSubagents(agentDir, sessionKey, index);
     expect(recovered.filter(r => r.callId === callId)).toHaveLength(1); // no legacy+normalized duplicate
     expect(recovered[0].details).toMatchObject({ mode: 'workflow', runId }); // normalized wins
+  });
+});
+
+describe('childSessionPointer + subagentChildTranscript', () => {
+  let root: string;
+  let tempBase: string;
+  let agentDir: string;
+  let savedEnv: string | undefined;
+  beforeEach(() => {
+    tempBase = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-transcript-test-'));
+    root = path.join(tempBase, 'async-subagent-runs');
+    fs.mkdirSync(root, { recursive: true });
+    agentDir = path.join(tempBase, 'agent');
+    fs.mkdirSync(agentDir, { recursive: true });
+    savedEnv = process.env.PI_SUBAGENTS_TEMP_ROOT;
+    process.env.PI_SUBAGENTS_TEMP_ROOT = tempBase; // subagentAsyncRoot() = tempBase/async-subagent-runs
+  });
+  afterEach(() => {
+    if (savedEnv === undefined) delete process.env.PI_SUBAGENTS_TEMP_ROOT; else process.env.PI_SUBAGENTS_TEMP_ROOT = savedEnv;
+    try { fs.rmSync(tempBase, { recursive: true, force: true }); } catch {}
+  });
+
+  const writeStatus = (runId: string, status: Record<string, any>) => {
+    const dir = path.join(root, runId);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'status.json'), JSON.stringify(status));
+  };
+
+  // parent session lives in tempBase/parent/session.jsonl; child sessions nest under it
+  const parentDir = () => path.join(tempBase, 'parent');
+  const parentPath = () => path.join(parentDir(), 'parent.jsonl');
+
+  function transcriptFixture(kind: 'workflow' | 'single') {
+    const now = Date.now();
+    const callId = 'call-t1';
+    const wfRunId = 'dddddddd-1111-4111-8111-000000000001';
+    const childRunId = 'eeeeeeee-2222-4222-8222-000000000002';
+    const childSessionDir = path.join(parentDir(), 'child-1', 'run-0');
+    fs.mkdirSync(childSessionDir, { recursive: true });
+    const childSessionFile = path.join(childSessionDir, 'session.jsonl');
+    const lines = [
+      JSON.stringify({ type: 'session', id: 'child-1', cwd: '/x' }),
+      JSON.stringify({ type: 'message', message: { role: 'user', content: 'review the diff' } }),
+      JSON.stringify({ type: 'message', message: { role: 'assistant', content: [{ type: 'thinking', thinking: 'secret chain of thought' }, { type: 'text', text: 'first finding' }] } }),
+      JSON.stringify({ type: 'message', message: { role: 'assistant', content: [{ type: 'toolCall', id: 't1', name: 'read', arguments: { path: '/a'.repeat(5000) } }] } }),
+      JSON.stringify({ type: 'message', message: { role: 'assistant', content: [{ type: 'text', text: 'x'.repeat(9000) }, { type: 'image', data: 'AAAA' }] } }),
+    ].join('\n') + '\n';
+    fs.writeFileSync(childSessionFile, lines);
+    let details: any;
+    if (kind === 'workflow') {
+      writeStatus(wfRunId, { runId: wfRunId, toolCallId: callId, sessionId: parentPath(), mode: 'workflow', state: 'completed', startedAt: now - 10000, lastUpdate: now - 500, workflowChildren: { version: 1, parentToolCallId: callId, workflowRunId: wfRunId, inventoryComplete: true, workflowState: 'completed', children: [{ childId: 'review', runId: childRunId, agent: 'code-reviewer', state: 'completed' }] } });
+      writeStatus(childRunId, { runId: childRunId, toolCallId: 'ct1', sessionId: parentPath(), mode: 'single', state: 'complete', startedAt: now - 9000, lastUpdate: now - 400, parentWorkflowRunId: wfRunId, workflowKey: 'review', sessionFile: childSessionFile });
+      details = { mode: 'workflow', runId: wfRunId, asyncId: wfRunId, asyncDir: path.join(root, wfRunId), results: [], workflowChildren: { version: 1, parentToolCallId: callId, workflowRunId: wfRunId, inventoryComplete: false, workflowState: 'completed', children: [] } };
+    } else {
+      writeStatus(childRunId, { runId: childRunId, toolCallId: callId, sessionId: parentPath(), mode: 'single', state: 'complete', startedAt: now - 9000, lastUpdate: now - 400, sessionFile: childSessionFile });
+      details = { mode: 'single', runId: childRunId, asyncId: childRunId, asyncDir: path.join(root, childRunId), results: [] };
+    }
+    const toolCall = { type: 'message', id: 'm1', message: { role: 'assistant', content: [{ type: 'toolCall', id: callId, name: 'subagent', arguments: { agent: 'code-reviewer' } }] }, timestamp: new Date().toISOString() };
+    const toolResult = { type: 'message', id: 'm2', message: { role: 'toolResult', toolCallId: callId, toolName: 'subagent', content: [], details } };
+    const history = makeHistory(parentPath(), [toolCall, toolResult]);
+    return { callId, childRunId, childSessionFile, history };
+  }
+
+  it('resolves a workflow child session file via the validated pointer chain', async () => {
+    const { callId, childSessionFile, history } = transcriptFixture('workflow');
+    const file = await childSessionPointer(history, [], callId, 'review', root);
+    expect(file).toBe(childSessionFile);
+    expect(await childSessionPointer(history, [], callId, 'wrong-key', root)).toBeUndefined();
+    expect(await childSessionPointer(history, [], 'unknown-call', 'review', root)).toBeUndefined();
+  });
+  it('resolves a single-async child session file only for childId single', async () => {
+    const { callId, childSessionFile, history } = transcriptFixture('single');
+    expect(await childSessionPointer(history, [], callId, 'single', root)).toBe(childSessionFile);
+    expect(await childSessionPointer(history, [], callId, 'other', root)).toBeUndefined();
+  });
+  it('subagentChildTranscript returns a bounded, sanitized tail', async () => {
+    const { callId, history } = transcriptFixture('workflow');
+    const index = { subagentHistory: () => history } as any;
+    const res = await subagentChildTranscript(agentDir, 'a'.repeat(64), index, callId, 'review');
+    expect('messages' in res).toBe(true);
+    if (!('messages' in res)) return;
+    // thinking payload dropped, long text capped, image replaced, tool args truncated
+    const all = JSON.stringify(res.messages);
+    expect(all).toContain('first finding');
+    expect(all).toContain('子代理详情省略思考内容');
+    expect(all).toContain('[image]');
+    expect(all).not.toContain('secret chain of thought');
+    expect(all.length).toBeLessThan(20000);
+  });
+  it('rejects a sessionFile outside the parent session directory', async () => {
+    const { callId, childRunId, history } = transcriptFixture('workflow');
+    // rewrite child status pointing outside
+    writeStatus(childRunId, { runId: childRunId, toolCallId: 'ct1', sessionId: parentPath(), mode: 'single', state: 'complete', startedAt: Date.now() - 9000, lastUpdate: Date.now() - 400, parentWorkflowRunId: 'dddddddd-1111-4111-8111-000000000001', workflowKey: 'review', sessionFile: '/etc/hosts' });
+    const index = { subagentHistory: () => history } as any;
+    const res = await subagentChildTranscript(agentDir, 'a'.repeat(64), index, callId, 'review');
+    expect(res).toEqual({ error: 'outside-sessions-root' });
+  });
+  it('reports no-snapshot when the async run directory is gone', async () => {
+    const { callId, childRunId, history } = transcriptFixture('workflow');
+    fs.rmSync(path.join(root, childRunId), { recursive: true, force: true });
+    const index = { subagentHistory: () => history } as any;
+    const res = await subagentChildTranscript(agentDir, 'a'.repeat(64), index, callId, 'review');
+    expect(res).toEqual({ error: 'no-snapshot' });
   });
 });
 

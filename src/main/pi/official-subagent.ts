@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import type { SessionIndex } from './session-index';
-import { readSnapshotJson, workflowSnapshots, type SubagentSnapshot } from './subagent-snapshots';
+import { childSessionPointer, readSnapshotJson, workflowSnapshots, type SubagentSnapshot } from './subagent-snapshots';
 import { singleAsyncDetails, workflowDetails, workflowId, workflowState } from '../../shared/subagent-workflow';
 
 /**
@@ -80,8 +80,19 @@ export async function recoverSubagents(agentDir: string, sessionKey: string, ind
   if (!/^[a-f0-9]{64}$/.test(sessionKey) || (leaf !== undefined && typeof leaf !== 'string')) return [];
   let history;
   try { history = index.subagentHistory(sessionKey, leaf); } catch { return []; }
-  const dir = path.join(agentDir, 'subagents');
+  const persisted = await readPersistedSnapshots(agentDir, sessionKey);
+  const workflows = await workflowSnapshots(history, persisted);
+  // single-async records are already normalized into `workflows`; leaving them in
+  // legacy would duplicate the callId and let the raw record shadow the snapshot.
+  const legacy = persisted.filter(rec => !workflowDetails(rec.details, rec.callId) && !singleAsyncDetails(rec.details, rec.callId));
+  return [...legacy, ...workflows];
+}
+
+/** Event-level persisted snapshots for one session (hash-owned file names only). */
+async function readPersistedSnapshots(agentDir: string, sessionKey: string): Promise<SubagentSnapshot[]> {
   const persisted: SubagentSnapshot[] = [];
+  if (!/^[a-f0-9]{64}$/.test(sessionKey)) return persisted;
+  const dir = path.join(agentDir, 'subagents');
   // Bounded directory iteration (never recursive); legacy event snapshots only.
   try {
     const entries = await fs.promises.opendir(dir);
@@ -98,11 +109,74 @@ export async function recoverSubagents(agentDir: string, sessionKey: string, ind
       } catch { /* missing/oversized/unsafe/corrupt is not success */ }
     } } finally { await entries.close().catch(() => undefined); }
   } catch { /* event persistence is optional; history remains authoritative */ }
-  const workflows = await workflowSnapshots(history, persisted);
-  // single-async records are already normalized into `workflows`; leaving them in
-  // legacy would duplicate the callId and let the raw record shadow the snapshot.
-  const legacy = persisted.filter(rec => !workflowDetails(rec.details, rec.callId) && !singleAsyncDetails(rec.details, rec.callId));
-  return [...legacy, ...workflows];
+  return persisted;
+}
+
+const TRANSCRIPT_TAIL_BYTES = 1536 * 1024;
+const TRANSCRIPT_MESSAGES = 60;
+const TRANSCRIPT_TEXT_CAP = 6000;
+
+/** Display-only sanitization: cap text, drop thinking payloads and image data,
+ *  truncate tool arguments. The child transcript is the child's own conversation;
+ *  it never carries the parent's prompts beyond what the child received as task. */
+function sanitizeTranscriptMessage(message: any): Record<string, unknown> {
+  const capText = (t: unknown) => typeof t === 'string' && t.length > TRANSCRIPT_TEXT_CAP ? `${t.slice(0, TRANSCRIPT_TEXT_CAP)}…` : t;
+  const content = Array.isArray(message?.content) ? message.content.map((block: any) => {
+    if (!block || typeof block !== 'object') return { type: 'text', text: '' };
+    if (block.type === 'text') return { type: 'text', text: capText(block.text) ?? '' };
+    if (block.type === 'thinking') return { type: 'thinking', thinking: '[子代理详情省略思考内容]' };
+    if (block.type === 'image') return { type: 'text', text: '[image]' };
+    if (block.type === 'toolCall') {
+      let args = block.arguments;
+      try { const serialized = JSON.stringify(args); if (typeof serialized === 'string' && serialized.length > 2000) args = { preview: `${serialized.slice(0, 2000)}…`, truncated: true }; } catch { args = { truncated: true }; }
+      return { type: 'toolCall', id: block.id, name: block.name, arguments: args };
+    }
+    if (block.type === 'toolResult') return { type: 'toolResult', content: Array.isArray(block.content) ? block.content.map((c: any) => c && c.type === 'text' ? { type: 'text', text: capText(c.text) ?? '' } : { type: 'text', text: `[${String(c?.type ?? 'block')}]` }) : [] };
+    return { type: 'text', text: `[${String(block.type ?? 'block')}]` };
+  }) : [];
+  return { role: typeof message?.role === 'string' ? message.role : 'assistant', content };
+}
+
+/** Read-only child transcript for the detail panel. The session file is resolved
+ *  through childSessionPointer (validated pointer chain) and must live inside the
+ *  parent session's directory (nested child layout); anything else is rejected.
+ *  Only a bounded, sanitized tail crosses IPC. */
+export async function subagentChildTranscript(agentDir: string, sessionKey: string, index: Pick<SessionIndex, 'subagentHistory'>, callId: string, childId: string): Promise<{ messages: Record<string, unknown>[]; truncated: boolean } | { error: string }> {
+  if (!/^[a-f0-9]{64}$/.test(sessionKey) || !workflowId(callId) || !workflowId(childId)) return { error: 'bad-args' };
+  let history;
+  try { history = index.subagentHistory(sessionKey); } catch { return { error: 'no-history' }; }
+  const persisted = await readPersistedSnapshots(agentDir, sessionKey);
+  const file = await childSessionPointer(history, persisted, callId, childId);
+  if (!file) return { error: 'no-snapshot' };
+  const parentDir = path.dirname(history.session.path);
+  let real: string, trustedParent: string;
+  try {
+    real = fs.realpathSync(file);
+    // Compare realpaths on both sides: parent dir may sit behind a symlink
+    // (e.g. macOS /var → /private/var).
+    trustedParent = fs.realpathSync(parentDir);
+  } catch { return { error: 'no-snapshot' }; }
+  if (!real.startsWith(trustedParent + path.sep)) return { error: 'outside-sessions-root' };
+  const stat = await fs.promises.stat(real).catch(() => null);
+  if (!stat || !stat.isFile() || stat.size > 64 * 1024 * 1024) return { error: 'no-snapshot' };
+  const tail = Math.min(stat.size, TRANSCRIPT_TAIL_BYTES);
+  const handle = await fs.promises.open(real, 'r');
+  try {
+    const buffer = Buffer.alloc(tail);
+    const { bytesRead } = await handle.read(buffer, 0, tail, stat.size - tail);
+    let text = buffer.subarray(0, bytesRead).toString('utf8');
+    if (tail < stat.size) text = text.slice(text.indexOf('\n') + 1); // drop partial line
+    const messages: Record<string, unknown>[] = [];
+    let total = 0;
+    for (const line of text.split('\n')) {
+      if (!line) continue;
+      let entry: any;
+      try { entry = JSON.parse(line); } catch { continue; }
+      if (entry?.type === 'message' && entry.message && typeof entry.message.role === 'string') { total++; messages.push(sanitizeTranscriptMessage(entry.message)); }
+    }
+    const out = messages.slice(-TRANSCRIPT_MESSAGES);
+    return { messages: out, truncated: total > out.length || tail < stat.size };
+  } finally { await handle.close().catch(() => undefined); }
 }
 
 /** Clean up all persisted subagent files for a session (on disconnect/close). */

@@ -1,4 +1,4 @@
-import { enableOfficialSubagent, officialSubagentStatus, recoverSubagents, cleanupSubagents } from './pi/official-subagent';
+import { enableOfficialSubagent, officialSubagentStatus, recoverSubagents, cleanupSubagents, subagentChildTranscript } from './pi/official-subagent';
 import { startDingTalkRegistration, pollDingTalkRegistration } from './pi/dingtalk-registration';
 import { syncBuiltinSkills, syncBuiltinPrompts } from './pi/builtin-skills';
 import { applyContinuations, loadContinuations } from './pi/session-continuations';
@@ -327,6 +327,7 @@ function registerIpc() {
   handle('officialSubagentStatus', () => officialSubagentStatus(host.environment.agentDir));
   handle('enableOfficialSubagent', () => enableOfficialSubagent(host.environment.agentDir));
   handle('recoverSubagents', (key: string, leaf?: string) => recoverSubagents(host.environment.agentDir, key, host.index, leaf));
+  handle('subagentChildTranscript', (key: string, callId: string, childId: string) => subagentChildTranscript(host.environment.agentDir, key, host.index, callId, childId));
   handle('cleanupSubagents', (key: string) => cleanupSubagents(host.environment.agentDir, key));
   // 记忆衔接层：探测 CLI 记忆插件（如 pi-memory），未启用时回退 Desktop 内置桥
   const memoryProject = (cwd: unknown) => cwd === undefined || cwd === '' ? undefined : authorizeProjectCwd(cwd,

@@ -149,7 +149,7 @@ export function createWorkflowAdapter(): SubagentAdapter {
         let args: Record<string, any> = {};
         try { args = obj(JSON.parse(part.argumentsText || '{}')) ?? {}; } catch {}
         const state = workflowState(single.state);
-        return [{ id: `${callId}:workflow:${single.runId}:single`, callId, runId: single.runId, mode: 'workflow', agent: bounded(args.agent) || '子代理', task: '', status: state, messages: [] }];
+        return [{ id: `${callId}:workflow:${single.runId}:single`, callId, runId: single.runId, childKey: 'single', mode: 'workflow', agent: bounded(args.agent) || '子代理', task: '', status: state, messages: [] }];
       }
       const d = workflowDetails(part.resultDetails, callId)!;
       const rows = workflowRows(d);
@@ -163,7 +163,7 @@ export function createWorkflowAdapter(): SubagentAdapter {
         const rawState = workflowState(row.state);
         const status: ChildState = !row.runId && rawState !== 'queued' ? 'unknown' : rawState;
         return {
-          id: `${callId}:workflow:${d.runId}:${row.childId}`, callId, mode: 'workflow',
+          id: `${callId}:workflow:${d.runId}:${row.childId}`, callId, childKey: row.childId, mode: 'workflow',
           agent: bounded(row.agent) || '子代理',
           // Only explicit display labels. Never reconstruct a redacted task from
           // sessionName, a transcript, or another on-disk prompt field.
