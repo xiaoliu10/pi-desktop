@@ -370,6 +370,8 @@ export interface ChatMessage {
   parts: MessagePart[];
   /** Simulated runs are explicitly labeled in the UI. */
   simulated?: boolean;
+  /** 内核注入的「元消息」（技能全文 / goal 确认协议）：渲染层折叠为一行摘要，正文可展开。 */
+  meta?: 'skill' | 'protocol';
   model?: string;
 }
 

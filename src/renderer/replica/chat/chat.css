@@ -1383,3 +1383,10 @@
 .pireplica .pi-tool__stat { display: inline-flex; gap: 6px; font-variant-numeric: tabular-nums; font-size: 11px; padding-right: 6px; flex-shrink: 0; }
 .pireplica .pi-tool__stat--add { color: #2ea043; }
 .pireplica .pi-tool__stat--del { color: #d73a49; }
+
+/* 内核注入的元消息（技能全文/goal 协议）：折叠为一行摘要 */
+.pireplica .pi-msg__meta { margin: 2px 0; }
+.pireplica .pi-msg__meta > summary { cursor: pointer; list-style: none; color: var(--pi-text-secondary); font-size: 12px; padding: 4px 10px; border: 1px dashed var(--pi-border); border-radius: 8px; display: inline-block; user-select: none; }
+.pireplica .pi-msg__meta > summary::-webkit-details-marker { display: none; }
+.pireplica .pi-msg__meta[open] > summary { margin-bottom: 6px; }
+.pireplica .pi-msg__meta[open] .pi-msg__bubble { max-height: 320px; overflow-y: auto; }
