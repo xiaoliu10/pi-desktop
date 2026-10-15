@@ -1057,8 +1057,10 @@ export function Composer(props: ComposerProps) {
     }
   }, [popup.kind, props.slashCommands.length, props.onSlashCommandsEmpty]);
   const fileHits = popup.kind === 'file' ? filterFiles(files, popup.query) : [];
-  const popupIndex = useRef(0);
-  popupIndex.current = 0;
+  // 斜杠/@ 候选高亮：必须是 state——↑/↓ 只改 ref 不会触发重渲染（高亮不动），
+  // 且渲染期无条件重置会在任何无关更新时把高亮拍回 0。改为按候选集变化重置。
+  const [popupIndex, setPopupIndex] = useState(0);
+  useEffect(() => { setPopupIndex(0); }, [popup.kind, popup.query]);
 
   // Close button menus on any outside click.
   useEffect(() => {
@@ -1178,19 +1180,20 @@ export function Composer(props: ComposerProps) {
     const popupOpen = popup.kind !== null && (popup.kind === 'slash' ? commands.length > 0 : fileHits.length > 0);
     if (popupOpen) {
       const count = popup.kind === 'slash' ? commands.length : fileHits.length;
+      const sel = Math.min(popupIndex, count - 1);
       if (e.key === 'ArrowDown') {
         e.preventDefault();
-        popupIndex.current = (popupIndex.current + 1) % count;
+        setPopupIndex((sel + 1) % count);
         return;
       }
       if (e.key === 'ArrowUp') {
         e.preventDefault();
-        popupIndex.current = (popupIndex.current - 1 + count) % count;
+        setPopupIndex((sel - 1 + count) % count);
         return;
       }
       if (e.key === 'Enter' || e.key === 'Tab') {
         e.preventDefault();
-        const choice = popup.kind === 'slash' ? commands[popupIndex.current].name : fileHits[popupIndex.current];
+        const choice = popup.kind === 'slash' ? commands[sel].name : fileHits[sel];
         setText((t) => applyMenuSelection(t, choice));
         return;
       }
@@ -1240,14 +1243,15 @@ export function Composer(props: ComposerProps) {
     <div className="pi-composer-wrap" ref={wrapRef}>
       {props.headerSlot}
       {/* slash / file popup */}
-      {popup.kind === 'slash' && commands.length > 0 && (
-        <div className="pi-composer__popup" role="listbox" aria-label={props.labels.slashCommands}>
+      {popup.kind === 'slash' && commands.length > 0 && (() => {
+        const sel = Math.min(popupIndex, commands.length - 1);
+        return <div className="pi-composer__popup" role="listbox" aria-label={props.labels.slashCommands}>
           {commands.map((c, i) => (
             <button
               key={c.name}
               role="option"
-              aria-selected={i === popupIndex.current}
-              className={`pi-composer__opt ${i === popupIndex.current ? 'pi-composer__opt--sel' : ''}`}
+              aria-selected={i === sel}
+              className={`pi-composer__opt ${i === sel ? 'pi-composer__opt--sel' : ''}`}
               onMouseDown={(e) => {
                 e.preventDefault();
                 setText((t) => applyMenuSelection(t, c.name));
@@ -1257,16 +1261,17 @@ export function Composer(props: ComposerProps) {
               <span className="pi-composer__optdesc">{c.description}</span>
             </button>
           ))}
-        </div>
-      )}
-      {popup.kind === 'file' && fileHits.length > 0 && (
-        <div className="pi-composer__popup" role="listbox" aria-label={props.labels.atFiles}>
+        </div>;
+      })()}
+      {popup.kind === 'file' && fileHits.length > 0 && (() => {
+        const sel = Math.min(popupIndex, fileHits.length - 1);
+        return <div className="pi-composer__popup" role="listbox" aria-label={props.labels.atFiles}>
           {fileHits.map((f, i) => (
             <button
               key={f}
               role="option"
-              aria-selected={i === popupIndex.current}
-              className={`pi-composer__opt pi-composer__opt--file ${i === popupIndex.current ? 'pi-composer__opt--sel' : ''}`}
+              aria-selected={i === sel}
+              className={`pi-composer__opt pi-composer__opt--file ${i === sel ? 'pi-composer__opt--sel' : ''}`}
               onMouseDown={(e) => {
                 e.preventDefault();
                 setText((t) => applyMenuSelection(t, `@${f}`));
@@ -1276,8 +1281,8 @@ export function Composer(props: ComposerProps) {
               <span className="pi-composer__optname">{f}</span>
             </button>
           ))}
-        </div>
-      )}
+        </div>;
+      })()}
 
       {/* model / reasoning popover */}
       {(menu === 'model' || menu === 'reasoning') && (
