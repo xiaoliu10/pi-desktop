@@ -10,10 +10,11 @@ import { findAdapter } from './subagent-registry';
  * 子代理转录 → 主对话同构轮次：插件上报的 messages 就是 pi 消息对象，
  * 包装成 PiEntry 走同一套 historyToMessages + executionTurns，
  * 从而直接复用 TurnArticle/ToolCard/ExecutionNote 渲染（与主对话完全一致）。
- * turnKey 参与消息 id，避免多个子代理的轮次缓存互相串扰。
+ * turnKey 参与消息 id，避免多个子代理的轮次缓存互相串扰；epoch 参与缓存键：
+ * 滑动尾窗（每次取最近 60 条）里同一下标会变成另一条消息，不换键会命中旧缓存。
  */
-export function subagentTranscriptTurns(messages: SubagentChild['messages'], turnKey: string): ChatTurn[] {
-  const entries = messages.map((message, i) => ({ type: 'message', id: `${turnKey}:${i}`, message }) as unknown as PiEntry);
+export function subagentTranscriptTurns(messages: SubagentChild['messages'], turnKey: string, epoch?: number): ChatTurn[] {
+  const entries = messages.map((message, i) => ({ type: 'message', id: `${turnKey}:${i}`, timestamp: epoch, message }) as unknown as PiEntry);
   return executionTurns(historyToMessages(entries));
 }
 

@@ -282,8 +282,9 @@ describe('childSessionPointer + subagentChildTranscript', () => {
       JSON.stringify({ type: 'session', id: 'child-1', cwd: '/x' }),
       JSON.stringify({ type: 'message', message: { role: 'user', content: 'review the diff' } }),
       JSON.stringify({ type: 'message', message: { role: 'assistant', content: [{ type: 'thinking', thinking: 'secret chain of thought' }, { type: 'text', text: 'first finding' }] } }),
+      JSON.stringify({ type: 'message', message: { role: 'toolResult', toolCallId: 't1', toolName: 'read', isError: true, content: [{ type: 'text', text: 'permission denied' }] } }),
       JSON.stringify({ type: 'message', message: { role: 'assistant', content: [{ type: 'toolCall', id: 't1', name: 'read', arguments: { path: '/a'.repeat(5000) } }] } }),
-      JSON.stringify({ type: 'message', message: { role: 'assistant', content: [{ type: 'text', text: 'x'.repeat(9000) }, { type: 'image', data: 'AAAA' }] } }),
+      JSON.stringify({ type: 'message', message: { role: 'assistant', content: [{ type: 'text', text: { type: 'thinking', thinking: 'smuggled via non-string text' } }, { type: 'text', text: 'x'.repeat(9000) }, { type: 'image', data: 'AAAA' }] } }),
     ].join('\n') + '\n';
     fs.writeFileSync(childSessionFile, lines);
     let details: any;
@@ -326,6 +327,16 @@ describe('childSessionPointer + subagentChildTranscript', () => {
     expect(all).toContain('[image]');
     expect(all).not.toContain('secret chain of thought');
     expect(all.length).toBeLessThan(20000);
+    // string content survives as a text block (P2: user task text not dropped)
+    const user = res.messages.find(m => m.role === 'user') as any;
+    expect(user?.content?.[0]?.text).toBe('review the diff');
+    // tool result keeps call identity + error flag (P2: no anonymous successful tools)
+    const toolResult = res.messages.find(m => m.role === 'toolResult') as any;
+    expect(toolResult?.toolCallId).toBe('t1');
+    expect(toolResult?.toolName).toBe('read');
+    expect(toolResult?.isError).toBe(true);
+    // non-string text block must not smuggle structured payloads across IPC
+    expect(all).not.toContain('smuggled via non-string text');
   });
   it('rejects a sessionFile outside the parent session directory', async () => {
     const { callId, childRunId, history } = transcriptFixture('workflow');
@@ -341,6 +352,24 @@ describe('childSessionPointer + subagentChildTranscript', () => {
     const index = { subagentHistory: () => history } as any;
     const res = await subagentChildTranscript(agentDir, 'a'.repeat(64), index, callId, 'review');
     expect(res).toEqual({ error: 'no-snapshot' });
+  });
+  it('rejects a workflow child status whose toolCallId is missing or malformed', async () => {
+    const { callId, childRunId, childSessionFile, history } = transcriptFixture('workflow');
+    // 与 workflowSnapshots 同等强度：子 status 的 toolCallId 必须是合法 id（revived single 例外不适用于 workflow）
+    writeStatus(childRunId, { runId: childRunId, sessionId: parentPath(), mode: 'single', state: 'complete', startedAt: Date.now() - 9000, lastUpdate: Date.now() - 400, parentWorkflowRunId: 'dddddddd-1111-4111-8111-000000000001', workflowKey: 'review', sessionFile: childSessionFile });
+    const index = { subagentHistory: () => history } as any;
+    expect(await subagentChildTranscript(agentDir, 'a'.repeat(64), index, callId, 'review')).toEqual({ error: 'no-snapshot' });
+  });
+  it('rejects a sessionFile symlink that resolves outside the parent directory', async () => {
+    const { callId, childRunId, childSessionFile, history } = transcriptFixture('workflow');
+    // symlink → 父目录外：realpath 解析后 containment 拦截；指向父目录内的链接则会被
+    // realpath 解析为目标本身（安全可读，不需拒绝）。
+    fs.rmSync(childSessionFile);
+    fs.symlinkSync('/etc/hosts', childSessionFile);
+    writeStatus(childRunId, { runId: childRunId, toolCallId: 'ct1', sessionId: parentPath(), mode: 'single', state: 'complete', startedAt: Date.now() - 9000, lastUpdate: Date.now() - 400, parentWorkflowRunId: 'dddddddd-1111-4111-8111-000000000001', workflowKey: 'review', sessionFile: childSessionFile });
+    const index = { subagentHistory: () => history } as any;
+    const res = await subagentChildTranscript(agentDir, 'a'.repeat(64), index, callId, 'review');
+    expect(res).toEqual({ error: 'outside-sessions-root' });
   });
 });
 

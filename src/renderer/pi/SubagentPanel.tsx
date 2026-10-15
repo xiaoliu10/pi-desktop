@@ -24,8 +24,8 @@ function StatusIcon({ status }: { status: ChildState }) {
 }
 
 /** 转录直接复用主对话的轮次 UI（ToolCard 工具行 / ExecutionNote 思考行 / 执行过程折叠）。 */
-export function Transcript({ messages, turnKey, live }: { messages: SubagentChild['messages']; turnKey: string; live: boolean }) {
-  const turns = useMemo(() => subagentTranscriptTurns(messages, turnKey), [messages, turnKey]);
+export function Transcript({ messages, turnKey, live, epoch }: { messages: SubagentChild['messages']; turnKey: string; live: boolean; epoch?: number }) {
+  const turns = useMemo(() => subagentTranscriptTurns(messages, turnKey, epoch), [messages, turnKey, epoch]);
   const chatLabels = usePiStore(s => replicaLabels(s.lang).chat);
   return <>{turns.map((turn, i) => <TurnArticle key={turn.id} m={turn} liveTurn={live && i === turns.length - 1} labels={chatLabels} />)}</>;
 }
@@ -42,18 +42,23 @@ export function SubagentPanel({ children, initialCall, onClose, onStop, parentRu
   useEffect(() => { follow.current = true; }, [selected]);
 
   // 插件不报消息的 workflow/异步子任务：按需拉子会话转录（主进程已验证身份链 +
-  // containment）。运行中每 3s 增量刷新；依赖只用标量，避免轮询新对象重复触发。
-  const [fetched, setFetched] = useState<Record<string, { messages: Record<string, unknown>[]; truncated: boolean; error?: string }>>({});
+  // containment）。运行中每 3s 增量刷新；deps 全标量 + seq 守卫防慢请求乱序覆盖。
+  const [fetched, setFetched] = useState<Record<string, { messages: Record<string, unknown>[]; truncated: boolean; state: 'loading' | 'ok' | 'error'; epoch: number }>>({});
+  const seqRef = useRef(0);
   const activeId = active?.id, activeChildKey = active?.childKey, activeCallId = active?.callId, activeStatus = active?.status;
   const pluginMessages = Boolean(active?.messages.length);
   useEffect(() => {
     if (!activeId || !activeChildKey || !activeCallId || pluginMessages || !s.selectedKey) return;
     let stopped = false;
     const load = () => {
+      const seq = ++seqRef.current;
       void window.localPi?.subagentChildTranscript(s.selectedKey!, activeCallId, activeChildKey).then(res => {
-        if (stopped) return;
-        setFetched(prev => ({ ...prev, [activeId]: 'error' in res ? { messages: [], truncated: false, error: res.error } : { messages: res.messages, truncated: res.truncated } }));
-      }).catch(() => { if (!stopped) setFetched(prev => ({ ...prev, [activeId]: { messages: [], truncated: false, error: 'ipc' } })); });
+        if (stopped || seq !== seqRef.current) return;
+        setFetched(prev => ({ ...prev, [activeId]: 'error' in res ? { messages: [], truncated: false, state: 'error', epoch: 0 } : { messages: res.messages, truncated: res.truncated, state: 'ok', epoch: Date.now() } }));
+      }).catch(() => {
+        if (stopped || seq !== seqRef.current) return;
+        setFetched(prev => ({ ...prev, [activeId]: { messages: [], truncated: false, state: 'error', epoch: 0 } }));
+      });
     };
     load();
     const timer = ['running', 'queued'].includes(activeStatus || '') ? setInterval(load, 3000) : undefined;
@@ -61,6 +66,7 @@ export function SubagentPanel({ children, initialCall, onClose, onStop, parentRu
   }, [activeId, activeChildKey, activeCallId, activeStatus, pluginMessages, s.selectedKey]);
   const shown = active ? (active.messages.length ? active.messages : fetched[active.id]?.messages ?? []) : [];
   const fetchedState = active ? fetched[active.id] : undefined;
+  useEffect(() => { if (follow.current && transcript.current) transcript.current.scrollTop = transcript.current.scrollHeight; }, [selected, shown, active?.status]);
   useEffect(() => { if (follow.current && transcript.current) transcript.current.scrollTop = transcript.current.scrollHeight; }, [selected, shown, active?.status]);
 
   const running = children.filter(c => ['running', 'queued'].includes(c.status));
@@ -94,9 +100,9 @@ export function SubagentPanel({ children, initialCall, onClose, onStop, parentRu
       </div>
       <div className="pi-subagents__transcript" ref={transcript} onScroll={e => { const el = e.currentTarget; follow.current = el.scrollHeight - el.clientHeight - el.scrollTop < 48; }}>
         {active.error && <p className="pi-subagents__error" role="alert">{active.error}</p>}
-        <Transcript messages={shown} turnKey={active.id} live={['running', 'queued'].includes(active.status)} />
+        <Transcript messages={shown} turnKey={active.id} epoch={fetchedState?.epoch} live={['running', 'queued'].includes(active.status)} />
         {!shown.length && (active.childKey
-          ? <p className="pi-subagents__empty">{fetchedState?.error ? (zh ? '子会话转录不可用（快照已清理或尚未产生）。' : 'Child transcript unavailable (snapshot cleaned or not produced yet).') : (zh ? '正在读取子会话转录…' : 'Loading child transcript…')}</p>
+          ? <p className="pi-subagents__empty">{fetchedState?.state === 'error' ? (zh ? '子会话转录不可用（快照已清理或尚未产生）。' : 'Child transcript unavailable (snapshot cleaned or not produced yet).') : fetchedState?.state === 'ok' ? (zh ? '子会话暂无消息。' : 'No messages in this child session.') : (zh ? '正在读取子会话转录…' : 'Loading child transcript…')}</p>
           : <p className="pi-subagents__empty">{zh ? '插件尚未报告消息。' : 'No messages reported yet.'}</p>)}
         {fetchedState?.truncated && shown.length > 0 && <p className="pi-subagents__empty">{zh ? '仅显示最近消息，更早内容已省略。' : 'Showing recent messages only; older content omitted.'}</p>}
         {/* Activity is owned by child state, never by transcript presence or parent activity. */}
