@@ -1,5 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import type { SessionIndex } from './session-index';
+import { readSnapshotJson, workflowSnapshots, type SubagentSnapshot } from './subagent-snapshots';
+import { workflowDetails, workflowId, workflowState } from '../../shared/subagent-workflow';
 
 /**
  * Detect whether a third-party subagent extension/package is installed.
@@ -72,26 +75,37 @@ export function enableOfficialSubagent(agentDir: string) {
   return { path: scout, upgraded: true };
 }
 
-/** Read persisted subagent files for a session (recovery after parent restart). */
-export function recoverSubagents(agentDir: string, sessionKey: string): Array<{ callId: string; status: string; details?: unknown; error?: string; startedAt?: number; updatedAt?: number }> {
+/** Recover only the selected, trusted session/branch. No renderer-supplied paths. */
+export async function recoverSubagents(agentDir: string, sessionKey: string, index: Pick<SessionIndex, 'subagentHistory'>, leaf?: string): Promise<SubagentSnapshot[]> {
+  if (!/^[a-f0-9]{64}$/.test(sessionKey) || (leaf !== undefined && typeof leaf !== 'string')) return [];
+  let history;
+  try { history = index.subagentHistory(sessionKey, leaf); } catch { return []; }
   const dir = path.join(agentDir, 'subagents');
-  if (!fs.existsSync(dir)) return [];
-  const prefix = sessionKey + '_';
-  const files = fs.readdirSync(dir).filter(f => f.startsWith(prefix) && f.endsWith('.json'));
-  return files.map(f => {
-    try {
-      const data = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8'));
-      if (data.status === 'completed') {
-        try { fs.unlinkSync(path.join(dir, f)); } catch {}
-        return null;
-      }
-      return data;
-    } catch { return null; }
-  }).filter(Boolean) as any;
+  const persisted: SubagentSnapshot[] = [];
+  // Bounded directory iteration (never recursive); legacy event snapshots only.
+  try {
+    const entries = await fs.promises.opendir(dir);
+    let count = 0;
+    try { for await (const entry of entries) {
+      if (++count > 2048 || persisted.length >= 32) break;
+      const prefix = sessionKey + '_';
+      if (!entry.isFile() || !entry.name.startsWith(prefix) || !entry.name.endsWith('.json')) continue;
+      const callId = entry.name.slice(prefix.length, -5);
+      if (!workflowId(callId)) continue;
+      try {
+        const data = await readSnapshotJson(dir, path.join(dir, entry.name), { bytes: 256 * 1024 });
+        if (data.callId === callId) persisted.push(data);
+      } catch { /* missing/oversized/unsafe/corrupt is not success */ }
+    } } finally { await entries.close().catch(() => undefined); }
+  } catch { /* event persistence is optional; history remains authoritative */ }
+  const workflows = await workflowSnapshots(history, persisted);
+  const legacy = persisted.filter(rec => !workflowDetails(rec.details, rec.callId));
+  return [...legacy, ...workflows];
 }
 
 /** Clean up all persisted subagent files for a session (on disconnect/close). */
 export function cleanupSubagents(agentDir: string, sessionKey: string) {
+  if (!/^[a-f0-9]{64}$/.test(sessionKey)) return;
   const dir = path.join(agentDir, 'subagents');
   if (!fs.existsSync(dir)) return;
   const prefix = sessionKey + '_';
@@ -107,18 +121,20 @@ export function cleanupSubagents(agentDir: string, sessionKey: string) {
  * it observes RPC events, not the extension's internal onUpdate callback.
  */
 export function persistSubagentEvent(agentDir: string, sessionKey: string, callId: string, event: Record<string, any>) {
+  if (!/^[a-f0-9]{64}$/.test(sessionKey) || !workflowId(callId)) return;
   const dir = path.join(agentDir, 'subagents');
   const file = path.join(dir, `${sessionKey}_${callId}.json`);
   try {
     fs.mkdirSync(dir, { recursive: true });
     const details = event.partialResult?.details ?? event.result?.details;
-    const status = event.type === 'tool_execution_end' ? 'completed' : 'running';
+    const workflow = workflowDetails(details, callId);
+    const status = workflow ? workflowState(workflow.state ?? workflow.workflowChildren?.workflowState) : event.type === 'tool_execution_end' ? 'completed' : 'running';
     const payload: Record<string, unknown> = { callId, startedAt: Date.now(), status, updatedAt: Date.now() };
     if (details) payload.details = details;
     if (event.type === 'tool_execution_end' && event.result?.isError) payload.status = 'failed';
     fs.writeFileSync(file, JSON.stringify(payload), { mode: 0o600 });
     // Clean up on success after 5s (session file is source of truth)
-    if (status === 'completed') {
+    if (status === 'completed' && !workflow) {
       setTimeout(() => { try { fs.unlinkSync(file); } catch {} }, 5000).unref?.();
     }
   } catch { /* best-effort */ }

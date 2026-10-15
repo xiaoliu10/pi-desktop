@@ -1,5 +1,6 @@
 import { contextPrompt, parseContextPrompt, type ContextItem, type ThinkingLevel } from '../../shared/composer';
 import { closeTransientPopovers } from '../replica/popovers';
+import { workflowDetails } from '../../shared/subagent-workflow';
 import { projectSubagents } from './subagents';
 import { dismissibleSubagentIds } from './subagent-dismissal';
 import { applyAssistantStreamDelta } from './stream-delta';
@@ -1595,9 +1596,14 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
             // 避免 UI 停留在最后一帧 live 状态、看起来像卡死。
             void refreshHistory();
             // 尝试从磁盘恢复未完成的子代理进度（扩展在 onUpdate 时持久化）。
-            void window.localPi!.recoverSubagents(event.key).then((recovered: unknown) => {
-              if (get().selectedKey !== event.key || get().runs.some(r => r.key === event.key && r.generation !== event.generation)) return;
-              if (Array.isArray(recovered) && recovered.length) set({ recoveredSubagents: recovered as PiReplicaState['recoveredSubagents'] });
+            const recoveryHistory = get().history;
+            const recoveryLeaf = get().leaf;
+            void window.localPi!.recoverSubagents(event.key, recoveryLeaf).then((recovered: unknown) => {
+              if (get().history !== recoveryHistory || get().leaf !== recoveryLeaf || get().selectedKey !== event.key || get().runs.some(r => r.key === event.key && r.generation !== event.generation)) return;
+              if (Array.isArray(recovered) && recovered.length) {
+                const legacy = recovered.filter(r => !workflowDetails(r.details, r.callId));
+                set({ recoveredSubagents: [...(get().recoveredSubagents ?? []).filter(r => workflowDetails(r.details, r.callId)), ...legacy] });
+              }
             }).catch(() => undefined);
             break;
           case 'ui': {

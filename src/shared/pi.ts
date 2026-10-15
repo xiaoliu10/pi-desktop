@@ -156,7 +156,7 @@ export interface LocalPiApi extends importSettingsApi {
   review(cwd: string): Promise<PiReview>;
   officialSubagentStatus(): Promise<{installed:boolean;thirdParty:boolean;thirdPartySource?:string;outdated:boolean;scoutExists:boolean;path:string}>;
   enableOfficialSubagent(): Promise<{path:string;upgraded:boolean}>;
-  recoverSubagents(sessionKey: string): Promise<Array<{callId:string;status:string;details?:unknown;error?:string;startedAt?:number;updatedAt?:number}>>;
+  recoverSubagents(sessionKey: string, leaf?: string): Promise<Array<{callId:string;status:string;details?:unknown;error?:string;startedAt?:number;updatedAt?:number}>>;
   /** 记忆衔接层状态：探测 CLI 记忆插件并返回当前链路。 */
   memoryAssistStatus(enabled: boolean): Promise<{ enabled: boolean; plugin: { kind: 'extension'; id: string; label?: string } | { kind: 'builtin' }; builtinDir: string; hint: string }>;
   /** 无 cwd 仅全局；指定 cwd 时附加项目 .pi/memory 与旧版路径映射文件（可能共用），仍包含全局。 */

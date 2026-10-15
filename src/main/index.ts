@@ -326,7 +326,7 @@ function registerIpc() {
   handle('filePreview', (cwd, file) => filePreview(cwd, file));
   handle('officialSubagentStatus', () => officialSubagentStatus(host.environment.agentDir));
   handle('enableOfficialSubagent', () => enableOfficialSubagent(host.environment.agentDir));
-  handle('recoverSubagents', (key: string) => recoverSubagents(host.environment.agentDir, key));
+  handle('recoverSubagents', (key: string, leaf?: string) => recoverSubagents(host.environment.agentDir, key, host.index, leaf));
   handle('cleanupSubagents', (key: string) => cleanupSubagents(host.environment.agentDir, key));
   // 记忆衔接层：探测 CLI 记忆插件（如 pi-memory），未启用时回退 Desktop 内置桥
   handle('memoryAssistStatus', (enabled: unknown) => memoryAssistStatus(host.environment.agentDir, Boolean(enabled)));

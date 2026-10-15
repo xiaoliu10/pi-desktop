@@ -169,6 +169,14 @@ export class SessionIndex {
     }
     return [...this.cache.values()].map(x => x.history.session).filter(s => includeSidecars || s.sidecarOf === undefined).sort((a, b) => b.updatedAt - a.updatedAt);
   }
+  /** Polling must not trigger a filesystem scan/reparse of every session. The
+   * normal index watcher/history path owns refresh; expose only an indexed key. */
+  subagentHistory(key: string, leaf?: string): PiHistory {
+    const found = this.cache.get(key)?.history;
+    if (!found || this.oversized.has(found)) throw new Error('Session unavailable');
+    if (leaf && !found.entries.some(e => e.id === leaf)) throw new Error('Unknown leaf');
+    return leaf ? { ...found, branch: branchEntries(found.entries, leaf), leafId: leaf } : found;
+  }
   history(key: string, leaf?: string): PiHistory {
     this.scan();
     // 目标会话有未落地的脏数据时同步重解析该文件（只此一个），保证刷新拿到完整尾部。
