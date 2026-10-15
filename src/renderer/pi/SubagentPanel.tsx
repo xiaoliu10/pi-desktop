@@ -7,6 +7,10 @@ import { usePiStore } from './adapter';
 import { Icon } from '../replica/Icons';
 import './subagents.css';
 
+/** 转录缓存键版本号：模块级单调递增，同毫秒重复拉取/时钟回拨都不会碰撞。 */
+let transcriptEpochSeq = 0;
+const nextTranscriptEpoch = () => ++transcriptEpochSeq;
+
 const labels: Record<ChildState, string> = {
   running: '执行中', queued: '等待执行', completed: '已完成', failed: '失败',
   interrupted: '已中断', unknown: '状态未确认', skipped: '未执行', recovered: '已从磁盘恢复',
@@ -42,31 +46,34 @@ export function SubagentPanel({ children, initialCall, onClose, onStop, parentRu
   useEffect(() => { follow.current = true; }, [selected]);
 
   // 插件不报消息的 workflow/异步子任务：按需拉子会话转录（主进程已验证身份链 +
-  // containment）。运行中每 3s 增量刷新；deps 全标量 + seq 守卫防慢请求乱序覆盖。
+  // containment）。单请求在途，完成后再排下轮（慢请求不饿死、也不会乱序覆盖）。
   const [fetched, setFetched] = useState<Record<string, { messages: Record<string, unknown>[]; truncated: boolean; state: 'loading' | 'ok' | 'error'; epoch: number }>>({});
-  const seqRef = useRef(0);
   const activeId = active?.id, activeChildKey = active?.childKey, activeCallId = active?.callId, activeStatus = active?.status;
   const pluginMessages = Boolean(active?.messages.length);
   useEffect(() => {
     if (!activeId || !activeChildKey || !activeCallId || pluginMessages || !s.selectedKey) return;
     let stopped = false;
-    const load = () => {
-      const seq = ++seqRef.current;
-      void window.localPi?.subagentChildTranscript(s.selectedKey!, activeCallId, activeChildKey).then(res => {
-        if (stopped || seq !== seqRef.current) return;
-        setFetched(prev => ({ ...prev, [activeId]: 'error' in res ? { messages: [], truncated: false, state: 'error', epoch: 0 } : { messages: res.messages, truncated: res.truncated, state: 'ok', epoch: Date.now() } }));
-      }).catch(() => {
-        if (stopped || seq !== seqRef.current) return;
-        setFetched(prev => ({ ...prev, [activeId]: { messages: [], truncated: false, state: 'error', epoch: 0 } }));
-      });
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let inFlight = false;
+    const load = async () => {
+      if (stopped || inFlight) return;
+      inFlight = true;
+      try {
+        const res = await window.localPi?.subagentChildTranscript(s.selectedKey!, activeCallId, activeChildKey);
+        if (stopped) return;
+        setFetched(prev => ({ ...prev, [activeId]: 'error' in res ? { messages: [], truncated: false, state: 'error', epoch: 0 } : { messages: res.messages, truncated: res.truncated, state: 'ok', epoch: nextTranscriptEpoch() } }));
+      } catch {
+        if (!stopped) setFetched(prev => ({ ...prev, [activeId]: { messages: [], truncated: false, state: 'error', epoch: 0 } }));
+      } finally {
+        inFlight = false;
+        if (!stopped && ['running', 'queued'].includes(activeStatus || '')) timer = setTimeout(() => { void load(); }, 3000);
+      }
     };
-    load();
-    const timer = ['running', 'queued'].includes(activeStatus || '') ? setInterval(load, 3000) : undefined;
-    return () => { stopped = true; if (timer) clearInterval(timer); };
+    void load();
+    return () => { stopped = true; if (timer) clearTimeout(timer); };
   }, [activeId, activeChildKey, activeCallId, activeStatus, pluginMessages, s.selectedKey]);
   const shown = active ? (active.messages.length ? active.messages : fetched[active.id]?.messages ?? []) : [];
   const fetchedState = active ? fetched[active.id] : undefined;
-  useEffect(() => { if (follow.current && transcript.current) transcript.current.scrollTop = transcript.current.scrollHeight; }, [selected, shown, active?.status]);
   useEffect(() => { if (follow.current && transcript.current) transcript.current.scrollTop = transcript.current.scrollHeight; }, [selected, shown, active?.status]);
 
   const running = children.filter(c => ['running', 'queued'].includes(c.status));

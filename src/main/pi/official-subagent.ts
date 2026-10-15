@@ -192,6 +192,14 @@ export async function subagentChildTranscript(agentDir: string, sessionKey: stri
     if (!stat.isFile() || stat.ino !== pre.ino || stat.dev !== pre.dev) return { error: 'no-snapshot' };
     walkCheck();
     if (fs.realpathSync(real) !== real) return { error: 'no-snapshot' };
+    // Final identity binding: the CURRENT path must still resolve to the very inode
+    // the fd holds. Closes the swap-ancestor → stat/open outside → restore window
+    // where both `pre` and the fd already come from the outside file.
+    const post = fs.statSync(real);
+    if (!post.isFile() || post.ino !== stat.ino || post.dev !== stat.dev) return { error: 'no-snapshot' };
+    // Windows: fs.constants.O_NOFOLLOW is undefined there (flags degrade to O_RDONLY).
+    // The walkCheck above provides the symlink rejection via lstat (works for
+    // symlinks and junctions); this matches the shipped readSnapshotJson posture.
     const tail = Math.min(stat.size, TRANSCRIPT_TAIL_BYTES);
     const buffer = Buffer.alloc(tail);
     const { bytesRead } = await handle.read(buffer, 0, tail, stat.size - tail);
