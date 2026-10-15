@@ -1,4 +1,4 @@
-import { workflowDetails } from '../../shared/subagent-workflow';
+import { singleAsyncDetails, workflowDetails } from '../../shared/subagent-workflow';
 import { createContext } from 'react';
 import type { ChatMessage, ToolPart } from '../replica/contracts';
 import { executionTurns, type ChatTurn } from '../replica/chat/execution';
@@ -51,9 +51,9 @@ export function projectSubagents(messages: ChatMessage[], parentRunning: boolean
       const callId = part.callId || part.id;
       // A verified async snapshot updates the SAME call, not an extra recovered
       // task. Legacy synchronous results remain authoritative as before.
-      const rec = recovered?.find(r => r.callId === callId && workflowDetails(r.details, callId));
-      const live = workflowDetails(part.resultDetails, callId);
-      const disk = rec && workflowDetails(rec.details, callId);
+      const rec = recovered?.find(r => r.callId === callId && (workflowDetails(r.details, callId) || singleAsyncDetails(r.details, callId)));
+      const live = workflowDetails(part.resultDetails, callId) || singleAsyncDetails(part.resultDetails, callId);
+      const disk = rec && (workflowDetails(rec.details, callId) || singleAsyncDetails(rec.details, callId));
       const useDisk = live && disk && live.runId === disk.runId && (!live.snapshotAt || !disk.snapshotAt || disk.snapshotAt >= live.snapshotAt);
       const source = useDisk ? { ...part, resultDetails: rec!.details } : part;
       const adapter = findAdapter(source);

@@ -1,4 +1,4 @@
-import { isSubagentManagement, workflowDetails, workflowRows, workflowState, workflowText as bounded } from '../../shared/subagent-workflow';
+import { isSubagentManagement, singleAsyncDetails, workflowDetails, workflowRows, workflowState, workflowText as bounded } from '../../shared/subagent-workflow';
 import type { ToolPart } from '../replica/contracts';
 import type { SubagentChild, ChildState } from './subagents';
 
@@ -130,15 +130,27 @@ function createGenericAdapter(): SubagentAdapter {
   };
 }
 
-/** pi-subagents >=0.78 asynchronous workflow protocol. Tool return / parent
- * idle do not imply child termination. Empty inventory is a workflow receipt,
- * explicitly labelled as waiting, not an invented delegated task. */
+/** pi-subagents >=0.78 asynchronous protocols. Covers both multi-child workflow
+ *  receipts and detached SINGLE runs (async launch / resume / revived), whose live
+ *  state lives in `<asyncDir>/status.json` rather than in `results[]`. Tool return /
+ *  parent idle do not imply child termination. Empty inventory is a workflow receipt,
+ *  explicitly labelled as waiting, not an invented delegated task. */
 export function createWorkflowAdapter(): SubagentAdapter {
   return {
     id: 'pi-subagents-workflow',
-    detect: part => part.tool === 'subagent' && !isSubagentManagement(part.argumentsText) && !!workflowDetails(part.resultDetails, part.callId || part.id),
-    parse(part) {
+    detect: part => part.tool === 'subagent' && !isSubagentManagement(part.argumentsText) && (!!workflowDetails(part.resultDetails, part.callId || part.id) || !!singleAsyncDetails(part.resultDetails, part.callId || part.id)),
+    parse(part, parentRunning) {
       const callId = part.callId || part.id;
+      const single = singleAsyncDetails(part.resultDetails, callId);
+      // Detached single run: synthesize one row until the disk snapshot (≤2s)
+      // replaces it with the verified state from status.json. agent is read
+      // from the launch arguments (display only); task is never reconstructed.
+      if (single) {
+        let args: Record<string, any> = {};
+        try { args = obj(JSON.parse(part.argumentsText || '{}')) ?? {}; } catch {}
+        const state = workflowState(single.state);
+        return [{ id: `${callId}:workflow:${single.runId}:single`, callId, runId: single.runId, mode: 'workflow', agent: bounded(args.agent) || '子代理', task: '', status: state, messages: [] }];
+      }
       const d = workflowDetails(part.resultDetails, callId)!;
       const rows = workflowRows(d);
       if (!rows.length) {

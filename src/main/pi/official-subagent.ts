@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { SessionIndex } from './session-index';
 import { readSnapshotJson, workflowSnapshots, type SubagentSnapshot } from './subagent-snapshots';
-import { workflowDetails, workflowId, workflowState } from '../../shared/subagent-workflow';
+import { singleAsyncDetails, workflowDetails, workflowId, workflowState } from '../../shared/subagent-workflow';
 
 /**
  * Detect whether a third-party subagent extension/package is installed.
@@ -99,7 +99,9 @@ export async function recoverSubagents(agentDir: string, sessionKey: string, ind
     } } finally { await entries.close().catch(() => undefined); }
   } catch { /* event persistence is optional; history remains authoritative */ }
   const workflows = await workflowSnapshots(history, persisted);
-  const legacy = persisted.filter(rec => !workflowDetails(rec.details, rec.callId));
+  // single-async records are already normalized into `workflows`; leaving them in
+  // legacy would duplicate the callId and let the raw record shadow the snapshot.
+  const legacy = persisted.filter(rec => !workflowDetails(rec.details, rec.callId) && !singleAsyncDetails(rec.details, rec.callId));
   return [...legacy, ...workflows];
 }
 

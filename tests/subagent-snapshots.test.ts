@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { readSnapshotJson, subagentAsyncRoot, workflowSnapshots, type SubagentSnapshot } from '../src/main/pi/subagent-snapshots';
+import { recoverSubagents } from '../src/main/pi/official-subagent';
 import { workflowDetails } from '../src/shared/subagent-workflow';
 import type { PiHistory } from '../src/shared/pi';
 
@@ -167,6 +168,76 @@ describe('workflowSnapshots integration', () => {
     expect(w.state).toBe('completed');
     expect(w.workflowChildren.children[0].state).toBe('completed');
     expect(w.workflowChildren.children[0].tokens).toBe(5000);
+  });
+  it('reads a detached async SINGLE run as one child from status.json', async () => {
+    const now = Date.now();
+    const runId = '1e61e2e8-8878-4008-940d-00aee2a8f040';
+    writeStatus(runId, {
+      runId, toolCallId: 'call-s1', sessionId: parentSessionFile, mode: 'single', state: 'paused', startedAt: now - 30000, lastUpdate: now - 1000,
+      steps: [{ agent: 'electron-pro', status: 'paused', model: 'ccr/ccr-opus' }], totalTokens: { total: 111240 }, turnCount: 12, cwd: '/x',
+    });
+    const toolCall = { type: 'message', id: 'm1', message: { role: 'assistant', content: [{ type: 'toolCall', id: 'call-s1', name: 'subagent', arguments: { agent: 'electron-pro' } }] }, timestamp: new Date().toISOString() };
+    const toolResult = { type: 'message', id: 'm2', message: { role: 'toolResult', toolCallId: 'call-s1', toolName: 'subagent', content: [], details: { mode: 'single', runId, asyncId: runId, asyncDir: `${root}/${runId}`, results: [] } } };
+    const history = makeHistory(parentSessionFile, [toolCall, toolResult]);
+    const snapshots = await workflowSnapshots(history, [], root, now);
+    expect(snapshots).toHaveLength(1);
+    const w = workflowDetails(snapshots[0].details, 'call-s1')!;
+    expect(w.state).toBe('interrupted'); // paused → interrupted
+    expect(w.workflowChildren.children).toHaveLength(1);
+    expect(w.workflowChildren.children[0]).toMatchObject({ childId: 'single', runId, agent: 'electron-pro', model: 'ccr/ccr-opus', state: 'interrupted' });
+    expect(w.workflowChildren.children[0].tokens).toBe(111240);
+    expect(w.workflowChildren.children[0]).not.toHaveProperty('sessionFile');
+  });
+  it('binds a revived single run (no toolCallId) by runId + sessionId', async () => {
+    const now = Date.now();
+    const runId = 'e8dad601-8ba7-45a6-b0b2-96f4dd6d17d2';
+    // Revived status.json omits toolCallId (completionOwnerId only) — must still bind.
+    writeStatus(runId, {
+      runId, sessionId: parentSessionFile, mode: 'single', state: 'complete', startedAt: now - 5000, lastUpdate: now - 500,
+      steps: [{ agent: 'electron-pro', status: 'complete', model: 'ccr/ccr-opus' }], totalTokens: { total: 47960 }, turnCount: 2, cwd: '/x',
+    });
+    const toolCall = { type: 'message', id: 'm1', message: { role: 'assistant', content: [{ type: 'toolCall', id: 'call-rev', name: 'subagent', arguments: { agent: 'electron-pro' } }] }, timestamp: new Date().toISOString() };
+    // The resume tool result carries the revived runId but the status.json has no toolCallId.
+    const toolResult = { type: 'message', id: 'm2', message: { role: 'toolResult', toolCallId: 'call-rev', toolName: 'subagent', content: [], details: { mode: 'single', runId, asyncId: runId, asyncDir: `${root}/${runId}`, results: [] } } };
+    const history = makeHistory(parentSessionFile, [toolCall, toolResult]);
+    const snapshots = await workflowSnapshots(history, [], root, now);
+    const w = workflowDetails(snapshots[0].details, 'call-rev')!;
+    expect(w.workflowChildren.children[0].state).toBe('completed');
+    expect(w.workflowChildren.children[0].tokens).toBe(47960);
+  });
+  it('rejects a single snapshot whose sessionId belongs to another session', async () => {
+    const now = Date.now();
+    const runId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+    writeStatus(runId, { runId, toolCallId: 'call-s2', sessionId: '/wrong/session.jsonl', mode: 'single', state: 'running', startedAt: now - 1000, lastUpdate: now, steps: [{ agent: 'x' }] });
+    const toolCall = { type: 'message', id: 'm1', message: { role: 'assistant', content: [{ type: 'toolCall', id: 'call-s2', name: 'subagent', arguments: {} }] }, timestamp: new Date().toISOString() };
+    const toolResult = { type: 'message', id: 'm2', message: { role: 'toolResult', toolCallId: 'call-s2', toolName: 'subagent', content: [], details: { mode: 'single', runId, asyncDir: `${root}/${runId}`, results: [] } } };
+    const history = makeHistory(parentSessionFile, [toolCall, toolResult]);
+    const snapshots = await workflowSnapshots(history, [], root, now);
+    expect(snapshots[0].status).toBe('unknown');
+  });
+});
+
+describe('recoverSubagents dedupe (single-async legacy shadowing)', () => {
+  let agentDir: string;
+  beforeEach(() => { agentDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-recover-test-')); });
+  afterEach(() => { try { fs.rmSync(agentDir, { recursive: true, force: true }); } catch {} });
+
+  it('does not duplicate a callId when a raw single-async event snapshot persists', async () => {
+    const sessionKey = 'a'.repeat(64);
+    const runId = 'cccccccc-dddd-4eee-8fff-000000000001';
+    const callId = 'call-dup1';
+    // persisted event-level snapshot carries the RAW single-async details
+    const subDir = path.join(agentDir, 'subagents');
+    fs.mkdirSync(subDir, { recursive: true });
+    fs.writeFileSync(path.join(subDir, `${sessionKey}_${callId}.json`), JSON.stringify({ callId, status: 'unknown', details: { mode: 'single', runId, asyncId: runId, asyncDir: `/nonexistent/${runId}`, results: [] } }));
+    // history contains the same call → workflowSnapshots normalizes it
+    const toolCall = { type: 'message', id: 'm1', message: { role: 'assistant', content: [{ type: 'toolCall', id: callId, name: 'subagent', arguments: { agent: 'electron-pro' } }] }, timestamp: new Date().toISOString() };
+    const toolResult = { type: 'message', id: 'm2', message: { role: 'toolResult', toolCallId: callId, toolName: 'subagent', content: [], details: { mode: 'single', runId, asyncId: runId, asyncDir: `/nonexistent/${runId}`, results: [] } } };
+    const history = makeHistory(parentSessionFile, [toolCall, toolResult]);
+    const index = { subagentHistory: () => history } as any;
+    const recovered = await recoverSubagents(agentDir, sessionKey, index);
+    expect(recovered.filter(r => r.callId === callId)).toHaveLength(1); // no legacy+normalized duplicate
+    expect(recovered[0].details).toMatchObject({ mode: 'workflow', runId }); // normalized wins
   });
 });
 

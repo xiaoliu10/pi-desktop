@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import type { PiHistory } from '../../shared/pi';
-import { isSubagentManagement, workflowDetails, workflowId, workflowObject as obj, workflowRows, workflowState, workflowText as text } from '../../shared/subagent-workflow';
+import { isSubagentManagement, singleAsyncDetails, singleRunRow, workflowDetails, workflowId, workflowObject as obj, workflowRows, workflowState, workflowText as text } from '../../shared/subagent-workflow';
 
 export interface SubagentSnapshot { callId: string; status: string; details?: unknown; error?: string; startedAt?: number; updatedAt?: number }
 const MAX_JSON = 256 * 1024;
@@ -59,19 +59,22 @@ export async function readSnapshotJson(root: string, file: string, budget = { by
 function pointers(history: PiHistory, persisted: SubagentSnapshot[]) {
   const calls = new Map<string, { at: number; management: boolean }>();
   const found = new Map<string, SubagentSnapshot>();
+  const collect = (details: unknown, callId: string, at?: number) => {
+    if (workflowDetails(details, callId) || singleAsyncDetails(details, callId)) found.set(callId, { callId, status: 'unknown', details, startedAt: at });
+  };
   for (const e of history.branch) {
     const m = e.message;
     if (m?.role === 'assistant' && Array.isArray(m.content)) for (const b of m.content) {
       if (b.type === 'toolCall' && b.name === 'subagent' && workflowId(b.id)) calls.set(b.id, { at: Date.parse(String(e.timestamp || '')) || 0, management: isSubagentManagement(JSON.stringify(b.arguments)) });
     }
     if (m?.role !== 'toolResult' || m.toolName !== 'subagent' || typeof m.toolCallId !== 'string' || calls.get(m.toolCallId)?.management) continue;
-    if (workflowDetails(m.details, m.toolCallId)) found.set(m.toolCallId, { callId: m.toolCallId, status: 'unknown', details: m.details, startedAt: calls.get(m.toolCallId)?.at });
+    collect(m.details, m.toolCallId, calls.get(m.toolCallId)?.at);
   }
   for (const rec of persisted) {
-    if (calls.get(rec.callId)?.management || !workflowDetails(rec.details, rec.callId)) continue;
+    if (calls.get(rec.callId)?.management) continue;
     // Events can precede the history append, but remain scoped to this session's
     // hash-owned persistence file. They are not a license to use arbitrary dirs.
-    if (!found.has(rec.callId)) found.set(rec.callId, rec);
+    if (!found.has(rec.callId) && (workflowDetails(rec.details, rec.callId) || singleAsyncDetails(rec.details, rec.callId))) found.set(rec.callId, rec);
   }
   return [...found.values()].slice(-MAX_CALLS);
 }
@@ -84,6 +87,7 @@ export async function workflowSnapshots(history: PiHistory, persisted: SubagentS
   for (const pointer of pointers(history, persisted)) {
     const d = obj(pointer.details)!;
     const runId = d.runId;
+    const isSingle = !!singleAsyncDetails(d, pointer.callId);
     let detail: Record<string, any> = { mode: 'workflow', runId, toolCallId: pointer.callId, state: 'unknown', steps: [] };
     let updatedAt = 0;
     try {
@@ -91,38 +95,54 @@ export async function workflowSnapshots(history: PiHistory, persisted: SubagentS
       if (typeof d.asyncDir !== 'string' || path.resolve(d.asyncDir) !== path.resolve(expectedDir) || (d.asyncId !== undefined && d.asyncId !== runId)) throw new Error('invalid async pointer');
       const status = await readSnapshotJson(root, path.join(expectedDir, 'status.json'), budget);
       const validTime = (s: any) => Number.isFinite(s.startedAt) && Number.isFinite(s.lastUpdate) && s.lastUpdate >= s.startedAt && s.lastUpdate <= now + 60_000 && (!pointer.startedAt || s.startedAt >= pointer.startedAt - 60_000);
-      if (status.mode !== 'workflow' || status.runId !== runId || status.toolCallId !== pointer.callId || status.sessionId !== history.session.path || !validTime(status) || !workflowDetails(status, pointer.callId)) throw new Error('snapshot identity/time mismatch');
-      const rows = workflowRows(status).slice(0, MAX_CHILDREN);
-      const children: Record<string, any>[] = [];
-      for (const row of rows) {
-        // Only these display fields cross IPC. In particular do not recover
-        // descriptions, prompts, sessionFile, transcriptPath or recent output.
-        const child: Record<string, any> = { childId: row.childId, runId: workflowId(row.runId) ? row.runId : undefined, agent: text(row.agent), label: text(row.label), state: workflowState(row.state), model: text(row.model) };
-        if (child.runId) {
-          try {
-            const s = await readSnapshotJson(root, path.join(root, child.runId, 'status.json'), budget);
-            if (s.runId !== child.runId || s.sessionId !== history.session.path || !workflowId(s.toolCallId) || s.parentWorkflowRunId !== runId || s.workflowKey !== row.childId || !validTime(s) || s.startedAt < status.startedAt) throw new Error('child identity/time mismatch');
-            const state = workflowState(s.state);
-            child.state = ['running', 'queued'].includes(state) && now - s.lastUpdate > STALE_MS ? 'unknown' : state;
-            const step = Array.isArray(s.steps) ? obj(s.steps[0]) : undefined;
-            child.model = text(step?.model) || child.model;
-            child.tokens = typeof s.totalTokens?.total === 'number' && Number.isFinite(s.totalTokens.total) ? s.totalTokens.total : undefined;
-            child.turns = typeof s.turnCount === 'number' && Number.isFinite(s.turnCount) ? s.turnCount : undefined;
-            child.snapshotAt = s.lastUpdate;
-          } catch { child.state = 'unknown'; }
-        } else if (child.state !== 'queued') child.state = 'unknown';
-        children.push(child);
+      if (isSingle) {
+        // Async single run: one child whose state lives in status.json (mode:'single').
+        // Revived runs may omit toolCallId; bind by runId + sessionId instead.
+        if (status.mode !== 'single' || status.runId !== runId || status.sessionId !== history.session.path || (status.toolCallId !== undefined && status.toolCallId !== pointer.callId) || !validTime(status)) throw new Error('single snapshot identity/time mismatch');
+        const row = singleRunRow(status);
+        let state = workflowState(row.state);
+        if (['running', 'queued'].includes(state) && now - (row.snapshotAt || 0) > STALE_MS) state = 'unknown';
+        const child: Record<string, any> = { childId: row.childId, runId: workflowId(row.runId) ? row.runId : undefined, agent: text(row.agent), label: text(row.label), state, model: text(row.model) };
+        if (typeof row.tokens === 'number') child.tokens = row.tokens;
+        if (typeof row.turns === 'number') child.turns = row.turns;
+        child.snapshotAt = row.snapshotAt;
+        detail = { mode: 'workflow', runId, toolCallId: pointer.callId, state, snapshotAt: status.lastUpdate, workflowChildren: { version: 1, parentToolCallId: pointer.callId, workflowRunId: runId, inventoryComplete: true, workflowState: state, children: [child] } };
+        updatedAt = Math.max(status.lastUpdate, child.snapshotAt || 0);
+      } else {
+        if (status.mode !== 'workflow' || status.runId !== runId || status.toolCallId !== pointer.callId || status.sessionId !== history.session.path || !validTime(status) || !workflowDetails(status, pointer.callId)) throw new Error('snapshot identity/time mismatch');
+        const rows = workflowRows(status).slice(0, MAX_CHILDREN);
+        const children: Record<string, any>[] = [];
+        for (const row of rows) {
+          // Only these display fields cross IPC. In particular do not recover
+          // descriptions, prompts, sessionFile, transcriptPath or recent output.
+          const child: Record<string, any> = { childId: row.childId, runId: workflowId(row.runId) ? row.runId : undefined, agent: text(row.agent), label: text(row.label), state: workflowState(row.state), model: text(row.model) };
+          if (child.runId) {
+            try {
+              const s = await readSnapshotJson(root, path.join(root, child.runId, 'status.json'), budget);
+              if (s.runId !== child.runId || s.sessionId !== history.session.path || !workflowId(s.toolCallId) || s.parentWorkflowRunId !== runId || s.workflowKey !== row.childId || !validTime(s) || s.startedAt < status.startedAt) throw new Error('child identity/time mismatch');
+              const state = workflowState(s.state);
+              child.state = ['running', 'queued'].includes(state) && now - s.lastUpdate > STALE_MS ? 'unknown' : state;
+              const step = Array.isArray(s.steps) ? obj(s.steps[0]) : undefined;
+              child.model = text(step?.model) || child.model;
+              child.tokens = typeof s.totalTokens?.total === 'number' && Number.isFinite(s.totalTokens.total) ? s.totalTokens.total : undefined;
+              child.turns = typeof s.turnCount === 'number' && Number.isFinite(s.turnCount) ? s.turnCount : undefined;
+              child.snapshotAt = s.lastUpdate;
+            } catch { child.state = 'unknown'; }
+          } else if (child.state !== 'queued') child.state = 'unknown';
+          children.push(child);
+        }
+        // A workflow's timestamp may stop advancing while children run. Never
+        // infer their completion from that timestamp or the parent's RPC state.
+        let state = workflowState(status.state ?? status.workflowChildren?.workflowState);
+        if (!children.length && ['running', 'queued'].includes(state) && now - status.lastUpdate > STALE_MS) state = 'unknown';
+        detail = { ...detail, state, snapshotAt: status.lastUpdate, workflowChildren: { version: 1, parentToolCallId: pointer.callId, workflowRunId: runId, inventoryComplete: status.workflowChildren?.inventoryComplete === true, workflowState: state, children } };
+        updatedAt = Math.max(status.lastUpdate, ...children.map(c => c.snapshotAt || 0));
       }
-      // A workflow's timestamp may stop advancing while children run. Never
-      // infer their completion from that timestamp or the parent's RPC state.
-      let state = workflowState(status.state ?? status.workflowChildren?.workflowState);
-      if (!children.length && ['running', 'queued'].includes(state) && now - status.lastUpdate > STALE_MS) state = 'unknown';
-      detail = { ...detail, state, snapshotAt: status.lastUpdate, workflowChildren: { version: 1, parentToolCallId: pointer.callId, workflowRunId: runId, inventoryComplete: status.workflowChildren?.inventoryComplete === true, workflowState: state, children } };
-      updatedAt = Math.max(status.lastUpdate, ...children.map(c => c.snapshotAt || 0));
     } catch {
       // Keep known identities on unavailable/corrupt snapshots without presenting
       // last-known running/completed as a newly verified observation.
-      detail.steps = workflowRows(d).map(row => ({ childId: row.childId, runId: row.runId, agent: text(row.agent), state: 'unknown' }));
+      if (isSingle) detail.steps = [{ childId: 'single', runId, agent: text(d.agent), state: 'unknown' }];
+      else detail.steps = workflowRows(d).map(row => ({ childId: row.childId, runId: row.runId, agent: text(row.agent), state: 'unknown' }));
     }
     output.push({ callId: pointer.callId, status: detail.state, details: detail, updatedAt });
   }

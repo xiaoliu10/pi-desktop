@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { projectSubagents } from '../src/renderer/pi/subagents';
 import { mergeSubagentSnapshots, pollSubagents } from '../src/renderer/pi/subagent-polling';
-import { workflowDetails, workflowRows, workflowState, isSubagentManagement } from '../src/shared/subagent-workflow';
+import { workflowDetails, workflowRows, workflowState, isSubagentManagement, singleAsyncDetails } from '../src/shared/subagent-workflow';
 import { createWorkflowAdapter } from '../src/renderer/pi/subagent-registry';
 import type { ChatMessage, ToolPart } from '../src/renderer/replica/contracts';
 import type { RecoveredSubagent } from '../src/renderer/pi/subagents';
@@ -201,6 +201,61 @@ describe('pollSubagents lifecycle', () => {
     await new Promise(r => setTimeout(r, 20));
     stop();
   });
+  it('branch switch drops the in-flight response but the next tick publishes the current branch', async () => {
+    // 手动切分支后：在途的旧分支响应被 leaf 守卫丢弃，下个 tick 读当前分支并发布。
+    let leaf = 'leaf-1';
+    let published: RecoveredSubagent[][] = [];
+    let resolveFirst!: (v: RecoveredSubagent[]) => void;
+    let calls = 0;
+    const stop = pollSubagents({
+      key: 'k',
+      leaf: () => leaf,
+      recover: (_k, l) => { calls++; if (calls === 1) return new Promise(r => { resolveFirst = () => r([{ callId: 'c1', status: 'running' } as RecoveredSubagent]); }); return Promise.resolve([{ callId: 'c1', status: 'running' } as RecoveredSubagent]); },
+      isCurrent: () => true,
+      publish: r => published.push(r),
+      interval: 10,
+    });
+    // 请求在途时用户手动切了分支
+    leaf = 'leaf-2';
+    resolveFirst([{ callId: 'c1', status: 'running' }]);
+    await new Promise(r => setTimeout(r, 30));
+    stop();
+    expect(published.length).toBeGreaterThanOrEqual(1);
+    expect(published[0]).toHaveLength(1);
+  });
+  it('drops a response whose branch was switched away mid-request', async () => {
+    // 用户选了分支 A，请求在途时手动切到分支 B：响应携带 A 的数据，必须丢弃。
+    let leaf = 'branchA';
+    let published = 0;
+    let resolveFirst!: (v: RecoveredSubagent[]) => void;
+    const stop = pollSubagents({
+      key: 'k', leaf: () => leaf,
+      recover: () => new Promise<RecoveredSubagent[]>(r => { resolveFirst = r; }),
+      isCurrent: () => true,
+      publish: () => { published++; },
+      interval: 10,
+    });
+    leaf = 'branchB'; // 切分支
+    resolveFirst([{ callId: 'c1', status: 'running' }]);
+    await new Promise(r => setTimeout(r, 25));
+    stop();
+    expect(published).toBe(0); // 旧分支响应被丢弃，等下个 tick 读 branchB
+  });
+  it('each tick reads the current leaf for branch-correct recovery', async () => {
+    const seen: (string | undefined)[] = [];
+    let leaf = 'leaf-a';
+    const stop = pollSubagents({
+      key: 'k', leaf: () => leaf,
+      recover: async (_k, l) => { seen.push(l); return []; },
+      isCurrent: () => true, publish: () => {}, interval: 5,
+    });
+    await new Promise(r => setTimeout(r, 12));
+    leaf = 'leaf-b';
+    await new Promise(r => setTimeout(r, 12));
+    stop();
+    expect(seen).toContain('leaf-a');
+    expect(seen).toContain('leaf-b');
+  });
   it('parent idle (not running) still polls and publishes', async () => {
     let published = 0;
     const stop = pollSubagents({
@@ -250,5 +305,73 @@ describe('missing/corrupt/unsafe snapshots', () => {
     const part = wf('run-1', 'call-1', 'running', [{ childId: 'no-run', agent: 'dev', state: 'running' }]); // no runId
     const children = projectSubagents(messages(part), true);
     expect(children[0].status).toBe('unknown'); // queued→unknown without runId (can't verify)
+  });
+});
+
+describe('async single runs (pi-subagents >=0.78)', () => {
+  const adapter = createWorkflowAdapter();
+  const singleLive = (runId: string, callId = 'call-1', agent = 'electron-pro', state?: string): ToolPart => ({
+    kind: 'tool', id: 'one', callId, tool: 'subagent', phase: 'result', status: 'done', summary: '',
+    argumentsText: JSON.stringify({ agent, cwd: '/x' }),
+    resultDetails: { mode: 'single', runId, asyncId: runId, asyncDir: `/tmp/pi-subagents-uid-501/async-subagent-runs/${runId}`, results: [], ...(state ? { state } : {}) },
+  });
+
+  it('singleAsyncDetails detects a detached single run and rejects sync/management shapes', () => {
+    const d = { mode: 'single', runId: 'r-async', asyncDir: '/tmp/x/r-async', results: [] };
+    expect(singleAsyncDetails(d, 'call-1')).toBeTruthy();
+    // synchronous single with a result → official adapter's job, not async
+    expect(singleAsyncDetails({ ...d, results: [{ agent: 'scout', exitCode: 0 }] }, 'call-1')).toBeUndefined();
+    // management reply (status) carries no runId → excluded
+    expect(singleAsyncDetails({ mode: 'single', results: [] }, 'call-1')).toBeUndefined();
+    // mismatched toolCallId → rejected
+    expect(singleAsyncDetails({ ...d, toolCallId: 'other' }, 'call-1')).toBeUndefined();
+    // non-single mode → not here
+    expect(singleAsyncDetails({ mode: 'workflow', runId: 'r', results: [] }, 'call-1')).toBeUndefined();
+  });
+
+  it('adapter renders one live single-async child with a stable id and agent from args', () => {
+    const part = singleLive('r-async', 'call-1', 'electron-pro');
+    expect(adapter.detect(part)).toBe(true);
+    const children = adapter.parse(part, true);
+    expect(children).toHaveLength(1);
+    expect(children[0].id).toBe('call-1:workflow:r-async:single');
+    expect(children[0].agent).toBe('electron-pro');
+    expect(children[0].status).toBe('unknown'); // live: unverified until disk snapshot arrives
+    expect(children[0].messages).toEqual([]);
+  });
+
+  it('a disk snapshot (normalized to workflow shape) replaces the live unknown child', () => {
+    const livePart = singleLive('r-async', 'call-1', 'electron-pro');
+    const snapshot: RecoveredSubagent = {
+      callId: 'call-1', status: 'running',
+      details: { mode: 'workflow', runId: 'r-async', toolCallId: 'call-1', state: 'running', snapshotAt: 1000, workflowChildren: { version: 1, parentToolCallId: 'call-1', workflowRunId: 'r-async', inventoryComplete: true, workflowState: 'running', children: [{ childId: 'single', runId: 'r-async', agent: 'electron-pro', state: 'running', model: 'ccr/ccr-opus', tokens: 47960, turns: 2, snapshotAt: 1000 }] } },
+    };
+    const children = projectSubagents(messages(livePart), true, [snapshot]);
+    expect(children).toHaveLength(1);
+    expect(children[0].id).toBe('call-1:workflow:r-async:single');
+    expect(children[0].status).toBe('running');
+    expect(children[0].model).toBe('ccr/ccr-opus');
+    expect(children[0].tokens).toBe(47960);
+  });
+
+  it('does not treat management (status/guide) single replies as async runs', () => {
+    const part: ToolPart = {
+      kind: 'tool', id: 'one', callId: 'call-1', tool: 'subagent', phase: 'result', status: 'done', summary: '',
+      argumentsText: JSON.stringify({ action: 'status' }),
+      resultDetails: { mode: 'single', agentScope: 'user', projectAgentsDir: null, results: [] },
+    };
+    expect(adapter.detect(part)).toBe(false);
+    expect(projectSubagents(messages(part), true)).toHaveLength(0);
+  });
+
+  it('does not reconstruct task from on-disk prompt fields for single-async children', () => {
+    const livePart = singleLive('r-async', 'call-1', 'electron-pro');
+    const snapshot: RecoveredSubagent = {
+      callId: 'call-1', status: 'completed',
+      details: { mode: 'workflow', runId: 'r-async', toolCallId: 'call-1', state: 'completed', snapshotAt: 2000, workflowChildren: { version: 1, parentToolCallId: 'call-1', workflowRunId: 'r-async', inventoryComplete: true, workflowState: 'completed', children: [{ childId: 'single', runId: 'r-async', agent: 'electron-pro', state: 'completed', task: '[prompt redacted]', description: '[prompt redacted]', snapshotAt: 2000 }] } },
+    };
+    const children = projectSubagents(messages(livePart), false, [snapshot]);
+    expect(children[0].task).toBe('');
+    expect(children[0].task).not.toContain('redacted');
   });
 });
