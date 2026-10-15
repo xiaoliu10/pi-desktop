@@ -97,7 +97,7 @@ const localPi: LocalPiApi = {
   respond: (key, gen, response) => invoke('respond', key, gen, response), forkMessage: (key, entryId) => invoke('forkMessage', key, entryId), review: cwd => invoke('review', cwd), gitStatus: cwd => invoke('gitStatus', cwd), filePreview: (cwd, file) => invoke('filePreview', cwd, file),
   officialSubagentStatus: () => invoke('officialSubagentStatus'),
   enableOfficialSubagent: () => invoke('enableOfficialSubagent'),
-  recoverSubagents: (key: string) => invoke('recoverSubagents', key),
+  recoverSubagents: (key: string, leaf?: string) => invoke('recoverSubagents', key, leaf),
   memoryAssistStatus: (enabled: boolean) => invoke('memoryAssistStatus', enabled),
   memoryList: (cwd?: string) => invoke('memoryList', cwd),
   memoryRead: (rel: string, cwd?: string) => invoke('memoryRead', rel, cwd),

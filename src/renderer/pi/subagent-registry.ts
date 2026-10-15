@@ -1,3 +1,4 @@
+import { isSubagentManagement, workflowDetails, workflowRows, workflowState, workflowText as bounded } from '../../shared/subagent-workflow';
 import type { ToolPart } from '../replica/contracts';
 import type { SubagentChild, ChildState } from './subagents';
 
@@ -11,11 +12,8 @@ export interface SubagentAdapter {
   id: string;
   /** Check whether a tool part's details belong to this adapter's format. */
   detect(part: ToolPart): boolean;
-  /** Extract child subagent states from the tool part.
-   *  Contract: children must be position-stable across incremental updates —
-   *  dismissal persists `${callId}:${index}`, so a results array that reorders
-   *  or compacts would misalign hidden rows. The official extension satisfies
-   *  this (parallel preallocates per-task slots, chain appends). */
+  /** Child ids must remain stable across incremental updates and reordering.
+   * Legacy adapters use preallocated slots; workflows use plugin-owned keys. */
   parse(part: ToolPart, parentRunning: boolean): SubagentChild[];
 }
 
@@ -55,7 +53,7 @@ function createOfficialAdapter(): SubagentAdapter {
     id: 'official',
     detect(part) {
       const d = obj(part.resultDetails);
-      return part.tool === 'subagent' && !!d && ['single', 'parallel', 'chain'].includes(d.mode) && Array.isArray(d.results);
+      return part.tool === 'subagent' && !isSubagentManagement(part.argumentsText) && !!d && ['single', 'parallel', 'chain'].includes(d.mode) && Array.isArray(d.results);
     },
     parse(part, parentRunning) {
       const d = obj(part.resultDetails)!;
@@ -104,7 +102,7 @@ function createGenericAdapter(): SubagentAdapter {
     id: 'generic',
     detect(part) {
       const d = obj(part.resultDetails);
-      return part.tool === 'subagent' && !!d && ['single', 'parallel', 'chain'].includes(d.mode) && Array.isArray(d.results);
+      return part.tool === 'subagent' && !isSubagentManagement(part.argumentsText) && !!d && ['single', 'parallel', 'chain'].includes(d.mode) && Array.isArray(d.results);
     },
     parse(part, parentRunning) {
       const d = obj(part.resultDetails)!;
@@ -132,8 +130,44 @@ function createGenericAdapter(): SubagentAdapter {
   };
 }
 
+/** pi-subagents >=0.78 asynchronous workflow protocol. Tool return / parent
+ * idle do not imply child termination. Empty inventory is a workflow receipt,
+ * explicitly labelled as waiting, not an invented delegated task. */
+export function createWorkflowAdapter(): SubagentAdapter {
+  return {
+    id: 'pi-subagents-workflow',
+    detect: part => part.tool === 'subagent' && !isSubagentManagement(part.argumentsText) && !!workflowDetails(part.resultDetails, part.callId || part.id),
+    parse(part) {
+      const callId = part.callId || part.id;
+      const d = workflowDetails(part.resultDetails, callId)!;
+      const rows = workflowRows(d);
+      if (!rows.length) {
+        const state = workflowState(d.state ?? d.workflowChildren?.workflowState);
+        return [{ id: `${callId}:workflow:${d.runId}`, callId, mode: 'workflow', agent: 'Workflow', task: d.workflowChildren?.inventoryComplete === true ? '工作流尚未报告子任务' : '等待工作流报告子任务（尚未发现子代理）', status: state, messages: [] }];
+      }
+      return rows.map(row => {
+        // Without a runId the child's claimed state can't be verified from
+        // its own snapshot. Only queued is safe (no run started yet).
+        const rawState = workflowState(row.state);
+        const status: ChildState = !row.runId && rawState !== 'queued' ? 'unknown' : rawState;
+        return {
+          id: `${callId}:workflow:${d.runId}:${row.childId}`, callId, mode: 'workflow',
+          agent: bounded(row.agent) || '子代理',
+          // Only explicit display labels. Never reconstruct a redacted task from
+          // sessionName, a transcript, or another on-disk prompt field.
+          task: bounded(row.label), status,
+          model: bounded(row.model) || undefined, messages: [],
+          tokens: typeof row.tokens === 'number' ? row.tokens : undefined,
+          turns: typeof row.turns === 'number' ? row.turns : undefined,
+        };
+      });
+    },
+  };
+}
+
 // Register built-in adapters (generic = lowest priority, official = higher)
 registerSubagentAdapter(createGenericAdapter());
 registerSubagentAdapter(createOfficialAdapter());
+registerSubagentAdapter(createWorkflowAdapter());
 
 export { createOfficialAdapter, createGenericAdapter };

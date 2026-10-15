@@ -75,7 +75,8 @@ describe('desktop auto memory (temporary directories only)', () => {
 
 function harness(result: () => Promise<any> = async () => ({ stopReason: 'stop', content: [{ type: 'text', text: 'synthetic recap' }] })) {
   const agent = temp(), cwd = temp();
-  vi.stubEnv('PI_DESKTOP_MEMORY', '1'); vi.stubEnv('PI_DESKTOP_MEMORY_DIR', builtinMemoryDir(agent)); vi.stubEnv('PI_DESKTOP_MEMORY_CWD', cwd);
+  // 隔离宿主（如 Desktop 自身注入的 PI_DESKTOP_MEMORY_SCOPED=1）：测试显式声明非 scoped 链路。
+  vi.stubEnv('PI_DESKTOP_MEMORY', '1'); vi.stubEnv('PI_DESKTOP_MEMORY_DIR', builtinMemoryDir(agent)); vi.stubEnv('PI_DESKTOP_MEMORY_CWD', cwd); vi.stubEnv('PI_DESKTOP_MEMORY_SCOPED', '');
   const handlers: Record<string, Function> = {};
   desktopMemory({ on: (event: string, fn: Function) => { handlers[event] = fn; } });
   const streamSimple = vi.fn(() => ({ result }));

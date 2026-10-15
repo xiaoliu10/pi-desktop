@@ -1,3 +1,4 @@
+import { mergeSubagentSnapshots, pollSubagents } from './subagent-polling';
 import { SubagentPanel } from './SubagentPanel';
 import { SidecarPanel, sidecarLabelsFor } from './SidecarPanel';
 import { projectSubagents, SubagentNavigation } from './subagents';
@@ -263,6 +264,16 @@ export default function PiReplicaApp() {
     }
     setSidecarOpen(open => !open);
   };
+  // Async children outlive the parent RPC. Poll even when it is idle/closed;
+  // branch/session changes and unmount cancel both timers and late publication.
+  useEffect(() => {
+    const api = window.localPi, key = s.selectedKey, leaf = s.leaf;
+    if (!api?.recoverSubagents || !key) return;
+    return pollSubagents({ key, leaf, recover: (k, l) => api.recoverSubagents(k, l),
+      isCurrent: () => usePiStore.getState().selectedKey === key && usePiStore.getState().leaf === leaf,
+      publish: records => usePiStore.setState(state => ({ recoveredSubagents: mergeSubagentSnapshots(state.recoveredSubagents ?? [], records) })),
+    });
+  }, [s.selectedKey, s.leaf]);
   const parentRunning=Boolean(run&&['starting','running','stopping'].includes(run.status));
   // 兜底：任何入口（导航回放/启动恢复）没把 subagentDismissed 初始化时，直接读持久化偏好，
   // 防止已清空的子代理重进又出现。

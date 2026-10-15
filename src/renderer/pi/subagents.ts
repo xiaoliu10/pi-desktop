@@ -1,3 +1,4 @@
+import { workflowDetails } from '../../shared/subagent-workflow';
 import { createContext } from 'react';
 import type { ChatMessage, ToolPart } from '../replica/contracts';
 import { executionTurns, type ChatTurn } from '../replica/chat/execution';
@@ -47,10 +48,18 @@ export function projectSubagents(messages: ChatMessage[], parentRunning: boolean
     for (const part of turn.steps) {
       if (part.kind !== 'tool') continue;
       // Use the adapter registry: find the first adapter that detects this part's format.
-      const adapter = findAdapter(part);
-      if (!adapter) continue;
-      seenCallIds.add(part.callId || part.id);
-      children.push(...adapter.parse(part, parentRunning));
+      const callId = part.callId || part.id;
+      // A verified async snapshot updates the SAME call, not an extra recovered
+      // task. Legacy synchronous results remain authoritative as before.
+      const rec = recovered?.find(r => r.callId === callId && workflowDetails(r.details, callId));
+      const live = workflowDetails(part.resultDetails, callId);
+      const disk = rec && workflowDetails(rec.details, callId);
+      const useDisk = live && disk && live.runId === disk.runId && (!live.snapshotAt || !disk.snapshotAt || disk.snapshotAt >= live.snapshotAt);
+      const source = useDisk ? { ...part, resultDetails: rec!.details } : part;
+      const adapter = findAdapter(source);
+      if (!adapter || seenCallIds.has(callId)) continue;
+      seenCallIds.add(callId);
+      children.push(...adapter.parse(source, parentRunning));
     }
   }
 
@@ -58,6 +67,14 @@ export function projectSubagents(messages: ChatMessage[], parentRunning: boolean
   if (recovered && recovered.length) {
     for (const rec of recovered) {
       if (seenCallIds.has(rec.callId)) continue;
+      const workflow = workflowDetails(rec.details, rec.callId);
+      if (workflow) {
+        const part: ToolPart = { kind: 'tool', id: rec.callId, callId: rec.callId, tool: 'subagent', phase: 'progress', status: 'running', summary: '', resultDetails: workflow };
+        const adapter = findAdapter(part);
+        if (adapter) children.push(...adapter.parse(part, parentRunning).map(c => ({ ...c, recovered: true })));
+        seenCallIds.add(rec.callId);
+        continue;
+      }
       const d = parseRecoveredDetails(rec.details);
       if (!d) {
         children.push({ id: `${rec.callId}:0`, callId: rec.callId, mode: 'single', agent: '子代理', task: rec.error || '（父任务已重启，进度已从磁盘恢复）', status: 'recovered', messages: [], error: rec.error });
