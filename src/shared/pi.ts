@@ -157,9 +157,9 @@ export interface LocalPiApi extends importSettingsApi {
   officialSubagentStatus(): Promise<{installed:boolean;thirdParty:boolean;thirdPartySource?:string;outdated:boolean;scoutExists:boolean;path:string}>;
   enableOfficialSubagent(): Promise<{path:string;upgraded:boolean}>;
   recoverSubagents(sessionKey: string, leaf?: string): Promise<Array<{callId:string;status:string;details?:unknown;error?:string;startedAt?:number;updatedAt?:number}>>;
-  /** 记忆衔接层状态：探测 CLI 记忆插件并返回当前链路。 */
-  memoryAssistStatus(enabled: boolean): Promise<{ enabled: boolean; plugin: { kind: 'extension'; id: string; label?: string } | { kind: 'builtin' }; builtinDir: string; hint: string }>;
-  /** 无 cwd 仅全局；指定 cwd 时附加项目 .pi/memory 与旧版路径映射文件（可能共用），仍包含全局。 */
+  /** 记忆衔接层状态：探测 CLI 记忆插件并返回当前链路。cwd 指定时附加项目存储类型与目录。 */
+  memoryAssistStatus(enabled: boolean, cwd?: string): Promise<{ enabled: boolean; plugin: { kind: 'extension'; id: string; label?: string } | { kind: 'builtin' }; builtinDir: string; hint: string; /** scoped = 集中存储（memory-projects/<key>/），project-local = 项目内 .pi/memory/。 */ storageKind?: 'scoped' | 'project-local'; /** 对应存储类型的实际项目记忆目录（后端计算，不在渲染端重新推导）。 */ projectDir?: string }>;
+  /** 无 cwd 仅全局；指定 cwd 时附加项目记忆文件（集中存储或项目 .pi/memory，可能共用），仍包含全局。 */
   memoryList(cwd?: string): Promise<Array<{ name: string; path: string; bytes: number; updatedAt: number; scope: 'global' | 'project'; entries: number; rel: string; /** 旧版 projects/ 映射文件的归属项目名（无法识别时缺失）。 */ project?: string; /** 唯一归属项目路径（共用/未识别时缺失），可用于迁移。 */ projectPath?: string }>>;
   /** 只读预览；projects-external/ 相对路径必须携带列举时的 cwd。 */
   memoryRead(rel: string, cwd?: string): Promise<string>;

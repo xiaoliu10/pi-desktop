@@ -88,7 +88,7 @@ export function SettingsFeatures({page,cwd,query,workspace,loadedExtensionPaths,
     {data&&page==='memory'&&<section className="pi-features__card"><h2>记忆</h2>
         {/* ZCode 记忆页口径：开关 +「N 条记忆」+ 搜索 + 文件列表（相对时间）；点击行内预览 */}
         <MemorySwitch enabled={Boolean(data.preferences.memoryAssist)} disabled={busy} onSaving={setBusy} onSaved={enabled=>{setData(current=>current?{...current,preferences:{...current.preferences,memoryAssist:enabled}}:current);usePiStore.setState(state=>({desktopPreferences:{...(state.desktopPreferences??data.preferences),memoryAssist:enabled}}));}}/>
-        <p className="pi-memory__hint">{memStatus ? `当前链路：${memStatus.plugin.kind==='extension'?(memStatus.plugin.label??memStatus.plugin.id)+'（用户已装，沿用）':'Desktop 内置桥（agentDir/memory/）'}。开启后每轮对话完成会自动整理记忆。` : '正在检测记忆链路…'}</p>
+        <p className="pi-memory__hint">{memStatus ? `当前链路：${memStatus.plugin.kind==='extension'?(memStatus.plugin.label??memStatus.plugin.id)+'（用户已装，沿用）':'Desktop 内置桥（agentDir/memory/）'}。满足条件时（空闲、至少 4 条消息、静默 20 秒、冷却 2 分钟）后台整理记忆，不占用对话流。` : '正在检测记忆链路…'}</p>
         {memStatus?.plugin.kind==='builtin'&&<div className="pi-features__actions"><button className="pi-btn pi-btn--primary" disabled={busy} onClick={()=>void act(async()=>{ await window.localPi!.memoryEnableDefault(); await api().memoryAssistStatus(true).then(setMemStatus); },'pi-memory 已安装并注册；新会话生效')}>安装内置记忆插件 pi-memory</button></div>}
         <MemoryBrowser cwd={cwd} projects={data.projects} globalDir={memStatus?.builtinDir}/>
       </section>}

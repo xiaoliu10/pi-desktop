@@ -113,7 +113,7 @@ async (page) => {
   await resolveList(pendingGlobalList);
   assert(await page.locator('.pi-memory__row').count() === 0 && await page.locator('.pi-memory__count').innerText() === '正在加载…', 'late global list cannot populate or finish project load');
   await resolveList(freshProjectList);
-  assert((await page.locator('.pi-memory__row').innerText()).includes('Alpha · 本地'), 'project rows badge shows the selected project name');
+  assert((await page.locator('.pi-memory__row').innerText()).includes('Alpha · 项目专属'), 'project rows badge shows the selected project name (never 本地)');
 
   // Rapid A -> B -> A: old A success and B failure must not populate new A.
   await mount('/mock/alpha', true); const oldA = await lastList();
@@ -130,6 +130,34 @@ async (page) => {
   assert(await page.evaluate(() => window.lists.at(-1).cwd === undefined), 'automatic mode also follows workspace clearing');
   await resolveList(await lastList(), true);
   assert((await page.locator('.pi-memory__empty').innerText()).includes('项目'), 'global empty state suggests selecting project');
+
+  // Backend storage-kind status: projectDir from memoryAssistStatus replaces the .pi/memory fallback,
+  // stale/pending responses are fenced per project, and empty scoped lists still show the real root.
+  await page.evaluate(() => {
+    window.statusDeferreds = {};
+    window.localPi.memoryAssistStatus = (enabled, cwd) => new Promise((resolve, reject) => {
+      (window.statusDeferreds[cwd ?? ''] = window.statusDeferreds[cwd ?? ''] || []).push({ resolve, reject });
+    });
+  });
+  const statusOf = (cwd, nth = 0) => page.evaluate(({ cwd, nth }) => window.statusDeferreds[cwd][nth], { cwd, nth });
+  await mount('/mock/alpha', true); // status pending: fallback keeps the honest legacy guess
+  assert((await page.locator('.pi-memory__scope').innerText()).includes('/mock/alpha/.pi/memory'), 'pending status falls back to legacy project guess, never a blank');
+  await mount('/mock/beta');
+  await (await statusOf('/mock/beta')).resolve({ enabled: true, plugin: { kind: 'extension', id: 'pi-scoped-memory' }, builtinDir: '/mock/agent/memory', hint: '', storageKind: 'scoped', projectDir: '/mock/agent/memory-projects/beta-key' });
+  await tick();
+  const betaScope = await page.locator('.pi-memory__scope').innerText();
+  assert(betaScope.includes('/mock/agent/memory-projects/beta-key'), 'backend projectDir replaces the .pi/memory guess for the selected project');
+  await resolveList(await lastList(), true);
+  assert((await page.locator('.pi-memory__scope').innerText()).includes('/mock/agent/memory-projects/beta-key'), 'empty scoped project list still shows the real centralized root');
+  await (await statusOf('/mock/alpha')).resolve({ enabled: true, plugin: { kind: 'extension', id: 'pi-scoped-memory' }, builtinDir: '/mock/agent/memory', hint: '', storageKind: 'scoped', projectDir: '/mock/agent/memory-projects/alpha-key' });
+  await tick();
+  assert(!(await page.locator('.pi-memory__scope').innerText()).includes('alpha-key'), 'late status for the previous project cannot repaint the scope line');
+  await mount('/mock/alpha');
+  await (await statusOf('/mock/alpha', 1)).resolve({ enabled: true, plugin: { kind: 'extension', id: 'pi-scoped-memory' }, builtinDir: '/mock/agent/memory', hint: '', storageKind: 'scoped', projectDir: '/mock/agent/memory-projects/alpha-key' });
+  await tick();
+  assert((await page.locator('.pi-memory__scope').innerText()).includes('/mock/agent/memory-projects/alpha-key'), 'returning to a project refetches its storage status');
+  await resolveList(await lastList(), true);
+  assert((await page.locator('.pi-memory__row').count()) === 0, 'scoped empty list has no rows');
 
   // Real app prop wiring, not a helper-only test: draft workspace must reach SettingsFeatures.
   await page.evaluate(() => window.mountApp({ draftCwd: '/mock/draft-project' }));

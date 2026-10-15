@@ -15,6 +15,10 @@ export interface MemoryAssistStatus {
   plugin: { kind: 'extension'; id: string; label?: string } | { kind: 'builtin' };
   builtinDir: string;
   hint: string;
+  /** 当传入有效 cwd 时：scoped = 集中存储（memory-projects/<key>/），project-local = 项目内 .pi/memory/。 */
+  storageKind?: 'scoped' | 'project-local';
+  /** 对应 storageKind 的实际项目记忆目录（由后端计算，不在渲染端重新推导）。 */
+  projectDir?: string;
 }
 
 /** 已知记忆插件（npm 裸名）；pi-memory 为内置默认（生态下载量最高）。 */
@@ -141,17 +145,29 @@ export function projectMemoryFile(agentDir: string, projectCwd: string) {
   return path.join(builtinMemoryDir(agentDir), 'projects', `${slug}.md`);
 }
 
-/** 面板/设置页展示用状态：当前使用哪条链路。 */
-export function memoryAssistStatus(agentDir: string, enabled: boolean): MemoryAssistStatus {
+/** 面板/设置页展示用状态：当前使用哪条链路。projectCwd 指定时附加项目存储类型与目录。 */
+export function memoryAssistStatus(agentDir: string, enabled: boolean, projectCwd?: string): MemoryAssistStatus {
   const plugin = detectMemoryPlugin(agentDir);
-  if (usesScopedMemory(agentDir)) return {
-    enabled, plugin, builtinDir: builtinMemoryDir(agentDir),
-    hint: 'Scoped Memory 管理全局与项目双层记忆：全局位于 memory/，项目位于 memory-projects/<项目键>/。Desktop 自动摘要写入对应目录的 daily/，不再创建项目内 .pi/memory，也不覆盖插件的注入与检索配置。',
+  const scoped = usesScopedMemory(agentDir);
+  // 验证 projectCwd（与 listMemoryFiles 同口径）；无效或缺失时不附加 projectDir；storageKind 始终返回（反映插件链路）。
+  let validProject = false;
+  try {
+    validProject = typeof projectCwd === 'string' && projectCwd !== '' && path.isAbsolute(projectCwd)
+      && !projectCwd.includes('\0') && fs.statSync(projectCwd).isDirectory();
+  } catch { /* 目录消失/不可访问：按无项目处理 */ }
+  const storageKind: MemoryAssistStatus['storageKind'] = scoped ? 'scoped' : 'project-local';
+  const projectDir = validProject
+    ? (scoped ? scopedProjectMemoryDir(agentDir, projectCwd!) : path.join(projectCwd!, '.pi', 'memory'))
+    : undefined;
+  if (scoped) return {
+    enabled, plugin, builtinDir: builtinMemoryDir(agentDir), storageKind, projectDir,
+    hint: 'Scoped Memory 管理全局与项目双层记忆：全局位于 memory/，项目位于 memory-projects/<项目键>/。Desktop 自动摘要写入对应目录的 daily/YYYY-MM-DD.md，不再创建项目内 .pi/memory，也不覆盖插件的注入与检索配置。',
   };
   return {
     enabled,
     plugin,
     builtinDir: builtinMemoryDir(agentDir),
+    storageKind, projectDir,
     hint: `Desktop 自动摘要写入项目 .pi/memory/daily/，无项目时写入全局 daily/。${plugin.kind === 'extension'
       ? `检测到记忆插件 ${plugin.label ?? plugin.id}；开启记忆后，项目会话会把其记忆根注入为 <项目>/.pi/memory（读写在项目内闭环），并关闭 qmd 重索引与检索注入，避免项目记忆被写进插件硬编码的全局检索集合造成跨项目串扰；无项目会话仍使用全局记忆目录。`
       : '未检测到记忆插件（settings.json packages/extensions 均无）；自动保存摘要不代表已启用记忆检索，注入用的环境变量在插件缺失时无副作用。若安装 pi-memory，项目会话会启用 <项目>/.pi/memory 注入并关闭跨项目检索。'}`,

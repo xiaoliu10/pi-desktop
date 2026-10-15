@@ -32,7 +32,7 @@ export function MemorySwitch({ enabled, disabled, onSaved, onSaving }: { enabled
     finally { saving.current = false; setPending(undefined); onSaving?.(false); }
   }
   return <>
-    <div className="pi-memory__toggle"><div><strong id="memory-switch-label">工作区记忆</strong><p id="memory-switch-description">保存并复用长期上下文，新会话生效。此开关全局生效，不随项目独立设置。开启后可能增加推理调用和 Token 成本。</p></div>
+    <div className="pi-memory__toggle"><div><strong id="memory-switch-label">工作区记忆</strong><p id="memory-switch-description">保存并复用长期上下文。此开关全局生效，不随项目独立设置；新连接生效。已安装记忆插件的工具与注入由插件自行管理，关闭此开关不保证卸载插件。开启后可能增加推理调用和 Token 成本。</p></div>
       <button type="button" className="pi-memory__switch" role="switch" aria-labelledby="memory-switch-label" aria-describedby="memory-switch-description" aria-checked={pending ?? enabled} disabled={disabled || pending !== undefined} onClick={() => void toggle()}><span /></button>
     </div>
     {error && <p className="pi-features__alert" role="alert">保存失败，已恢复原设置：{error}</p>}
@@ -89,6 +89,9 @@ function MemoryScopeBrowser({ cwd, projects, globalDir, project, onSelect }: Mem
   const [files, setFiles] = useState<MemoryFile[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  // 项目记忆存储状态：由后端按 cwd 返回 storageKind + projectDir；未返回时回退旧逻辑（.pi/memory）。
+  const [memStatus, setMemStatus] = useState<{ storageKind?: 'scoped' | 'project-local'; projectDir?: string } | undefined>();
+  const statusId = useRef(0);
   const [preview, setPreview] = useState<{ rel: string; text?: string }>();
   const previewRegionId = useId();
   const previewTrigger = useRef<HTMLButtonElement>(null);
@@ -113,6 +116,18 @@ function MemoryScopeBrowser({ cwd, projects, globalDir, project, onSelect }: Mem
       .finally(() => { if (id === listId.current) setLoading(false); });
     return () => { listId.current++; previewId.current++; };
   }, [project, refresh]);
+  // 项目存储路径由后端返回，不在渲染端重新推导 hash；旧请求在项目切换时隔离。
+  useEffect(() => {
+    const id = ++statusId.current;
+    setMemStatus(undefined);
+    if (!project) { return; }
+    // 旧 mock 可能没有 memoryAssistStatus；可选链防止 crash。
+    if (typeof window.localPi.memoryAssistStatus !== 'function') return;
+    window.localPi.memoryAssistStatus(true, project).then(value => {
+      if (id === statusId.current) setMemStatus({ storageKind: value.storageKind, projectDir: value.projectDir });
+    }).catch(() => {}).finally(() => {});
+    return () => { statusId.current++; };
+  }, [project]);
   async function open(file: MemoryFile) {
     const id = ++previewId.current;
     // Own the disclosure immediately, including while the read is pending or fails.
@@ -132,15 +147,21 @@ function MemoryScopeBrowser({ cwd, projects, globalDir, project, onSelect }: Mem
     // A filtered-out row must not leave an orphan preview or resurrect on a late read.
     if (preview && !files.some(f => f.rel === preview.rel && matchesQuery(f, value))) closePreview();
   }
-  const storageDir = project ? `${project.replace(/[\\/]+$/, '')}/.pi/memory` : globalDir;
+  // 项目存储路径优先用后端返回的 projectDir（集中存储 memory-projects/<key>/ 或项目 .pi/memory）；
+  // 后端未返回时回退旧逻辑（.pi/memory），保持旧 mock 兼容。
+  const storageDir = project ? (memStatus?.projectDir ?? `${project.replace(/[\\/]+$/, '')}/.pi/memory`) : globalDir;
+  const scoped = memStatus?.storageKind === 'scoped';
+  const projectBadge = scoped ? '集中' : '项目专属';
+  // 迁移/移动确认文案目标：scoped 用集中存储目录名，project-local 用项目 .pi/memory。
+  const projectTargetLabel = scoped ? '集中记忆目录' : '.pi/memory/';
   return <div>
     <p className="pi-memory__scope"><strong>当前浏览范围：{project ? `项目 · ${options.get(project)}` : '全局 · 共享'}</strong><br />存储目录：{storageDir ? <code>{storageDir}</code> : '正在确认全局存储路径…'}</p>
-    <p>{project ? '项目本地记忆仅来自所选项目 .pi/memory（含子目录）；新自动摘要写入 .pi/memory/daily/YYYY-MM-DD.md。旧版 projects/ 映射会尽量标注所属项目（按历史路径识别）；识别不出的仍可能跨项目共用，不属于项目专属记忆。共享全局记忆请选择「全局记忆」。' : '显示共享全局记忆；旧版 projects/ 映射文件也会列出并尽量标注所属项目（按历史路径正向/反向识别，识别不出时标注未识别）。'} 浏览范围仅覆盖 agentDir/memory 与项目 .pi/memory，不代表所有第三方插件存储。第三方 memory 工具的检索与上下文注入范围由插件自行管理，不会因摘要路径改变而自动隔离。</p>
+    <p>{project ? (scoped ? '集中项目记忆来自所选项目的记忆目录 memory-projects/<项目键>/（含子目录）；自动摘要写入 daily/YYYY-MM-DD.md。浏览范围覆盖 agentDir/memory-projects 与全局 memory/。旧版 projects/ 映射在全局视图以「旧版映射」标注；项目视图如出现该项目的旧版映射文件，会按项目记忆显示。共享全局记忆请选择「全局记忆」。' : '项目记忆来自所选项目 .pi/memory（含子目录）；自动摘要写入 .pi/memory/daily/YYYY-MM-DD.md。旧版 projects/ 映射在全局视图以「旧版映射」标注；项目视图如出现该项目的旧版映射文件，会按项目记忆显示。共享全局记忆请选择「全局记忆」。') : '显示共享全局记忆；旧版 projects/ 映射文件也会列出并尽量标注所属项目（按历史路径正向/反向识别，识别不出时标注未识别）。'} 浏览范围覆盖 agentDir/memory 与项目记忆目录，不代表所有第三方插件存储。第三方 memory 工具的检索与上下文注入范围由插件自行管理，不会因摘要路径改变而自动隔离。</p>
     {files.some(f => f.rel.startsWith('projects/')) && (() => {
       const migratable = files.filter(f => f.rel.startsWith('projects/') && f.projectPath);
       return <p>兼容性提示：projects/ 沿用旧版截断路径映射，已尽量标注归属项目；长路径前缀相同的项目可能共用同一文件。
         {migratable.length > 0 && <button type="button" className="pi-btn pi-btn--outline" style={{ marginLeft: 8 }} disabled={migrating}
-          onClick={() => { if (window.confirm(`把 ${migratable.length} 个可识别归属的旧版记忆文件迁移到各项目 .pi/memory/legacy/？共用与未识别的会跳过。`)) void migrate(async () => {
+          onClick={() => { if (window.confirm(`把 ${migratable.length} 个可识别归属的旧版记忆文件迁移到各项目 ${projectTargetLabel}？共用与未识别的会跳过。`)) void migrate(async () => {
             let moved = 0; const failed: string[] = [];
             for (const f of migratable) { try { await window.localPi.memoryMigrateLegacy(f.rel); moved += 1; } catch { failed.push(f.name); } }
             if (failed.length) throw new Error(`已迁移 ${moved} 个；失败 ${failed.length} 个：${failed.join('、')}`);
@@ -157,10 +178,10 @@ function MemoryScopeBrowser({ cwd, projects, globalDir, project, onSelect }: Mem
         return <li key={f.path} className="pi-memory__row">
           <button ref={expanded ? previewTrigger : undefined} type="button" className="pi-memory__open" title={f.path} aria-expanded={expanded} aria-controls={expanded ? regionId : undefined} onClick={() => expanded ? closePreview() : void open(f)}>
             <Icon name={expanded ? 'chevron-down' : 'chevron-right'} size={14} />
-            <span className="pi-memory__body"><strong>{f.name}</strong><small>{f.scope === 'global' ? f.rel.startsWith('projects/') ? (f.project ? `${f.project} · 旧版映射` : '旧版映射 · 未识别项目') : '全局 · 共享' : `${options.get(project) || '所选项目'} · 本地`} · {f.entries} 条 · {formatMemoryTime(f.updatedAt)}</small><small className="pi-memory__path">{f.path}</small></span>
+            <span className="pi-memory__body"><strong>{f.name}</strong><small>{f.scope === 'global' ? f.rel.startsWith('projects/') ? (f.project ? `${f.project} · 旧版映射` : '旧版映射 · 未识别项目') : '全局 · 共享' : `${options.get(project) || '所选项目'} · ${projectBadge}`} · {f.entries} 条 · {formatMemoryTime(f.updatedAt)}</small><small className="pi-memory__path">{f.path}</small></span>
           </button>
-          <div className="pi-memory__tools">{movable(f) && <MemoryMenu label={`${f.name} 移到项目`} title="移到项目" selected="" items={moveTargets(f.name)} onSelect={id => { if (window.confirm(`把 ${f.name} 移动到「${options.get(id) || id}」的 .pi/memory/？原全局文件将移除。`)) void migrate(() => window.localPi.memoryMoveToProject(f.rel, id), '移动'); }}><span style={{ fontSize: 11 }}>移到项目</span></MemoryMenu>}{f.rel.startsWith('projects/') && f.projectPath && <button type="button" className="pi-memory__launch" style={{ width: 'auto', padding: '0 8px', fontSize: 11 }} title={`迁移到 ${f.project || f.projectPath} 的 .pi/memory/legacy/`}
-            disabled={migrating} onClick={() => { if (window.confirm(`把 ${f.name} 迁移到「${f.project || f.projectPath}」项目的 .pi/memory/legacy/？原全局文件将移除。`)) void migrate(() => window.localPi.memoryMigrateLegacy(f.rel), '迁移'); }}>迁移到项目</button>}<button type="button" className="pi-memory__launch" aria-label={`用 ${selectedTool?.name || '文件管理器'} 打开 ${f.name}`} disabled={opening || !selectedTool} onClick={() => selectedTool && void openExternal(f, selectedTool.id)}>{appIcon(selectedTool)}</button><MemoryMenu label={`${f.name} 打开方式`} title="打开方式" selected={selectedTool?.id || ''} items={apps.map(app => ({ id: app.id, name: app.name, icon: appIcon(app) }))} onSelect={id => void openExternal(f, id)}><span className="pi-memory__sr">打开方式</span></MemoryMenu></div>
+          <div className="pi-memory__tools">{movable(f) && <MemoryMenu label={`${f.name} 移到项目`} title="移到项目" selected="" items={moveTargets(f.name)} onSelect={id => { if (window.confirm(`把 ${f.name} 移动到「${options.get(id) || id}」的 ${projectTargetLabel}？原全局文件将移除。`)) void migrate(() => window.localPi.memoryMoveToProject(f.rel, id), '移动'); }}><span style={{ fontSize: 11 }}>移到项目</span></MemoryMenu>}{f.rel.startsWith('projects/') && f.projectPath && <button type="button" className="pi-memory__launch" style={{ width: 'auto', padding: '0 8px', fontSize: 11 }} title={`迁移到 ${f.project || f.projectPath} 的 ${projectTargetLabel}`}
+            disabled={migrating} onClick={() => { if (window.confirm(`把 ${f.name} 迁移到「${f.project || f.projectPath}」项目的 ${projectTargetLabel}？原全局文件将移除。`)) void migrate(() => window.localPi.memoryMigrateLegacy(f.rel), '迁移'); }}>迁移到项目</button>}<button type="button" className="pi-memory__launch" aria-label={`用 ${selectedTool?.name || '文件管理器'} 打开 ${f.name}`} disabled={opening || !selectedTool} onClick={() => selectedTool && void openExternal(f, selectedTool.id)}>{appIcon(selectedTool)}</button><MemoryMenu label={`${f.name} 打开方式`} title="打开方式" selected={selectedTool?.id || ''} items={apps.map(app => ({ id: app.id, name: app.name, icon: appIcon(app) }))} onSelect={id => void openExternal(f, id)}><span className="pi-memory__sr">打开方式</span></MemoryMenu></div>
           {expanded && <div id={regionId} className="pi-memory__preview" role="region" aria-labelledby={`${regionId}-label`}>
             <div className="pi-memory__previewbar"><strong id={`${regionId}-label`}>预览：{f.rel}</strong><button type="button" className="pi-btn pi-btn--ghost" onClick={() => closePreview(true)}>关闭</button></div>
             {previewLoading && <p className="pi-memory__previewstatus" role="status">正在读取预览…</p>}
@@ -169,7 +190,7 @@ function MemoryScopeBrowser({ cwd, projects, globalDir, project, onSelect }: Mem
           </div>}
         </li>;
       })}
-      {!loading && !error && !visible.length && <li className="pi-memory__empty">{query ? '没有匹配的记忆文件。' : project ? '此项目暂无记忆文件。自动摘要保存后可点击「刷新记忆」查看；历史共享文件仍在「全局记忆」，不会自动迁移到项目。' : '暂无共享全局记忆。项目本地文件请在「记忆项目」中选择对应项目查看。'}</li>}
+      {!loading && !error && !visible.length && <li className="pi-memory__empty">{query ? '没有匹配的记忆文件。' : project ? '此项目暂无记忆文件。自动摘要保存后可点击「刷新记忆」查看；历史共享文件仍在「全局记忆」，不会自动迁移到项目。' : '暂无共享全局记忆。项目文件请在「记忆项目」中选择对应项目查看。'}</li>}
     </ul>
   </div>;
 }
