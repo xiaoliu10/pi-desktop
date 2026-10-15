@@ -46,7 +46,7 @@ async (page) => {
           draftText: draft, onDraftChange: setDraft, sessionActive: true,
           modelId: 'anthropic/a1', modelGroups: [{ provider: 'P', models: [{ id: 'p/m1', name: 'M-one' }] }],
           reasoning: 'low', agentMode: 'agent', permissionMode: 'full',
-          slashCommands: COMMANDS, files: [], running: false, queued: 0, queue: [], demo: false, labels: zh,
+          slashCommands: COMMANDS, files: ['README.md', 'src/index.ts'], running: false, queued: 0, queue: [], demo: false, labels: zh,
           hideReasoning: true,
           onSend: () => {}, onStop: () => {},
           onPickModel: () => {}, onPickReasoning: () => {}, onPickAgentMode: () => {}, onPickPermission: () => {},
@@ -87,5 +87,21 @@ async (page) => {
   await page.waitForTimeout(450); // setText→onDraftChange 有 200ms 防抖
   const draft = await page.evaluate(() => window.__draft);
   assert(String(draft).includes('/skill-12'), `Enter picks the highlighted command (draft=${JSON.stringify(draft)})`);
+
+  // @file 弹层：同一套键盘导航；键盘选中必须保留 @ 前缀（applyMenuSelection 会吃掉触发符）
+  await page.keyboard.press('ControlOrMeta+a');
+  await page.keyboard.press('Backspace');
+  await page.waitForTimeout(80);
+  await page.keyboard.type('@');
+  await page.waitForTimeout(120);
+  const filePopup = page.locator('.pi-composer__popup .pi-composer__opt--file');
+  assert(await filePopup.count() >= 2, 'file popup lists project files');
+  assert(await selIndex() === 0, 'file popup starts highlighted at first');
+  await page.keyboard.press('ArrowDown');
+  assert(await selIndex() === 1, 'file popup ArrowDown moves highlight');
+  await page.keyboard.press('Tab');
+  await page.waitForTimeout(450);
+  const draftTab = await page.evaluate(() => window.__draft);
+  assert(String(draftTab).includes('@src/index.ts'), `Tab picks the highlighted file with @ (draft=${JSON.stringify(draftTab)})`);
   assert(errors.length === 0, `no page errors: ${errors.join('; ')}`);
 }

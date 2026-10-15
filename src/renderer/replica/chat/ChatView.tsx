@@ -1193,7 +1193,9 @@ export function Composer(props: ComposerProps) {
       }
       if (e.key === 'Enter' || e.key === 'Tab') {
         e.preventDefault();
-        const choice = popup.kind === 'slash' ? commands[sel].name : fileHits[sel];
+        // @file 键盘选中也要带 @：applyMenuSelection 的正则会把触发符一起替换掉，
+        // 传裸文件名会丢 @ 前缀（鼠标路径传 `@${f}`，两路必须对称）。
+        const choice = popup.kind === 'slash' ? commands[sel].name : `@${fileHits[sel]}`;
         setText((t) => applyMenuSelection(t, choice));
         return;
       }
