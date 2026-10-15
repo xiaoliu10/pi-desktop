@@ -194,6 +194,14 @@ function MessageParts({ parts, labels, onOpenToolFile, live, hiddenErrors }: { p
             return <ExecutionNote key={p.id} zh={labels.you === '你'} title={`${labels.you === '你' ? '思考' : 'Thought'}${p.durationMs !== undefined ? ` · ${labels.you === '你' ? `用时 ${Math.max(1, Math.ceil(p.durationMs / 1000))} 秒` : `took ${Math.max(1, Math.ceil(p.durationMs / 1000))}s`}` : ''}`} text={p.text} active={live} />;
           case 'tool':
             return <ToolCard key={p.id} part={p} labels={labels} onOpenToolFile={onOpenToolFile} live={live} />;
+          case 'skill':
+            // 技能全文：默认折叠（正文里的用户指令已独立可见），点开可查全文。
+            return (
+              <details key={p.id} className="pi-msg__skill">
+                <summary>{labels.you === '你' ? `🧩 技能${p.name ? ` · ${p.name}` : ''}（点开查看全文）` : `🧩 Skill${p.name ? ` · ${p.name}` : ''} (folded)`}</summary>
+                <div className="pi-msg__bubble"><ChatMarkdown text={p.text} zh={labels.you === '你'} /></div>
+              </details>
+            );
           case 'notice':
             return p.strong ? (
               <div key={p.id} className="pi-notice pi-notice--strong" role="note">
@@ -573,6 +581,10 @@ export const TurnArticle = memo(function TurnArticle({ m, liveTurn, retrying, su
   const copiedTimer = useRef<number>(0);
   useEffect(() => () => window.clearTimeout(copiedTimer.current), []);
   const userText = m.role === 'user' ? m.answer.filter(p => p.kind === 'text').map(p => (p as Extract<MessagePart, { kind: 'text' }>).text).join('\n\n') : '';
+  // 编辑重发保留 skill 上下文：草稿重建 <skill> 包装（重发后投影会重新剥离成折叠的
+  // skill part，显示仍干净且模型拿得到技能全文）；复制按钮仍只复制用户指令 userText。
+  const skillDraft = m.role === 'user' ? m.answer.filter(p => p.kind === 'skill').map(p => { const s = p as Extract<MessagePart, { kind: 'skill' }>; return `<skill name="${s.name ?? ''}">\n${s.text}\n</skill>`; }).join('\n\n') : '';
+  const editDraftText = skillDraft ? `${skillDraft}\n\n${userText}` : userText;
   const copy = async () => {
     try {
       await navigator.clipboard.writeText(userText);
@@ -615,15 +627,20 @@ export const TurnArticle = memo(function TurnArticle({ m, liveTurn, retrying, su
               </div>
             </div>
             : m.meta
-              ? <details className="pi-msg__meta" data-meta={m.meta}>
-                  <summary>{m.meta === 'skill' ? (zh ? '🧩 技能内容（已折叠，点开查看全文）' : '🧩 Skill content (folded)') : (zh ? '⚙️ Goal 确认协议（已折叠）' : '⚙️ Goal protocol (folded)')}</summary>
-                  <div className="pi-msg__bubble"><MessageParts parts={m.answer} labels={labels} onOpenToolFile={onOpenToolFile} /></div>
-                </details>
+              ? (m.meta === 'skill'
+                // 用户指令默认可见；<skill> 全文走 skill part 折叠。投影层已把正文里的
+                // skill 块剥离成独立 skill part（见 adapter.splitUserMeta）。messageCache
+                // 是进程内存缓存，app 更新重启即重建，旧历史随之走新投影。
+                ? <UserMessageParts parts={m.answer} labels={labels} onOpenToolFile={onOpenToolFile} onDownloadImage={onDownloadImage} />
+                : <details className="pi-msg__meta" data-meta={m.meta}>
+                    <summary>{zh ? '⚙️ Goal 确认协议（已折叠）' : '⚙️ Goal protocol (folded)'}</summary>
+                    <div className="pi-msg__bubble"><MessageParts parts={m.answer} labels={labels} onOpenToolFile={onOpenToolFile} /></div>
+                  </details>)
               : <UserMessageParts parts={m.answer} labels={labels} onOpenToolFile={onOpenToolFile} onDownloadImage={onDownloadImage} />}
           {!editing && (userText || onEditUser) && (
             <div className="pi-msg__actions">
               {userText && <button type="button" className="pi-msg__action" title={copied ? labels.copied : labels.copyMessage} aria-label={labels.copyMessage} onClick={() => void copy()}>{copied ? <><Icon name="check" size={13} /><span>{labels.copied}</span></> : <Icon name="copy" size={13} />}</button>}
-              {onEditUser && userText && <button type="button" className="pi-msg__action" title={editCorrection ? (zh ? '编辑并发送更正' : 'Edit and send correction') : labels.editMessage} aria-label={editCorrection ? (zh ? '编辑并发送更正' : 'Edit and send correction') : labels.editMessage} onClick={() => { setDraft(userText); setEditing(true); }}><Icon name="pencil" size={13} /></button>}
+              {onEditUser && userText && <button type="button" className="pi-msg__action" title={editCorrection ? (zh ? '编辑并发送更正' : 'Edit and send correction') : labels.editMessage} aria-label={editCorrection ? (zh ? '编辑并发送更正' : 'Edit and send correction') : labels.editMessage} onClick={() => { setDraft(editDraftText); setEditing(true); }}><Icon name="pencil" size={13} /></button>}
             </div>
           )}
         </>

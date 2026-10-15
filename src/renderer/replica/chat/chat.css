@@ -1390,3 +1390,9 @@
 .pireplica .pi-msg__meta > summary::-webkit-details-marker { display: none; }
 .pireplica .pi-msg__meta[open] > summary { margin-bottom: 6px; }
 .pireplica .pi-msg__meta[open] .pi-msg__bubble { max-height: 320px; overflow-y: auto; }
+/* skill part：与 meta 同款虚线折叠头（正文里的用户指令已默认可见，这里只放技能全文） */
+.pireplica .pi-msg__skill { margin: 2px 0; }
+.pireplica .pi-msg__skill > summary { cursor: pointer; list-style: none; color: var(--pi-text-secondary); font-size: 12px; padding: 4px 10px; border: 1px dashed var(--pi-border); border-radius: 8px; display: inline-block; user-select: none; }
+.pireplica .pi-msg__skill > summary::-webkit-details-marker { display: none; }
+.pireplica .pi-msg__skill[open] > summary { margin-bottom: 6px; }
+.pireplica .pi-msg__skill[open] .pi-msg__bubble { max-height: 320px; overflow-y: auto; }

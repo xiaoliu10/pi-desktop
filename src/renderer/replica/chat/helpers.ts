@@ -64,7 +64,7 @@ export function buildNavPoints(messages: ChatMessage[]): NavPoint[] {
 /** Flat text of a message's text parts — used for search indexing. */
 export function messageText(message: ChatMessage): string {
   return message.parts
-    .map((p) => (p.kind === 'text' ? p.text : p.kind === 'notice' ? p.text : p.kind === 'error' ? p.message : ''))
+    .map((p) => (p.kind === 'text' ? p.text : p.kind === 'notice' ? p.text : p.kind === 'error' ? p.message : '')) // skill part 默认折叠，不进搜索索引
     .join(' ');
 }
 
