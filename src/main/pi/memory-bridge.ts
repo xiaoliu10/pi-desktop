@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { createHash } from 'node:crypto';
 
 /**
  * Desktop 记忆衔接层（memory bridge）。目标：
@@ -26,6 +27,7 @@ export const KNOWN_MEMORY_PLUGINS: ReadonlyArray<{ name: string; label: string }
   { name: '@samfp/pi-memory', label: 'Samfp Memory' },
   { name: '@yandy0725/pi-memory', label: 'Filesystem Memory' },
   { name: 'pi-scoped-memory', label: 'Scoped Memory' },
+  { name: '@wengine-ai/pi-scoped-memory', label: 'Scoped Memory' },
   { name: '@fradser/pi-memory', label: 'Fradser Memory' },
 ];
 
@@ -61,6 +63,20 @@ export function detectMemoryPlugin(agentDir: string): { kind: 'extension'; id: s
   return { kind: 'builtin' };
 }
 
+/** Scoped memory owns its two-layer injection; never override it with legacy PI_MEMORY_* vars. */
+export function usesScopedMemory(agentDir: string): boolean {
+  const plugin = detectMemoryPlugin(agentDir);
+  return plugin.kind === 'extension' && ['pi-scoped-memory', '@wengine-ai/pi-scoped-memory'].includes(specToName(plugin.id));
+}
+
+/** Keep this key identical to @wengine-ai/pi-scoped-memory/src/paths.ts (path.resolve, not realpath). */
+export function scopedProjectMemoryDir(agentDir: string, cwd: string): string {
+  const normalized = path.resolve(cwd);
+  const key = process.platform === 'win32' ? normalized.toLowerCase() : normalized;
+  const slug = (path.basename(normalized).toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 48)) || 'project';
+  return path.join(agentDir, 'memory-projects', `${slug}-${createHash('sha256').update(key).digest('hex').slice(0, 16)}`);
+}
+
 /** Desktop 全局浏览/无项目摘要目录；第三方插件是否检索此目录取决于插件配置。 */
 export function builtinMemoryDir(agentDir: string) { return path.join(agentDir, 'memory'); }
 
@@ -70,7 +86,7 @@ export function builtinMemoryDir(agentDir: string) { return path.join(agentDir, 
  * 全局会话必须落在插件默认根（~/.pi/agent/memory），项目会话才注入项目根。
  */
 export const MEMORY_ENV_KEYS = [
-  'PI_DESKTOP_MEMORY', 'PI_DESKTOP_MEMORY_CWD', 'PI_DESKTOP_MEMORY_DIR',
+  'PI_DESKTOP_MEMORY', 'PI_DESKTOP_MEMORY_CWD', 'PI_DESKTOP_MEMORY_DIR', 'PI_DESKTOP_MEMORY_SCOPED',
   'PI_MEMORY_DIR', 'PI_MEMORY_QMD_UPDATE', 'PI_MEMORY_NO_SEARCH',
 ] as const;
 
@@ -84,7 +100,8 @@ export function clearMemoryEnv(env: NodeJS.ProcessEnv): void {
  * - 记忆关闭：返回空对象，什么都不注入。
  * - PI_DESKTOP_MEMORY*：desktop-memory 自动摘要（有项目写 <cwd>/.pi/memory/daily，
  *   无项目写全局 daily）——与本项目既有行为完全一致，不改动。
- * - 项目会话（cwd 为有效的绝对目录）：额外把 pi-memory 的记忆根指到 <cwd>/.pi/memory，
+ * - Scoped Memory：不注入 PI_MEMORY_*，摘要和浏览使用 agentDir/memory-projects/<key>。
+ * - 旧插件项目会话（cwd 为有效的绝对目录）：额外把 pi-memory 的记忆根指到 <cwd>/.pi/memory，
  *   实现 per-project 读写/注入隔离。同时设 PI_MEMORY_QMD_UPDATE=off 与
  *   PI_MEMORY_NO_SEARCH=1：插件的 qmd 集合名硬编码为 pi-memory（指向全局记忆目录），
  *   若把项目记忆 embed 进该集合会污染全局检索并与其它项目互相竞争；因此项目作用域下
@@ -105,6 +122,11 @@ export function memorySessionEnv(memory: { enabled: boolean; dir: string }, proj
     valid = typeof projectCwd === 'string' && projectCwd !== '' && path.isAbsolute(projectCwd)
       && !projectCwd.includes('\0') && fs.statSync(projectCwd).isDirectory();
   } catch { /* 目录消失/不可访问：按无项目处理，绝不注入半途失效的根。 */ }
+  if (usesScopedMemory(agentDir)) {
+    env.PI_DESKTOP_MEMORY_SCOPED = '1';
+    env.PI_DESKTOP_MEMORY_DIR = projectCwd ? scopedProjectMemoryDir(agentDir, projectCwd) : builtinMemoryDir(agentDir);
+    return env;
+  }
   if (valid) {
     env.PI_MEMORY_DIR = path.join(projectCwd!, '.pi', 'memory');
     env.PI_MEMORY_QMD_UPDATE = 'off';
@@ -122,6 +144,10 @@ export function projectMemoryFile(agentDir: string, projectCwd: string) {
 /** 面板/设置页展示用状态：当前使用哪条链路。 */
 export function memoryAssistStatus(agentDir: string, enabled: boolean): MemoryAssistStatus {
   const plugin = detectMemoryPlugin(agentDir);
+  if (usesScopedMemory(agentDir)) return {
+    enabled, plugin, builtinDir: builtinMemoryDir(agentDir),
+    hint: 'Scoped Memory 管理全局与项目双层记忆：全局位于 memory/，项目位于 memory-projects/<项目键>/。Desktop 自动摘要写入对应目录的 daily/，不再创建项目内 .pi/memory，也不覆盖插件的注入与检索配置。',
+  };
   return {
     enabled,
     plugin,
@@ -204,7 +230,9 @@ export function resolveMemoryFile(agentDir: string, rel: unknown, projectCwd?: s
   }
   // 全局视图允许读旧版 projects/ 映射：它们本就在全局记忆目录内，设置页已尽量标注归属项目。
   const target = external
-    ? checkedPath(projectCwd!, ['.pi', 'memory', ...rel.slice('projects-external/'.length).split('/')])
+    ? usesScopedMemory(agentDir)
+      ? checkedPath(agentDir, ['memory-projects', path.basename(scopedProjectMemoryDir(agentDir, projectCwd!)), ...rel.slice('projects-external/'.length).split('/')])
+      : checkedPath(projectCwd!, ['.pi', 'memory', ...rel.slice('projects-external/'.length).split('/')])
     : checkedPath(agentDir, ['memory', ...rel.split('/')]);
   if (!fs.statSync(target).isFile()) throw new Error('不是记忆文件');
   return target;
@@ -222,8 +250,9 @@ export function listMemoryFiles(agentDir: string, projectCwd?: string, knownProj
         ...(!project && rel.startsWith('projects/') ? (() => { const a = legacyAttribution(rel, knownProjects); return { project: a.display, projectPath: a.path }; })() : {}) });
     } catch { /* Missing/linked/inaccessible entries are not visible. */ }
   };
-  const anchor = project ? projectCwd! : agentDir;
-  const base = project ? ['.pi', 'memory'] : ['memory'];
+  const scoped = project && usesScopedMemory(agentDir);
+  const anchor = project && !scoped ? projectCwd! : agentDir;
+  const base = scoped ? ['memory-projects', path.basename(scopedProjectMemoryDir(agentDir, projectCwd!))] : project ? ['.pi', 'memory'] : ['memory'];
   const visit = (parts: string[]) => {
     let full: string;
     try { full = checkedPath(anchor, [...base, ...parts]); } catch { return; }
@@ -255,7 +284,7 @@ export function migrateLegacyMemoryFile(agentDir: string, rel: unknown, knownPro
   let dirStat: fs.Stats;
   try { dirStat = fs.statSync(project); } catch { throw new Error('项目目录已不存在，无法迁移'); }
   if (!dirStat.isDirectory()) throw new Error('项目路径不是目录，无法迁移');
-  const destDir = path.join(project, '.pi', 'memory', 'legacy');
+  const destDir = usesScopedMemory(agentDir) ? scopedProjectMemoryDir(agentDir, project) : path.join(project, '.pi', 'memory', 'legacy');
   fs.mkdirSync(destDir, { recursive: true });
   const dest = path.join(fs.realpathSync(destDir), path.basename(full));
   if (fs.existsSync(dest)) throw new Error('项目内已存在同名文件，未迁移');
@@ -270,7 +299,7 @@ export function moveMemoryFileToProject(agentDir: string, rel: unknown, projectC
     throw new Error('只能移动全局记忆中的主题文件（不含 MEMORY.md / SCRATCHPAD.md 与保留目录）');
   if (typeof projectCwd !== 'string' || !validateProject(projectCwd)) throw new Error('请选择目标项目');
   const full = resolveMemoryFile(agentDir, rel, undefined);
-  const destDir = path.join(projectCwd, '.pi', 'memory');
+  const destDir = usesScopedMemory(agentDir) ? scopedProjectMemoryDir(agentDir, projectCwd) : path.join(projectCwd, '.pi', 'memory');
   fs.mkdirSync(destDir, { recursive: true });
   const base = path.basename(rel);
   const stem = base.slice(0, -'.md'.length);
