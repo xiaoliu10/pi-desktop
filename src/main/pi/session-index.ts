@@ -20,8 +20,31 @@ export function branchEntries(entries: PiEntry[], leaf?: string): PiEntry[] {
   }
   return out.reverse();
 }
+/**
+ * 从嵌套会话路径推断其宿主主会话文件：pi-subagents async 布局为
+ * <root>/<主会话名>/<childId>/run-N/session.jsonl——路径中第一段等于某主会话目录名
+ * （即根下存在同名 <主会话名>.jsonl）时，返回该主会话文件路径。
+ */
+function inferParentFromNestedPath(dir: string, rootReal: Set<string>, files: Map<string, string>): string | undefined {
+  let cur = dir;
+  for (;;) {
+    const parent = path.dirname(cur);
+    if (rootReal.has(parent)) {
+      // cur 是根下的第一层目录（主会话专属目录）
+      const candidate = path.join(parent, path.basename(cur) + '.jsonl');
+      if (files.has(candidate)) return candidate;
+      // Overlapping roots may contain a more distant owning session. Keep walking.
+    }
+    const next = path.dirname(cur);
+    if (next === cur) return undefined;
+    cur = next;
+  }
+}
+
 export class SessionIndex {
   private cache = new Map<string, { stamp: string; history: PiHistory }>();
+  /** 嵌套子会话（pi-subagents async 布局）文件 → 推断的主会话路径。 */
+  private nestedParents = new Map<string, string>();
   /** 已有缓存但文件又增长了的会话：等写入平息后再全量重解析。 */
   private dirty = new Map<string, string>();
   private settleTimer?: ReturnType<typeof setTimeout>;
@@ -59,7 +82,7 @@ export class SessionIndex {
     const title = typeof first === 'string' ? first : Array.isArray(first) ? first.filter(b => b.type === 'text').map(b => b.text).join(' ') : '';
     const name = [...entries].reverse().find(e => e.type === 'session_info' && typeof e.name === 'string')?.name;
     const parents = new Set(entries.map(e => e.parentId));
-    const session: PiSession = { key, id: header.id, path: file, cwd: header.cwd, name: String(name || title || '未命名 pi 会话').slice(0, 180), updatedAt: stat.mtimeMs, size: stat.size, warnings, owned: file.startsWith(canonical(this.ownedRoot) + path.sep), parentSession: typeof header.parentSession === 'string' ? header.parentSession : undefined, sidecarOf: path.basename(file).startsWith('sidecar_') ? '' : undefined };
+    const session: PiSession = { key, id: header.id, path: file, cwd: header.cwd, name: String(name || title || '未命名 pi 会话').slice(0, 180), updatedAt: stat.mtimeMs, size: stat.size, warnings, owned: file.startsWith(canonical(this.ownedRoot) + path.sep), parentSession: typeof header.parentSession === 'string' ? header.parentSession : this.nestedParents.get(file), sidecarOf: path.basename(file).startsWith('sidecar_') ? '' : undefined };
     this.cache.set(key, { stamp, history: { session, entries, branch, leaves: entries.filter(e => e.id && !parents.has(e.id)).map(e => e.id!), leafId: branch.at(-1)?.id || null, syncedAt: Date.now() } });
     this.dirty.delete(key);
   }
@@ -75,19 +98,39 @@ export class SessionIndex {
     }, 1500);
   }
   scan(includeSidecars = false): PiSession[] {
-    const files = new Set<string>();
+    const files = new Map<string, string>();
     const walk = (dir: string, depth = 0) => {
       if (depth > 8) return;
+      let real: string;
+      try { real = fs.realpathSync(dir); } catch { return; }
       try { for (const item of fs.readdirSync(dir, { withFileTypes: true })) {
         const full = path.join(dir, item.name);
         if (item.isSymbolicLink()) continue;
         if (item.isDirectory()) walk(full, depth + 1);
-        else if (item.isFile() && item.name.endsWith('.jsonl')) files.add(fs.realpathSync(full));
+        else if (item.isFile() && item.name.endsWith('.jsonl')) files.set(fs.realpathSync(full), real);
       } } catch { /* A missing/unreadable directory does not hide the others. */ }
     };
     this.roots.forEach(root => walk(root));
-    for (const [key, { history }] of this.cache) if (!files.has(history.session.path)) this.cache.delete(key);
-    for (const file of files) {
+    // pi-subagents ≥0.78 的 async 子会话落在 <主会话目录>/<childId>/run-N/session.jsonl，
+    // 头部没有 parentSession/sidecarOf 标记 → 递归扫描会把它当独立会话收进侧栏/远控。
+    // 按路径判定：凡不在会话根目录顶层、且位于某个主会话专属目录下的，推回其父主会话标记
+    // （侧栏与远控的既有 parentSession 过滤随即生效）。
+    const rootReal = new Set(this.roots.map(r => { try { return canonical(r); } catch { return r; } }));
+    const previousParents = new Map(this.nestedParents);
+    this.nestedParents.clear();
+    for (const [file, dir] of files) {
+      const parent = inferParentFromNestedPath(dir, rootReal, files);
+      if (parent) this.nestedParents.set(file, parent);
+    }
+    for (const [key, { history }] of this.cache) {
+      const file = history.session.path;
+      // Parent creation/removal changes visibility even when the child file itself is unchanged.
+      if (!files.has(file) || previousParents.get(file) !== this.nestedParents.get(file)) {
+        this.cache.delete(key);
+        this.dirty.delete(key);
+      }
+    }
+    for (const file of files.keys()) {
       const key = fileKey(file);
       try {
         const stamped = this.stampOf(file);
@@ -113,7 +156,7 @@ export class SessionIndex {
           if (!stub || !stamped) continue;
           const { stat, stamp } = stamped;
           const degraded = {
-            session: { key, id: String(stub.header.id ?? key), path: file, cwd: String(stub.header.cwd ?? path.dirname(file)), name: String(stub.firstUserText || '未命名 pi 会话').slice(0, 180), updatedAt: stat.mtimeMs, size: stat.size, warnings: [err.message], owned: file.startsWith(canonical(this.ownedRoot) + path.sep), parentSession: typeof stub.header.parentSession === 'string' ? stub.header.parentSession : undefined, sidecarOf: path.basename(file).startsWith('sidecar_') ? '' : undefined },
+            session: { key, id: String(stub.header.id ?? key), path: file, cwd: String(stub.header.cwd ?? path.dirname(file)), name: String(stub.firstUserText || '未命名 pi 会话').slice(0, 180), updatedAt: stat.mtimeMs, size: stat.size, warnings: [err.message], owned: file.startsWith(canonical(this.ownedRoot) + path.sep), parentSession: typeof stub.header.parentSession === 'string' ? stub.header.parentSession : this.nestedParents.get(file), sidecarOf: path.basename(file).startsWith('sidecar_') ? '' : undefined },
             entries: [], branch: [], leaves: [], leafId: null, syncedAt: Date.now(),
           };
           this.oversized.add(degraded);
