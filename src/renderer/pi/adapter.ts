@@ -107,12 +107,30 @@ const messageCache = new Map<string, ChatMessage>();
 // 同一份 Promise，避免同一会话并发两次 connect 各自 spawn 一个 pi 进程。
 const prewarmInFlight = new Map<string, Promise<void>>();
 
+const SKILL_BLOCK = /^\s*<skill name="([^"]*)"[^>]*>([\s\S]*?)<\/skill>\s*/;
+
+export interface UserMetaSplit {
+  meta: 'skill' | 'protocol' | undefined;
+  /** 用户真实指令（skill/protocol 全文已剥离）；原消息整体是上下文注入时为空。 */
+  text: string;
+  /** <skill>…</skill> 全文（name 用于折叠标题）；无则 undefined。 */
+  skill?: { name?: string; text: string };
+}
+
 /** 内核会把 /skill: 展开成 <skill>…</skill> 全文、goal 扩展把确认协议整块注入为 user 消息——
- *  这些是给模型的上下文，但人不需要通读：渲染层按此分类折叠（投影时打标，正文原样保留）。 */
-export function classifyUserMeta(text: string): 'skill' | 'protocol' | undefined {
-  if (text.startsWith('<skill name="') && text.includes('</skill>')) return 'skill';
-  if (text.startsWith('[GOAL CONFIRMATION') || text.startsWith('[PI GOAL ACTIVE') || text.includes('<goal_topic>')) return 'protocol';
-  return undefined;
+ *  这些是给模型的上下文，但人不需要通读：投影时从正文剥离（正文只留用户真实指令），
+ *  上下文部分渲染为折叠块。skill 段只从消息开头剥离一次（用户指令里手写 <skill> 不误伤）。 */
+export function splitUserMeta(text: string): UserMetaSplit {
+  const skillMatch = SKILL_BLOCK.exec(text);
+  if (skillMatch) {
+    return {
+      meta: 'skill',
+      text: text.slice(skillMatch[0].length).trim(),
+      skill: { name: skillMatch[1] || undefined, text: skillMatch[2] },
+    };
+  }
+  const protocol = text.startsWith('[GOAL CONFIRMATION') || text.startsWith('[PI GOAL ACTIVE') || text.includes('<goal_topic>');
+  return { meta: protocol ? 'protocol' : undefined, text: protocol ? '' : text };
 }
 function modelOutcome(m: Record<string, unknown>): ChatMessage['modelOutcome'] {
   if (m.stopReason === 'error' || m.errorMessage) return 'error';
@@ -159,8 +177,16 @@ export function historyToMessages(branch: PiEntry[], compactionAfter?: Compactio
       if (timestamp !== undefined) prevAt = timestamp;
       const content = m.content;
       if (role === 'user') {
-        const text = contentText(content);
-        push(entry, id, () => ({ id, timestamp, role: 'user', meta: classifyUserMeta(text), parts: [{ kind: 'text', id: `${id}-t`, text }, ...(Array.isArray(content) ? content.flatMap((b: any, i: number): MessagePart[] => b.type === 'image' && typeof b.data === 'string' && /^image\/(png|jpeg|webp|gif)$/.test(b.mimeType) ? [{kind:'image',id:`${id}-image-${i}`,data:b.data,mimeType:b.mimeType}] : []) : [])] }));
+        const split = splitUserMeta(contentText(content));
+        const images: MessagePart[] = Array.isArray(content) ? content.flatMap((b: any, i: number): MessagePart[] => b.type === 'image' && typeof b.data === 'string' && /^image\/(png|jpeg|webp|gif)$/.test(b.mimeType) ? [{kind:'image',id:`${id}-image-${i}`,data:b.data,mimeType:b.mimeType}] : []) : [];
+        push(entry, id, () => ({
+          id, timestamp, role: 'user', meta: split.meta,
+          parts: [
+            ...(split.text ? [{ kind: 'text' as const, id: `${id}-t`, text: split.text }] : []),
+            ...(split.skill ? [{ kind: 'skill' as const, id: `${id}-skill`, name: split.skill.name, text: split.skill.text }] : []),
+            ...images,
+          ],
+        }));
         return;
       }
       if (role === 'assistant') {

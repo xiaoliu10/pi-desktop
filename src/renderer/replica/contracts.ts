@@ -353,13 +353,27 @@ export interface NoticePart {
   strong?: boolean;
 }
 
+/**
+ * 内核展开 /skill: 后注入的 <skill>…</skill> 全文：给模型的上下文，人不需要通读。
+ * 从用户消息正文剥离后独立渲染为折叠块——正文（用户真实指令）保持默认可见。
+ */
+export interface SkillPart {
+  kind: 'skill';
+  id: string;
+  /** 技能名（从 <skill name="…"> 提取），用于折叠标题。 */
+  name?: string;
+  /** 技能全文（原样保留，未截断）。 */
+  text: string;
+}
+
 export type MessagePart =
   | { kind: 'image'; id: string; data: string; mimeType: string }
   | { kind: 'text'; id: string; text: string }
   | { kind: 'thinking'; id: string; text: string; durationMs?: number }
   | ToolPart
   | ErrorPart
-  | NoticePart;
+  | NoticePart
+  | SkillPart;
 
 export interface ChatMessage {
   /** Terminal model outcome, distinct from tool results and partial streamed output. */

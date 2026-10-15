@@ -194,6 +194,14 @@ function MessageParts({ parts, labels, onOpenToolFile, live, hiddenErrors }: { p
             return <ExecutionNote key={p.id} zh={labels.you === '你'} title={`${labels.you === '你' ? '思考' : 'Thought'}${p.durationMs !== undefined ? ` · ${labels.you === '你' ? `用时 ${Math.max(1, Math.ceil(p.durationMs / 1000))} 秒` : `took ${Math.max(1, Math.ceil(p.durationMs / 1000))}s`}` : ''}`} text={p.text} active={live} />;
           case 'tool':
             return <ToolCard key={p.id} part={p} labels={labels} onOpenToolFile={onOpenToolFile} live={live} />;
+          case 'skill':
+            // 技能全文：默认折叠（正文里的用户指令已独立可见），点开可查全文。
+            return (
+              <details key={p.id} className="pi-msg__skill">
+                <summary>{labels.you === '你' ? `🧩 技能${p.name ? ` · ${p.name}` : ''}（点开查看全文）` : `🧩 Skill${p.name ? ` · ${p.name}` : ''} (folded)`}</summary>
+                <div className="pi-msg__bubble"><ChatMarkdown text={p.text} zh={labels.you === '你'} /></div>
+              </details>
+            );
           case 'notice':
             return p.strong ? (
               <div key={p.id} className="pi-notice pi-notice--strong" role="note">
@@ -615,10 +623,15 @@ export const TurnArticle = memo(function TurnArticle({ m, liveTurn, retrying, su
               </div>
             </div>
             : m.meta
-              ? <details className="pi-msg__meta" data-meta={m.meta}>
-                  <summary>{m.meta === 'skill' ? (zh ? '🧩 技能内容（已折叠，点开查看全文）' : '🧩 Skill content (folded)') : (zh ? '⚙️ Goal 确认协议（已折叠）' : '⚙️ Goal protocol (folded)')}</summary>
-                  <div className="pi-msg__bubble"><MessageParts parts={m.answer} labels={labels} onOpenToolFile={onOpenToolFile} /></div>
-                </details>
+              ? (m.meta === 'skill'
+                // 用户指令默认可见；<skill> 全文走 skill part 折叠。投影层已把正文里的
+                // skill 块剥离成独立 skill part（见 adapter.splitUserMeta）——含旧缓存
+                // 重算（缓存键带 entry.id+timestamp，投影逻辑变更后自动 miss 重建）。
+                ? <UserMessageParts parts={m.answer} labels={labels} onOpenToolFile={onOpenToolFile} onDownloadImage={onDownloadImage} />
+                : <details className="pi-msg__meta" data-meta={m.meta}>
+                    <summary>{zh ? '⚙️ Goal 确认协议（已折叠）' : '⚙️ Goal protocol (folded)'}</summary>
+                    <div className="pi-msg__bubble"><MessageParts parts={m.answer} labels={labels} onOpenToolFile={onOpenToolFile} /></div>
+                  </details>)
               : <UserMessageParts parts={m.answer} labels={labels} onOpenToolFile={onOpenToolFile} onDownloadImage={onDownloadImage} />}
           {!editing && (userText || onEditUser) && (
             <div className="pi-msg__actions">
