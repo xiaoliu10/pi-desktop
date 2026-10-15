@@ -93,6 +93,7 @@ PI Desktop 通过 pi 的 RPC 模式驱动本地 pi。CLI 会话从磁盘发现�
 <table>
 <thead><tr><th>版本</th><th>发布内容</th></tr></thead>
 <tbody>
+<tr><td><strong>0.1.22</strong></td><td><ul><li><strong>子代理卡片恢复</strong>：新版异步工作流派发的子代理重新出现在右侧卡片并持续刷新状态，主对话空闲不再被误标为中断。</li><li><strong>工作区记忆页对齐集中存储</strong>：存储目录显示真实位置，开关与链路说明改为准确描述。</li></ul></td></tr>
 <tr><td><strong>0.1.21</strong></td><td><ul><li><strong>双层记忆兼容</strong>：识别 scoped 插件，摘要与浏览使用集中项目目录，不再创建项目内记忆。</li><li><strong>技能/Goal 长文本折叠</strong>：一行摘要、按需展开，模型上下文保持完整。</li><li><strong>子代理会话隐藏</strong>：新版异步子会话不再混入桌面或手机项目列表。</li><li>pi 兼容窗口与内置版本说明同步。</li></ul></td></tr>
 <tr><td><strong>0.1.20</strong></td><td><ul><li><strong>手机端历史懒加载</strong>：进会话只拉最近 50 条，更早历史上滑按需翻页；大会话进会话/切会话/回合结束都秒开。</li><li><strong>技能列表键盘操作</strong>：↑↓ 移动光标、Enter 选中，搜索过滤时高亮重置。</li><li><strong>自动化任务不再重复执行</strong>：忙碌会话排队等待而非另开新会话；修复用户回合结算误判导致的二次执行。</li><li><strong>手机端思考流折叠</strong>：流式一行「思考中…（N 字）」可展开，正文开始自动收起；渲染抖动治理（节流+智能滚底）。</li><li>模型编辑器「会话亲和」卡片上下堆叠，不再超宽。</li></ul></td></tr>
 <tr><td><strong>0.1.19</strong></td><td><ul><li><strong>内置 pi 运行时升级 1.1.0 → 1.2.0</strong>：协议面逐一核对（RPC 命令集/事件面/签名无变化），本地 CLI 兼容窗口同步放宽。</li><li><strong>手机端发送截图</strong>：远程页新增图片附件（相册/拍摄，≤10 张），随消息发给模型；连接行显示桌面端版本。</li><li><strong>手机端过滤强化</strong>：归档/已移除项目、子代理与副驾内部会话不再出现在列表、历史与实时事件（含符号链接别名、移除即时生效、回前台刷新）。</li><li><strong>dist 只保留当前版本安装包</strong>：打包后自动清理历史版本产物（prune-dist）。</li></ul></td></tr>
@@ -102,7 +103,6 @@ PI Desktop 通过 pi 的 RPC 模式驱动本地 pi。CLI 会话从磁盘发现�
 <tr><td><strong>0.1.15</strong></td><td><ul><li><strong>内置 pi 运行时升级 1.0.4 → 1.1.0</strong>（#81），协议面完全兼容。</li><li><strong>提问/审批卡键盘直达</strong>：↓ 移到「自定义回答」输入行可直接键入，↑/Tab 移回选项，Enter 恰好提交一次；审批卡 Shift+Enter 换行（#82）。</li><li><strong>第三方 ask_user_question 插件共存</strong>：装了 rpiv 等提问插件不再同名冲突崩溃（此前 pi 进程启动即退出、会话打不开、思考等级选不到），第三方提问自动渲染成富问题卡片（#83）。</li></ul></td></tr>
 <tr><td><strong>0.1.14</strong></td><td><ul><li><strong>自动化任务默认复用项目会话执行</strong>：任务触发时在项目最近空闲会话里跑，上下文连续、结论出现在原对话；可显式选「独立新会话」（#79）。</li><li><strong>运行中过程整轮折叠</strong>：点击任一「执行过程」组头把整轮工具/思考收成一条汇总，点开恢复逐段视图；过程叙述流式期间按时间线原位可见，不再来回跳变（#80）。</li><li><strong>会话连接上限 6 → 12</strong>：满员自动断开最久空闲会话腾位（历史无损，点开即重连），不再直接拒绝（#75）。</li><li><strong>超大会话不再从侧栏消失</strong>：96MB 会话跨过旧 64MiB 上限导致整个会话从列表蒸发；上限提至 512MiB + 超限降级为「元数据可见」（#78）。</li><li><strong>钉钉一键配置修复</strong>（IPC 通道名错配，#49 起即坏）+ `/compact` 摘要截断改可执行中文文案（#77）。</li><li><strong>未发送草稿按会话保留</strong>（文字+图片/文件/附件切换不丢）；↑↓ 历史召回原样还原全部附件（#76）。</li></ul></td></tr>
 <tr><td><strong>0.1.13</strong></td><td><ul><li><strong>`desktop_schedule` 定时任务工具</strong>：agent 可创建/管理 Desktop 定时任务（一次性/周期/cron），由 Desktop 调度器在独立会话执行。</li><li><strong>钉钉扫码一键配置</strong>：device flow 自动建应用并回填凭据（#48/#49）；<strong>微信渠道上线</strong>：扫码绑定 + 任务通知推送（Server酱/PushPlus）（#50）。</li><li><strong>手机远程页改版</strong>：ZCode 式项目列表 + 二级对话视图（#47）。</li><li>模型编辑器推理等级改 ZCode 式可编辑 chips（#54）；渲染层黑屏防护（#51）；用户气泡溢出修复（#52）；压缩 token 口径修正（#46）。</li></ul></td></tr>
-<tr><td><strong>0.1.12</strong></td><td><ul><li><strong>pi 1.0 适配</strong>：内置运行时升级 pi 1.0.0 / Node 22.23.3；<strong>直连生图</strong>（图像模型目录 + 会话内生图卡片）（#15）。</li><li><strong>插件市场统一管理</strong>：扩展管理并入插件市场，启停/更新/源码编辑齐备（#12/#14）；MCP 停用开关与导入增强（#3）；记忆 UI 计数徽标（#2）。</li><li>通知合并计数 + 独立滚动；渠道品牌图标对齐 ZCode；选中态主色描边（#10/#11）。</li></ul></td></tr>
 </tbody>
 </table>
 
