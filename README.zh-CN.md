@@ -93,6 +93,7 @@ PI Desktop 通过 pi 的 RPC 模式驱动本地 pi。CLI 会话从磁盘发现�
 <table>
 <thead><tr><th>版本</th><th>发布内容</th></tr></thead>
 <tbody>
+<tr><td><strong>0.1.23</strong></td><td><ul><li><strong>/skill 只显示你的指令</strong>：技能全文折叠成一行按需展开，编辑重发保留上下文。</li><li><strong>任务清单合成计划文档</strong>：无计划文档时合成整页 Markdown 计划，可复制。</li><li><strong>提示缓存第二断点</strong>：长会话补显式断点提升命中、降成本（Anthropic 系，可关）。</li><li><strong>异步子代理卡片可见</strong>：single 工作流子代理回到卡片并可看子会话转录。</li><li><strong>斜杠候选键盘导航</strong>：↑↓ 循环、Enter 选中恢复；@文件 不丢 @ 前缀。</li></ul></td></tr>
 <tr><td><strong>0.1.22</strong></td><td><ul><li><strong>子代理卡片恢复</strong>：新版异步工作流派发的子代理重新出现在右侧卡片并持续刷新状态，主对话空闲不再被误标为中断。</li><li><strong>工作区记忆页对齐集中存储</strong>：存储目录显示真实位置，开关与链路说明改为准确描述。</li></ul></td></tr>
 <tr><td><strong>0.1.21</strong></td><td><ul><li><strong>双层记忆兼容</strong>：识别 scoped 插件，摘要与浏览使用集中项目目录，不再创建项目内记忆。</li><li><strong>技能/Goal 长文本折叠</strong>：一行摘要、按需展开，模型上下文保持完整。</li><li><strong>子代理会话隐藏</strong>：新版异步子会话不再混入桌面或手机项目列表。</li><li>pi 兼容窗口与内置版本说明同步。</li></ul></td></tr>
 <tr><td><strong>0.1.20</strong></td><td><ul><li><strong>手机端历史懒加载</strong>：进会话只拉最近 50 条，更早历史上滑按需翻页；大会话进会话/切会话/回合结束都秒开。</li><li><strong>技能列表键盘操作</strong>：↑↓ 移动光标、Enter 选中，搜索过滤时高亮重置。</li><li><strong>自动化任务不再重复执行</strong>：忙碌会话排队等待而非另开新会话；修复用户回合结算误判导致的二次执行。</li><li><strong>手机端思考流折叠</strong>：流式一行「思考中…（N 字）」可展开，正文开始自动收起；渲染抖动治理（节流+智能滚底）。</li><li>模型编辑器「会话亲和」卡片上下堆叠，不再超宽。</li></ul></td></tr>
