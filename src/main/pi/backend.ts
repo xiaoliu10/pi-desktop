@@ -247,6 +247,10 @@ export class PiBackend {
     // 可判定规则 + 运行中提醒（缺失不阻塞会话）。
     const nudgePath = path.join(path.dirname(this.policyPath), '..', 'desktop-codemode-nudge', 'index.mjs');
     const nudgeArgs = fs.existsSync(nudgePath) ? ['-e', nudgePath] : [];
+    // 显式缓存断点：在 provider 已放的断点之外补第二个（长会话静态/易变分叉保护）。
+    // 只动 cache_control 标记；PI_DESKTOP_CACHE=off 时扩展内部自行禁用。
+    const cachePath = path.join(path.dirname(this.policyPath), '..', 'desktop-cache', 'index.mjs');
+    const cacheArgs = fs.existsSync(cachePath) ? ['-e', cachePath] : [];
     const args = [
       ...(this.env.launchArgs || []),
       '--mode', 'rpc',
@@ -261,6 +265,7 @@ export class PiBackend {
       ...memoryArgs,
       ...subagentArgs,
       ...nudgeArgs,
+      ...cacheArgs,
       // 调度守则随 desktop-schedule 扩展注入：用户要「定时干活」时引导模型用 desktop_schedule，
       // 而不是在会话里 sleep 等待（会话退出即丢失；与扩展共存亡，缺失时不注入）。
       ...(scheduleArgs.length

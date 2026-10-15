@@ -118,6 +118,10 @@
         "to": "desktop-codemode-nudge"
       },
       {
+        "from": "extensions/desktop-cache",
+        "to": "desktop-cache"
+      },
+      {
         "from": "extensions/desktop-schedule",
         "to": "desktop-schedule"
       },
