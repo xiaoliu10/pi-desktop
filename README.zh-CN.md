@@ -93,6 +93,7 @@ PI Desktop 通过 pi 的 RPC 模式驱动本地 pi。CLI 会话从磁盘发现�
 <table>
 <thead><tr><th>版本</th><th>发布内容</th></tr></thead>
 <tbody>
+<tr><td><strong>0.1.25</strong></td><td><ul><li><strong>切换会话不再弹确认</strong>：子代理提示条照常常驻，切换不被打断；「断开」确认照旧。</li><li><strong>内置 pi 1.3.0</strong>：修复继续会话后子代理工具失效；本机 pi 1.3.x 可直选。</li></ul></td></tr>
 <tr><td><strong>0.1.24</strong></td><td><ul><li><strong>子代理可见性</strong>：输入框上方常驻「N 个子代理正在工作」提示，点击开面板；切换/断开会话前先确认，不再误丢后台子代理。</li><li><strong>模型配置即时生效</strong>：保存后运行中会话当场重读配置并回读思考等级；忙碌时等安全空闲再刷，失败不假成功。</li><li><strong>任务计划只取最近一轮</strong>：长期会话不再显示旧任务的计划清单。</li><li><strong>completions 子代理卡片恢复</strong>：第三形态子代理回到卡片，子会话转录可读。</li><li><strong>长会话渲染提速</strong>：labels 模块级缓存，修复流式期间全树重渲染。</li></ul></td></tr>
 <tr><td><strong>0.1.23</strong></td><td><ul><li><strong>/skill 只显示你的指令</strong>：技能全文折叠成一行按需展开，编辑重发保留上下文。</li><li><strong>任务清单合成计划文档</strong>：无计划文档时合成整页 Markdown 计划，可复制。</li><li><strong>提示缓存第二断点</strong>：长会话补显式断点提升命中、降成本（Anthropic 系，可关）。</li><li><strong>异步子代理卡片可见</strong>：single 工作流子代理回到卡片并可看子会话转录。</li><li><strong>斜杠候选键盘导航</strong>：↑↓ 循环、Enter 选中恢复；@文件 不丢 @ 前缀。</li></ul></td></tr>
 <tr><td><strong>0.1.22</strong></td><td><ul><li><strong>子代理卡片恢复</strong>：新版异步工作流派发的子代理重新出现在右侧卡片并持续刷新状态，主对话空闲不再被误标为中断。</li><li><strong>工作区记忆页对齐集中存储</strong>：存储目录显示真实位置，开关与链路说明改为准确描述。</li></ul></td></tr>
