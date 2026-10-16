@@ -13,8 +13,15 @@ const PI_MIN_VERSION = '0.85.1';
  *  1.2.0 已核对：RPC 命令集 33 个与 1.1.0 逐一相同、事件面（extension_error/extension_ui_request/
  *  response/user_bash）无增减、Desktop 依赖的 13 个命令签名不变（prompt/set_model/
  *  get_available_thinking_levels 等）；实测捆绑 1.2.0 六命令 RPC 冒烟全通。
- *  上界是**排他**的（compareVersion < 0），故设为 1.3.0 表示「已测到 1.2.x」。 */
-const PI_MAX_TESTED = '1.3.0';
+ *  1.3.0 已核对（2026-10-16）：rpc-types.d.ts 与 1.2.0 **零差异**（请求/响应/事件契约不变）、
+ *  rpc-mode.js 与 1.2.0 逐字节相同（33 命令面不变）、model-registry.js / extensions/runner.js /
+ *  extensions/types.d.ts / sdk.js 全部相同；bundle 重新拆 chunks（chunk 哈希变化）但
+ *  rpc-entry.js 入口语义不变。唯一实质差异是 agent-session.js 的
+ *  `_restoreToolsFromTranscript(modifiers)`（上游修 continue 后工具丢失，见 pi-subagents #2916）：
+ *  Desktop 传显式 `--tools` 白名单且不含 `+/-` 修饰符 → `toolModifiers === undefined` →
+ *  `usesDefaultTools === false`，该分支不生效，白名单行为不变。
+ *  上界是**排他**的（compareVersion < 0），故设为 1.4.0 表示「已测到 1.3.x」。 */
+const PI_MAX_TESTED = '1.4.0';
 
 /** pi ≥0.99 内置原生 MCP（builtin:mcp，读同一份 mcp.json）：desktop 的 mcp-bridge 必须
  *  让位，否则同一服务器双连接、工具双注册。backend 以 PI_DESKTOP_PI_VERSION 注入运行时版本。 */
