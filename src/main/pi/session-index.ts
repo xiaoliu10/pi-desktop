@@ -45,7 +45,7 @@ export class SessionIndex {
   /** parsedBytes = 已完整消费的字节数（到最后一行完整行末尾）；pendingTail = 其后尚未成行的残留。
    *  大会话流式期间每次只追加几 KB，history() 对脏文件走增量 tail 解析（毫秒级），
    *  不再全量重读（实测 103MB 会话全量重解析 421ms，同步阻塞主进程）。 */
-  private cache = new Map<string, { stamp: string; history: PiHistory; parsedBytes: number; pendingTail: string; parsedIno: number }>();
+  private cache = new Map<string, { stamp: string; history: PiHistory; parsedBytes: number; pendingTail: Buffer; parsedIno: number }>();
   /** 嵌套子会话（pi-subagents async 布局）文件 → 推断的主会话路径。 */
   private nestedParents = new Map<string, string>();
   /** 已有缓存但文件又增长了的会话：等写入平息后再全量重解析。 */
@@ -77,14 +77,21 @@ export class SessionIndex {
       return;
     }
     const buf = fs.readFileSync(file);
+    // 按字节切行（\n = 0x0a 单字节，UTF-8 多字节序列不含它）：行内容最后统一解码，
+    // 撕裂的多字节字符在增量补齐后才解码，不会经过 U+FFFD 丢失原始字节。
+    const lines: Buffer[] = [];
+    for (let start = 0, i = 0; i <= buf.length; i++) {
+      // 与 split('\n') 语义一致：结尾的 \n 之后也产生一个（空）段，pop 掉的才是「未成行」。
+      if (i === buf.length || buf[i] === 0x0a) { lines.push(buf.subarray(start, i)); start = i + 1; }
+    }
+    const tailBytes = lines.pop() ?? Buffer.alloc(0); // Never consume an incomplete append.
     const raw = buf.toString('utf8');
-    const lines = raw.split('\n');
-    const tail = lines.pop(); // Never consume an incomplete append.
     const parsed: PiEntry[] = [], warnings: string[] = [];
-    if (tail?.trim()) warnings.push('尾行尚未完整写入，等待同步。');
+    if (tailBytes.length) warnings.push('尾行尚未完整写入，等待同步。');
     for (let i = 0; i < lines.length; i++) {
-      if (!lines[i].trim()) continue;
-      try { const e = JSON.parse(lines[i]); if (e && typeof e.type === 'string') parsed.push(e); else warnings.push(`第 ${i + 1} 行格式无效`); }
+      const text = lines[i].toString('utf8');
+      if (!text.trim()) continue;
+      try { const e = JSON.parse(text); if (e && typeof e.type === 'string') parsed.push(e); else warnings.push(`第 ${i + 1} 行格式无效`); }
       catch { warnings.push(`第 ${i + 1} 行损坏，已跳过`); }
     }
     const header = parsed[0];
@@ -95,10 +102,10 @@ export class SessionIndex {
     const name = [...entries].reverse().find(e => e.type === 'session_info' && typeof e.name === 'string')?.name;
     const parents = new Set(entries.map(e => e.parentId));
     const session: PiSession = { key, id: header.id, path: file, cwd: header.cwd, name: String(name || title || '未命名 pi 会话').slice(0, 180), updatedAt: stat.mtimeMs, size: stat.size, warnings, owned: file.startsWith(canonical(this.ownedRoot) + path.sep), parentSession: typeof header.parentSession === 'string' ? header.parentSession : this.nestedParents.get(file), sidecarOf: path.basename(file).startsWith('sidecar_') ? '' : undefined };
-    // parsedBytes 停在最后一个 0x0A 字节处（行边界在 U+000A，不受撕裂多字节尾部
-    // 解码成 U+FFFD 后 byteLength 计数错位的影响）；尾部残留行作为 pendingTail 待增量拼接。
-    const parsedBytes = buf.lastIndexOf(0x0a) + 1;
-    this.cache.set(key, { stamp, history: { session, entries, branch, leaves: entries.filter(e => e.id && !parents.has(e.id)).map(e => e.id!), leafId: branch.at(-1)?.id || null, syncedAt: Date.now() }, parsedBytes, pendingTail: tail ?? '', parsedIno: stat.ino });
+    // parsedBytes = buf.length：全部字节已读；尾部未成行字节保存在 pendingTail（原始
+    // Buffer，解码无损），增量时与新 chunk 拼接后再统一解码——撕裂多字节在字节层面
+    // 补齐后才能正确解码，任何字符串层面的提前处理都会经 U+FFFD 永久丢字节。
+    this.cache.set(key, { stamp, history: { session, entries, branch, leaves: entries.filter(e => e.id && !parents.has(e.id)).map(e => e.id!), leafId: branch.at(-1)?.id || null, syncedAt: Date.now() }, parsedBytes: buf.length, pendingTail: Buffer.from(tailBytes), parsedIno: stat.ino });
     this.dirty.delete(key);
   }
   /** 增量消费 cached.parsedBytes 之后的新增字节。parsedBytes 是**已读偏移**（pendingTail
@@ -106,24 +113,29 @@ export class SessionIndex {
    *  文件缩短/替换（stamp 变小）时回退全量。只读新增段，不重读旧内容——这是大会话流式
    *  期间 history() 从几百 ms 同步阻塞降到毫秒级的关键。有新增完整行时替换 history 对象
    *  （原契约：重解析返回新引用）；仅尾部未成行时只更新元数据，不换引用以免渲染抖动。 */
-  private parseAppends(file: string, key: string, stat: fs.Stats, stamp: string, cached: { stamp: string; history: PiHistory; parsedBytes: number; pendingTail: string; parsedIno: number }): void {
+  private parseAppends(file: string, key: string, stat: fs.Stats, stamp: string, cached: { stamp: string; history: PiHistory; parsedBytes: number; pendingTail: Buffer; parsedIno: number }): void {
     const { history, parsedBytes, pendingTail } = cached;
     if (stat.ino !== cached.parsedIno) { this.parseFile(file, key); return; } // 替换（新 inode）：全量
     if (stat.size < parsedBytes) { this.parseFile(file, key); return; } // 截断：全量
     if (stat.size === parsedBytes && stamp !== cached.stamp) { this.parseFile(file, key); return; } // 同尺寸原地改写：无法廉价判别内容，回退全量
     if (stat.size === parsedBytes) { cached.stamp = stamp; this.dirty.delete(key); return; } // append-only 契约下纯 mtime 变化
     const len = stat.size - parsedBytes;
-    const buf = Buffer.alloc(len);
+    const chunk = Buffer.alloc(len);
     const fd = fs.openSync(file, 'r');
-    try { fs.readSync(fd, buf, 0, len, parsedBytes); } finally { fs.closeSync(fd); }
-    const lines = (pendingTail + buf.toString('utf8')).split('\n');
-    const newTail = lines.pop() ?? '';
+    try { fs.readSync(fd, chunk, 0, len, parsedBytes); } finally { fs.closeSync(fd); }
+    const whole = Buffer.concat([pendingTail, chunk]);
+    const lines: Buffer[] = [];
+    for (let start = 0, i = 0; i <= whole.length; i++) {
+      if (i === whole.length || whole[i] === 0x0a) { lines.push(whole.subarray(start, i)); start = i + 1; }
+    }
+    const newTail = lines.pop() ?? Buffer.alloc(0);
     const base = history.session.warnings.filter(w => !w.startsWith('增量段跳过') && w !== '尾行尚未完整写入，等待同步。');
     const added: PiEntry[] = [];
     let bad = 0;
     for (const line of lines) {
-      if (!line.trim()) continue;
-      try { const e = JSON.parse(line); if (e && typeof e.type === 'string') added.push(e); else bad++; }
+      const text = line.toString('utf8');
+      if (!text.trim()) continue;
+      try { const e = JSON.parse(text); if (e && typeof e.type === 'string') added.push(e); else bad++; }
       catch { bad++; }
     }
     // 坏行跨增量累计成单条可替换警告：既有提示（原契约，坏行内容永久损坏）又不随流式无限增长。
@@ -238,7 +250,7 @@ export class SessionIndex {
           };
           this.oversized.add(degraded);
           // parsedBytes/pendingTail 对超限降级缓存无意义（永不增量解析），置 0/空满足类型。
-          this.cache.set(key, { stamp, history: degraded, parsedBytes: 0, pendingTail: '', parsedIno: stat.ino });
+          this.cache.set(key, { stamp, history: degraded, parsedBytes: 0, pendingTail: Buffer.alloc(0), parsedIno: stat.ino });
           continue;
         }
         const old = this.cache.get(key);
@@ -264,7 +276,7 @@ export class SessionIndex {
       const file = fast.history.session.path;
       const stamped = this.stampOf(file);
       if (stamped && stamped.stamp === fast.stamp) {
-        if (stamped.stat.size > fast.parsedBytes || fast.pendingTail) {
+        if (stamped.stat.size > fast.parsedBytes || fast.pendingTail.length) {
           try { this.parseFile(file, key, true); } catch { /* 增量失败保留旧缓存 */ }
         }
         if (this.oversized.has(this.cache.get(key)!.history)) throw new OversizedSessionError(file, this.cache.get(key)!.history.session.size);
