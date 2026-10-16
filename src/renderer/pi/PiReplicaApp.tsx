@@ -91,7 +91,19 @@ export function sidebarVersionLabel(env?: { version?: string | null; desktopVers
   return env?.desktopVersion ? `Desktop ${env.desktopVersion} · pi ${env?.version ?? '未发现'}` : `pi ${env?.version ?? '未发现'}`;
 }
 
-function labelsFor(lang: 'en' | 'zh') {
+// labelsFor 是纯函数且 lang 只有两种取值：模块级缓存结果，保证跨 render 引用稳定。
+// 否则每次 render 新建的 labels 对象会击穿 ChatView/Composer/Sidebar 等所有 memo 子组件
+// （流式期间 150ms 一拍全树重渲染的直接开关——性能回归见 docs/design/input-lag.md）。
+// 缓存类型从 buildLabels 取（后者不引用缓存，无循环推断）。
+const labelsCache = new Map<'en' | 'zh', ReturnType<typeof buildLabels>>();
+function labelsFor(lang: 'en' | 'zh'): ReturnType<typeof buildLabels> {
+  const cached = labelsCache.get(lang);
+  if (cached) return cached;
+  const built = buildLabels(lang);
+  labelsCache.set(lang, built);
+  return built;
+}
+function buildLabels(lang: 'en' | 'zh') {
   const t = replicaLabels(lang);
   if (lang === 'zh') {
     return {
