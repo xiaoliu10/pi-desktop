@@ -20,8 +20,10 @@ const PI_MIN_VERSION = '0.85.1';
  *  `_restoreToolsFromTranscript(modifiers)`（上游修 continue 后工具丢失，见 pi-subagents #2916）：
  *  Desktop 传显式 `--tools` 白名单且不含 `+/-` 修饰符 → `toolModifiers === undefined` →
  *  `usesDefaultTools === false`，该分支不生效，白名单行为不变。
- *  上界是**排他**的（compareVersion < 0），故设为 1.4.0 表示「已测到 1.3.x」。 */
-const PI_MAX_TESTED = '1.4.0';
+ *  上界是**排他**的（compareVersion < 0），故设为 1.4.0 表示「已测到 1.3.x」。
+ *  **升级到新 pi 版本时必须同步**：跑 `pnpm smoke:rpc` + `pnpm smoke:rpc-full`（见
+ *  docs/requirements.md R-model-01），两者都过再把这里 +1。 */
+export const PI_MAX_TESTED = '1.4.0';
 
 /** pi ≥0.99 内置原生 MCP（builtin:mcp，读同一份 mcp.json）：desktop 的 mcp-bridge 必须
  *  让位，否则同一服务器双连接、工具双注册。backend 以 PI_DESKTOP_PI_VERSION 注入运行时版本。 */

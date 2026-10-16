@@ -216,6 +216,12 @@ export class PiBackend {
     fs.writeFileSync(modeFile, input.permission, 'utf8');
     const env: NodeJS.ProcessEnv = { ...process.env, PI_CODING_AGENT_DIR: this.env.agentDir, PI_OFFLINE: '1', PI_SKIP_VERSION_CHECK: '1', PI_DESKTOP_PERMISSION: input.permission, PI_DESKTOP_GENERATION: generation, PI_DESKTOP_MODE_FILE: modeFile, PI_DESKTOP_TRUST_PROJECT: input.trustProject ? '1' : '0', PI_DESKTOP_PI_VERSION: this.env.version ?? '' };
     delete env.ELECTRON_RUN_AS_NODE;
+    // pi 的 bundle 用 PI_PACKAGE_DIR 覆盖自身包目录：Desktop 若从某个 pi 会话里启动，
+    // 该变量会让内置 cli 解析到**发起方的** pi 包（本机全局安装时版本可能不同），
+    // 导致「PI_DESKTOP_PI_VERSION 声明 1.3.0、实际跑 1.2.0」的错配。删掉，让 cli.js
+    // 从自身路径解析。
+    delete env.PI_PACKAGE_DIR;
+    delete env.PI_SUBAGENTS_PI_CODING_AGENT_PACKAGE_ROOT;
     // GUI applications may not inherit the same PATH as a terminal.
     env.PATH = [path.dirname(this.env.executable!), '/opt/homebrew/bin', '/usr/local/bin', env.PATH || ''].join(path.delimiter);
     // Desktop 自带的 ask_user_question 扩展（随 Desktop 默认加载；缺失不阻塞会话）。
