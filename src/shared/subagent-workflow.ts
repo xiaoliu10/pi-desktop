@@ -11,6 +11,35 @@ export function workflowState(value: unknown): WorkflowState {
 export const workflowObject = (value: unknown): Record<string, any> | undefined => value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, any> : undefined;
 export const workflowText = (value: unknown, max = 256): string => typeof value === 'string' ? value.slice(0, max) : '';
 export const workflowId = (value: unknown): value is string => typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9._-]{0,255}$/.test(value);
+/**
+ * pi-subagents >=0.79 的第三种结果形态：run 结束后 tool result 只带
+ * `{token, runId, outcome, completions:[{agent, mode:'single', state, success,
+ * results:[{agent, sessionFile, outputState, ...}], archivePath}]}`——既非 workflow
+ * （无 mode/steps/workflowChildren）也非 singleAsyncDetails（无顶层 mode/asyncDir）。
+ * 子会话转录指针在 completions[].results[].sessionFile 里，不解析这层详情面板
+ * 就拿不到 childKey（用户实测：详情面板永久转圈/「不可用」）。
+ * 规范成 singleAsyncDetails 同款形状（mode:'single' + runId + sessionFile），
+ * 复用同一套指针链路；asyncDir 缺失时指针回退为 completions 内 sessionFile。
+ */
+export function completionsDetails(value: unknown, callId: string): Record<string, any> | undefined {
+  const d = workflowObject(value);
+  if (!d || !Array.isArray(d.completions) || d.completions.length === 0) return undefined;
+  if (d.toolCallId !== undefined && d.toolCallId !== callId) return undefined;
+  for (const entry of d.completions) {
+    const c = workflowObject(entry);
+    if (!c || c.mode !== 'single') continue;
+    if (c.toolCallId !== undefined && c.toolCallId !== callId) continue;
+    const results = Array.isArray(c.results) ? c.results.filter(workflowObject) : [];
+    const hit = results.find(r => typeof r.sessionFile === 'string');
+    if (!hit) continue;
+    const runId = workflowId(c.runId) ? c.runId : workflowId(d.runId) ? d.runId : undefined;
+    if (!runId) continue;
+    // sessionFile 由 completions 携带；asyncDir 保持缺省（指针链路按 runId 走 expectedDir，
+ // 缺 asyncDir 时 childSessionPointer 的 completions 分支直接用这个 sessionFile）。
+    return { ...c, ...d, runId, mode: 'single', results, sessionFile: hit.sessionFile, __fromCompletions: true };
+  }
+  return undefined;
+}
 /** Reject management replies, including status replies which themselves contain run metadata. */
 export function isSubagentManagement(argumentsText?: string): boolean {
   try { const args = JSON.parse(argumentsText || '{}'); return typeof args?.action === 'string' && args.action !== ''; } catch { return false; }
