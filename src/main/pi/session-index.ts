@@ -45,7 +45,7 @@ export class SessionIndex {
   /** parsedBytes = 已完整消费的字节数（到最后一行完整行末尾）；pendingTail = 其后尚未成行的残留。
    *  大会话流式期间每次只追加几 KB，history() 对脏文件走增量 tail 解析（毫秒级），
    *  不再全量重读（实测 103MB 会话全量重解析 421ms，同步阻塞主进程）。 */
-  private cache = new Map<string, { stamp: string; history: PiHistory; parsedBytes: number; pendingTail: string }>();
+  private cache = new Map<string, { stamp: string; history: PiHistory; parsedBytes: number; pendingTail: string; parsedIno: number }>();
   /** 嵌套子会话（pi-subagents async 布局）文件 → 推断的主会话路径。 */
   private nestedParents = new Map<string, string>();
   /** 已有缓存但文件又增长了的会话：等写入平息后再全量重解析。 */
@@ -69,11 +69,15 @@ export class SessionIndex {
     const { stat, stamp } = stamped;
     if (stat.size > MAX_SESSION) throw new OversizedSessionError(file, stat.size);
     const cached = this.cache.get(key);
-    if (incremental && cached && stat.size >= cached.parsedBytes) {
+    // 增量门：仅在「同一 inode 且 size ≥ 已读偏移」时安全。文件替换（rename-replace，
+    // 新 inode）或截断都会落回全量——此前仅比 size 曾把替换误判为追加并污染 stamp，
+    // scan() 永不纠正（静默错误历史直到重启）。
+    if (incremental && cached && stat.size >= cached.parsedBytes && stat.ino === cached.parsedIno) {
       this.parseAppends(file, key, stat, stamp, cached);
       return;
     }
-    const raw = fs.readFileSync(file, 'utf8');
+    const buf = fs.readFileSync(file);
+    const raw = buf.toString('utf8');
     const lines = raw.split('\n');
     const tail = lines.pop(); // Never consume an incomplete append.
     const parsed: PiEntry[] = [], warnings: string[] = [];
@@ -91,9 +95,10 @@ export class SessionIndex {
     const name = [...entries].reverse().find(e => e.type === 'session_info' && typeof e.name === 'string')?.name;
     const parents = new Set(entries.map(e => e.parentId));
     const session: PiSession = { key, id: header.id, path: file, cwd: header.cwd, name: String(name || title || '未命名 pi 会话').slice(0, 180), updatedAt: stat.mtimeMs, size: stat.size, warnings, owned: file.startsWith(canonical(this.ownedRoot) + path.sep), parentSession: typeof header.parentSession === 'string' ? header.parentSession : this.nestedParents.get(file), sidecarOf: path.basename(file).startsWith('sidecar_') ? '' : undefined };
-    // parsedBytes 停在最后一个完整行末尾；尾部残留行作为 pendingTail 待增量时拼接。
-    const parsedBytes = Buffer.byteLength(raw, 'utf8') - Buffer.byteLength(tail ?? '', 'utf8');
-    this.cache.set(key, { stamp, history: { session, entries, branch, leaves: entries.filter(e => e.id && !parents.has(e.id)).map(e => e.id!), leafId: branch.at(-1)?.id || null, syncedAt: Date.now() }, parsedBytes, pendingTail: tail ?? '' });
+    // parsedBytes 停在最后一个 0x0A 字节处（行边界在 U+000A，不受撕裂多字节尾部
+    // 解码成 U+FFFD 后 byteLength 计数错位的影响）；尾部残留行作为 pendingTail 待增量拼接。
+    const parsedBytes = buf.lastIndexOf(0x0a) + 1;
+    this.cache.set(key, { stamp, history: { session, entries, branch, leaves: entries.filter(e => e.id && !parents.has(e.id)).map(e => e.id!), leafId: branch.at(-1)?.id || null, syncedAt: Date.now() }, parsedBytes, pendingTail: tail ?? '', parsedIno: stat.ino });
     this.dirty.delete(key);
   }
   /** 增量消费 cached.parsedBytes 之后的新增字节。parsedBytes 是**已读偏移**（pendingTail
@@ -101,10 +106,12 @@ export class SessionIndex {
    *  文件缩短/替换（stamp 变小）时回退全量。只读新增段，不重读旧内容——这是大会话流式
    *  期间 history() 从几百 ms 同步阻塞降到毫秒级的关键。有新增完整行时替换 history 对象
    *  （原契约：重解析返回新引用）；仅尾部未成行时只更新元数据，不换引用以免渲染抖动。 */
-  private parseAppends(file: string, key: string, stat: fs.Stats, stamp: string, cached: { stamp: string; history: PiHistory; parsedBytes: number; pendingTail: string }): void {
+  private parseAppends(file: string, key: string, stat: fs.Stats, stamp: string, cached: { stamp: string; history: PiHistory; parsedBytes: number; pendingTail: string; parsedIno: number }): void {
     const { history, parsedBytes, pendingTail } = cached;
-    if (stat.size === parsedBytes) { cached.stamp = stamp; this.dirty.delete(key); return; }
-    if (stat.size < parsedBytes) { this.parseFile(file, key); return; } // 截断/替换：回退全量
+    if (stat.ino !== cached.parsedIno) { this.parseFile(file, key); return; } // 替换（新 inode）：全量
+    if (stat.size < parsedBytes) { this.parseFile(file, key); return; } // 截断：全量
+    if (stat.size === parsedBytes && stamp !== cached.stamp) { this.parseFile(file, key); return; } // 同尺寸原地改写：无法廉价判别内容，回退全量
+    if (stat.size === parsedBytes) { cached.stamp = stamp; this.dirty.delete(key); return; } // append-only 契约下纯 mtime 变化
     const len = stat.size - parsedBytes;
     const buf = Buffer.alloc(len);
     const fd = fs.openSync(file, 'r');
@@ -137,9 +144,17 @@ export class SessionIndex {
     const branch = branchEntries(entries);
     const parents = new Set(entries.map(e => e.parentId));
     const name = [...added].reverse().find(e => e.type === 'session_info' && typeof e.name === 'string')?.name;
+    // 增量路径也要派生标题（全量时 entries 为空、首条 user 晚到）：header-only 首扫后
+    // 首条 user 经增量落地，不能让快流式会话一直叫「未命名 pi 会话」。
+    let derived: string | undefined = typeof name === 'string' ? name : undefined;
+    if (!derived && history.session.name === '未命名 pi 会话') {
+      const firstUser = added.find(e => e.type === 'message' && e.message?.role === 'user')?.message?.content as unknown;
+      const title = typeof firstUser === 'string' ? firstUser : Array.isArray(firstUser) ? firstUser.filter((b: any) => b.type === 'text').map((b: any) => String(b.text)).join(' ') : '';
+      if (title) derived = title;
+    }
     cached.history = {
       ...history,
-      session: { ...history.session, size: stat.size, updatedAt: stat.mtimeMs, warnings, ...(name ? { name: String(name).slice(0, 180) } : {}) },
+      session: { ...history.session, size: stat.size, updatedAt: stat.mtimeMs, warnings, ...(derived ? { name: String(derived).slice(0, 180) } : {}) },
       entries,
       branch,
       leaves: entries.filter(e => e.id && !parents.has(e.id)).map(e => e.id!),
@@ -223,7 +238,7 @@ export class SessionIndex {
           };
           this.oversized.add(degraded);
           // parsedBytes/pendingTail 对超限降级缓存无意义（永不增量解析），置 0/空满足类型。
-          this.cache.set(key, { stamp, history: degraded, parsedBytes: 0, pendingTail: '' });
+          this.cache.set(key, { stamp, history: degraded, parsedBytes: 0, pendingTail: '', parsedIno: stat.ino });
           continue;
         }
         const old = this.cache.get(key);

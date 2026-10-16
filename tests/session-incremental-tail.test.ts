@@ -19,7 +19,6 @@ describe('incremental tail parsing', () => {
     write(file, [header, { type: 'message', id: 'a', parentId: null, message: { role: 'user', content: 'go' } }]);
     const index = new SessionIndex([root], root);
     const key = index.scan()[0].key;
-    const readBytes = () => { let n = 0; const orig = fs.readFileSync; };
     // 第一轮增量：两条完整行
     fs.appendFileSync(file, [line('b'), line('c')].map(e => JSON.stringify(e)).join('\n') + '\n');
     let h = index.history(key);
@@ -68,9 +67,41 @@ describe('incremental tail parsing', () => {
     fs.appendFileSync(file, '{"type":"message","id":"b"');
     expect(index.history(key)).toBe(before);
     // 落地：引用必须变化（history 消费方依赖对象身份感知更新）
-    fs.appendFileSync(file, ',\"x\":1}\n'.replace('\\"', '"')); // 续上合法 JSON
+    fs.appendFileSync(file, ',"x":1}\n'); // 续上合法 JSON
     const after = index.history(key);
     expect(after).not.toBe(before);
     expect(after.entries.map(e => e.id)).toEqual(['a', 'b']);
   });
+});
+
+// 回归（review P1）：rename-replace（新 inode、size 更大）曾把替换误判为追加并污染
+// stamp，scan() 永不纠正——持久性静默错误历史。同尺寸原地改写曾静默吞掉。
+it('full re-parses when the file is replaced via rename (new inode) or rewritten in place', () => {
+  const root = temp(), file = path.join(root, 's.jsonl');
+  const line = (id: string) => ({ type: 'message', id, parentId: null, message: { role: 'assistant', content: id } });
+  write(file, [header, { type: 'message', id: 'a', parentId: null, message: { role: 'user', content: 'go' } }, line('old')]);
+  const index = new SessionIndex([root], root);
+  const key = index.scan()[0].key;
+  expect(index.history(key).entries.map(e => e.id)).toEqual(['a', 'old']);
+  // rename-replace：新 inode、更大内容
+  const replacement = path.join(root, 'replacement.jsonl');
+  write(replacement, [header, { type: 'message', id: 'a', parentId: null, message: { role: 'user', content: 'go' } }, line('new1'), line('new2')]);
+  fs.renameSync(replacement, file);
+  expect(index.history(key).entries.map(e => e.id)).toEqual(['a', 'new1', 'new2']);
+  // 同尺寸原地改写（mtime 变化）：无法廉价判别 → 回退全量，内容以新为准
+  const sameSize = fs.readFileSync(file, 'utf8').replace('"new2"', '"n2w2"');
+  fs.writeFileSync(file, sameSize);
+  fs.utimesSync(file, new Date(), new Date(Date.now() + 50));
+  expect(index.history(key).entries.map(e => e.id)).toEqual(['a', 'new1', 'n2w2']);
+});
+
+// 回归（review P2）：header-only 首扫 + 首条 user 经增量落地 → 派生标题，不再「未命名」
+it('derives the session title from the first user message landing via increments', () => {
+  const root = temp(), file = path.join(root, 's.jsonl');
+  write(file, [header]);
+  const index = new SessionIndex([root], root);
+  const key = index.scan()[0].key;
+  expect(index.history(key).session.name).toBe('未命名 pi 会话');
+  fs.appendFileSync(file, JSON.stringify({ type: 'message', id: 'u', parentId: null, message: { role: 'user', content: '帮我分析这段报错日志' } }) + '\n');
+  expect(index.history(key).session.name).toBe('帮我分析这段报错日志');
 });
