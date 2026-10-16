@@ -142,13 +142,13 @@
 **需求**：大会话流式输出（150ms 一拍 delta）期间，输入与界面不卡。
 
 **验收**：
-- 流式期间主进程单次同步阻塞 < 阈值（待定，当前主进程 1.06s 是已知缺陷）。
+- 流式期间主进程单次同步阻塞 < 50ms（实测修复前：history() 每次 scan() 热 173ms/冷 3.5s，103.7MB 会话 dirty 全量重解析 421ms）。
 - 渲染层 memo 子组件不被每次 render 新建的对象击穿。
-- `get_entries(since=leafId)` 增量契约被使用，不全量重读。
+- 大会话历史读取不全量重读：落盘会话走增量 tail 解析（session-index），运行中会话的 `get_entries(since=leafId)` 增量契约待接入（切片 2c）。
 
-**状态**：部分满足。切片 1（labelsFor 模块级缓存，v0.1.24 #120）已修渲染层 memo 击穿；切片 2（主进程 1.06s 同步阻塞，嫌疑在 `session-index.ts:68/184`）待做。
+**状态**：大部分满足。切片 1（labelsFor 缓存，v0.1.24 #120）已修 memo 击穿；切片 2a/2b（history() 去全扫 + 增量 tail 解析，实测 421ms → 平均 6.3ms）已修（PR #128）；剩余：运行中会话改走 RPC get_entries（切片 2c）、可选虚拟化（切片 3）。
 
-**回归触发**：改 `session-index.ts`/`adapter.ts`/`PiReplicaApp.tsx`；pi RPC `get_entries` 增量契约变化。
+**回归触发**：改 `session-index.ts`（增量偏移/快路径）/`adapter.ts`/`PiReplicaApp.tsx`；pi RPC `get_entries` 增量契约变化。
 
 ---
 
