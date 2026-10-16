@@ -78,6 +78,14 @@
 
 **上游依赖**：pi 内核 `ModelRuntime.refresh({allowNetwork:false})` 可重读配置；`setModel` 重绑；`getSupportedThinkingLevels`（`@earendil-works/pi-ai`）。
 
+**pi 版本适配**：已测至 **1.3.0**（2026-10-16）：rpc-types.d.ts 与 1.2.0 零差异、rpc-mode.js 逐字节相同（33 命令面）、model-registry.js / extensions/runner.js / types.d.ts / sdk.js 全部相同；bundled runtime 与 `PI_MAX_TESTED` 均已升到 1.3.x。
+
+**冒烟（每次 pi 升级必跑，两条命令）**：
+- `pnpm smoke:rpc`：裸 CLI + RPC，8 个命令（get_state / get_available_models / get_available_thinking_levels / set_model / set_thinking_level / get_entries / get_session_stats / set_session_name）+ 事件面。
+- `pnpm smoke:rpc-full`：**Desktop 完整启动参数**（`-e` 扩展链 + `--session`/`--session-dir` + `--append-system-prompt` + `--tools` 白名单 + `--model`），起本地 OpenAI 兼容 server 让 prompt 真正跑通、transcript 落盘，再从 system prompt 的 `<tools>` 块断言激活工具集（必须含 read/grep/find/ls、不得含 bash/edit/write）；扩展链靠 entries/transcript 里的 `desktop-policy-audit` 自定义条目验证。
+
+**冒烟自保（`tests/bundled-runtime-integrity.test.ts`）**：pi 的 bundle 用 `PI_PACKAGE_DIR` 覆盖自身包目录，任何 spawn 点若继承该变量，冒烟会静默跑到**全局 pi 安装**上（版本不符时「验证通过」是假的，且 `prepare-runtime.mjs` 版本自检会抛错）。故：所有 spawn 点（prepare-runtime.mjs / backend.ts / 两条冒烟）必须删除 `PI_PACKAGE_DIR` 与 `PI_SUBAGENTS_PI_CODING_AGENT_PACKAGE_ROOT`；两条冒烟必须在跑任何命令前先断言 `cli --version === resources/pi-runtime/package.json`。该测试真起子进程验证（污染确实生效 + 清理后恢复），并做破坏-恢复验证过。
+
 **回归触发**：pi 升级（refresh/setModel 契约）；改 `model-refresh.mjs`/`backend.ts`（modelsSafe/performModelRefresh）。
 
 ### R-model-02　思考等级配置不丢
@@ -149,7 +157,7 @@
 | 升级项 | 必须回归的需求 | 原因 |
 |---|---|---|
 | pi-subagents | R-subagent-02, R-subagent-01 | async 路径 status/sessionFile 形态可能变 |
-| pi 内核 | R-model-01, R-render-01, R-subagent-02 | refresh/setModel 契约、get_entries 增量、subagent 事件 |
+| pi 内核 | R-model-01, R-model-03, R-render-01, R-subagent-02 | refresh/setModel 契约、get_entries 增量、subagent 事件。**必跑 `pnpm smoke:rpc`** |
 | CCR | R-model-02, R-model-03 | provider 生命周期、思考等级字段 |
 | Electron | 全部渲染/IO 需求 | 进程模型、IPC 行为 |
 

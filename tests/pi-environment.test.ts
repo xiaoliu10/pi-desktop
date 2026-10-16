@@ -1,6 +1,6 @@
 import { afterEach, expect, it } from 'vitest';
 import fs from 'node:fs';import os from 'node:os';import path from 'node:path';
-import { discoverPi, piVersionSupported, compareVersion, piHasNativeMcp } from '../src/main/pi/environment';
+import { discoverPi, piVersionSupported, compareVersion, piHasNativeMcp, PI_MAX_TESTED } from '../src/main/pi/environment';
 const roots:string[]=[];afterEach(()=>roots.splice(0).forEach(p=>fs.rmSync(p,{recursive:true,force:true})));
 
 it('discovers a symlinked npm installation with spaces without executing it',()=>{
@@ -45,7 +45,7 @@ it('accepts pi 0.85.1 and 0.87.0 as supported, rejects 0.84.0',()=>{
   expect(piVersionSupported('0.84.0')).toBe(false);
   expect(piVersionSupported(null)).toBe(false);
 });
-it('accepts pi 0.99.x–1.2.x (native MCP era) and keeps 1.3.0 as the exclusive bound',()=>{
+it('accepts pi 0.99.x–1.3.x (native MCP era) and keeps 1.4.0 as the exclusive bound',()=>{
   expect(piVersionSupported('0.90.0')).toBe(process.platform !== 'win32');
   expect(piVersionSupported('0.99.0')).toBe(process.platform !== 'win32');
   expect(piVersionSupported('0.99.1')).toBe(process.platform !== 'win32');
@@ -54,8 +54,16 @@ it('accepts pi 0.99.x–1.2.x (native MCP era) and keeps 1.3.0 as the exclusive 
   expect(piVersionSupported('1.1.0')).toBe(process.platform !== 'win32');
   expect(piVersionSupported('1.2.0')).toBe(process.platform !== 'win32');
   expect(piVersionSupported('1.2.1')).toBe(process.platform !== 'win32');
-  expect(piVersionSupported('1.3.0')).toBe(false);
+  expect(piVersionSupported('1.3.0')).toBe(process.platform !== 'win32');
+  expect(piVersionSupported('1.3.1')).toBe(process.platform !== 'win32');
+  expect(piVersionSupported('1.3.5')).toBe(process.platform !== 'win32');
+  expect(piVersionSupported('1.4.0')).toBe(false);
+  expect(piVersionSupported('1.4.1')).toBe(false);
   expect(piVersionSupported('2.0.0')).toBe(false);
+  // Pin the exclusive-bound invariant itself, not just the literal: the bound must reject
+  // its own value and accept the patch level just below it.
+  expect(piVersionSupported(PI_MAX_TESTED)).toBe(false);
+  expect(piVersionSupported(PI_MAX_TESTED.replace(/(\d+)\.(\d+)\.(\d+)/, (_, a, b, c) => `${a}.${b}.${Number(c) - 1}`))).toBe(process.platform !== 'win32');
   expect(piHasNativeMcp('0.99.0')).toBe(true);
   expect(piHasNativeMcp('1.0.0')).toBe(true);
   expect(piHasNativeMcp('1.2.0')).toBe(true);
