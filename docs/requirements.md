@@ -82,7 +82,9 @@
 
 **冒烟（每次 pi 升级必跑，两条命令）**：
 - `pnpm smoke:rpc`：裸 CLI + RPC，8 个命令（get_state / get_available_models / get_available_thinking_levels / set_model / set_thinking_level / get_entries / get_session_stats / set_session_name）+ 事件面。
-- `pnpm smoke:rpc-full`：**Desktop 完整启动参数**（6 个 `-e` 扩展 + `--session`/`--session-dir` + `--append-system-prompt` + `--tools` 白名单 + `--model`），验证扩展链靠 entries 里的 `desktop-policy-audit` 自定义条目（system prompt 不落 entries，别断言它）、增量契约用 `get_entries(since=leafId)`。
+- `pnpm smoke:rpc-full`：**Desktop 完整启动参数**（`-e` 扩展链 + `--session`/`--session-dir` + `--append-system-prompt` + `--tools` 白名单 + `--model`），起本地 OpenAI 兼容 server 让 prompt 真正跑通、transcript 落盘，再从 system prompt 的 `<tools>` 块断言激活工具集（必须含 read/grep/find/ls、不得含 bash/edit/write）；扩展链靠 entries/transcript 里的 `desktop-policy-audit` 自定义条目验证。
+
+**冒烟自保（`tests/bundled-runtime-integrity.test.ts`）**：pi 的 bundle 用 `PI_PACKAGE_DIR` 覆盖自身包目录，任何 spawn 点若继承该变量，冒烟会静默跑到**全局 pi 安装**上（版本不符时「验证通过」是假的，且 `prepare-runtime.mjs` 版本自检会抛错）。故：所有 spawn 点（prepare-runtime.mjs / backend.ts / 两条冒烟）必须删除 `PI_PACKAGE_DIR` 与 `PI_SUBAGENTS_PI_CODING_AGENT_PACKAGE_ROOT`；两条冒烟必须在跑任何命令前先断言 `cli --version === resources/pi-runtime/package.json`。该测试真起子进程验证（污染确实生效 + 清理后恢复），并做破坏-恢复验证过。
 
 **回归触发**：pi 升级（refresh/setModel 契约）；改 `model-refresh.mjs`/`backend.ts`（modelsSafe/performModelRefresh）。
 
