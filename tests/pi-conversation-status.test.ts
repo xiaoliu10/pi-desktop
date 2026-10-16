@@ -18,8 +18,6 @@ describe('Git status',()=>{
 });
 const msg=(plan:unknown,status:'done'|'error'|'running'='done',phase:'result'|'progress'|'call'='result',id='one'):ChatMessage=>({id,role:'assistant',parts:[{kind:'tool',id,callId:id,tool:'desktop_update_plan',status,phase,detailLines:[JSON.stringify({plan})]}]});
 it('uses successful plans, ignores failures and incomplete updates, restores historical state',()=>{const pending=[{step:'Build',status:'pending'}],done=[{step:'Build',status:'completed'}];expect(conversationPlan([msg(pending),msg(done,'error')])).toEqual(pending);expect(conversationPlan([msg(pending),msg(done,'done','progress','two')])).toEqual(done);expect(conversationPlan([msg(done),msg(pending,'done','progress')])).toEqual(done);expect(conversationPlan([msg(pending),msg([{step:'Bad',status:'fake'}])])).toEqual(pending);expect(conversationPlan([msg(done),msg([])])).toEqual([]);});
-<<<<<<< Updated upstream
-=======
 const userMsg=(id:string,text='go'):ChatMessage=>({id,role:'user',parts:[{kind:'text',text}]});
 // 跨任务长会话：上一轮的旧 plan 不得继续占位（真实事故：一个从 09-29 用到现在的会话
 // 有 375 条 plan 记录，面板一直显示最早那批 LiteLLM 相关清单）。
@@ -53,5 +51,4 @@ it('returns empty when the newest turn has no plan, even if an earlier turn does
  expect(conversationPlan([userMsg('u1'),msg(old),userMsg('u2','')])).toEqual([]);
 });
 it('takes the last successful plan within the current turn only',()=>{const a=[{step:'One',status:'pending'}],b=[{step:'Two',status:'completed'}];expect(conversationPlan([userMsg('u1'),msg(a),msg(b,'done','result','two')])).toEqual(b);expect(conversationPlan([userMsg('u1'),msg(a),userMsg('u2'),msg(b)])).toEqual(b);});
->>>>>>> Stashed changes
 it('registers a metadata-only tool with validated round-trip progress results',async()=>{let tool:any;registerDesktopPlan({registerTool:(t:any)=>tool=t});const args={plan:[{step:' Test ',status:'in_progress'}]};const result=await tool.execute('id',args);expect(JSON.parse(result.content[0].text)).toEqual({plan:[{step:'Test',status:'in_progress'}]});await expect(tool.execute('id',{plan:[{step:'',status:'completed'}]})).rejects.toThrow();});
