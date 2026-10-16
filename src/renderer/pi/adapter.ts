@@ -1740,9 +1740,8 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
       set({archivedKeys: result, sessions: get().sessions.filter(s=>s.key!==key)});
       return true;
     },
-    /** 当前选中会话仍在工作的子代理（含排队）。切换会话只是看不到它们（pi 进程仍在跑、
-     *  可切回），断开会话才会终止持有它们的 pi 进程、子代理随之消失且不可恢复——
-     *  两个动作的提示文案不同：前者是提醒，后者是安全确认。
+    /** 当前选中会话仍在工作的子代理（含排队）。供提示条与断开确认使用：切换会话
+     *  不拦截（不杀进程、可切回），断开才需要确认。
      *  只支持当前会话：store 只缓存选中会话的 history，其他会话没有可靠数据源；
      *  断开路径对其他会话退化为通用确认（disconnectRun），不会凭缺失数据放行。 */
     liveSubagentCount: () => {
@@ -1756,10 +1755,9 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
       return runningSubagents(projectSubagents(messages, parentRunning, s.recoveredSubagents).filter(c => !dismissed.includes(c.id) && !dismissed.includes(c.callId))).length;
     },
     selectSession: (key) => {
-      // 切换会话不终止 pi 进程：子代理仍在后台运行，切回还能看到；这里只是提醒，不承诺「无法恢复」。
-      // 真正不可逆的是断开（disconnectRun），文案与语义在两处分别表达。
-      const live = get().liveSubagentCount();
-      if (live > 0 && !window.confirm(`当前会话还有 ${live} 个子代理正在工作。切换会话后它们仍在后台运行，你可以随时切回查看；确定现在离开吗？`)) return;
+      // 切换会话不拦截（用户 2026-10-16 明确）：它不终止 pi 进程，子代理仍在后台跑，
+      // 切回就能看到；「看得见」由常驻提示条负责，不靠打断切换。真正不可逆的是
+      // 断开（disconnectRun），确认只留在那条路径上。
       const draft = switchComposerOwner(get, key);
       set((s) => ({ selectedKey: key, leaf: undefined, history: undefined, review: undefined, view: 'chat', ...(draft ?? {}), recoveredSubagents: [], subagentDismissed: s.desktopPreferences?.subagentDismissed?.[key] ?? [] }));
       void refreshHistory();

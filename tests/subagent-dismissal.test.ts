@@ -157,20 +157,22 @@ describe('running-subagent guard on leaving a session', () => {
   const withLive = (status: ChildState) => {
     usePiStore.setState({ selectedKey: 'a', runs: [{ ...run, status: 'running' }], history: history([child(status)]), recoveredSubagents: [], subagentDismissed: undefined });
   };
-  // 断开会话会杀掉持有子代理的 pi 进程：有 running/queued 时必须先确认，
-  // 否则用户在不知情的情况下离开就会永久丢失子代理（真实痛点）。
-  it('blocks switching and disconnecting while a subagent is live, and allows it after settlement', async () => {
+  // 切换会话不拦截（用户 2026-10-16 明确）：它不杀进程、切回还能看到，常驻提示条已负责
+  // 可见性；断开（杀进程、不可逆）才是必须确认的那条路径。
+  it('switches freely while a subagent is live; only disconnecting requires confirmation', async () => {
     vi.stubGlobal('window', { localPi: { close: vi.fn(async () => undefined) }, innerWidth: 1280, confirm: vi.fn(() => false) });
     const close = (window as unknown as { localPi: { close: ReturnType<typeof vi.fn> } }).localPi.close;
     for (const status of ['running', 'queued'] as ChildState[]) {
       withLive(status);
       const store = usePiStore.getState();
       expect(store.liveSubagentCount()).toBe(1);
+      (window as unknown as { confirm: ReturnType<typeof vi.fn> }).confirm = vi.fn(() => false); // 每轮重置 spy
       store.selectSession('b');
-      expect(usePiStore.getState().selectedKey).toBe('a'); // 用户取消 → 不切换
+      expect(usePiStore.getState().selectedKey).toBe('b'); // 不弹确认、直接切换
+      expect((window as unknown as { confirm: ReturnType<typeof vi.fn> }).confirm).not.toHaveBeenCalled();
       store.disconnectRun('a');
       await vi.advanceTimersByTimeAsync(0);
-      expect(close).not.toHaveBeenCalled();
+      expect(close).not.toHaveBeenCalled(); // 取消 → 不关
       expect((window as unknown as { confirm: ReturnType<typeof vi.fn> }).confirm).toHaveBeenCalled();
     }
     // 用户确认 → 放行
