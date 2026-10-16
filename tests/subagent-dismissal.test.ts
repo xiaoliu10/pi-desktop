@@ -31,7 +31,7 @@ beforeEach(() => {
   service = new SettingsService({} as never, root, '');
   service.savePreferences({ subagentDismissed: { b: ['keep-hidden'] } });
   api = { saveDesktopSettings: vi.fn(async patch => service.savePreferences(patch)), history: vi.fn(async () => history(statuses.map(s => child(s)))) };
-  vi.stubGlobal('window', { localPi: api, innerWidth: 1280 });
+  vi.stubGlobal('window', { localPi: api, innerWidth: 1280, confirm: () => true });
   vi.stubGlobal('localStorage', { getItem: () => null });
   usePiStore.setState({ ...initial, selectedKey: 'a', runs: [run], history: history(statuses.map(s => child(s))), desktopPreferences: service.preferences(), subagentDismissed: undefined, recoveredSubagents: [] });
 });
@@ -150,5 +150,46 @@ describe('task board finished-only dismissal', () => {
   it('wires board actions to the existing store callbacks', () => {
     const app = fs.readFileSync(new URL('../src/renderer/pi/PiReplicaApp.tsx', import.meta.url), 'utf8');
     expect(app).toContain('onDismissSubagent={s.dismissSubagent} onDismissFinishedSubagents={s.dismissFinishedSubagents}');
+  });
+});
+
+describe('running-subagent guard on leaving a session', () => {
+  const withLive = (status: ChildState) => {
+    usePiStore.setState({ selectedKey: 'a', runs: [{ ...run, status: 'running' }], history: history([child(status)]), recoveredSubagents: [], subagentDismissed: undefined });
+  };
+  // 断开会话会杀掉持有子代理的 pi 进程：有 running/queued 时必须先确认，
+  // 否则用户在不知情的情况下离开就会永久丢失子代理（真实痛点）。
+  it('blocks switching and disconnecting while a subagent is live, and allows it after settlement', async () => {
+    vi.stubGlobal('window', { localPi: { close: vi.fn(async () => undefined) }, innerWidth: 1280, confirm: vi.fn(() => false) });
+    const close = (window as unknown as { localPi: { close: ReturnType<typeof vi.fn> } }).localPi.close;
+    for (const status of ['running', 'queued'] as ChildState[]) {
+      withLive(status);
+      const store = usePiStore.getState();
+      expect(store.liveSubagentCount()).toBe(1);
+      store.selectSession('b');
+      expect(usePiStore.getState().selectedKey).toBe('a'); // 用户取消 → 不切换
+      store.disconnectRun('a');
+      await vi.advanceTimersByTimeAsync(0);
+      expect(close).not.toHaveBeenCalled();
+      expect((window as unknown as { confirm: ReturnType<typeof vi.fn> }).confirm).toHaveBeenCalled();
+    }
+    // 用户确认 → 放行
+    vi.stubGlobal('window', { localPi: { close }, innerWidth: 1280, confirm: vi.fn(() => true) });
+    withLive('running');
+    usePiStore.getState().disconnectRun('a');
+    await vi.advanceTimersByTimeAsync(0);
+    expect(close).toHaveBeenCalledWith('a');
+  });
+  it('never blocks on finished subagents', async () => {
+    vi.stubGlobal('window', { localPi: { close: vi.fn(async () => undefined) }, innerWidth: 1280, confirm: vi.fn(() => false) });
+    const close = (window as unknown as { localPi: { close: ReturnType<typeof vi.fn> } }).localPi.close;
+    for (const status of ['completed', 'failed', 'interrupted', 'recovered', 'skipped', 'unknown'] as ChildState[]) {
+      withLive(status);
+      expect(usePiStore.getState().liveSubagentCount()).toBe(0);
+    }
+    withLive('completed');
+    usePiStore.getState().disconnectRun('a');
+    await vi.advanceTimersByTimeAsync(0);
+    expect(close).toHaveBeenCalledWith('a'); // 无确认直接放行
   });
 });

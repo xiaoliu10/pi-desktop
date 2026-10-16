@@ -1,7 +1,7 @@
 import { contextPrompt, parseContextPrompt, type ContextItem, type ThinkingLevel } from '../../shared/composer';
 import { closeTransientPopovers } from '../replica/popovers';
 import { workflowDetails } from '../../shared/subagent-workflow';
-import { projectSubagents } from './subagents';
+import { projectSubagents, runningSubagents } from './subagents';
 import { dismissibleSubagentIds } from './subagent-dismissal';
 import { applyAssistantStreamDelta } from './stream-delta';
 import { modelErrorPart } from './model-error';
@@ -866,6 +866,8 @@ export interface PiReplicaActions {
   prewarmSession: (key: string) => void;
   dismissSubagent: (childId: string) => void;
   dismissFinishedSubagents: (childIds: string[]) => void;
+  /** 当前选中会话仍在工作的子代理数量；切换/断开拦截的判定来源（其他会话无可靠数据源，恒 0）。 */
+  liveSubagentCount: () => number;
   setSessionArchived: (key: string, archived: boolean) => Promise<boolean>;
   /** 删除归档会话（文件进系统废纸篓）：成功后从归档列表与会话索引移除。 */
   deleteArchivedSession: (key: string) => Promise<boolean>;
@@ -1738,7 +1740,23 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
       set({archivedKeys: result, sessions: get().sessions.filter(s=>s.key!==key)});
       return true;
     },
+    /** 当前选中会话仍在工作的子代理（含排队）。切换/断开会话会杀掉持有它们的 pi 进程，
+     *  子代理随之消失且不可恢复，因此这两个动作必须先向用户确认。
+     *  只支持当前会话：store 只缓存选中会话的 history，其他会话没有可靠数据源，
+     *  凭缺失数据放行会造成「有时拦有时不拦」的不一致体验（返回 0 = 无从判定）。 */
+    liveSubagentCount: () => {
+      const s = get();
+      const key = s.selectedKey;
+      if (!key) return 0;
+      const messages = sentConversationMessages(s.history?.branch ?? [], s.live[key], s.toolProgress[key], (s.sends ?? []).filter(send => send.key === key), s.compactionAfter[key]);
+      const run = s.runs.find(r => r.key === key);
+      const parentRunning = Boolean(run && ['starting', 'running', 'stopping'].includes(run.status));
+      const dismissed = s.subagentDismissed ?? s.desktopPreferences?.subagentDismissed?.[key] ?? [];
+      return runningSubagents(projectSubagents(messages, parentRunning, s.recoveredSubagents).filter(c => !dismissed.includes(c.id) && !dismissed.includes(c.callId))).length;
+    },
     selectSession: (key) => {
+      const live = get().liveSubagentCount();
+      if (live > 0 && !window.confirm(`当前会话还有 ${live} 个子代理正在工作。切换会话会中断它们且无法恢复，确定继续吗？`)) return;
       const draft = switchComposerOwner(get, key);
       set((s) => ({ selectedKey: key, leaf: undefined, history: undefined, review: undefined, view: 'chat', ...(draft ?? {}), recoveredSubagents: [], subagentDismissed: s.desktopPreferences?.subagentDismissed?.[key] ?? [] }));
       void refreshHistory();
@@ -2363,6 +2381,9 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
       }
     },
     disconnectRun: (key) => {
+      // 只拦当前会话：其他会话的 history 不在 store 里，无从可靠判定（见 liveSubagentCount）。
+      const live = key === get().selectedKey ? get().liveSubagentCount() : 0;
+      if (live > 0 && !window.confirm(`该会话还有 ${live} 个子代理正在工作。断开会话会中断它们且无法恢复，确定继续吗？`)) return;
       void attempt(() => window.localPi!.close(key));
     },
 
