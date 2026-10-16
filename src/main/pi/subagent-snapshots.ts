@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import type { PiHistory } from '../../shared/pi';
-import { isSubagentManagement, singleAsyncDetails, singleRunRow, workflowDetails, workflowId, workflowObject as obj, workflowRows, workflowState, workflowText as text } from '../../shared/subagent-workflow';
+import { isSubagentManagement, completionsDetails, singleAsyncDetails, singleRunRow, workflowDetails, workflowId, workflowObject as obj, workflowRows, workflowState, workflowText as text } from '../../shared/subagent-workflow';
 
 export interface SubagentSnapshot { callId: string; status: string; details?: unknown; error?: string; startedAt?: number; updatedAt?: number }
 const MAX_JSON = 256 * 1024;
@@ -60,7 +60,7 @@ function pointers(history: PiHistory, persisted: SubagentSnapshot[]) {
   const calls = new Map<string, { at: number; management: boolean }>();
   const found = new Map<string, SubagentSnapshot>();
   const collect = (details: unknown, callId: string, at?: number) => {
-    if (workflowDetails(details, callId) || singleAsyncDetails(details, callId)) found.set(callId, { callId, status: 'unknown', details, startedAt: at });
+    if (workflowDetails(details, callId) || singleAsyncDetails(details, callId) || completionsDetails(details, callId)) found.set(callId, { callId, status: 'unknown', details, startedAt: at });
   };
   for (const e of history.branch) {
     const m = e.message;
@@ -74,7 +74,7 @@ function pointers(history: PiHistory, persisted: SubagentSnapshot[]) {
     if (calls.get(rec.callId)?.management) continue;
     // Events can precede the history append, but remain scoped to this session's
     // hash-owned persistence file. They are not a license to use arbitrary dirs.
-    if (!found.has(rec.callId) && (workflowDetails(rec.details, rec.callId) || singleAsyncDetails(rec.details, rec.callId))) found.set(rec.callId, rec);
+    if (!found.has(rec.callId) && (workflowDetails(rec.details, rec.callId) || singleAsyncDetails(rec.details, rec.callId) || completionsDetails(rec.details, rec.callId))) found.set(rec.callId, rec);
   }
   return [...found.values()].slice(-MAX_CALLS);
 }
@@ -166,7 +166,11 @@ export async function childSessionPointer(history: PiHistory, persisted: Subagen
     if (typeof d.asyncDir !== 'string' || path.resolve(d.asyncDir) !== path.resolve(expectedDir) || (d.asyncId !== undefined && d.asyncId !== runId)) return undefined;
     const status = await readSnapshotJson(root, path.join(expectedDir, 'status.json'));
     if (status.runId !== runId || status.sessionId !== history.session.path || !validTime(status)) return undefined;
-    if (singleAsyncDetails(d, callId)) {
+    if (singleAsyncDetails(d, callId) || completionsDetails(d, callId)) {
+      // completions 形态：指针由 completions[].results[].sessionFile 直接给出（run 已结束、
+      // async 目录可能已清），不再走 expectedDir/status.json 校验链。
+      const fromCompletions = completionsDetails(d, callId);
+      if (fromCompletions) return fromCompletions.sessionFile;
       if (status.mode !== 'single' || (status.toolCallId !== undefined && status.toolCallId !== callId) || childId !== 'single') return undefined;
       return typeof status.sessionFile === 'string' ? status.sessionFile : undefined;
     }
