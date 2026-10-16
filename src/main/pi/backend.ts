@@ -986,6 +986,9 @@ export class PiBackend {
         const clean = (m: any) => ({ id: String(m.id), name: String(m.name || m.id), provider: String(m.provider), reasoning: !!m.reasoning, input: Array.isArray(m.input) ? m.input.filter((i: unknown) => typeof i === 'string') : undefined });
         run.view.models = models.models.map(clean);
         run.view.model = state.model ? clean(state.model) : undefined;
+        // 防御性兜底（原 refreshModels 同款）：get_state 报的模型若不在刷新后的可用列表里，
+        // 清掉选择，避免 UI 显示一个下拉里不存在的模型。
+        if (run.view.model && !run.view.models.some(m => m.provider === run.view.model!.provider && m.id === run.view.model!.id)) run.view.model = undefined;
         run.view.thinkingLevel = state.thinkingLevel;
         run.view.thinkingLevels = thinking.levels.filter((l: ThinkingLevel) => THINKING_LEVELS.includes(l));
         run.modelRefreshDone = revision;
