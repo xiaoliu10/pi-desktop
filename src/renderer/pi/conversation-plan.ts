@@ -20,7 +20,7 @@ export function conversationPlan(messages: ChatMessage[]): PlanItem[] {
     if (messages[index]?.role === 'user') { start = index + 1; break; }
     start = index; // 没有用户消息（纯工具续跑）时退回整段，保持可用
   }
-  const saved = new Set(messages.flatMap(m => m.parts).filter(p => p.kind === 'tool' && p.phase === 'result').map(p => (p.kind === 'tool' ? p.callId : undefined)).filter(Boolean));
+  const saved = new Set(messages.slice(start).flatMap(m => m.parts).filter(p => p.kind === 'tool' && p.phase === 'result').map(p => (p.kind === 'tool' ? p.callId : undefined)).filter(Boolean));
   let plan: PlanItem[] = [];
   for (let index = start; index < messages.length; index += 1) {
     const message = messages[index];
