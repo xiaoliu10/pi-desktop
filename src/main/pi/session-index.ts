@@ -42,7 +42,10 @@ function inferParentFromNestedPath(dir: string, rootReal: Set<string>, files: Ma
 }
 
 export class SessionIndex {
-  private cache = new Map<string, { stamp: string; history: PiHistory }>();
+  /** parsedBytes = 已完整消费的字节数（到最后一行完整行末尾）；pendingTail = 其后尚未成行的残留。
+   *  大会话流式期间每次只追加几 KB，history() 对脏文件走增量 tail 解析（毫秒级），
+   *  不再全量重读（实测 103MB 会话全量重解析 421ms，同步阻塞主进程）。 */
+  private cache = new Map<string, { stamp: string; history: PiHistory; parsedBytes: number; pendingTail: string }>();
   /** 嵌套子会话（pi-subagents async 布局）文件 → 推断的主会话路径。 */
   private nestedParents = new Map<string, string>();
   /** 已有缓存但文件又增长了的会话：等写入平息后再全量重解析。 */
@@ -60,11 +63,16 @@ export class SessionIndex {
       return { stat, stamp: `${stat.ino}:${stat.size}:${stat.mtimeMs}:${stat.ctimeMs}` };
     } catch { return undefined; }
   }
-  private parseFile(file: string, key: string): void {
+  private parseFile(file: string, key: string, incremental = false): void {
     const stamped = this.stampOf(file);
     if (!stamped) return;
     const { stat, stamp } = stamped;
     if (stat.size > MAX_SESSION) throw new OversizedSessionError(file, stat.size);
+    const cached = this.cache.get(key);
+    if (incremental && cached && stat.size >= cached.parsedBytes) {
+      this.parseAppends(file, key, stat, stamp, cached);
+      return;
+    }
     const raw = fs.readFileSync(file, 'utf8');
     const lines = raw.split('\n');
     const tail = lines.pop(); // Never consume an incomplete append.
@@ -83,7 +91,61 @@ export class SessionIndex {
     const name = [...entries].reverse().find(e => e.type === 'session_info' && typeof e.name === 'string')?.name;
     const parents = new Set(entries.map(e => e.parentId));
     const session: PiSession = { key, id: header.id, path: file, cwd: header.cwd, name: String(name || title || '未命名 pi 会话').slice(0, 180), updatedAt: stat.mtimeMs, size: stat.size, warnings, owned: file.startsWith(canonical(this.ownedRoot) + path.sep), parentSession: typeof header.parentSession === 'string' ? header.parentSession : this.nestedParents.get(file), sidecarOf: path.basename(file).startsWith('sidecar_') ? '' : undefined };
-    this.cache.set(key, { stamp, history: { session, entries, branch, leaves: entries.filter(e => e.id && !parents.has(e.id)).map(e => e.id!), leafId: branch.at(-1)?.id || null, syncedAt: Date.now() } });
+    // parsedBytes 停在最后一个完整行末尾；尾部残留行作为 pendingTail 待增量时拼接。
+    const parsedBytes = Buffer.byteLength(raw, 'utf8') - Buffer.byteLength(tail ?? '', 'utf8');
+    this.cache.set(key, { stamp, history: { session, entries, branch, leaves: entries.filter(e => e.id && !parents.has(e.id)).map(e => e.id!), leafId: branch.at(-1)?.id || null, syncedAt: Date.now() }, parsedBytes, pendingTail: tail ?? '' });
+    this.dirty.delete(key);
+  }
+  /** 增量消费 cached.parsedBytes 之后的新增字节。parsedBytes 是**已读偏移**（pendingTail
+   *  的字节已包含在内）：下次从它继续读，text = pendingTail + 新 chunk，不会重读也不会漏。
+   *  文件缩短/替换（stamp 变小）时回退全量。只读新增段，不重读旧内容——这是大会话流式
+   *  期间 history() 从几百 ms 同步阻塞降到毫秒级的关键。有新增完整行时替换 history 对象
+   *  （原契约：重解析返回新引用）；仅尾部未成行时只更新元数据，不换引用以免渲染抖动。 */
+  private parseAppends(file: string, key: string, stat: fs.Stats, stamp: string, cached: { stamp: string; history: PiHistory; parsedBytes: number; pendingTail: string }): void {
+    const { history, parsedBytes, pendingTail } = cached;
+    if (stat.size === parsedBytes) { cached.stamp = stamp; this.dirty.delete(key); return; }
+    if (stat.size < parsedBytes) { this.parseFile(file, key); return; } // 截断/替换：回退全量
+    const len = stat.size - parsedBytes;
+    const buf = Buffer.alloc(len);
+    const fd = fs.openSync(file, 'r');
+    try { fs.readSync(fd, buf, 0, len, parsedBytes); } finally { fs.closeSync(fd); }
+    const lines = (pendingTail + buf.toString('utf8')).split('\n');
+    const newTail = lines.pop() ?? '';
+    const base = history.session.warnings.filter(w => !w.startsWith('增量段跳过') && w !== '尾行尚未完整写入，等待同步。');
+    const added: PiEntry[] = [];
+    let bad = 0;
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      try { const e = JSON.parse(line); if (e && typeof e.type === 'string') added.push(e); else bad++; }
+      catch { bad++; }
+    }
+    // 坏行跨增量累计成单条可替换警告：既有提示（原契约，坏行内容永久损坏）又不随流式无限增长。
+    const prevBad = history.session.warnings.reduce((n, w) => n + (Number(/^增量段跳过 (\d+) 行损坏$/.exec(w)?.[1]) || 0), 0);
+    const warnings = [...base, ...(prevBad + bad ? [`增量段跳过 ${prevBad + bad} 行损坏`] : [])];
+    cached.stamp = stamp;
+    cached.parsedBytes = parsedBytes + len;
+    cached.pendingTail = newTail;
+    if (!added.length) {
+      // 只有未成行的尾部变化：元数据就地更新，history 引用不变。
+      history.session.size = stat.size;
+      history.session.updatedAt = stat.mtimeMs;
+      history.session.warnings = warnings;
+      return;
+    }
+    // 会话头只出现在首行，增量段不会引入 header；session_info 改名也能增量生效。
+    const entries = [...history.entries, ...added];
+    const branch = branchEntries(entries);
+    const parents = new Set(entries.map(e => e.parentId));
+    const name = [...added].reverse().find(e => e.type === 'session_info' && typeof e.name === 'string')?.name;
+    cached.history = {
+      ...history,
+      session: { ...history.session, size: stat.size, updatedAt: stat.mtimeMs, warnings, ...(name ? { name: String(name).slice(0, 180) } : {}) },
+      entries,
+      branch,
+      leaves: entries.filter(e => e.id && !parents.has(e.id)).map(e => e.id!),
+      leafId: branch.at(-1)?.id || history.leafId,
+      syncedAt: Date.now(),
+    };
     this.dirty.delete(key);
   }
   /** 文件写入平息 1.5s 后再重解析脏会话（流式追加是连续的，只有间隙才安全）。 */
@@ -92,7 +154,7 @@ export class SessionIndex {
     this.settleTimer = setTimeout(() => {
       if (!this.dirty.size) return;
       for (const [key, file] of this.dirty) {
-        try { this.parseFile(file, key); } catch { /* 保留旧缓存，下次轮询重试 */ }
+        try { this.parseFile(file, key, true); } catch { /* 保留旧缓存，下次轮询重试 */ }
       }
       changed?.();
     }, 1500);
@@ -160,7 +222,8 @@ export class SessionIndex {
             entries: [], branch: [], leaves: [], leafId: null, syncedAt: Date.now(),
           };
           this.oversized.add(degraded);
-          this.cache.set(key, { stamp, history: degraded });
+          // parsedBytes/pendingTail 对超限降级缓存无意义（永不增量解析），置 0/空满足类型。
+          this.cache.set(key, { stamp, history: degraded, parsedBytes: 0, pendingTail: '' });
           continue;
         }
         const old = this.cache.get(key);
@@ -178,17 +241,40 @@ export class SessionIndex {
     return leaf ? { ...found, branch: branchEntries(found.entries, leaf), leafId: leaf } : found;
   }
   history(key: string, leaf?: string): PiHistory {
+    // 快路径：缓存命中且目标文件 stamp 未变 → 直接增量消费尾部（若有新增）并返回。
+    // 不再每次全扫 scan()（实测热扫也要 173ms，冷扫 3.5s——主进程同步阻塞是打字卡顿的
+    // 第一根因）；新增/删除会话由 watcher/轮询的 changed() 驱动，单会话读取不依赖它。
+    const fast = this.cache.get(key);
+    if (fast) {
+      const file = fast.history.session.path;
+      const stamped = this.stampOf(file);
+      if (stamped && stamped.stamp === fast.stamp) {
+        if (stamped.stat.size > fast.parsedBytes || fast.pendingTail) {
+          try { this.parseFile(file, key, true); } catch { /* 增量失败保留旧缓存 */ }
+        }
+        if (this.oversized.has(this.cache.get(key)!.history)) throw new OversizedSessionError(file, this.cache.get(key)!.history.session.size);
+        return this.fromCache(key, leaf);
+      }
+      // stamp 变了（增长或截断替换）或文件消失：增长走增量，其余走慢路径清理。
+      if (stamped && stamped.stat.size >= fast.parsedBytes) {
+        try { this.parseFile(file, key, true); } catch (err) { if (err instanceof OversizedSessionError) throw err; }
+        const updated = this.cache.get(key);
+        if (updated && updated.stamp === stamped.stamp) return this.fromCache(key, leaf);
+      }
+    }
     this.scan();
     // 目标会话有未落地的脏数据时同步重解析该文件（只此一个），保证刷新拿到完整尾部。
     const dirtyFile = this.dirty.get(key);
-    if (dirtyFile) { try { this.parseFile(dirtyFile, key); } catch { /* 保留旧缓存 */ } }
+    if (dirtyFile) { try { this.parseFile(dirtyFile, key, true); } catch { /* 保留旧缓存 */ } }
+    return this.fromCache(key, leaf);
+  }
+  private fromCache(key: string, leaf?: string): PiHistory {
     const cached = this.cache.get(key)?.history;
     if (!cached) throw new Error('会话不存在、不可读或不在选定目录中。');
-    const found = cached;
     // 超限会话只做了元数据降级：列表可见但全量历史不可读，给可执行错误而不是空历史。
-    if (this.oversized.has(found)) throw new OversizedSessionError(found.session.path, found.session.size);
-    if (leaf && !found.entries.some(e => e.id === leaf)) throw new Error('分支记录不存在');
-    return leaf ? { ...found, branch: branchEntries(found.entries, leaf), leafId: leaf } : found;
+    if (this.oversized.has(cached)) throw new OversizedSessionError(cached.session.path, cached.session.size);
+    if (leaf && !cached.entries.some(e => e.id === leaf)) throw new Error('Unknown leaf');
+    return leaf ? { ...cached, branch: branchEntries(cached.entries, leaf), leafId: leaf } : cached;
   }
   start(changed: () => void) {
     this.close();
