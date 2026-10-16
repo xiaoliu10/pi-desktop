@@ -102,7 +102,7 @@ export async function workflowSnapshots(history: PiHistory, persisted: SubagentS
         const row = singleRunRow(status);
         let state = workflowState(row.state);
         if (['running', 'queued'].includes(state) && now - (row.snapshotAt || 0) > STALE_MS) state = 'unknown';
-        const child: Record<string, any> = { childId: row.childId, runId: workflowId(row.runId) ? row.runId : undefined, agent: text(row.agent), label: text(row.label), state, model: text(row.model) };
+        const child: Record<string, any> = { childId: row.childId, runId: workflowId(row.runId) ? row.runId : undefined, agent: text(row.agent), label: text(row.label), sessionName: text(row.sessionName), state, model: text(row.model) };
         if (typeof row.tokens === 'number') child.tokens = row.tokens;
         if (typeof row.turns === 'number') child.turns = row.turns;
         child.snapshotAt = row.snapshotAt;
@@ -115,7 +115,7 @@ export async function workflowSnapshots(history: PiHistory, persisted: SubagentS
         for (const row of rows) {
           // Only these display fields cross IPC. In particular do not recover
           // descriptions, prompts, sessionFile, transcriptPath or recent output.
-          const child: Record<string, any> = { childId: row.childId, runId: workflowId(row.runId) ? row.runId : undefined, agent: text(row.agent), label: text(row.label), state: workflowState(row.state), model: text(row.model) };
+          const child: Record<string, any> = { childId: row.childId, runId: workflowId(row.runId) ? row.runId : undefined, agent: text(row.agent), label: text(row.label), sessionName: text(row.sessionName), state: workflowState(row.state), model: text(row.model) };
           if (child.runId) {
             try {
               const s = await readSnapshotJson(root, path.join(root, child.runId, 'status.json'), budget);

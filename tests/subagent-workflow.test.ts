@@ -98,6 +98,17 @@ describe('workflow adapter projection', () => {
     const children = adapter.parse(part, false);
     expect(children.map(c => c.status)).toEqual(['completed', 'failed', 'interrupted']);
   });
+  it('shows the task theme from a clean sessionName, falls back to the key when redacted', () => {
+    // 干净 sessionName：卡片标题显示任务主题（去 agent 前缀），而不是 workflow key
+    const clean = adapter.parse(wf('run-1', 'call-1', 'running', [{ childId: 'research-cc', runId: 'r1', agent: 'researcher', state: 'running', sessionName: 'researcher: 调研 Claude Code 最新版本的质量机制增量' }]), false);
+    expect(clean[0].task).toBe('调研 Claude Code 最新版本的质量机制增量');
+    // 红线 sessionName：不得恢复内容，回退 label（无 label 则空）
+    const redacted = adapter.parse(wf('run-2', 'call-2', 'running', [{ childId: 'fix-bug', runId: 'r2', agent: 'dev', state: 'running', sessionName: 'dev: [prompt redacted] some secret task text', description: '[prompt redacted]' }]), false);
+    expect(redacted[0].task).toBe('');
+    // 无 sessionName 的旧版上游：回退 label（旧行为）
+    const legacy = adapter.parse(wf('run-3', 'call-3', 'running', [{ childId: 'cc-latest', runId: 'r3', agent: 'researcher', state: 'running', label: 'cc-latest' }]), false);
+    expect(legacy[0].task).toBe('cc-latest');
+  });
   it('does not reverse-decrypt tasks from sessionName or redacted prompt fields', () => {
     const part = wf('run-1', 'call-1', 'running', [{ childId: 'fix-bug', runId: 'c1', agent: 'dev', state: 'running', sessionName: 'dev: [prompt redacted] some secret task text', description: '[prompt redacted]' }]);
     const children = adapter.parse(part, false);

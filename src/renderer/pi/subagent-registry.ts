@@ -151,7 +151,10 @@ export function createWorkflowAdapter(): SubagentAdapter {
         const state = workflowState(single.state);
         // completions 形态的指针在 completions[].results[].sessionFile（run 已结束），
         // runId 用于 id 稳定性；childKey='single' 让详情面板走 completions 指针分支。
-        return [{ id: `${callId}:workflow:${single.runId}:single`, callId, runId: single.runId, childKey: 'single', mode: 'workflow', agent: bounded(args.agent) || '子代理', task: '', status: state, messages: [] }];
+        // 标题同 workflow 子代理：优先 single 会话名的任务主题（红线时回退空）。
+        const singleTheme = String((single as Record<string, unknown>).sessionName ?? '');
+        const singleTask = singleTheme && !singleTheme.includes('[prompt redacted]') ? bounded(singleTheme.replace(/^[^:\s]{1,40}:\s*/, '')) : '';
+        return [{ id: `${callId}:workflow:${single.runId}:single`, callId, runId: single.runId, childKey: 'single', mode: 'workflow', agent: bounded(args.agent) || '子代理', task: singleTask, status: state, messages: [] }];
       }
       const d = workflowDetails(part.resultDetails, callId)!;
       const rows = workflowRows(d);
@@ -167,9 +170,12 @@ export function createWorkflowAdapter(): SubagentAdapter {
         return {
           id: `${callId}:workflow:${d.runId}:${row.childId}`, callId, childKey: row.childId, mode: 'workflow',
           agent: bounded(row.agent) || '子代理',
-          // Only explicit display labels. Never reconstruct a redacted task from
-          // sessionName, a transcript, or another on-disk prompt field.
-          task: bounded(row.label), status,
+          // 卡片标题用任务主题：上游派生的 sessionName（`agent: <主题>`，去 agent 前缀）。
+          // 但 task 被红线时 sessionName 同样埋有 [prompt redacted]——此时绝不从它恢复
+          // 内容，回退 label（旧契约：Only explicit display labels）。无 sessionName 的
+          // 旧版上游同样回退 label（通常是无信息量的 workflow key）。
+          task: (() => { const theme = String(row.sessionName ?? ''); return theme && !theme.includes('[prompt redacted]') ? bounded(theme.replace(/^[^:\s]{1,40}:\s*/, '')) || bounded(row.label) : bounded(row.label); })(),
+          status,
           model: bounded(row.model) || undefined, messages: [],
           tokens: typeof row.tokens === 'number' ? row.tokens : undefined,
           turns: typeof row.turns === 'number' ? row.turns : undefined,
