@@ -34,7 +34,8 @@ export interface PiRetryGroup {
   phase: 'running' | 'waiting' | 'completed' | 'exhausted' | 'cancelled' | 'failed';
   delayMs?: number; nextRetryAt?: number; error?: string;
 }
-export interface PiRun { sidecarOf?: string; retryGroup?: PiRetryGroup; queue?: {text: string; behavior: 'steer' | 'followUp'; images?: PiImage[]; pendingSync?: boolean}[]; pendingModel?: { provider: string; id: string }; pendingThinking?: ThinkingLevel; thinkingLevel?: ThinkingLevel; thinkingLevels?: ThinkingLevel[]; planReady?: boolean; accessMode?: AccessMode; executionMode?: Exclude<AccessMode, 'plan'>; timing?: { startedAt: number; endedAt?: number }; compacting?: boolean; key: string; generation: string; cwd: string; file: string; status: 'starting' | 'idle' | 'running' | 'stopping' | 'error'; /** starting 期的子阶段：loading=会话历史加载中（大会话可长达数分钟），就绪后置 undefined。 */ stage?: 'loading'; model?: PiModel; models: PiModel[]; commands: PiCommand[]; pending: number; error?: string; contextDetails?: import('./context-details').ContextDetails; contextUsage?: { tokens: number; contextWindow: number; percent: number }; stats?: PiSessionStats; /** 输出速度采样快照（当前连接内有效完成调用累计）；断开/重连后置 undefined 显示 —。与 stats 独立，避免被 refreshContextUsage 的 stats 快照覆盖。 */ outputPerformance?: PiOutputPerformance }
+export interface PiModelRefresh { status: 'pending' | 'refreshing' | 'refreshed' | 'error'; count?: number; message?: string }
+export interface PiRun { modelRefresh?: PiModelRefresh; sidecarOf?: string; retryGroup?: PiRetryGroup; queue?: {text: string; behavior: 'steer' | 'followUp'; images?: PiImage[]; pendingSync?: boolean}[]; pendingModel?: { provider: string; id: string }; pendingThinking?: ThinkingLevel; thinkingLevel?: ThinkingLevel; thinkingLevels?: ThinkingLevel[]; planReady?: boolean; accessMode?: AccessMode; executionMode?: Exclude<AccessMode, 'plan'>; timing?: { startedAt: number; endedAt?: number }; compacting?: boolean; key: string; generation: string; cwd: string; file: string; status: 'starting' | 'idle' | 'running' | 'stopping' | 'error'; /** starting 期的子阶段：loading=会话历史加载中（大会话可长达数分钟），就绪后置 undefined。 */ stage?: 'loading'; model?: PiModel; models: PiModel[]; commands: PiCommand[]; pending: number; error?: string; contextDetails?: import('./context-details').ContextDetails; contextUsage?: { tokens: number; contextWindow: number; percent: number }; stats?: PiSessionStats; /** 输出速度采样快照（当前连接内有效完成调用累计）；断开/重连后置 undefined 显示 —。与 stats 独立，避免被 refreshContextUsage 的 stats 快照覆盖。 */ outputPerformance?: PiOutputPerformance }
 /** Provider-reported output tokens paired with measured durations in this connection only. */
 export interface PiOutputPerformance { tokens: number; ms: number; calls: number }
 export interface PiSessionStats { tokens: { input: number; output: number; cacheRead: number; cacheWrite: number; total: number }; cost?: number; totalMessages?: number; toolCalls?: number }
@@ -133,7 +134,7 @@ export interface LocalPiApi extends importSettingsApi {
   sessionReload(key: string): Promise<PiRun>;
   /** 按需重拉斜杠命令列表（补全面板为空时自愈）；返回最新命令数。 */
   refreshCommands(key: string): Promise<number>;
-  refreshModels(key: string): Promise<number>;
+  refreshModels(key: string): Promise<PiModelRefresh>;
   stop(key: string): Promise<{ steering: string[]; followUp: string[] }>;
   /** Mutate the queued follow-ups of a running session: remove / edit / steer-now. */
   queueEdit(key: string, op: PiQueueOp): Promise<void>;
@@ -276,6 +277,7 @@ export interface PiAccountLogin {
   prompt?:{id:string;type:'text'|'secret'|'select'|'manual_code';message:string;placeholder?:string;options?:{id:string;label:string;description?:string}[]};
 }
 export interface PiModelCatalog {
+  sessionRefresh?: { refreshed: number; pending: number; failed: number };
   warning?: string;
   defaultProvider?: string;
   defaultModel?: string;

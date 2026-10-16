@@ -133,9 +133,14 @@ export class PiHost {
     } catch { return []; }
   }
   modelDefaultSave(input: { provider?: string; model?: string }) { return writeDefaultModel(this.environment.agentDir, input); }
-  modelProviderSave(provider: PiModelProviderDraft) { return writeModelProvider(this.environment.agentDir, provider); }
-  modelProviderAuthSave(input: { id: string; apiKey?: string; clear?: boolean }) { return writeProviderApiKey(this.environment.agentDir, input); }
-  modelProviderRemove(id: string) { return removeModelProvider(this.environment.agentDir, id); }
+  /** Persistence succeeds independently of connected-session adoption; never claim both on failure. */
+  private async adoptModelConfiguration(catalog: import('../../shared/pi').PiModelCatalog) {
+    const sessionRefresh = await this.backend.refreshModelConfiguration();
+    return { ...catalog, sessionRefresh, ...(sessionRefresh.failed ? { warning: '配置已保存，但部分会话刷新失败；请检查会话提示，修复后刷新模型列表或断开后重连。' } : {}) };
+  }
+  modelProviderSave(provider: PiModelProviderDraft) { return this.adoptModelConfiguration(writeModelProvider(this.environment.agentDir, provider)); }
+  modelProviderAuthSave(input: { id: string; apiKey?: string; clear?: boolean }) { return this.adoptModelConfiguration(writeProviderApiKey(this.environment.agentDir, input)); }
+  modelProviderRemove(id: string) { return this.adoptModelConfiguration(removeModelProvider(this.environment.agentDir, id)); }
   usageStats() { return this.usage.get(); }
   review(cwd: string) {
     if (!this.index.scan().some(s => s.cwd === cwd) && !this.backend.runs().some(r => r.cwd === cwd)) throw new Error('请先选择该项目的会话');

@@ -20,6 +20,7 @@ function setup({ selectImpl, modeFile } = {}) {
     getActiveTools: () => ['read', 'write', 'edit', 'bash'],
     setActiveTools: () => {},
     registerTool: () => {},
+    registerCommand: () => {},
     appendEntry: (_type, data) => audit.push(data),
     ui: { setStatus: () => {} },
   };

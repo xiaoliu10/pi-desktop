@@ -1,3 +1,5 @@
+import { availableLevelsOf } from '../replica/settings/thinking-level-chips';
+import { modelSaveNotice } from './model-refresh-notice';
 import { mergeSubagentSnapshots, pollSubagents } from './subagent-polling';
 import { SubagentPanel } from './SubagentPanel';
 import { SidecarPanel, sidecarLabelsFor } from './SidecarPanel';
@@ -545,7 +547,7 @@ export default function PiReplicaApp() {
         ...(run?.commands ?? []).map((c) => ({ name: `/${c.name}`, description: c.description ?? '' })),
       ]}
       onSlashCommandsEmpty={run ? () => { void window.localPi!.refreshCommands(run.key).catch(() => { /* 会话可能已关闭 */ }); } : undefined}
-      onRefreshModels={run ? () => { void window.localPi!.refreshModels(run.key).then(n => { s.notify({ kind: 'info', title: s.lang === 'zh' ? `已刷新，会话内可用模型 ${n} 个` : `Refreshed: ${n} models available`, time: '刚刚' }); }).catch((e) => s.notify({ kind: 'error', title: String(e), time: '刚刚' })); } : undefined}
+      onRefreshModels={run ? () => { void window.localPi!.refreshModels(run.key).then(result => { s.notify({ kind: 'info', title: result.status === 'refreshed' ? (s.lang === 'zh' ? `已刷新，会话内可用模型 ${result.count} 个` : `Refreshed: ${result.count} models available`) : (result.message ?? (s.lang === 'zh' ? '模型配置待刷新' : 'Model refresh pending')), time: '刚刚' }); }).catch((e) => s.notify({ kind: 'error', title: String(e), time: '刚刚' })); } : undefined}
       files={[]}
       running={Boolean(run && ['running', 'starting', 'stopping'].includes(run.status)) || Boolean(s.selectedKey && s.retrying[s.selectedKey])}
       sending={(s.sends ?? []).some(send => send.key === s.selectedKey && isAwaitingSend(send)) || Boolean(launchPrompt)}
@@ -561,8 +563,8 @@ export default function PiReplicaApp() {
       pendingModelId={run?.pendingModel ? `${run.pendingModel.provider}/${run.pendingModel.id}` : undefined}
       headerSlot={<ProjectHeader cwd={composerCwd} locked={!!s.selectedKey || s.connecting} onChoose={s.chooseWorkspace} projects={sidebar.projects.map(p=>({path:p.path,name:p.name}))} onSelect={path=>usePiStore.setState({draftCwd:path})} />}
       addSlot={<ComposerAdd cwd={composerCwd} disabled={s.connecting} onAdd={s.addContext} />}
-      contextSlot={<><ContextChips items={s.contextItems} remove={s.removeContext} />{attachmentLoading && <div className="pi-attachment-loading" role="status">正在读取附件…</div>}</>}
-      reasoningSlot={<ThinkingMenu value={run?.thinkingLevel ?? s.desktopPreferences?.defaultThinkingLevel ?? 'off'} levels={run ? (run.thinkingLevels ?? []) : draftModel?.reasoning ? ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const : []} disabled={s.connecting} pending={run?.pendingThinking} onChange={s.pickThinking} />}
+      contextSlot={<>{run?.modelRefresh?.message && <div className="pi-attachment-loading" role="status">{run.modelRefresh.message}</div>}<ContextChips items={s.contextItems} remove={s.removeContext} />{attachmentLoading && <div className="pi-attachment-loading" role="status">正在读取附件…</div>}</>}
+      reasoningSlot={<ThinkingMenu value={run?.thinkingLevel ?? s.desktopPreferences?.defaultThinkingLevel ?? 'off'} levels={run ? (run.thinkingLevels ?? []) : draftModel?.reasoning ? availableLevelsOf(JSON.stringify(draftModel.thinkingLevelMap ?? {})) : []} disabled={s.connecting} pending={run?.pendingThinking} onChange={s.pickThinking} />}
       voiceSlot={appendTranscript =>
         <VoiceInputButton
           key={`${s.selectedKey ?? 'draft'}:${composerCwd ?? ''}`}
@@ -735,15 +737,14 @@ export default function PiReplicaApp() {
     providerSaving.current=true;
     setProviderForm(current=>({...current,saving:true,error:undefined}));
     void window.localPi!.modelProviderSave({ id, name: draft.name.trim(), baseUrl: draft.baseUrl.trim(), ...(draft.apiKey ? { apiKey: draft.apiKey } : {}), models })
-      .then(() => { setProviderForm({ saving:false, open: false, editingId: null, name: '', baseUrl: '', apiKey: '', modelLine: '', error: undefined }); return s.loadCatalog(); })
-      .then(() => s.notify({ kind: 'success', title: '提供商已保存', body: '已写入 pi 的 models.json；新建会话生效。', time: '刚刚' }))
+      .then(async result => { s.notify({ ...modelSaveNotice(result, '提供商已保存'), time: '刚刚' }); setProviderForm({ saving:false, open: false, editingId: null, name: '', baseUrl: '', apiKey: '', modelLine: '', error: undefined }); return s.loadCatalog(); })
       .catch((e) => setProviderForm(current => ({ ...current, error: String((e as Error).message || e) })))
       .finally(()=>{providerSaving.current=false;setProviderForm(current=>({...current,saving:false}));});
   }, [providerForm, s]);
   const deleteProvider = useCallback((id: string) => {
     const p = s.catalog?.providers.find((x) => x.id === id);
     if (!window.confirm(`删除提供商 ${p?.name || id}？该操作会从 pi 的 models.json 移除其配置。`)) return;
-    void window.localPi!.modelProviderRemove(id).then(() => s.loadCatalog()).catch((e) => s.notify({ kind: 'error', title: String((e as Error).message || e), time: '刚刚' }));
+    void window.localPi!.modelProviderRemove(id).then(async result => { s.notify({ ...modelSaveNotice(result, '提供商已删除'), time: '刚刚' }); await s.loadCatalog(); }).catch((e) => s.notify({ kind: 'error', title: String((e as Error).message || e), time: '刚刚' }));
   }, [s]);
   const defaultSaving = useRef(false);
   const [defaultModelSaving, setDefaultModelSaving] = useState(false);
@@ -852,9 +853,9 @@ export default function PiReplicaApp() {
           onSelectDefaultModel={selectDefaultModel}
           onSaveProvider={saveProvider}
           onSaveProviderAuth={async (id, input) => {
-            await window.localPi!.modelProviderAuthSave({ id, ...input });
+            const result = await window.localPi!.modelProviderAuthSave({ id, ...input });
             await s.loadCatalog();
-            s.notify({ kind: 'success', title: input.clear ? '已清除 API Key' : 'API Key 已保存', body: '已写入 pi 的 auth.json（0600），pi CLI 与 Desktop 共用；运行中的会话按请求重新读取。', time: '刚刚' });
+            s.notify({ ...modelSaveNotice(result, input.clear ? '已清除 API Key' : 'API Key 已保存'), time: '刚刚' });
           }}
           onSaveProviderModel={async (providerId,model,originalId,fields)=>{
             const catalog=await window.localPi!.modelCatalog();
@@ -863,18 +864,18 @@ export default function PiReplicaApp() {
             if(originalId&&!provider.models.some(m=>m.id===originalId))throw new Error('模型已被移除，请刷新后重试。');
             if(provider.models.some(m=>m.id===model.id&&m.id!==originalId))throw new Error('该模型 ID 已存在。');
             const current = provider.models.find(m=>m.id===originalId);
-            await window.localPi!.modelProviderSave({id:providerId,baseUrl:'',models:[model],modelEdit:{originalId,kind:originalId ? (current?.definition === 'custom' ? 'custom' : 'override') : 'custom',fields}});
+            const result = await window.localPi!.modelProviderSave({id:providerId,baseUrl:'',models:[model],modelEdit:{originalId,kind:originalId ? (current?.definition === 'custom' ? 'custom' : 'override') : 'custom',fields}});
             await s.loadCatalog();
-            s.notify({kind:'success',title:'模型配置已保存',body:'已写入 pi 的 models.json；新建或重载会话生效，正在运行的会话仍使用原配置。',time:'刚刚'});
+            s.notify({ ...modelSaveNotice(result, '模型配置已保存'), time: '刚刚' });
           }}
           onDeleteProviderModel={async (providerId, modelId) => {
             const catalog = await window.localPi!.modelCatalog();
             const provider = catalog.providers.find(p => p.id === providerId);
             if (!provider) throw new Error('提供商不存在，请刷新后重试。');
             if (!provider.models.some(m => m.id === modelId)) throw new Error('模型已被移除，请刷新后重试。');
-            await window.localPi!.modelProviderSave({ id: providerId, baseUrl: '', models: [{ id: modelId }], modelEdit: { originalId: modelId, kind: 'delete' } });
+            const result = await window.localPi!.modelProviderSave({ id: providerId, baseUrl: '', models: [{ id: modelId }], modelEdit: { originalId: modelId, kind: 'delete' } });
             await s.loadCatalog();
-            s.notify({ kind: 'success', title: '模型已删除', body: '已从 pi 的 models.json 移除；新建或重载会话生效。', time: '刚刚' });
+            s.notify({ ...modelSaveNotice(result, '模型已删除'), time: '刚刚' });
           }}
           onEditProvider={editProvider}
           onDeleteProvider={deleteProvider}
@@ -1144,7 +1145,7 @@ export function ModelCatalogSection({
   }
   const save = async (fn: () => Promise<unknown>, okText: string) => {
     setBusy(true);
-    try { await fn(); await onChanged(); say(okText); return true; }
+    try { const result = await fn(); await onChanged(); say(result && typeof result === 'object' && 'sessionRefresh' in result ? modelSaveNotice(result as import('../../shared/pi').PiModelCatalog, okText).body : okText); return true; }
     catch (e) { say(String((e as Error).message || e)); return false; }
     finally { setBusy(false); }
   };
