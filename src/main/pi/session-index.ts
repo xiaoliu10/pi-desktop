@@ -42,7 +42,8 @@ function inferParentFromNestedPath(dir: string, rootReal: Set<string>, files: Ma
 }
 
 export class SessionIndex {
-  /** parsedBytes = 已完整消费的字节数（到最后一行完整行末尾）；pendingTail = 其后尚未成行的残留。
+  /** parsedBytes = 已读字节偏移（pendingTail 的字节含在内）；pendingTail = 已读但尚未成行的原始字节。
+   *  详见 parseAppends 注释。
    *  大会话流式期间每次只追加几 KB，history() 对脏文件走增量 tail 解析（毫秒级），
    *  不再全量重读（实测 103MB 会话全量重解析 421ms，同步阻塞主进程）。 */
   private cache = new Map<string, { stamp: string; history: PiHistory; parsedBytes: number; pendingTail: Buffer; parsedIno: number }>();
@@ -85,7 +86,6 @@ export class SessionIndex {
       if (i === buf.length || buf[i] === 0x0a) { lines.push(buf.subarray(start, i)); start = i + 1; }
     }
     const tailBytes = lines.pop() ?? Buffer.alloc(0); // Never consume an incomplete append.
-    const raw = buf.toString('utf8');
     const parsed: PiEntry[] = [], warnings: string[] = [];
     if (tailBytes.length) warnings.push('尾行尚未完整写入，等待同步。');
     for (let i = 0; i < lines.length; i++) {
