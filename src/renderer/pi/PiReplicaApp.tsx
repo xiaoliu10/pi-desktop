@@ -2,6 +2,7 @@ import { availableLevelsOf } from '../replica/settings/thinking-level-chips';
 import { modelSaveNotice } from './model-refresh-notice';
 import { mergeSubagentSnapshots, pollSubagents } from './subagent-polling';
 import { SubagentPanel } from './SubagentPanel';
+import { RunningSubagentBar } from './RunningSubagentBar';
 import { SidecarPanel, sidecarLabelsFor } from './SidecarPanel';
 import { projectSubagents, SubagentNavigation } from './subagents';
 import { AccountLoginDialog } from './AccountLoginDialog';
@@ -526,7 +527,10 @@ export default function PiReplicaApp() {
   const runModels = run?.models ?? [];
 
   const composer = (
-    <Composer
+    <>
+      {/* 后台子代理持续可见：不依赖侧边面板展开/右侧面板打开（用户反馈：看不到就容易误关会话）。 */}
+      <RunningSubagentBar subagents={subagents} onOpen={()=>setSubagentPanel({})} />
+      <Composer
       key={composerOwnerKeyOf(s) ?? 'home'}
       draftText={s.draftText}
       draftOwnerKey={composerOwnerKeyOf(s)}
@@ -611,6 +615,7 @@ export default function PiReplicaApp() {
       onPickPermission={() => undefined}
       hideReasoning
     />
+    </>
   );
 
   const searchItems: SearchItem[] = useMemo(() => {

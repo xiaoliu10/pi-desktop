@@ -1,7 +1,7 @@
 import { contextPrompt, parseContextPrompt, type ContextItem, type ThinkingLevel } from '../../shared/composer';
 import { closeTransientPopovers } from '../replica/popovers';
 import { workflowDetails } from '../../shared/subagent-workflow';
-import { projectSubagents } from './subagents';
+import { projectSubagents, runningSubagents } from './subagents';
 import { dismissibleSubagentIds } from './subagent-dismissal';
 import { applyAssistantStreamDelta } from './stream-delta';
 import { modelErrorPart } from './model-error';
@@ -866,6 +866,8 @@ export interface PiReplicaActions {
   prewarmSession: (key: string) => void;
   dismissSubagent: (childId: string) => void;
   dismissFinishedSubagents: (childIds: string[]) => void;
+  /** 当前选中会话仍在工作的子代理数量；切换/断开拦截的判定来源（其他会话无可靠数据源，恒 0）。 */
+  liveSubagentCount: () => number;
   setSessionArchived: (key: string, archived: boolean) => Promise<boolean>;
   /** 删除归档会话（文件进系统废纸篓）：成功后从归档列表与会话索引移除。 */
   deleteArchivedSession: (key: string) => Promise<boolean>;
@@ -1738,7 +1740,26 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
       set({archivedKeys: result, sessions: get().sessions.filter(s=>s.key!==key)});
       return true;
     },
+    /** 当前选中会话仍在工作的子代理（含排队）。切换会话只是看不到它们（pi 进程仍在跑、
+     *  可切回），断开会话才会终止持有它们的 pi 进程、子代理随之消失且不可恢复——
+     *  两个动作的提示文案不同：前者是提醒，后者是安全确认。
+     *  只支持当前会话：store 只缓存选中会话的 history，其他会话没有可靠数据源；
+     *  断开路径对其他会话退化为通用确认（disconnectRun），不会凭缺失数据放行。 */
+    liveSubagentCount: () => {
+      const s = get();
+      const key = s.selectedKey;
+      if (!key) return 0;
+      const messages = sentConversationMessages(s.history?.branch ?? [], s.live[key], s.toolProgress[key], (s.sends ?? []).filter(send => send.key === key), s.compactionAfter[key]);
+      const run = s.runs.find(r => r.key === key);
+      const parentRunning = Boolean(run && ['starting', 'running', 'stopping'].includes(run.status));
+      const dismissed = s.subagentDismissed ?? s.desktopPreferences?.subagentDismissed?.[key] ?? [];
+      return runningSubagents(projectSubagents(messages, parentRunning, s.recoveredSubagents).filter(c => !dismissed.includes(c.id) && !dismissed.includes(c.callId))).length;
+    },
     selectSession: (key) => {
+      // 切换会话不终止 pi 进程：子代理仍在后台运行，切回还能看到；这里只是提醒，不承诺「无法恢复」。
+      // 真正不可逆的是断开（disconnectRun），文案与语义在两处分别表达。
+      const live = get().liveSubagentCount();
+      if (live > 0 && !window.confirm(`当前会话还有 ${live} 个子代理正在工作。切换会话后它们仍在后台运行，你可以随时切回查看；确定现在离开吗？`)) return;
       const draft = switchComposerOwner(get, key);
       set((s) => ({ selectedKey: key, leaf: undefined, history: undefined, review: undefined, view: 'chat', ...(draft ?? {}), recoveredSubagents: [], subagentDismissed: s.desktopPreferences?.subagentDismissed?.[key] ?? [] }));
       void refreshHistory();
@@ -2363,6 +2384,13 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
       }
     },
     disconnectRun: (key) => {
+      // 断开 = 终止 pi 进程，子代理不可恢复。当前会话能精确判定就报数量；其他会话的
+      // history 不在 store 里（无从判定数量），但这条路径的后果不可逆，不能因为没有
+      // 数据就完全放行，退化为通用确认。
+      const live = key === get().selectedKey ? get().liveSubagentCount() : -1;
+      if (live !== 0 && !window.confirm(live > 0
+        ? `该会话还有 ${live} 个子代理正在工作。断开会话会终止它们且无法恢复，确定继续吗？`
+        : '断开会话会终止该任务的 pi 进程；若其中有子代理在运行，将一并结束且无法恢复。确定继续吗？')) return;
       void attempt(() => window.localPi!.close(key));
     },
 

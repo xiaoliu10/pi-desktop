@@ -18,6 +18,16 @@ export function subagentTranscriptTurns(messages: SubagentChild['messages'], tur
   return executionTurns(historyToMessages(entries));
 }
 
+/**
+ * 运行中（含排队中）子代理数量。主对话持续提示条与「切换/断开会话」拦截共用
+ * 同一个判定：一个会话里只要有子代理还在跑，就不该让用户在不知情的情况下离开
+ * 或断开——断开会杀掉持有子代理的 pi 进程，子代理随之消失且不可恢复。
+ * 与 SubagentPanel 的 running 分组同源（同一批 SubagentChild 状态），不另造判定。
+ */
+export function runningSubagents(children: SubagentChild[]): SubagentChild[] {
+  return children.filter(c => c.status === 'running' || c.status === 'queued');
+}
+
 export const SubagentNavigation = createContext<((callId?: string) => void) | undefined>(undefined);
 export type ChildState = 'running' | 'queued' | 'completed' | 'failed' | 'interrupted' | 'unknown' | 'skipped' | 'recovered';
 export interface SubagentChild { id: string; callId: string; agent: string; task: string; mode: string; status: ChildState; model?: string; messages: Record<string, unknown>[]; error?: string; tokens?: number; turns?: number; cost?: number; recovered?: boolean; /** workflow/async 子任务的插件自有键（childId/'single'）：详情面板据此按需拉子会话转录。 */ childKey?: string }
