@@ -175,7 +175,6 @@ export function createWorkflowAdapter(): SubagentAdapter {
           // 内容，回退 label（旧契约：Only explicit display labels）。无 sessionName 的
           // 旧版上游同样回退 label（通常是无信息量的 workflow key）。
           task: (() => { const theme = String(row.sessionName ?? ''); return theme && !theme.includes('[prompt redacted]') ? bounded(theme.replace(/^[^:\s]{1,40}:\s*/, '')) || bounded(row.label) : bounded(row.label); })(),
-          // sessionName, a transcript, or another on-disk prompt field.
           status,
           model: bounded(row.model) || undefined, messages: [],
           tokens: typeof row.tokens === 'number' ? row.tokens : undefined,
