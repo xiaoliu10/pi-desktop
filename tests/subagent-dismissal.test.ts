@@ -180,6 +180,20 @@ describe('running-subagent guard on leaving a session', () => {
     await vi.advanceTimersByTimeAsync(0);
     expect(close).toHaveBeenCalledWith('a');
   });
+  it('still confirms disconnecting a non-current session (generic warning, no count)', async () => {
+    vi.stubGlobal('window', { localPi: { close: vi.fn(async () => undefined) }, innerWidth: 1280, confirm: vi.fn(() => false) });
+    const close = (window as unknown as { localPi: { close: ReturnType<typeof vi.fn> } }).localPi.close;
+    withLive('completed'); // 当前会话无 live 子代理
+    usePiStore.getState().disconnectRun('other'); // 设置页断开其他会话：store 无其 history，无从判定
+    await vi.advanceTimersByTimeAsync(0);
+    expect(close).not.toHaveBeenCalled(); // 通用确认取消 → 不关
+    expect((window as unknown as { confirm: ReturnType<typeof vi.fn> }).confirm).toHaveBeenCalled();
+    // 用户确认 → 放行
+    vi.stubGlobal('window', { localPi: { close }, innerWidth: 1280, confirm: vi.fn(() => true) });
+    usePiStore.getState().disconnectRun('other');
+    await vi.advanceTimersByTimeAsync(0);
+    expect(close).toHaveBeenCalledWith('other');
+  });
   it('never blocks on finished subagents', async () => {
     vi.stubGlobal('window', { localPi: { close: vi.fn(async () => undefined) }, innerWidth: 1280, confirm: vi.fn(() => false) });
     const close = (window as unknown as { localPi: { close: ReturnType<typeof vi.fn> } }).localPi.close;

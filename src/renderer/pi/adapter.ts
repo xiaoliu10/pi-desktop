@@ -1740,10 +1740,11 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
       set({archivedKeys: result, sessions: get().sessions.filter(s=>s.key!==key)});
       return true;
     },
-    /** 当前选中会话仍在工作的子代理（含排队）。切换/断开会话会杀掉持有它们的 pi 进程，
-     *  子代理随之消失且不可恢复，因此这两个动作必须先向用户确认。
-     *  只支持当前会话：store 只缓存选中会话的 history，其他会话没有可靠数据源，
-     *  凭缺失数据放行会造成「有时拦有时不拦」的不一致体验（返回 0 = 无从判定）。 */
+    /** 当前选中会话仍在工作的子代理（含排队）。切换会话只是看不到它们（pi 进程仍在跑、
+     *  可切回），断开会话才会终止持有它们的 pi 进程、子代理随之消失且不可恢复——
+     *  两个动作的提示文案不同：前者是提醒，后者是安全确认。
+     *  只支持当前会话：store 只缓存选中会话的 history，其他会话没有可靠数据源；
+     *  断开路径对其他会话退化为通用确认（disconnectRun），不会凭缺失数据放行。 */
     liveSubagentCount: () => {
       const s = get();
       const key = s.selectedKey;
@@ -1755,8 +1756,10 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
       return runningSubagents(projectSubagents(messages, parentRunning, s.recoveredSubagents).filter(c => !dismissed.includes(c.id) && !dismissed.includes(c.callId))).length;
     },
     selectSession: (key) => {
+      // 切换会话不终止 pi 进程：子代理仍在后台运行，切回还能看到；这里只是提醒，不承诺「无法恢复」。
+      // 真正不可逆的是断开（disconnectRun），文案与语义在两处分别表达。
       const live = get().liveSubagentCount();
-      if (live > 0 && !window.confirm(`当前会话还有 ${live} 个子代理正在工作。切换会话会中断它们且无法恢复，确定继续吗？`)) return;
+      if (live > 0 && !window.confirm(`当前会话还有 ${live} 个子代理正在工作。切换会话后它们仍在后台运行，你可以随时切回查看；确定现在离开吗？`)) return;
       const draft = switchComposerOwner(get, key);
       set((s) => ({ selectedKey: key, leaf: undefined, history: undefined, review: undefined, view: 'chat', ...(draft ?? {}), recoveredSubagents: [], subagentDismissed: s.desktopPreferences?.subagentDismissed?.[key] ?? [] }));
       void refreshHistory();
@@ -2381,9 +2384,13 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
       }
     },
     disconnectRun: (key) => {
-      // 只拦当前会话：其他会话的 history 不在 store 里，无从可靠判定（见 liveSubagentCount）。
-      const live = key === get().selectedKey ? get().liveSubagentCount() : 0;
-      if (live > 0 && !window.confirm(`该会话还有 ${live} 个子代理正在工作。断开会话会中断它们且无法恢复，确定继续吗？`)) return;
+      // 断开 = 终止 pi 进程，子代理不可恢复。当前会话能精确判定就报数量；其他会话的
+      // history 不在 store 里（无从判定数量），但这条路径的后果不可逆，不能因为没有
+      // 数据就完全放行，退化为通用确认。
+      const live = key === get().selectedKey ? get().liveSubagentCount() : -1;
+      if (live !== 0 && !window.confirm(live > 0
+        ? `该会话还有 ${live} 个子代理正在工作。断开会话会终止它们且无法恢复，确定继续吗？`
+        : '断开会话会终止该任务的 pi 进程；若其中有子代理在运行，将一并结束且无法恢复。确定继续吗？')) return;
       void attempt(() => window.localPi!.close(key));
     },
 

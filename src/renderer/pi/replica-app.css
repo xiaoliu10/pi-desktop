@@ -534,7 +534,6 @@
 .pi-subagent-bar__text b{font-variant-numeric:tabular-nums}
 .pi-subagent-bar__action{display:inline-flex;align-items:center;gap:3px;flex:0 0 auto;padding:4px 8px;border-radius:7px;color:var(--pi-text-secondary);cursor:pointer;font-size:12px}
 .pi-subagent-bar__action:hover{color:var(--pi-text);background:var(--pi-bg)}
-@keyframes pi-spin{to{transform:rotate(360deg)}}
 .pi-project-picker{position:relative;min-width:0}
 .pi-project-picker>button{padding:4px 8px;border-radius:7px;max-width:260px}.pi-project-picker>button:hover:not(:disabled){background:var(--pi-bg-hover)}.pi-project-picker>button>span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .pi-project-picker__popover{position:absolute;bottom:calc(100% + 10px);left:0;width:288px;max-width:calc(100vw - 60px);background:var(--pi-bg);border:1px solid var(--pi-border);border-radius:10px;box-shadow:0 4px 14px #00000016;z-index:80;padding:0;overflow:hidden;font-size:13px;color:var(--pi-text)}
