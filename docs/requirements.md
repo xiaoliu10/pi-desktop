@@ -17,17 +17,18 @@
 
 ### R-subagent-01　运行中子代理在主对话可见
 
-**需求**：后台子代理运行时，用户在主对话界面能持续看到"还有 N 个子代理在工作"，不需要主动展开面板。全部结束后提示消失。
+**需求**：后台子代理运行时，用户在主对话界面能持续看到它在工作。形态对齐 ZCode：**对话流内的子代理工具卡片用机器人（bot）图标标识**（`chat.toolCall` 卡片 + bot 标识），不用额外横幅（用户 2026-10-16 指定，替代 0.1.24 的常驻横幅形态）。
 
 **验收**：
-- 有 running/queued 子代理时，输入框上方常驻提示条，显示数量与 agent 名（>3 个去重）。
-- 点击提示条打开子代理面板；面板与提示条只计 running/queued，不含 completed/failed。
-- **切换会话不拦截**（用户 2026-10-16 明确）：切换不杀进程、切回即见，可见性由常驻提示条负责。
-- 全部子代理进入终态后，提示条自动消失。
+- 主对话流里 subagent 工具调用渲染为带 bot 图标的工具卡片，运行中显示进行时状态。
+- 不再渲染输入框上方的常驻横幅（`RunningSubagentBar` 已移除）。
+- 面板与状态统计只计 running/queued，不含 completed/failed。
+- **切换会话不拦截**（用户 2026-10-16 明确）：切换不杀进程、切回即见，可见性由对话内卡片负责。
+- 全部子代理进入终态后，卡片状态随之收敛。
 
-**状态**：满足（v0.1.24 #124；切换拦截于 0.1.25 按用户反馈移除）。
+**状态**：满足（v0.1.24 #124 首版；v0.1.25+ 按用户反馈两轮定稿：去弹窗、去横幅、换 bot 图标）。
 
-**回归触发**：改 `adapter.ts`（selectSession/disconnectRun/liveSubagentCount）、`subagents.ts`、`RunningSubagentBar.tsx`；pi-subagents 升级（status 形态可能变）。
+**回归触发**：改 `ChatView.tsx`（toolRowIcon/ToolCard 的 bot 图标与卡片渲染）、`adapter.ts`（selectSession/disconnectRun/liveSubagentCount）、`subagents.ts`；pi-subagents 升级（status 形态可能变）。
 
 ### R-subagent-02　子代理详情可读：运行中与完成态都看得到转录尾部
 
