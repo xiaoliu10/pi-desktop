@@ -28,7 +28,7 @@
 
 **状态**：满足（v0.1.24 #124 首版；v0.1.25+ 按用户反馈两轮定稿：去弹窗、去横幅、换 bot 图标）。
 
-**回归触发**：改 `adapter.ts`（selectSession/disconnectRun/liveSubagentCount）、`subagents.ts`、`RunningSubagentBar.tsx`；pi-subagents 升级（status 形态可能变）。
+**回归触发**：改 `ChatView.tsx`（toolRowIcon/ToolCard 的 bot 图标与卡片渲染）、`adapter.ts`（selectSession/disconnectRun/liveSubagentCount）、`subagents.ts`；pi-subagents 升级（status 形态可能变）。
 
 ### R-subagent-02　子代理详情可读：运行中与完成态都看得到转录尾部
 
