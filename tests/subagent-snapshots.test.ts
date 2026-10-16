@@ -360,6 +360,21 @@ describe('childSessionPointer + subagentChildTranscript', () => {
     const index = { subagentHistory: () => history } as any;
     expect(await subagentChildTranscript(agentDir, 'a'.repeat(64), index, callId, 'review')).toEqual({ error: 'no-snapshot' });
   });
+  it('falls back to the parent workflow steps[].sessionFile when the child status.json omits it', async () => {
+    // pi-subagents >=0.79 child runs may not write sessionFile to their own status.json.
+    // The parent workflow's steps[].sessionFile (set at launch time) is the fallback.
+    const { callId, childRunId, childSessionFile, history } = transcriptFixture('workflow');
+    const wfRunId = 'dddddddd-1111-4111-8111-000000000001';
+    // Rewrite child status WITHOUT sessionFile; add steps[].sessionFile to the parent.
+    writeStatus(childRunId, { runId: childRunId, toolCallId: 'ct1', sessionId: parentPath(), mode: 'single', state: 'complete', startedAt: Date.now() - 9000, lastUpdate: Date.now() - 400, parentWorkflowRunId: wfRunId, workflowKey: 'review' });
+    writeStatus(wfRunId, { runId: wfRunId, toolCallId: callId, sessionId: parentPath(), mode: 'workflow', state: 'completed', startedAt: Date.now() - 10000, lastUpdate: Date.now() - 500, steps: [{ workflowKey: 'review', sessionFile: childSessionFile, runId: childRunId }], workflowChildren: { version: 1, parentToolCallId: callId, workflowRunId: wfRunId, inventoryComplete: true, workflowState: 'completed', children: [{ childId: 'review', runId: childRunId, agent: 'code-reviewer', state: 'completed' }] } });
+    const file = await childSessionPointer(history, [], callId, 'review', root);
+    expect(file).toBe(childSessionFile);
+    // Transcript reads through the fallback path too.
+    const index = { subagentHistory: () => history } as any;
+    const res = await subagentChildTranscript(agentDir, 'a'.repeat(64), index, callId, 'review');
+    expect('messages' in res).toBe(true);
+  });
   it('rejects a sessionFile symlink that resolves outside the parent directory', async () => {
     const { callId, childRunId, childSessionFile, history } = transcriptFixture('workflow');
     // symlink → 父目录外：realpath 解析后 containment 拦截；指向父目录内的链接则会被

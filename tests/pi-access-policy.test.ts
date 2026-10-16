@@ -39,7 +39,7 @@ function harness(mode = 'ask', select = vi.fn().mockResolvedValue('拒绝')) {
  // 隔离外部 Desktop 连接的模式控制文件（如从 Desktop 内发起测试时继承的 PI_DESKTOP_MODE_FILE）。
  vi.stubEnv('PI_DESKTOP_MODE_FILE', '');
  const handlers: Record<string, Function> = {};
- const pi = { registerTool: vi.fn(), on: (name: string, fn: Function) => { handlers[name] = fn; }, getAllTools: () => ['read', 'write', 'bash'].map(name => ({ name, sourceInfo: { source: 'builtin' } })), getActiveTools: () => ['read', 'write', 'bash'], setActiveTools: vi.fn(), appendEntry: vi.fn() };
+ const pi = { registerTool: vi.fn(), registerCommand: vi.fn(), on: (name: string, fn: Function) => { handlers[name] = fn; }, getAllTools: () => ['read', 'write', 'bash'].map(name => ({ name, sourceInfo: { source: 'builtin' } })), getActiveTools: () => ['read', 'write', 'bash'], setActiveTools: vi.fn(), appendEntry: vi.fn() };
  desktopPolicy(pi);
  const ctx = { cwd, signal: new AbortController().signal, ui: { select, setStatus: vi.fn() } };
  return { handlers, pi, ctx, select };

@@ -3,7 +3,7 @@ import { isAccessMode, type AccessMode } from '../../shared/access-mode';
 import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import type { PiEnvironment, PiEvent, PiRun, PiUiRequest } from '../../shared/pi';
+import type { PiEnvironment, PiEvent, PiRun, PiUiRequest, PiModelRefresh } from '../../shared/pi';
 import { PiRpcClient, piLogDir } from './rpc-client';
 import { SessionIndex, canonical, fileKey } from './session-index';
 import { runAutomationBridge, SCHEDULE_GUIDANCE } from './automation-bridge';
@@ -39,7 +39,8 @@ const STUCK_WATCHDOG_INTERVAL_MS = 30_000;
  *  满员时 connect 自动断开最久空闲的会话腾位（历史无损，点开即重连），全繁忙才拒绝。 */
 const MAX_SESSIONS = 12;
 type QueuedInput = NonNullable<PiRun['queue']>[number];
-interface Running { recheckTimer?: ReturnType<typeof setTimeout>; stopQueueSnapshot?: QueuedInput[]; settlement?: { token: string; timer: ReturnType<typeof setTimeout> }; activity: number; /** 假 running 自愈用：全部 pi 事件计数与最近事件时刻 */ eventCount: number; lastEventAt: number; verifying?: boolean; promptSequence: number; retryUncertain: boolean; stopUnconfirmed: boolean; retry: RetryGroups; retryReady: boolean; retryEntryId?: string; deferredQueue: QueuedInput[]; stopEpoch: number; policyReady: boolean; client: PiRpcClient; view: PiRun; input: { cwd: string; trustProject: boolean; permission: AccessMode; executionMode?: Exclude<AccessMode, 'plan'>; file: string; origin: string; sidecarOf?: string; systemPrompt?: string; tools?: string[]; model?: string }; dialogs: Map<string, { timer?: ReturnType<typeof setTimeout>; method: string; request: PiUiRequest }>; /** 第三方 ask 插件在供题（desktop-ask 未随会话加载）——事件层把其原生问卷桥接成桌面卡片。 */ thirdPartyAsk: boolean; /** 输出速度采样器（当前连接内有效完成调用；launch 新建 → 断开/重连从零，历史不回推）。 */ outputPerformance: OutputPerformanceTracker; /** tool_execution_start 暂存的问卷入参：首个原生 UI 请求到达即消费；校验失败直接 end 时由 end 清理。 */ pendingAskArgs?: { toolCallId: string; questions: AskBridgeQuestion[] }; /** 活动问卷桥：卡片已下发，后续原生请求按 plan 自动应答。 */ askBridge?: AskBridgeState; queueImages: StagedQueueImage[] }
+interface ModelRefreshWork { token: string; finish: (result: { status: string; code?: string }) => void }
+interface Running { modelRefreshReady?: boolean; modelRefreshRevision?: number; modelRefreshDone?: number; modelRefreshTask?: Promise<PiModelRefresh>; modelRefreshWork?: ModelRefreshWork; modelRefreshUncertain?: boolean; modelSwitching?: number; recheckTimer?: ReturnType<typeof setTimeout>; stopQueueSnapshot?: QueuedInput[]; settlement?: { token: string; timer: ReturnType<typeof setTimeout> }; activity: number; /** 假 running 自愈用：全部 pi 事件计数与最近事件时刻 */ eventCount: number; lastEventAt: number; verifying?: boolean; promptSequence: number; retryUncertain: boolean; stopUnconfirmed: boolean; retry: RetryGroups; retryReady: boolean; retryEntryId?: string; deferredQueue: QueuedInput[]; stopEpoch: number; policyReady: boolean; client: PiRpcClient; view: PiRun; input: { cwd: string; trustProject: boolean; permission: AccessMode; executionMode?: Exclude<AccessMode, 'plan'>; file: string; origin: string; sidecarOf?: string; systemPrompt?: string; tools?: string[]; model?: string }; dialogs: Map<string, { timer?: ReturnType<typeof setTimeout>; method: string; request: PiUiRequest }>; /** 第三方 ask 插件在供题（desktop-ask 未随会话加载）——事件层把其原生问卷桥接成桌面卡片。 */ thirdPartyAsk: boolean; /** 输出速度采样器（当前连接内有效完成调用；launch 新建 → 断开/重连从零，历史不回推）。 */ outputPerformance: OutputPerformanceTracker; /** tool_execution_start 暂存的问卷入参：首个原生 UI 请求到达即消费；校验失败直接 end 时由 end 清理。 */ pendingAskArgs?: { toolCallId: string; questions: AskBridgeQuestion[] }; /** 活动问卷桥：卡片已下发，后续原生请求按 plan 自动应答。 */ askBridge?: AskBridgeState; queueImages: StagedQueueImage[] }
 export class PiBackend {
   private active = new Map<string, Running>();
   private watchdog: ReturnType<typeof setInterval> | undefined;
@@ -307,6 +308,7 @@ export class PiBackend {
     client.on('closed', () => {
       if (this.active.get(key) !== run) return;
       this.active.delete(key);
+      run.modelRefreshWork?.finish({ status: 'error', code: 'closed' });
       this.clearSettlement(run); run.retry.dispose(); ++run.stopEpoch;
       if (view.timing && view.timing.endedAt === undefined) view.timing = { ...view.timing, endedAt: Date.now() };
       view.status = 'error';
@@ -351,20 +353,20 @@ export class PiBackend {
       const cleanModel = (m: any) => ({ id: String(m.id), name: String(m.name || m.id), provider: String(m.provider), reasoning: !!m.reasoning, input: Array.isArray(m.input) ? m.input : undefined });
       view.models = (models?.models || []).map(cleanModel);
       view.model = state?.model ? cleanModel(state.model) : undefined;
-      view.commands = (commands?.commands || []).filter((c: any) => !String(c.name).startsWith('desktop-retry-')).map((c: any) => ({ name: String(c.name), description: c.description, source: c.source, path: c.path ?? String(c.sourceInfo?.path ?? '') }));
+      view.commands = (commands?.commands || []).filter((c: any) => !String(c.name).startsWith('desktop-retry-') && !String(c.name).startsWith('desktop-model-refresh-')).map((c: any) => ({ name: String(c.name), description: c.description, source: c.source, path: c.path ?? String(c.sourceInfo?.path ?? '') }));
       view.thinkingLevel = state?.thinkingLevel ?? 'off';
       view.thinkingLevels = (await client.request('get_available_thinking_levels').catch(() => ({levels: []})))?.levels ?? [];
       view.status = state?.isStreaming || state?.isCompacting ? 'running' : 'idle';
       view.stage = undefined;
       this.emit({ type: 'run', run: { ...view } }); this.emit({ type: 'sessions-changed' });
-      this.refreshContextUsage(run);
+      this.refreshContextUsage(run); this.maybeRefreshModels(run);
       // 迟加载自愈：扩展/npm 包若在初次拉取后才注册命令（或初次拉取失败），
       // 命令列表会永远空。短延时后复检一次，有新增则更新并广播。
       run.recheckTimer = setTimeout(() => {
         if (run.client !== client || this.active.get(key) !== run) return;
         void client.request('get_commands').then((again: any) => {
           if (this.active.get(key) !== run || run.client !== client) return;
-          const list = ((again?.commands || []) as any[]).filter((c: any) => !String(c.name).startsWith('desktop-retry-'))
+          const list = ((again?.commands || []) as any[]).filter((c: any) => !String(c.name).startsWith('desktop-retry-') && !String(c.name).startsWith('desktop-model-refresh-'))
             .map((c: any) => ({ name: String(c.name), description: c.description, source: c.source, path: c.path ?? String(c.sourceInfo?.path ?? '') }));
           if (list.length > view.commands.length) {
             view.commands = list;
@@ -453,6 +455,18 @@ export class PiBackend {
         return;
       }
       if (req.method === 'setStatus' && req.statusKey === 'desktop-policy' && req.statusText) run.policyReady = true;
+      if (req.method === 'setStatus' && req.statusKey === 'desktop-model-refresh-ready') {
+        if (req.statusText === generation) run.modelRefreshReady = true;
+        return;
+      }
+      if (req.method === 'setStatus' && req.statusKey === 'desktop-model-refresh-result') {
+        try {
+          const result = JSON.parse(String(req.statusText ?? ''));
+          if (result.generation === generation && result.token === run.modelRefreshWork?.token)
+            run.modelRefreshWork?.finish({ status: result.status, code: result.code });
+        } catch { /* Malformed/stale receipts are never success. */ }
+        return;
+      }
       if (req.method === 'setStatus' && req.statusKey === 'desktop-retry-ready' && req.statusText === generation) { run.retryReady = true; return; }
       if (req.method === 'setStatus' && req.statusKey === 'desktop-retry-settled') {
         try {
@@ -473,6 +487,10 @@ export class PiBackend {
         run.dialogs.set(req.id, { timer, method: req.method, request: req });
       }
       this.emit({ type: 'ui', key, generation, request: req }); return;
+    }
+    if (event.type === 'extension_error' && event.extensionPath === `command:desktop-model-refresh-${generation}`) {
+      run.modelRefreshWork?.finish({ status: 'error', code: 'refresh' });
+      return; // no raw extension exception (config may contain secrets)
     }
     if (event.type === 'extension_error' && run.settlement && event.extensionPath === `command:desktop-retry-${generation}-settle`) {
       this.clearSettlement(run);
@@ -606,6 +624,7 @@ export class PiBackend {
     // message_update / tool_execution_update 逐 delta 到达（每秒几十个），上面的分支
     // 不会在它们上改 view；逐条重发完整 run 视图只会让渲染层每秒白渲染几十次。
     if (event.type !== 'message_update' && event.type !== 'tool_execution_update') this.emit({ type: 'run', run: { ...run.view } });
+    this.maybeRefreshModels(run);
   }
   private clearSettlement(run: Running) {
     if (run.settlement) clearTimeout(run.settlement.timer);
@@ -698,7 +717,7 @@ export class PiBackend {
   }
   async prompt(key: string, text: string, behavior: 'steer' | 'followUp', images?: import('../../shared/composer').PiImage[], dispatchDeferred = false): Promise<string | undefined> {
     if (!text.trim() || text.length > 200_000) throw new Error('输入为空或超过 200000 字符');
-    const run = this.get(key);
+    const run = this.get(key); this.assertModelsUnlocked(run);
     if (!['idle', 'running'].includes(run.view.status) || run.stopUnconfirmed || run.retryUncertain) throw new Error('当前会话暂不能发送；请先停止确认执行状态');
     if (run.input.permission === 'plan' && text.trimStart().startsWith('/')) throw new Error('计划模式不运行斜杠命令，请使用普通输入研究项目。');
     if (images !== undefined && !Array.isArray(images)) throw new Error('图片格式无效');
@@ -778,7 +797,7 @@ export class PiBackend {
    */
   async forkTo(key: string, entryId: string): Promise<string> {
     if (typeof entryId !== 'string' || !entryId) throw new Error('消息条目无效');
-    const run = this.get(key);
+    const run = this.get(key); this.assertModelsUnlocked(run);
     if (['starting', 'running', 'stopping'].includes(run.view.status) || run.view.pending > 0) throw new Error('请先停止当前任务再编辑历史消息');
     if (this.hasPendingDialogs(key)) throw new Error('等待交互完成后再编辑');
     const result = await run.client.request('fork', { entryId }, 30_000) as { text?: unknown; cancelled?: unknown } | undefined;
@@ -871,24 +890,113 @@ export class PiBackend {
    * 压缩只发 compaction_start/end、不发 agent_settled，完成后需在此复位状态。
    */
   /** 按需重拉斜杠命令列表：补全面板发现列表为空时可调用；有新增则更新并广播。 */
-  /** 重新拉取可用模型/思考等级：供应商列表更新后，无需断开重连即可刷新会话内模型菜单。 */
-  async refreshModels(key: string): Promise<number> {
+  /** Save and manual refresh share one versioned, generation-bound local reload path. */
+  async refreshModels(key: string): Promise<PiModelRefresh> {
     const run = this.get(key);
-    if (run.view.status === 'error') return run.view.models.length;
-    const models = await run.client.request('get_available_models', {}, 30_000);
-    const thinking = await run.client.request('get_available_thinking_levels', {}, 15_000).catch(() => ({ levels: [] }));
-    if (this.active.get(key) !== run) return (models?.models || []).length; // 刷新期间会话已关闭/重连，废弃本次结果，避免僵尸 run 事件
-    const view = run.view;
-    const cleanModel = (m: any) => ({ id: String(m.id), name: String(m.name || m.id), provider: String(m.provider), reasoning: !!m.reasoning, input: Array.isArray(m.input) ? m.input : undefined });
-    view.models = (models?.models || []).map(cleanModel);
-    view.thinkingLevels = thinking?.levels ?? view.thinkingLevels;
-    const current = view.model;
-    if (current && !view.models.some(m => m.provider === current.provider && m.id === current.id)) {
-      // 当前选中的模型已从目录移除：清掉选择，避免发送时命中不存在的模型。
-      view.model = undefined;
+    run.modelRefreshRevision = (run.modelRefreshRevision ?? 0) + 1;
+    if (run.modelRefreshTask) return run.modelRefreshTask;
+    if (run.modelRefreshUncertain) throw new Error('模型刷新状态未确认，请断开后重连会话。');
+    if (!this.modelsSafe(run)) return this.publishModelRefresh(run, { status: 'pending', message: '模型配置待刷新：将在任务、交互和队列结束后的安全空闲时生效。' });
+    // Install the lock before the first await; prompt/model/thinking/compact cannot race it.
+    const task = this.performModelRefresh(run);
+    run.modelRefreshTask = task;
+    try { return await task; }
+    finally { if (run.modelRefreshTask === task) run.modelRefreshTask = undefined; }
+  }
+  private modelsSafe(run: Running) {
+    return this.active.get(run.view.key) === run && run.view.status === 'idle' && !run.view.compacting
+      && !run.view.pending && !run.view.queue?.length && !run.dialogs.size && !run.askBridge
+      && !run.stopUnconfirmed && !run.retryUncertain && !run.settlement && !run.retry.tracking
+      && !run.deferredQueue.length && !run.modelSwitching && !run.view.pendingModel && !run.view.pendingThinking;
+  }
+  private assertModelsUnlocked(run: Running) {
+    if (run.modelRefreshUncertain) throw new Error('模型刷新状态未确认，请断开后重连会话。');
+    if (run.modelRefreshTask) throw new Error('正在刷新模型配置，请稍后再试。');
+    if (run.view.modelRefresh?.status === 'error') throw new Error('模型配置刷新失败，请刷新模型列表或断开后重连。');
+  }
+  private publishModelRefresh(run: Running, result: PiModelRefresh) {
+    if (this.active.get(run.view.key) === run) {
+      run.view.modelRefresh = result;
+      this.emit({ type: 'run', run: { ...run.view } });
     }
-    this.emit({ type: 'run', run: { ...view } });
-    return view.models.length;
+    return result;
+  }
+  private maybeRefreshModels(run: Running) {
+    if (run.view.modelRefresh?.status !== 'pending' || run.modelRefreshTask || !this.modelsSafe(run)) return;
+    void this.refreshModels(run.view.key).catch(() => { /* view.modelRefresh holds actionable, sanitized failure. */ });
+  }
+  /** Saving a provider affects every connected registry (including sessions currently on other providers). */
+  async refreshModelConfiguration() {
+    const results = await Promise.all([...this.active.keys()].map(async key => {
+      try { return (await this.refreshModels(key)).status; } catch { return 'error'; }
+    }));
+    return { refreshed: results.filter(s => s === 'refreshed').length, pending: results.filter(s => s === 'pending').length, failed: results.filter(s => s === 'error').length };
+  }
+  private async performModelRefresh(run: Running): Promise<PiModelRefresh> {
+    const { key, generation } = run.view;
+    const current = () => this.active.get(key) === run && run.view.generation === generation;
+    const fail = (code?: string): never => {
+      const message = code === 'closed' ? '模型刷新期间会话已关闭。'
+        : code === 'timeout' ? '模型刷新超时，状态未确认；请断开后重连会话。'
+        : code === 'missing' ? '当前运行时缺少模型热刷新命令，请断开后重连会话加载扩展。'
+        : code === 'removed' ? '当前模型已被移除；请选择仍可用的模型或修复模型配置后刷新。'
+        : code === 'auth' ? '模型配置已读取，但当前模型鉴权不可用；请检查凭据后刷新。'
+        : '模型配置刷新失败，请检查 models.json / 鉴权后刷新模型列表，或断开后重连。';
+      this.publishModelRefresh(run, { status: 'error', message });
+      throw new Error(message);
+    };
+    try {
+      while (current()) {
+        const revision = run.modelRefreshRevision ?? 0;
+        this.publishModelRefresh(run, { status: 'refreshing' });
+        // An advertised ready signal AND command registration are required before prompt dispatch.
+        if (!run.modelRefreshReady) return fail('missing');
+        const commands = await run.client.request('get_commands', {}, 10_000);
+        if (!current()) return fail('closed');
+        const command = `desktop-model-refresh-${generation}`;
+        if (!commands?.commands?.some((c: any) => c.name === command)) return fail('missing');
+        if (!this.modelsSafe(run)) return this.publishModelRefresh(run, { status: 'pending', message: '模型配置待刷新：等待安全空闲。' });
+        const token = randomUUID();
+        const deadline = Date.now() + 25_000;
+        // Receipt, not RPC prompt acceptance, is authoritative. Always settle on close/timeout.
+        const result = await new Promise<{ status: string; code?: string }>(resolve => {
+          const timer = setTimeout(() => { run.modelRefreshUncertain = true; finish({ status: 'error', code: 'timeout' }); }, 30_000);
+          const finish = (value: { status: string; code?: string }) => {
+            if (run.modelRefreshWork?.token !== token) return;
+            clearTimeout(timer); run.modelRefreshWork = undefined; resolve(value);
+          };
+          run.modelRefreshWork = { token, finish };
+          void run.client.request('prompt', { message: `/${command} ${JSON.stringify({ generation, sessionFile: run.input.file, token, deadline })}` }, 30_000).catch(() => {
+            // Rejected/ambiguous ACK does not prove the async command stopped.
+            run.modelRefreshUncertain = true; finish({ status: 'error', code: 'timeout' });
+          });
+        });
+        if (!current()) return fail('closed');
+        if (result.status === 'pending') return this.publishModelRefresh(run, { status: 'pending', message: '模型配置待刷新：运行时尚未安全空闲，将在下次空闲时重试。' });
+        if (result.status !== 'refreshed') return fail(result.code);
+        const activity = run.activity, epoch = run.stopEpoch;
+        const state = await run.client.request('get_state', {}, 10_000);
+        const models = await run.client.request('get_available_models', {}, 10_000);
+        const thinking = await run.client.request('get_available_thinking_levels', {}, 10_000);
+        if (!current()) return fail('closed');
+        if (activity !== run.activity || epoch !== run.stopEpoch || !this.modelsSafe(run) || state?.isStreaming || state?.isCompacting || state?.pendingMessageCount) {
+          return this.publishModelRefresh(run, { status: 'pending', message: '模型刷新回读期间会话状态变化，等待安全空闲后再次确认。' });
+        }
+        if (!Array.isArray(models?.models) || !Array.isArray(thinking?.levels) || !THINKING_LEVELS.includes(state?.thinkingLevel)) return fail();
+        const clean = (m: any) => ({ id: String(m.id), name: String(m.name || m.id), provider: String(m.provider), reasoning: !!m.reasoning, input: Array.isArray(m.input) ? m.input.filter((i: unknown) => typeof i === 'string') : undefined });
+        run.view.models = models.models.map(clean);
+        run.view.model = state.model ? clean(state.model) : undefined;
+        run.view.thinkingLevel = state.thinkingLevel;
+        run.view.thinkingLevels = thinking.levels.filter((l: ThinkingLevel) => THINKING_LEVELS.includes(l));
+        run.modelRefreshDone = revision;
+        if (revision !== run.modelRefreshRevision) continue; // Save while awaiting refresh/readback: reload newest disk once more.
+        return this.publishModelRefresh(run, { status: 'refreshed', count: run.view.models.length });
+      }
+      return fail('closed');
+    } catch (error) {
+      if (run.view.modelRefresh?.status === 'error') throw error;
+      return fail();
+    }
   }
 
   async refreshCommands(key: string): Promise<number> {
@@ -896,7 +1004,7 @@ export class PiBackend {
     if (run.view.status === 'error') return run.view.commands.length;
     const result = await run.client.request('get_commands', {}, 15_000);
     const view = run.view;
-    const list = ((result?.commands || []) as any[]).filter((c: any) => !String(c.name).startsWith('desktop-retry-'))
+    const list = ((result?.commands || []) as any[]).filter((c: any) => !String(c.name).startsWith('desktop-retry-') && !String(c.name).startsWith('desktop-model-refresh-'))
       .map((c: any) => ({ name: String(c.name), description: c.description, source: c.source, path: c.path ?? String(c.sourceInfo?.path ?? '') }));
     if (list.length > view.commands.length) {
       view.commands = list;
@@ -915,7 +1023,7 @@ export class PiBackend {
   }
 
   async compact(key: string, customInstructions?: string, timeoutMs = 180_000) {
-    const run = this.get(key);
+    const run = this.get(key); this.assertModelsUnlocked(run);
     if (run.view.status !== 'idle') throw new Error('请在任务空闲时压缩上下文');
     if (run.dialogs.size) throw new Error('请先处理待确认操作，再压缩上下文。');
     // 压缩是对整段上下文的模型调用，耗时不可预测，超时放宽到 3 分钟。
@@ -1029,7 +1137,7 @@ export class PiBackend {
     return { ...run.view };
   }
   async model(key: string, provider: string, modelId: string) {
-    const run = this.get(key);
+    const run = this.get(key); this.assertModelsUnlocked(run);
     const model = run.view.models.find(m => m.provider === provider && m.id === modelId);
     if (!model) throw new Error('模型不在 pi 可用列表中');
     // 运行中不直接下发：pi 的 set_model 会立即改写状态（并顺带重置思考等级），
@@ -1046,7 +1154,7 @@ export class PiBackend {
     return { ...run.view };
   }
   async thinking(key: string, level: ThinkingLevel) {
-    const run = this.get(key);
+    const run = this.get(key); this.assertModelsUnlocked(run);
     // 只校验等级名本身；能力钳制交给 pi（set_thinking_level 内部 clampThinkingLevel），
     // 实际生效值由 get_state 回读，绝不显示与运行不一致的等级。
     if (!THINKING_LEVELS.includes(level)) throw new Error('未知的思考等级。');
@@ -1062,6 +1170,8 @@ export class PiBackend {
     return { ...run.view };
   }
   private async applyModel(run: Running, provider: string, modelId: string) {
+    run.modelSwitching = (run.modelSwitching ?? 0) + 1;
+    try {
     const model = run.view.models.find(m => m.provider === provider && m.id === modelId);
     if (!model) throw new Error('模型不在 pi 可用列表中');
     await run.client.request('set_model', { provider, modelId }); run.view.model = model;
@@ -1069,13 +1179,17 @@ export class PiBackend {
     run.view.thinkingLevel = state?.thinkingLevel ?? 'off';
     run.view.thinkingLevels = (await run.client.request('get_available_thinking_levels').catch(() => ({levels: []})))?.levels ?? [];
     this.emit({ type: 'run', run: { ...run.view } });
+    } finally { --run.modelSwitching; this.maybeRefreshModels(run); }
   }
   private async applyThinking(run: Running, level: ThinkingLevel) {
+    run.modelSwitching = (run.modelSwitching ?? 0) + 1;
+    try {
     if (!THINKING_LEVELS.includes(level)) throw new Error('未知的思考等级。');
     await run.client.request('set_thinking_level', {level});
     const state = await run.client.request('get_state');
     run.view.thinkingLevel = state.thinkingLevel;
     this.emit({type:'run',run:{...run.view}});
+    } finally { --run.modelSwitching; this.maybeRefreshModels(run); }
   }
   /**
    * Pending model/thinking switches taken while a task runs are pushed to pi at
@@ -1203,9 +1317,9 @@ export class PiBackend {
     this.emit({ type: 'ui', key, generation, request: synthesized });
     return true;
   }
-  close(key: string) { const run = this.active.get(key); if (!run) return; this.active.delete(key); ++run.stopEpoch; if (run.recheckTimer) { clearTimeout(run.recheckTimer); run.recheckTimer = undefined; } this.clearSettlement(run); run.retry.dispose(); run.deferredQueue = []; this.clearDialogs(run); run.client.close(); // 同步删 mode 文件：close 后立即 launch（/reload、资源页刷新）时异步 rm 会晚于重写到达，把新写的文件删掉
+  close(key: string) { const run = this.active.get(key); if (!run) return; this.active.delete(key); run.modelRefreshWork?.finish({ status: 'error', code: 'closed' }); ++run.stopEpoch; if (run.recheckTimer) { clearTimeout(run.recheckTimer); run.recheckTimer = undefined; } this.clearSettlement(run); run.retry.dispose(); run.deferredQueue = []; this.clearDialogs(run); run.client.close(); // 同步删 mode 文件：close 后立即 launch（/reload、资源页刷新）时异步 rm 会晚于重写到达，把新写的文件删掉
   fs.rmSync(path.join(this.ownedRoot, `.mode-${key}`), { force: true }); this.emit({ type: 'closed', key, generation: run.view.generation, ...(run.input.sidecarOf !== undefined ? { sidecarOf: run.input.sidecarOf } : {}) }); }
-  async refresh(key: string) { const run = this.get(key); if (run.view.status !== 'idle' || run.view.pending || run.dialogs.size) throw new Error('会话仍在运行或等待交互，请完成或停止后刷新。'); const input = run.input; const executionMode = run.view.executionMode; const timing = run.view.timing; this.close(key); await this.launch(input); const active = this.get(key); active.view.executionMode = executionMode; active.view.timing = timing; this.emit({ type: 'run', run: { ...active.view } }); return { ...active.view }; }
+  async refresh(key: string) { const run = this.get(key); this.assertModelsUnlocked(run); if (!this.modelsSafe(run) || run.view.pending || run.dialogs.size) throw new Error('会话仍在运行或等待交互，请完成或停止后刷新。'); const input = run.input; const executionMode = run.view.executionMode; const timing = run.view.timing; this.close(key); await this.launch(input); const active = this.get(key); active.view.executionMode = executionMode; active.view.timing = timing; this.emit({ type: 'run', run: { ...active.view } }); return { ...active.view }; }
   /** connect 首帧预算：会话文件越大加载越久（实测 40MB/700 条含截图会话 >60s）。
    *  小会话保持 60s，大会话按 5s/MB 放宽（40MB→210s，上限 5 分钟）。 */
   private startupBudget(file: string): number {

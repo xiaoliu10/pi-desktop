@@ -175,6 +175,11 @@ export async function childSessionPointer(history: PiHistory, persisted: Subagen
     if (!row || !workflowId(row.runId)) return undefined;
     const s = await readSnapshotJson(root, path.join(root, row.runId, 'status.json'));
     if (s.runId !== row.runId || s.sessionId !== history.session.path || !workflowId(s.toolCallId) || s.parentWorkflowRunId !== runId || s.workflowKey !== childId || !validTime(s) || s.startedAt < status.startedAt) return undefined;
-    return typeof s.sessionFile === 'string' ? s.sessionFile : undefined;
+    // pi-subagents child runs may omit sessionFile from their own status.json.
+    // Fall back to the parent workflow's steps[].sessionFile (set at launch time).
+    if (typeof s.sessionFile === 'string') return s.sessionFile;
+    const step = Array.isArray(status.steps) ? status.steps.find((st: any) => obj(st)?.workflowKey === childId) : undefined;
+    const stepFile = obj(step)?.sessionFile;
+    return typeof stepFile === 'string' ? stepFile : undefined;
   } catch { return undefined; }
 }
