@@ -112,6 +112,12 @@ export function DiffBlock({ diff, hideHead }: { diff: DemoFileDiff; hideHead?: b
   );
 }
 
+/** 工具步骤条图标。子代理调用用机器人图标（对齐 ZCode chat.toolCall 卡片的 bot 标识，
+ *  用户 2026-10-16 指定）；codemode/MCP 优先级更高（它们是外壳形态而非工具本体）。 */
+export function toolRowIcon(part: ToolPart, isCodeMode: boolean, mcpName: string[] | null): IconName {
+  return isCodeMode ? 'code' as const : mcpName ? 'plug' as const : part.tool === 'subagent' ? 'bot' as const : ['bash','run_command'].includes(part.tool) ? 'terminal' : ['grep','find','ls'].includes(part.tool) ? 'search' : ['edit','write'].includes(part.tool) ? 'pencil' : part.tool === 'read' ? 'book' : part.tool === 'desktop_schedule' ? 'timer' : 'plug';
+}
+
 export function ToolCard({ part, labels, onOpenToolFile, live }: { part: ToolPart; labels: ChatViewProps['labels']; onOpenToolFile?: ChatViewProps['onOpenToolFile']; /** 组流式中且这是最后一个 part：运行中的工具行展示加粗「正在执行」（与正在思考同款） */ live?: boolean }) {
   const openSubagents=useContext(SubagentNavigation);
   const zh = labels.you === '你';
@@ -127,7 +133,7 @@ export function ToolCard({ part, labels, onOpenToolFile, live }: { part: ToolPar
   const codeSummary = code ? code.split('\n').map(l => l.trim()).find(l => l && !l.startsWith('//'))?.slice(0, 90) : undefined;
   // pi ≥0.99 原生 MCP 工具名 `mcp__<server>__<tool>`：显示为「server / tool」并配插头图标。
   const mcpName = part.tool.startsWith('mcp__') ? part.tool.split('__').slice(1).filter(Boolean) : null;
-  const icon = isCodeMode ? 'code' as const : mcpName ? 'plug' as const : ['bash','run_command'].includes(part.tool) ? 'terminal' : ['grep','find','ls'].includes(part.tool) ? 'search' : ['edit','write'].includes(part.tool) ? 'pencil' : part.tool === 'read' ? 'book' : part.tool === 'desktop_schedule' ? 'timer' : 'plug';
+  const icon = toolRowIcon(part, isCodeMode, mcpName);
   const toolLabel = mcpName ? mcpName.join(' / ') : zh ? ({ read: '读取', bash: '终端', run_command: '终端', edit: '编辑', write: '写入', grep: '查阅', find: '查阅', ls: '查阅', codemode: 'JS 脚本', desktop_schedule: '定时任务' } as Record<string, string>)[part.tool] : undefined;
   const statusLabel = part.phase === 'call' ? (part.status === 'running' ? (zh ? '等待执行结果' : 'Awaiting result') : (zh ? '未记录结果' : 'No saved result')) : part.status === 'running' ? labels.toolRunning : part.status === 'error' ? labels.toolError : labels.toolDone;
   // 摘要行上的行数统计：write 用 content 行数（+N），edit 用 edits[] 的 old/new 行数（+N/−M）。
