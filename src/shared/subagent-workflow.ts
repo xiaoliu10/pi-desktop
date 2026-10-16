@@ -91,6 +91,9 @@ export function singleRunRow(status: Record<string, any>): Record<string, any> {
     runId: workflowId(status.runId) ? status.runId : undefined,
     agent: workflowText(step?.agent),
     label: workflowText(step?.label),
+    // pi 派生子会话名 `agent: <任务主题>`（deriveChildSessionName）——它是上游自带的
+    // 展示字段（非红线内容），宿主用它做卡片标题，替代无信息量的 workflow key。
+    sessionName: workflowText(step?.sessionName ?? status.sessionName),
     state: workflowState(status.state ?? step?.status),
     model: workflowText(step?.model),
     tokens: tokens && typeof tokens.total === 'number' && Number.isFinite(tokens.total) ? tokens.total : undefined,
