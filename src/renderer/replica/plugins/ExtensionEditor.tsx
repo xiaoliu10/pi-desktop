@@ -36,15 +36,22 @@ export function ExtensionSourceDialog(props: {
   const [busy, setBusy] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
+  const [readError, setReadError] = useState('');
   useEffect(() => {
     ref.current?.focus();
+    setReadError('');
     if (!creating && props.init.mode === 'edit') {
       let active = true;
       api().resourceRead(props.init.id).then((doc) => {
         if (!active) return;
         setRevision(doc.revision);
         setText(doc.text);
-      }).catch((e) => { props.onError(String(e)); props.onClose(); });
+      }).catch((e) => {
+        if (!active) return;
+        // 读失败不关窗：关窗会让用户只看到「一闪」，连原因都看不到（真事故事实：
+        // 插件页点「编辑源码」窗口一闪即消）。保留窗口并显示错误，允许重试或复制路径外查。
+        setReadError(String(e));
+      });
       return () => { active = false; };
     }
   }, [creating]);
@@ -74,6 +81,15 @@ export function ExtensionSourceDialog(props: {
           <button type="button" className="pi-iconbtn" aria-label="关闭" onClick={props.onClose}>×</button>
         </header>
         {!creating && resource && <code className="pi-exteditor__path">{resource.path}{!resource.editable && '（只读）'}</code>}
+        {!creating && readError && (
+          <div className="pi-exteditor__readerror" role="alert">
+            <span>源码读取失败：{readError}</span>
+            <div className="pi-exteditor__readerror-actions">
+              <button type="button" className="pi-btn pi-btn--outline" onClick={() => { const again = async () => { setReadError(''); try { const doc = await api().resourceRead(props.init.mode === 'edit' ? props.init.id : ''); setRevision(doc.revision); setText(doc.text); } catch (e) { setReadError(String(e)); } }; void again(); }}>重试</button>
+              {resource && <button type="button" className="pi-btn pi-btn--outline" onClick={() => { void navigator.clipboard.writeText(resource.path); }}>复制路径</button>}
+            </div>
+          </div>
+        )}
         {creating && (
           <div className="pi-exteditor__fields">
             <label>范围
