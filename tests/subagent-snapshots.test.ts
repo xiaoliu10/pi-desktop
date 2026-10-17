@@ -309,6 +309,40 @@ describe('childSessionPointer + subagentChildTranscript', () => {
     expect(await childSessionPointer(history, [], callId, 'wrong-key', root)).toBeUndefined();
     expect(await childSessionPointer(history, [], 'unknown-call', 'review', root)).toBeUndefined();
   });
+  it('resolves a pinned call that falls outside the MAX_CALLS tail window', async () => {
+    // 真因回归：大会话里 subagent 调用超过 32 个时，pointers() 的尾窗把老的
+    // workflow 卡片静默丢掉——按需拉它的转录永远 no-snapshot（用户看不到
+    // workflow 进度的根因之一）。pinned 的 callId 必须穿透窗口。
+    const now = Date.now();
+    const callId = 'call-old';
+    const wfRunId = 'ffffffff-3333-4333-8333-000000000001';
+    const childRunId = 'ffffffff-4444-4444-8444-000000000002';
+    const childSessionDir = path.join(parentDir(), 'old-child', 'run-0');
+    fs.mkdirSync(childSessionDir, { recursive: true });
+    const childSessionFile = path.join(childSessionDir, 'session.jsonl');
+    fs.writeFileSync(childSessionFile, [JSON.stringify({ type: 'session', id: 'old-child', cwd: '/x' })].join('\n') + '\n');
+    writeStatus(wfRunId, { runId: wfRunId, toolCallId: callId, sessionId: parentPath(), mode: 'workflow', state: 'completed', startedAt: now - 60000, lastUpdate: now - 50000, workflowChildren: { version: 1, parentToolCallId: callId, workflowRunId: wfRunId, inventoryComplete: true, workflowState: 'completed', children: [{ childId: 'review', runId: childRunId, agent: 'code-reviewer', state: 'completed' }] } });
+    writeStatus(childRunId, { runId: childRunId, toolCallId: 'ct-old', sessionId: parentPath(), mode: 'single', state: 'complete', startedAt: now - 59000, lastUpdate: now - 49000, parentWorkflowRunId: wfRunId, workflowKey: 'review', sessionFile: childSessionFile });
+    // branch：目标 call 在最老位置，之后垫 40 个更新的 workflow 指针（超过 MAX_CALLS=32）。
+    const branch: any[] = [
+      { type: 'message', id: 'c-old', message: { role: 'assistant', content: [{ type: 'toolCall', id: callId, name: 'subagent', arguments: { agent: 'code-reviewer' } }] }, timestamp: new Date(now - 60000).toISOString() },
+      { type: 'message', id: 'r-old', message: { role: 'toolResult', toolCallId: callId, toolName: 'subagent', content: [], details: { mode: 'workflow', runId: wfRunId, asyncId: wfRunId, asyncDir: path.join(root, wfRunId), results: [], workflowChildren: { version: 1, parentToolCallId: callId, workflowRunId: wfRunId, inventoryComplete: true, workflowState: 'completed', children: [] } } } },
+    ];
+    for (let i = 0; i < 40; i++) {
+      const id = `call-new-${i}`, run = `aaaaaaaa-5555-4555-8555-${String(i).padStart(12, '0')}`;
+      branch.push({ type: 'message', id: `c-${i}`, message: { role: 'assistant', content: [{ type: 'toolCall', id, name: 'subagent', arguments: { agent: 'dev' } }] }, timestamp: new Date(now - 50000 + i * 100).toISOString() });
+      branch.push({ type: 'message', id: `r-${i}`, message: { role: 'toolResult', toolCallId: id, toolName: 'subagent', content: [], details: { mode: 'workflow', runId: run, asyncId: run, asyncDir: path.join(root, run), results: [], workflowChildren: { version: 1, parentToolCallId: id, workflowRunId: run, inventoryComplete: true, workflowState: 'completed', children: [] } } } });
+    }
+    const history = makeHistory(parentPath(), branch);
+    // 列表窗口（无 pin）保持 32 条且有界
+    const all = await workflowSnapshots(history, [], root);
+    expect(all.length).toBeLessThanOrEqual(32);
+    expect(all.some(w => w.callId === callId)).toBe(false); // 被窗口挤出（符合预期）
+    // 但按需拉这个老卡片的转录必须能解析到文件
+    const file = await childSessionPointer(history, [], callId, 'review', root);
+    expect(file).toBe(childSessionFile);
+  });
+
   it('resolves a single-async child session file only for childId single', async () => {
     const { callId, childSessionFile, history } = transcriptFixture('single');
     expect(await childSessionPointer(history, [], callId, 'single', root)).toBe(childSessionFile);

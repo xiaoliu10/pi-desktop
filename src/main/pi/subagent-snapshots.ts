@@ -56,7 +56,13 @@ export async function readSnapshotJson(root: string, file: string, budget = { by
   } finally { await handle.close(); }
 }
 
-function pointers(history: PiHistory, persisted: SubagentSnapshot[]) {
+/** Collect subagent call pointers from the branch (+ persisted event snapshots).
+ *  `pinned` = a callId the caller will definitely consume: it survives the MAX_CALLS
+ *  window even when a session has more subagent calls than the window holds (real
+ *  sessions hit 30+; the tail window silently dropped older workflow cards, so
+ *  on-demand transcript fetches for them returned no-snapshot). Pinning keeps the
+ *  bounded scan for list rendering while making per-card reads always resolvable. */
+function pointers(history: PiHistory, persisted: SubagentSnapshot[], pinned?: string) {
   const calls = new Map<string, { at: number; management: boolean }>();
   const found = new Map<string, SubagentSnapshot>();
   const collect = (details: unknown, callId: string, at?: number) => {
@@ -76,7 +82,15 @@ function pointers(history: PiHistory, persisted: SubagentSnapshot[]) {
     // hash-owned persistence file. They are not a license to use arbitrary dirs.
     if (!found.has(rec.callId) && (workflowDetails(rec.details, rec.callId) || singleAsyncDetails(rec.details, rec.callId) || completionsDetails(rec.details, rec.callId))) found.set(rec.callId, rec);
   }
-  return [...found.values()].slice(-MAX_CALLS);
+  const all = [...found.values()];
+  const window = all.slice(-MAX_CALLS);
+  if (pinned && workflowId(pinned) && !window.some(p => p.callId === pinned)) {
+    const hit = all.find(p => p.callId === pinned);
+    // Replace the oldest window entry rather than growing it: list rendering stays
+    // bounded; the pinned card is what the user is looking at right now.
+    if (hit) { window.shift(); window.push(hit); }
+  }
+  return window;
 }
 
 /** Main-process-only adapter. No scans, no session/transcript/prompt reads and no
@@ -155,7 +169,7 @@ export async function workflowSnapshots(history: PiHistory, persisted: SubagentS
  *  sessions root before reading. Never returns filesystem pointers to the renderer. */
 export async function childSessionPointer(history: PiHistory, persisted: SubagentSnapshot[], callId: string, childId: string, root = subagentAsyncRoot(), now = Date.now()): Promise<string | undefined> {
   if (!workflowId(callId) || !workflowId(childId)) return undefined;
-  const pointer = pointers(history, persisted).find(p => p.callId === callId);
+  const pointer = pointers(history, persisted, callId).find(p => p.callId === callId);
   if (!pointer) return undefined;
   const d = obj(pointer.details)!;
   const runId = d.runId;
