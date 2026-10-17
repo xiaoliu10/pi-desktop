@@ -35,9 +35,36 @@ export interface ChatTurn {
  * an unchanged turn keeps its object identity. Signature = member count plus
  * first/last member identity (the tail is what streaming mutates).
  */
+// turn 级缓存让 executionTurns 在流式期间（messages 数组每拍重建）不必重跑整棵
+// 历史：命中的 group 直接复用上次的 ChatTurn。
+// 上限必须封顶：hit 分支保留 members 引用（整组 message 对象）+ turn.steps（含
+// tool 参数/输出 parts）。无界 Map 在 24637 条大会话上实测把渲染进程推到 3.6GB
+// RSS、GC 常年高压——打字卡的第二个根因。超限整体清空：最坏退化一次全量重建。
+const TURN_CACHE_MAX = 2048;
+/**
+ * turnCache 容量控制。注意不能整体 clear：流式期间 executionTurns 每拍重算整棵历史，
+ * 一轮下来写入的 group 数（12000+）远大于上限——每拍 clear 会让缓存命中率归零，
+ * 比不缓存更慢。淘汰最老的一半（Map 按插入序，头部最旧），保留近期 turn；
+ * 代价是被淘汰的 group 下次要重建一次，但它们位于窗口外、不会立即再访问。
+ */
+function trimTurnCache(): void {
+  if (turnCache.size <= TURN_CACHE_MAX) return;
+  const drop = turnCache.size >> 1;
+  let i = 0;
+  for (const key of turnCache.keys()) { if (i++ >= drop) break; turnCache.delete(key); }
+}
+
+
 const turnCache = new Map<string, { count: number; first: ChatMessage; last: ChatMessage; members?: ChatMessage[]; turn: ChatTurn }>();
 
-export function executionTurns(messages: ChatMessage[]): ChatTurn[] {
+/**
+ * 把消息数组聚合成「用户轮 + 其执行段」的 turn 序列。
+ * limit：只需要尾部 N 个 turn 时传——流式期间本函数每拍被调一次（messages 数组每拍
+ * 重建），而调用方（ChatView）默认只渲染尾部 60 个 turn。无 limit 时 24637 条大会话
+ * 每拍要聚合 12000+ 个 group（含逐 members 缓存比对），是打字卡的元凶之一。
+ * 语义与无 limit 完全一致：只是不为「不可能被渲染」的前缀付 CPU。
+ */
+export function executionTurns(messages: ChatMessage[], limit?: number): ChatTurn[] {
   const turns: ChatTurn[] = [];
   const groups: { id: string; role: 'user' | 'assistant'; boundary: string; startedAt?: number; members: ChatMessage[] }[] = [];
   let current: (typeof groups)[number] | undefined;
@@ -53,13 +80,18 @@ export function executionTurns(messages: ChatMessage[]): ChatTurn[] {
     }
     current.members.push(message);
   }
-  for (const group of groups) {
+  // 只要尾部 limit 个：groups 从头切掉。注意 group 边界与 turn 一一对应（每组一个 turn）。
+  const keep = typeof limit === 'number' && limit > 0 && groups.length > limit
+    ? groups.slice(groups.length - limit)
+    : groups;
+  for (const group of keep) {
     if (group.role === 'user') {
       const message = group.members[0]!;
       const userHit = turnCache.get(group.id);
       if (userHit && userHit.count === 1 && userHit.first === message && userHit.last === message) { turns.push(userHit.turn); continue; }
       const turn: ChatTurn = { id: group.id, role: 'user', meta: message.meta, messageIds: [message.id], segments: [{ kind: 'text', parts: message.parts }], liveSegments: [{ kind: 'text', parts: message.parts }], steps: [], answer: message.parts };
       turnCache.set(group.id, { count: 1, first: message, last: message, turn });
+      trimTurnCache();
       turns.push(turn);
       continue;
     }
@@ -136,6 +168,7 @@ export function executionTurns(messages: ChatMessage[]): ChatTurn[] {
     turn.steps = segments.flatMap((s) => (s.kind === 'steps' ? s.parts : []));
     turn.answer = segments.flatMap((s) => (s.kind === 'text' ? s.parts : []));
     turnCache.set(group.id, { count: group.members.length, first, last, members: group.members, turn });
+    trimTurnCache();
     turns.push(turn);
   }
   return turns;

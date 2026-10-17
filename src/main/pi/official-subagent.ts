@@ -239,8 +239,11 @@ export function cleanupSubagents(agentDir: string, sessionKey: string) {
 /** 按会话聚合「运行中子代理数」：侧栏会话行的菊花要在主 run 结束后继续转，
  *  否则用户误以为任务已结束（子代理还在后台跑）。数据源是 persistSubagentEvent
  *  落的快照文件；只数 status=running 且未 stale 的（STALE_MS 与 subagent-snapshots
- *  同口径）——死快照不能让菊花永转。 */
-export function runningSubagentCounts(agentDir: string, now = Date.now()): Record<string, number> {
+ *  同口径）——死快照不能让菊花永转。顺手把 stale 文件删掉：workflow 型快照的
+ *  completed 清理被特意跳过（recoverSubagents 要读它做详情恢复），于是「跑到一半
+ *  进程死了」的快照会永远留在 running 态——用户侧栏因此显示幽灵运行中
+ *  （真实 bug：4 天前的快照让侧栏常驻 5 个「正在运行」）。 */
+export function runningSubagentCounts(agentDir: string, now = Date.now(), opts: { sweep?: boolean } = {}): Record<string, number> {
   const dir = path.join(agentDir, 'subagents');
   const counts: Record<string, number> = {};
   let entries: string[];
@@ -257,7 +260,12 @@ export function runningSubagentCounts(agentDir: string, now = Date.now()): Recor
       const snap = JSON.parse(fs.readFileSync(path.join(dir, name), 'utf8'));
       if (snap?.status !== 'running') continue;
       const updatedAt = Number(snap.updatedAt) || 0;
-      if (!updatedAt || now - updatedAt > STALE_MS) continue;
+      if (!updatedAt || now - updatedAt > STALE_MS) {
+        // stale 的 running 快照：进程早死了，事件不会再更新它。删掉，别再让任何
+        // 消费者（侧栏计数/详情恢复）把它当成活着的工作。
+        if (opts.sweep) { try { fs.unlinkSync(path.join(dir, name)); } catch { /* best-effort */ } }
+        continue;
+      }
       counts[sessionKey] = (counts[sessionKey] ?? 0) + 1;
     } catch { /* 快照损坏/半写：跳过，不影响其他会话 */ }
   }
