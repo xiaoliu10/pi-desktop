@@ -652,6 +652,21 @@ export function confirmSends(sends: OptimisticSend[], history: PiHistory, key: s
 }
 
 /** Split at explicit send boundaries, not wall-clock guesses. Old live stays before the new user. */
+/** 把 segment 缓存提升到模块级：流式期间 messages useMemo 每拍重跑 sentConversationMessages，
+ *  历史段的 (entries, owner) 输入在 branch 不变时逐拍重复——缓存命中时跳过整个
+ *  conversationMessages 机器（saved 预扫 + live 插入排序 + historyToMessages 重建），
+ *  每拍只剩 O(n) 预扫 + 320 次 Map 查找。按 branch 数组身份（WeakMap）隔离：
+ *  - 流式中 refreshHistory 换新 branch 数组 ⇒ 冷重建一次（O(n) 但已无 anchor 热点）
+ *  - 两次 refresh 之间的所有 tick（150ms 一拍，400ms 去抖）全部命中
+ *  - 每个 branch 自带的缓存随数组被 GC 一起回收，不泄漏；小分支（测试 fixture）
+ *    各自隔离，同名 id 的合成数据互不污染 */
+const segmentCaches = new WeakMap<PiEntry[], Map<string, ChatMessage[]>>();
+function segmentCacheFor(branch: PiEntry[]): Map<string, ChatMessage[]> {
+  let cache = segmentCaches.get(branch);
+  if (!cache) { cache = new Map(); segmentCaches.set(branch, cache); }
+  return cache;
+}
+
 export function sentConversationMessages(branch: PiEntry[], live: Record<string, Record<string, unknown>> | undefined, tools: ToolProgress[] | undefined, sends: OptimisticSend[], compactionAfter?: CompactionAfter): ChatMessage[] {
   // Every persisted user is a boundary, including consumed follow-up/steer
   // items (which intentionally have no optimistic send). Missing confirmed
@@ -667,17 +682,32 @@ export function sentConversationMessages(branch: PiEntry[], live: Record<string,
   ];
   const out: ChatMessage[] = [];
   let cursor = 0;
+  // entry.id → branch 下标。confirmed 边界的定位与 anchorOf 在旧实现里对每个 send 各做一次
+  // findIndex（319 轮 × 24.6k 条 ≈ 6400 万次比较，实测占满一拍的 259ms）。entry.id 在一条
+  // branch 内稳定，一次 O(n) 建 Map 后所有查询 O(1)。findIndex 的语义（首个匹配、缺失 -1）
+  // 原样保留：Map 记 first index。
+  const indexById = new Map<string, number>();
+  for (let i = 0; i < branch.length; i += 1) { const id = branch[i]!.id; if (id && !indexById.has(id)) indexById.set(id, i); }
+  const indexOfEntry = (id: string) => { const at = indexById.get(id); return at === undefined ? -1 : at; };
+  // baseline 集合同样预计算成 Set：未确认 send 的 anchorOf 每次重建 includes 数组是
+  // O(baseline × branch)，长 baseline 的排队 send 会把这一项放大成第二热点。
+  const baselineSets = new WeakMap<OptimisticSend, Set<string>>();
+  const baselineOf = (s: OptimisticSend) => { let set = baselineSets.get(s); if (!set) { set = new Set(s.baseline); baselineSets.set(s, set); } return set; };
   // send 的锚定位置（branch 下标）：confirmed 在其条目处；未确认 send 锚定在本轮自身产物
   // （baseline 外首条落盘条目）之前。sends 按锚定排序后按时间序插入，而不是把未确认 send
   // 无条件排到对话流最底部（那会让它永挂底部，把之后排队自动发出的消息挤到上面）。
   const anchorOf = (s: OptimisticSend) => {
-    if (s.confirmedId) { const at = branch.findIndex(e => e.id === s.confirmedId); return at < 0 ? branch.length : at; }
-    if (s.baseline.length) { const first = branch.findIndex(e => e.id && !s.baseline.includes(e.id)); return first < 0 ? branch.length : first; }
+    if (s.confirmedId) { const at = indexOfEntry(s.confirmedId); return at < 0 ? branch.length : at; }
+    if (s.baseline.length) { const seen = baselineOf(s); const first = branch.findIndex(e => e.id && !seen.has(e.id)); return first < 0 ? branch.length : first; }
     return branch.length;
   };
   // 同锚点时未确认 send 必须排在该条目之前（它的锚就是“首个 baseline 外条目”的位置）；
   // 已确认/history 边界排后，其余按发送时间。
-  sends = [...sends].sort((a, b) => (anchorOf(a) - anchorOf(b)) || (a.confirmedId ? 1 : b.confirmedId ? -1 : a.at - b.at));
+  // 锚值对 sort 是热点（比较器每次调用重算两次 anchorOf，O(n log n) 次）。排序前对每个
+  // send 算一次并缓存，比较器只读数字。
+  const anchorCache = new Map<OptimisticSend, number>();
+  for (const s of sends) anchorCache.set(s, anchorOf(s));
+  sends = [...sends].sort((a, b) => (anchorCache.get(a)! - anchorCache.get(b)!) || (a.confirmedId ? 1 : b.confirmedId ? -1 : a.at - b.at));
   // A late result/update may arrive after its progress was retired. Persisted
   // call identity outranks the current event turn, otherwise old work resurfaces
   // after the new user despite having already been saved in an earlier segment.
@@ -702,12 +732,55 @@ export function sentConversationMessages(branch: PiEntry[], live: Record<string,
   // Saved message identity also outranks event arrival order. Suppress saved
   // live copies globally, not per segment (a late end may have a stale owner).
   const savedMessages = new Set(branch.filter(e => e.message?.role === 'assistant').map(e => String(e.message?.timestamp ?? e.message?.id)));
-  const segment = (entries: PiEntry[], owner?: string) => conversationMessages(entries,
-    Object.fromEntries(Object.entries(live ?? {}).filter(([id, m]) => !savedMessages.has(id) && m._turnId === owner)),
-    (tools ?? []).filter(t => (toolOwners.has(t.toolCallId) ? toolOwners.get(t.toolCallId) : t.turnId) === owner), compactionAfter).map(m => m.id === 'live-tools' ? { ...m, id: `live-tools:${owner ?? 'initial'}` } : m);
+  // segment() 旧实现每拍被调用 320 次（每轮一次），每次都：过滤 live（O(live)）+ 过滤 tools
+  // + conversationMessages（内部 saved/pending 两次 O(n) 预扫 + historyToMessages 数组重建）。
+  // 历史段的 (entries, owner) 组合在流式期间逐拍重复且输入不变——按 (entries 区间, owner,
+  // live/tools 内容签名) 缓存整个结果。owner 维度的 live/tools 过滤与签名每拍只算一次
+  //（提到循环外），签名用 JSON.stringify：流式 delta 更新同 id 的 live 消息内容时
+  //（'NEW' → 'NEW CONTINUED'）id 不变但内容变，id-only 签名会命中陈旧段。
+  // 不变量：_turnId/turnId 只会是 string | undefined（由 currentOwner = send id 或
+  // `history:${id}` 赋值，之后原样传递），null/number 不会出现。ownerKeyOf 的 null 合并
+  // 语义因此与旧实现 `=== owner` 严格等价（null 若真出现会改变路由，但不可达）。
+  const ownerKeyOf = (owner: string | undefined) => owner ?? '\u0000';
+  const liveByOwner = new Map<string, [Record<string, Record<string, unknown>>, string]>();
+  for (const [id, m] of Object.entries(live ?? {})) {
+    if (savedMessages.has(id)) continue;
+    const ownerKey = ownerKeyOf(m._turnId as string | undefined);
+    const entry = liveByOwner.get(ownerKey) ?? [{} as Record<string, Record<string, unknown>>, ''];
+    entry[0][id] = m;
+    liveByOwner.set(ownerKey, entry);
+  }
+  for (const [ownerKey, pair] of liveByOwner) liveByOwner.set(ownerKey, [pair[0], JSON.stringify(pair[0])]);
+  const toolsByOwner = new Map<string, [ToolProgress[], string]>();
+  for (const t of tools ?? []) {
+    const ownerKey = ownerKeyOf(toolOwners.has(t.toolCallId) ? toolOwners.get(t.toolCallId) : t.turnId);
+    const entry = toolsByOwner.get(ownerKey) ?? [[], ''] as [ToolProgress[], string];
+    entry[0].push(t);
+    toolsByOwner.set(ownerKey, entry);
+  }
+  for (const [ownerKey, pair] of toolsByOwner) toolsByOwner.set(ownerKey, [pair[0], JSON.stringify(pair[0])]);
+  // segment 缓存跨调用存活（模块级，按 branch 数组身份隔离：IPC 刷新会换新数组 ⇒
+  // 流式中同一 branch 的多个 tick 之间命中；测试各建新数组互不串扰）。真实会话同一
+  // (first,last,len,owner,liveSig,toolsSig) 的内容由 append-only 契约保证不变。
+  const segmentCache = segmentCacheFor(branch);
+  const segment = (entries: PiEntry[], owner?: string) => {
+    const ownerKey = ownerKeyOf(owner);
+    const livePart = liveByOwner.get(ownerKey);
+    const toolsPart = toolsByOwner.get(ownerKey);
+    const cacheKey = `${entries[0]?.id ?? ''}\u0000${entries[entries.length - 1]?.id ?? ''}\u0000${entries.length}\u0000${ownerKey}\u0000${livePart?.[1] ?? ''}\u0000${toolsPart?.[1] ?? ''}\u0000${compactionAfter?.at ?? ''}\u0000${compactionAfter?.tokensAfter ?? ''}`;
+    const hit = segmentCache.get(cacheKey);
+    if (hit) return hit;
+    const built = conversationMessages(entries, livePart?.[0], toolsPart?.[0], compactionAfter).map(m => m.id === 'live-tools' ? { ...m, id: `live-tools:${owner ?? 'initial'}` } : m);
+    segmentCache.set(cacheKey, built);
+    // 缓存封顶：流式增长会为新区间不断建新键；上限 4096 防长会话无界增长。
+    // 触顶整体清空（下一拍重建，等价冷路径一次）。
+    if (segmentCache.size > 4096) segmentCache.clear();
+    return built;
+  };
   for (let i = 0; i < sends.length; i++) {
     const send = sends[i];
-    const at = send.confirmedId ? branch.findIndex(e => e.id === send.confirmedId) : -1;
+    // 走同一个 indexById Map（旧实现这里又做一次 findIndex）。
+    const at = send.confirmedId ? indexOfEntry(send.confirmedId) : -1;
     // While history is late, everything already saved still belongs before this send.
     // 排序后锚定恒 >= cursor；陈旧确认（at < cursor）仍容忍回退到末尾。
     const anchor = anchorOf(send);

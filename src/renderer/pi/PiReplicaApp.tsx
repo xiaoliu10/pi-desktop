@@ -199,6 +199,16 @@ export default function PiReplicaApp() {
 
   const t = labelsFor(s.lang);
   const run = currentRunOf(s);
+  // ChatView 的 memo 击穿点：filter/some 每拍新建数组/布尔。用 useMemo 把身份钉住，
+  // 让流式期间（live/toolProgress 每拍换引用）ChatView 及其子树的历史行不重渲染。
+  const viewQueue = useMemo(
+    () => run?.queue?.filter(q => !(q.behavior === 'steer' && q.text === s.pendingSteer?.[s.selectedKey ?? '']?.text)),
+    [run, s.pendingSteer, s.selectedKey],
+  );
+  const scrollRequest = useMemo(
+    () => (s.sends ?? []).filter(send => send.key === s.selectedKey && !send.received).at(-1)?.id,
+    [s.sends, s.selectedKey],
+  );
   const session = currentSessionOf(s);
   const cwd = cwdOf(s);
   const title = sessionTitleOf(s);
@@ -997,7 +1007,7 @@ export default function PiReplicaApp() {
                     runTiming={run?.timing}
                     running={Boolean(run && ['running', 'stopping'].includes(run.status))}
                     queued={run?.pending ?? 0}
-                    scrollRequest={(s.sends ?? []).filter(send => send.key === s.selectedKey && !send.received).at(-1)?.id}
+                    scrollRequest={scrollRequest}
                     sending={(s.sends ?? []).some(send => send.key === s.selectedKey && isAwaitingSend(send)) || run?.status === 'starting' || Boolean(launchPrompt)}
                     sendingText={launchPrompt}
                     steeringText={s.pendingSteer?.[s.selectedKey ?? '']?.text}
@@ -1007,7 +1017,7 @@ export default function PiReplicaApp() {
                     retryGroup={run?.retryGroup}
                     onStop={s.stop}
                     stopping={run?.status === 'stopping'}
-                    queue={run?.queue?.filter(q => !(q.behavior === 'steer' && q.text === s.pendingSteer?.[s.selectedKey ?? '']?.text))}
+                    queue={viewQueue}
                     demo={false}
                     labels={t.chat}
                     onOpenToolFile={openToolFile}
