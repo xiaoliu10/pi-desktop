@@ -1175,6 +1175,9 @@ document.getElementById('imgChips').addEventListener('click', e => {
 });
 // 编辑态：entryId 非空时，下一次提交不是新消息而是 fork 截断重发（对齐桌面语义）。
 let editingEntry = null;
+// 半提交错误前缀：后端 editResend 在 fork 成功后发送失败时加此标记（Error 属性
+// 过不了 HTTP JSON，用消息前缀传递「历史已回退但未发送」的阶段信息）。
+const SENDFAIL_PREFIX = 'EDIT_RESEND_SEND_FAILED_AFTER_FORK:';
 // 乐观项实例序号：同一文本连发/跨会话同文时，失败撤回按 id 精确命中自己那条。
 let optimisticSeq = 0;
 /** 按 entryId 从原始条目取完整用户文本：展示层有 8000 字截断且按钮文案混在
@@ -1205,11 +1208,20 @@ document.getElementById('composer').addEventListener('submit', e => {
     post('/api/edit', { key: current, entryId, text })
       .then(() => { ta.value = ''; ta.style.height = 'auto'; document.getElementById('composer').classList.remove('editing'); document.getElementById('conn').textContent = '已重发'; loadHistory(); })
       .catch(err => {
-      // 保留编辑态（输入框内容不丢）。后端 editResend 先做发送前置校验：此处失败
-      // 多数是「未截断」的可重试错误（运行中/待审批/斜杠命令）；若错误发生在 fork
-      // 之后（半提交：历史已截断但消息未发），后端消息会带 fork 成功标记，UI 明示。
+      const msg = String(err.message || err);
+      if (msg.startsWith(SENDFAIL_PREFIX)) {
+        // 半提交（fork 已成功、消息未发出）：历史已截断，旧 entry 的重试毫无意义。
+        // 退出编辑态、刷新历史（让用户看到截断后的真实状态）、把输入框内容留给
+        // 普通发送入口——直接发这条文本即可在当前（截断后）会话里继续。
+        editingEntry = null;
+        document.getElementById('composer').classList.remove('editing');
+        document.getElementById('conn').textContent = '已回退到该消息，但发送失败：' + msg.slice(SENDFAIL_PREFIX.length) + '。输入框内容已保留，直接发送即可继续。';
+        loadHistory();
+        return;
+      }
+      // fork 之前被拒（运行中/待审批/斜杠命令等）：未截断，保留编辑态可重试。
       editingEntry = entryId;
-      document.getElementById('conn').textContent = '重发失败：' + String(err.message || err);
+      document.getElementById('conn').textContent = '重发失败：' + msg;
     });
     return;
   }

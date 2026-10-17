@@ -186,6 +186,10 @@ describe('RemoteServer (LAN remote control)', () => {
     expect(html).toContain('originalUserText');
     // P2 修复：乐观项按实例 id 撤回
     expect(html).toContain('o.id !== optId');
+    // P2-3 修复：fork 后发送失败（半提交）与 fork 前拒绝分流，且明示恢复路径
+    expect(html).toContain('EDIT_RESEND_SEND_FAILED_AFTER_FORK');
+    expect(html).toContain('已回退到该消息，但发送失败');
+    expect(html).toContain('直接发送即可继续');
   });
 
   it('rejects oversized request bodies', async () => {

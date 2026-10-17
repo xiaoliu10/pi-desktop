@@ -815,9 +815,16 @@ export class PiBackend {
     const run = this.get(key); this.assertModelsUnlocked(run);
     this.assertResendable(run, text);
     await this.forkTo(key, entryId);
-    // fork 成功后的发送失败如实报：此时历史已截断，调用方（远控 UI）需明示
-    // 「已回退但未发送」，由用户在原会话继续或重试。
-    await this.prompt(key, text, 'followUp');
+    try {
+      await this.prompt(key, text, 'followUp');
+    } catch (error) {
+      // 半提交：fork 已成功（历史已截断到该条目），消息没发出去。错误必须带
+      // 阶段标记，远控 UI 才能明示「已回退但未发送」并引导恢复，而不是让
+      // 用户以为编辑整体失败、对着旧 entry 反复重试（reviewer P2 实证缺口）。
+      const marked = new Error(String((error as Error)?.message ?? error)) as Error & { editResendStage?: string };
+      marked.editResendStage = 'forked-send-failed';
+      throw marked;
+    }
   }
 
   async forkTo(key: string, entryId: string): Promise<string> {

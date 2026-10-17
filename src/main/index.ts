@@ -51,7 +51,16 @@ const remote = new RemoteServer({
   prompt: async (key, text, images) => { await host.backend.prompt(key, text, 'followUp', images); },
   // 编辑重发：fork 截断到该条目（后端 forkTo 收尾：延续关系记录 + 链尾指正），
   // 再以普通发送链路重发新文本。运行中/有待审批时 backend 拒绝，错误原样回手机。
-  editResend: (key, entryId, text) => host.backend.editResend(key, entryId, text),
+  // fork 成功后发送失败 = 半提交：历史已截断但消息没发出。错误消息加前缀标记，
+  // 手机端据此与「fork 前被拒」区分（前者不能对着旧 entry 重试，需引导恢复发送）。
+  editResend: async (key, entryId, text) => {
+    try { await host.backend.editResend(key, entryId, text); }
+    catch (e) {
+      const marked = e as Error & { editResendStage?: string };
+      if (marked.editResendStage === 'forked-send-failed') throw new Error('EDIT_RESEND_SEND_FAILED_AFTER_FORK:' + String(marked.message ?? marked));
+      throw e;
+    }
+  },
   stop: key => host.backend.stop(key),
   respond: (key, generation, response) => host.backend.respond(key, generation, response),
   pendingDialogs: key => host.backend.pendingDialogs(key),
