@@ -17,6 +17,7 @@ function makeProvider(): RemoteDataProvider {
         : null,
     version: () => '0.85.1-test',
     prompt: vi.fn(),
+    editResend: vi.fn(),
     stop: vi.fn(),
     respond: vi.fn(),
     pendingDialogs: vi.fn(() => [
@@ -153,6 +154,34 @@ describe('RemoteServer (LAN remote control)', () => {
     const expired = await postJson(base, '/api/respond', status.token, { key: 'k1', generation: 'g1', response: { id: 'r', value: 'x' } });
     expect(expired.status).toBe(400);
     expect(((await expired.json()) as { error: string }).error).toContain('已过期');
+  });
+
+  it('POST /api/edit validates shape and delegates to editResend', async () => {
+    const { status, base } = await start();
+    const bad = await postJson(base, '/api/edit', status.token, { key: 'k1', text: '改' });
+    expect(bad.status).toBe(400);
+    const empty = await postJson(base, '/api/edit', status.token, { key: 'k1', entryId: 'e1', text: '   ' });
+    expect(empty.status).toBe(400);
+    const unknown = await postJson(base, '/api/edit', status.token, { key: 'nope', entryId: 'e1', text: '改' });
+    expect(unknown.status).toBe(404);
+    const ok = await postJson(base, '/api/edit', status.token, { key: 'k1', entryId: 'e1', text: '改过的消息' });
+    expect(ok.status).toBe(200);
+    expect(provider.editResend).toHaveBeenCalledWith('k1', 'e1', '改过的消息');
+  });
+
+  it('viewer page carries the mobile edit/zoom affordances', () => {
+    const html = viewerPage();
+    // UI 缩放：锁定 viewport（maximum-scale + user-scalable=no），composer 16px 防 iOS 聚焦放大
+    expect(html).toContain('maximum-scale=1');
+    expect(html).toContain('user-scalable=no');
+    expect(html).toMatch(/composer textarea[^}]*font-size:16px/);
+    // 编辑重发 UI：消息编辑按钮 + 提交路由 /api/edit
+    expect(html).toContain('data-edit');
+    expect(html).toContain('/api/edit');
+    // 乐观发送：上屏先于 POST 成功（conn 文案）
+    expect(html).toContain('发送中…');
+    // 死卡片修复：respond 失败也撤卡
+    expect(html).toContain('过期/失败一律撤卡');
   });
 
   it('rejects oversized request bodies', async () => {

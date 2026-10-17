@@ -49,6 +49,12 @@ const remote = new RemoteServer({
   desktopVersion: () => app.getVersion(),
   // 写操作直转 backend：与桌面 IPC 同一套校验（会话连接、generation、可发送状态、图片数量/MIME/总长）。
   prompt: async (key, text, images) => { await host.backend.prompt(key, text, 'followUp', images); },
+  // 编辑重发：fork 截断到该条目（后端 forkTo 收尾：延续关系记录 + 链尾指正），
+  // 再以普通发送链路重发新文本。运行中/有待审批时 backend 拒绝，错误原样回手机。
+  editResend: async (key, entryId, text) => {
+    await host.backend.forkTo(key, entryId);
+    await host.backend.prompt(key, text, 'followUp');
+  },
   stop: key => host.backend.stop(key),
   respond: (key, generation, response) => host.backend.respond(key, generation, response),
   pendingDialogs: key => host.backend.pendingDialogs(key),

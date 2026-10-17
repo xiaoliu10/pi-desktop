@@ -39,6 +39,8 @@ export interface RemoteDataProvider {
   desktopVersion?(): string;
   /** 写操作：全部委托 PiBackend（与桌面 IPC 同款校验与并发语义）。 */
   prompt(key: string, text: string, images?: PiImage[]): Promise<void> | void;
+  /** 编辑历史消息：fork 截断到该条目后重发新文本（后端 forkTo + 新 prompt，空闲态校验同桌面）。 */
+  editResend?(key: string, entryId: string, text: string): Promise<void>;
   stop(key: string): Promise<void> | void;
   respond(key: string, generation: string, response: RemoteDialogResponse): void;
   /** 待审批快照：页面刷新后据此恢复审批卡片。 */
@@ -219,7 +221,7 @@ export class RemoteServer {
 
   private async handlePost(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
     const path = url.pathname;
-    if (!['/api/prompt', '/api/stop', '/api/respond'].includes(path)) {
+    if (!['/api/prompt', '/api/stop', '/api/respond', '/api/edit'].includes(path)) {
       this.json(res, 404, { error: 'not found' });
       return;
     }
@@ -259,6 +261,16 @@ export class RemoteServer {
         if (!images.length && rawBytes > MAX_BODY_BYTES) { this.json(res, 400, { error: '请求体过大' }); return; }
         if (images.length) await this.data.prompt(key, text, images);
         else await this.data.prompt(key, text); // 无图保持既有两参调用形状
+        this.json(res, 200, { ok: true });
+        return;
+      }
+      if (path === '/api/edit') {
+        const key = body.key, entryId = body.entryId, text = typeof body.text === 'string' ? body.text : '';
+        if (!this.isRun(key)) { this.json(res, 404, { error: '会话未连接' }); return; }
+        if (typeof entryId !== 'string' || !entryId) { this.json(res, 400, { error: '消息条目无效' }); return; }
+        if (!text.trim()) { this.json(res, 400, { error: '内容为空' }); return; }
+        if (!this.data.editResend) { this.json(res, 501, { error: '当前桌面版本不支持编辑消息' }); return; }
+        await this.data.editResend(key, entryId, text);
         this.json(res, 200, { ok: true });
         return;
       }
@@ -438,7 +450,7 @@ export function viewerPage(): string {
 <html lang="zh">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <title>PI Desktop · 远程控制</title>
 <style>
   :root { color-scheme: light dark; --bg:#f4f4f6; --card:#fff; --line:#e3e3e6; --text:#1c1c1e; --sub:#8a8a90; --accent:#1d1d1f; --user:#e8f0fe; --danger:#ba4236; --chip:#eeeef0; }
@@ -500,7 +512,12 @@ export function viewerPage(): string {
   .chip .chip-size { color:var(--sub); font-size:11px; flex-shrink:0; }
   .chip-x { border:0; background:none; color:var(--sub); font-size:13px; line-height:1; padding:2px 4px; cursor:pointer; }
   .chips-total { font-size:11px; color:var(--sub); }
-  .composer textarea { flex:1; resize:none; border:1px solid var(--line); background:var(--bg); color:var(--text); border-radius:10px; padding:9px 10px; font:inherit; font-size:14px; max-height:120px; min-height:38px; }
+  .msg-edit { margin-left:8px; border:1px solid var(--line); background:none; color:var(--sub); border-radius:8px; font-size:11px; padding:1px 8px; }
+  .msg-edit:active { color:var(--accent); border-color:var(--accent); }
+  .msg .who { display:flex; align-items:center; }
+  .composer.editing textarea { border-color:var(--accent); }
+  .composer textarea { flex:1; resize:none; border:1px solid var(--line); background:var(--bg); color:var(--text); border-radius:10px; padding:9px 10px; font:inherit; font-size:16px; max-height:120px; min-height:38px; }
+  .composer-row .sendbtn { font-size:14px; }
   .composer textarea:disabled { opacity:.5; }
   .sendbtn { flex-shrink:0; border:0; background:var(--accent); color:var(--bg); border-radius:10px; font-size:14px; padding:9px 16px; }
   .sendbtn:disabled { opacity:.4; }
@@ -724,7 +741,7 @@ function render(entries, opts) {
     const e = viewPages.get(i);
     if (!e || e.type !== 'message' || !e.message) continue;
     const m = e.message, role = m.role || '';
-    if (role === 'user') { const t = textOf(m.content); seenUser.add(t); out.push(bubble('用户', t, 'user')); }
+    if (role === 'user') { const t = textOf(m.content); seenUser.add(t); out.push(bubble('用户', t, 'user', e.id)); }
     else if (role === 'assistant') {
       if (typeof m.content === 'string') out.push(bubble('助手', m.content, ''));
       else if (Array.isArray(m.content)) for (const b of m.content) {
@@ -747,8 +764,12 @@ function render(entries, opts) {
   feed.innerHTML = btn + (out.length ? out.join('') : '<div class="empty">这个会话还没有内容</div>');
   if (!opts || !opts.preserve) window.scrollTo(0, document.body.scrollHeight);
 }
-function bubble(who, text, cls) {
-  return '<div class="msg ' + cls + '"><div class="who">' + escapeHtml(who) + '</div>' + escapeHtml(String(text ?? '')).slice(0, 8000) + '</div>';
+function bubble(who, text, cls, entryId) {
+  const body = escapeHtml(String(text ?? '')).slice(0, 8000);
+  if (!entryId || cls === 'user pending') return '<div class="msg ' + cls + '"><div class="who">' + escapeHtml(who) + '</div>' + body + '</div>';
+  return '<div class="msg ' + cls + '" data-entry="' + escapeHtml(entryId) + '"><div class="who">' + escapeHtml(who)
+    + '<button type="button" class="msg-edit" data-edit="' + escapeHtml(entryId) + '" title="编辑并重发（会截断该消息之后的对话）">编辑</button></div>'
+    + body + '</div>';
 }
 /** 思考折叠气泡：流式中只留一行状态 + 最新片段预览（默认收起，点开看全文），完成后折叠为「已思考」。 */
 function thinkBubble(text, streaming) {
@@ -940,9 +961,15 @@ function renderAsk(holder, d) {
   rebuild();
 }
 function respondDialog(d, response) {
+  const id = d.request.id;
   post('/api/respond', { key: d.key, generation: d.generation, response })
-    .then(() => { dialogs.delete(d.request.id); renderDialog(); })
-    .catch(e => { document.getElementById('conn').textContent = String(e.message || e); });
+    .then(() => { dialogs.delete(id); renderDialog(); })
+    .catch(e => {
+      // 过期/失败一律撤卡：桌面端已清的卡片若留在手机上，用户每点一次就再弹一次
+      // （死卡片循环）。桌面端权威态在 seedDialogs 对账，误删最多丢一次交互机会。
+      dialogs.delete(id); renderDialog();
+      document.getElementById('conn').textContent = String(e.message || e);
+    });
 }
 function seedDialogs(state) {
   for (const r of state.runs || []) for (const dg of r.dialogs || []) {
@@ -957,7 +984,11 @@ async function loadState() {
     const s = await api('/api/state');
     sessions = s.sessions || [];
     runs = new Map((s.runs || []).map(r => [r.key, r]));
-    dialogs = new Map();
+    // 权威对账：断线期间漏掉 ui-resolved 的死卡片在此消失（同 id 保留未应答的新卡）。
+    const live = new Set();
+    for (const r of s.runs || []) for (const dg of r.dialogs || []) live.add(dg.request.id);
+    for (const id of [...dialogs.keys()]) if (!live.has(id)) dialogs.delete(id);
+    if (chatView) { const d = [...dialogs.values()].find(x => x.key === current); if (!d) renderDialog(); }
     stateLoaded = true;
     seedDialogs(s);
     document.getElementById('projSearch').disabled = false;
@@ -1137,26 +1168,54 @@ document.getElementById('imgChips').addEventListener('click', e => {
   pendingImages.splice(Number(b.getAttribute('data-rm')), 1);
   renderImgChips();
 });
+// 编辑态：entryId 非空时，下一次提交不是新消息而是 fork 截断重发（对齐桌面语义）。
+let editingEntry = null;
+document.getElementById('feed').addEventListener('click', e => {
+  const btn = e.target.closest('[data-edit]');
+  if (!btn) return;
+  const entryId = btn.getAttribute('data-edit');
+  const msg = btn.closest('.msg');
+  const text = msg ? msg.textContent.replace(/^用户/, '').replace(/编辑$/, '') : '';
+  editingEntry = entryId;
+  ta.value = text.trim(); ta.focus();
+  document.getElementById('composer').classList.add('editing');
+  document.getElementById('conn').textContent = '编辑模式：修改后发送将重发该消息（截断其后对话）';
+});
 document.getElementById('composer').addEventListener('submit', e => {
   e.preventDefault();
   follow = true; // 发送后恢复自动跟随
   const text = ta.value.trim();
   if (!current) return;
+  // 编辑重发路径：forkTo 只接受 idle 态（后端会拒运行中），失败保留输入框内容。
+  if (editingEntry) {
+    const entryId = editingEntry; editingEntry = null;
+    post('/api/edit', { key: current, entryId, text })
+      .then(() => { ta.value = ''; ta.style.height = 'auto'; document.getElementById('composer').classList.remove('editing'); document.getElementById('conn').textContent = '已重发'; loadHistory(); })
+      .catch(err => { editingEntry = entryId; document.getElementById('conn').textContent = '重发失败：' + String(err.message || err); });
+    return;
+  }
   const imgs = pendingImages.map(im => ({ type: 'image', mimeType: im.mimeType, data: im.data }));
   // 服务端允许纯图请求，但 backend 会拒空文本：与桌面同口径补说明文字。
   const sent = imgs.length && !text ? '请查看所附文件。' : text;
   if (!sent) return;
   const body = { key: current, text: sent };
   if (imgs.length) body.images = imgs;
+  editingEntry = null; document.getElementById('composer').classList.remove('editing');
+  // 乐观发送先上屏（不等 POST）：backend.prompt 同步等 pi 的 prompt RPC 响应，
+  // 慢模型/大附件时 POST 可拖到秒级——输入框与回显必须立刻响应。
+  optimistic.push({ match: sent, display: imgs.length ? ('📷 ' + imgs.length + ' 张' + (text ? '\\n' + text : '')) : text });
+  ta.value = ''; ta.style.height = 'auto';
+  pendingImages = []; renderImgChips();
+  render(null);
+  document.getElementById('conn').textContent = '发送中…';
   post('/api/prompt', body)
-    .then(() => {
-      optimistic.push({ match: sent, display: imgs.length ? ('📷 ' + imgs.length + ' 张' + (text ? '\\n' + text : '')) : text });
-      ta.value = ''; ta.style.height = 'auto';
-      pendingImages = []; renderImgChips();
+    .then(() => { document.getElementById('conn').textContent = '已发送'; })
+    .catch(err => {
+      // 失败撤回乐观项：文本精确匹配才撤（回显已落定时不影响历史）。
+      optimistic = optimistic.filter(o => o.match !== sent);
       render(null);
-      document.getElementById('conn').textContent = '已发送';
-    })
-    .catch(err => { document.getElementById('conn').textContent = '发送失败：' + String(err.message || err); });
+      document.getElementById('conn').textContent = '发送失败：' + String(err.message || err);
+    });
 });
 // ---- 回前台刷新：移除/归档的项目无需等 SSE（chat 视图，防抖 500ms） ----
 let visTimer = null;
