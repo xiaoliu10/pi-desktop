@@ -573,7 +573,8 @@ export function buildPiSidebar(
           source: s.owned ? ('desktop' as const) : ('pi-cli' as const),
           syncedAt: undefined,
           canContinue: !s.owned && !runByKey.has(s.key),
-          busy: ['running', 'starting'].includes(runByKey.get(s.key)?.status ?? ''),
+          // 菊花覆盖子代理：主 run 已结束但该会话仍有子代理在跑时不停（用户 2026-10-17）。
+          busy: ['running', 'starting'].includes(runByKey.get(s.key)?.status ?? '') || (runByKey.get(s.key)?.runningSubagents ?? 0) > 0,
           cwd: s.cwd,
           path: s.path,
         })),
@@ -594,7 +595,7 @@ export function buildPiSidebar(
       title: '新桌面会话',
       updatedAt: Date.now(),
       source: 'desktop' as const,
-      busy: r.status === 'running' || r.status === 'starting',
+      busy: r.status === 'running' || r.status === 'starting' || (r.runningSubagents ?? 0) > 0,
     }));
   return { temporary: orphanRuns, projects };
 }

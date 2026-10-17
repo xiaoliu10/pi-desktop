@@ -25,10 +25,11 @@
 - 面板与状态统计只计 running/queued，不含 completed/failed。
 - **切换会话不拦截**（用户 2026-10-16 明确）：切换不杀进程、切回即见，可见性由对话内卡片负责。
 - 全部子代理进入终态后，卡片状态随之收敛。
+- **侧栏会话行的运行中标识覆盖子代理**（用户 2026-10-17 补充）：主 run 已结束但该会话仍有运行中子代理时，侧栏菊花不停——否则用户会误以为任务已结束。数据源为主进程 `agentDir/subagents/<sessionKey>_<callId>.json` 快照（带 stale 判定）。
 
-**状态**：满足（v0.1.24 #124 首版；v0.1.25+ 按用户反馈两轮定稿：去弹窗、去横幅、换 bot 图标）。
+**状态**：满足（v0.1.24 #124 首版；v0.1.25+ 按用户反馈两轮定稿：去弹窗、去横幅、换 bot 图标；侧栏子代理维度见上）。
 
-**回归触发**：改 `ChatView.tsx`（toolRowIcon/ToolCard 的 bot 图标与卡片渲染）、`adapter.ts`（selectSession/disconnectRun/liveSubagentCount）、`subagents.ts`；pi-subagents 升级（status 形态可能变）。
+**回归触发**：改 `ChatView.tsx`（toolRowIcon/ToolCard 的 bot 图标与卡片渲染）、`adapter.ts`（selectSession/disconnectRun/liveSubagentCount/buildPiSidebar 的 busy 口径）、`subagents.ts`、主进程 `persistSubagentEvent`/subagent 快照扫描；pi-subagents 升级（status 形态可能变）。
 
 ### R-subagent-02　子代理详情可读：运行中与完成态都看得到转录尾部
 
