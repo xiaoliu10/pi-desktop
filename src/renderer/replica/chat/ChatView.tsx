@@ -40,6 +40,7 @@ import {
   parseMenuState,
 } from './helpers';
 import './chat.css';
+import { imageDataUrl } from './image-url';
 import { toolFilePreview } from '../../pi/tool-file-preview';
 import { executionTurns, formatElapsed, type ChatTurn } from './execution';
 
@@ -193,7 +194,10 @@ function MessageParts({ parts, labels, onOpenToolFile, live, hiddenErrors }: { p
       {parts.map((p) => {
         switch (p.kind) {
           case 'image':
-            return <img key={p.id} className="pi-message-image" src={`data:${p.mimeType};base64,${p.data}`} alt="附件图片" />;
+            // data URL 必须按 part 缓存：大会话里一张 base64 图可达数 MB（实测某会话
+            // 117 张图共 195MB），模板串每拍渲染都新建一份等同大小的字符串——流式期间
+            // 每拍拼一遍就是 GB 级垃圾，GC 常年高压（打字卡的根因之一）。
+            return <img key={p.id} className="pi-message-image" src={imageDataUrl(p)} alt="附件图片" />;
           case 'text':
             return <ChatMarkdown key={p.id} text={p.text} zh={labels.you === '你'} />;
           case 'thinking':
@@ -797,8 +801,15 @@ export const ChatView = memo(function ChatView(props: ChatViewProps) {
   }, [props.scrollRequest]);
 
   const retryUI = retryPresentation(props.retryGroup, props.retrying, props.stopping);
+  // 长会话只渲染尾部窗口（TAIL_WINDOW）+ 顶部滚动补载步长（LOAD_STEP）。声明必须在
+  // 下面的 turns useMemo 之前：useMemo 首帧先执行，晚于它的 const 还在 TDZ。
+  const TAIL_WINDOW = 60;
+  const LOAD_STEP = 60;
   const turns = useMemo(() => {
-    const result = executionTurns(props.messages);
+    // 只聚合要渲染的尾部 turn（默认 60 + 向上补载步长）：本 useMemo 在流式期间每拍
+    // 重算，全量聚合 24637 条大会话的 12000+ group 是长帧主因。多取一个 LOAD_STEP
+    // 的余量，避免 renderLimit 变化当拍还要重算。
+    const result = executionTurns(props.messages, TAIL_WINDOW + LOAD_STEP);
     const last = result[result.length - 1];
     const timing = props.runTiming;
     if (last?.role === 'assistant' && timing && ((last.endedAt ?? 0) >= timing.startedAt || (last.startedAt ?? 0) >= timing.startedAt - 1000)) {
@@ -830,8 +841,6 @@ export const ChatView = memo(function ChatView(props: ChatViewProps) {
   // 长会话只渲染尾部窗口：全量 2000+ 轮一次性上 DOM 是打开大会话秒级长帧的主因
   // （布局/绘制成本也随总节点数走，流式期间每次 flush 都在付）。顶部滚动到近处
   // 自动补载更早消息（并保留视口锚点），顶部常驻一条「更早消息」提示可手动点。
-  const TAIL_WINDOW = 60;
-  const LOAD_STEP = 60;
   const [renderLimit, setRenderLimit] = useState(TAIL_WINDOW);
   const limitEpochRef = useRef('');
   const firstTurnId = turns[0]?.id ?? '';

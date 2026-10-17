@@ -38,6 +38,19 @@ describe('runningSubagentCounts', () => {
     expect(counts).toEqual({ [sessionA]: 2, [sessionB]: 1 });
   });
 
+  it('sweeps stale running snapshots so ghost rows cannot survive an agent end', () => {
+    const agentDir = setupAgentDir();
+    const now = Date.now();
+    const stale = `${sessionA}_call_stale.json`;
+    const fresh = `${sessionA}_call_fresh.json`;
+    fs.writeFileSync(path.join(agentDir, 'subagents', stale), JSON.stringify({ callId: 'call_stale', status: 'running', updatedAt: now - 10 * 60 * 1000 }));
+    fs.writeFileSync(path.join(agentDir, 'subagents', fresh), JSON.stringify({ callId: 'call_fresh', status: 'running', updatedAt: now }));
+    const counts = runningSubagentCounts(agentDir, now, { sweep: true });
+    expect(counts).toEqual({ [sessionA]: 1 });
+    expect(fs.existsSync(path.join(agentDir, 'subagents', stale))).toBe(false);
+    expect(fs.existsSync(path.join(agentDir, 'subagents', fresh))).toBe(true);
+  });
+
   it('returns {} when the snapshot dir is missing', () => {
     const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'sidebar-subagent-busy-')));
     roots.push(root);

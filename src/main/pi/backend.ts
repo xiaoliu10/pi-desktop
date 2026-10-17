@@ -204,6 +204,23 @@ export class PiBackend {
     }).catch(() => undefined);
   }
 
+  /** 重算并广播该会话的运行中子代理数。
+   *  只在 subagent 事件路径调用不够：最后一个子代理跑完后如果没有新事件，
+   *  run.view.runningSubagents 会停在旧值——侧栏菊花就此永转（真实 bug：用户看到
+   *  「5 个正在运行」但实际 0 个，那些快照已陈旧 4 天）。因此在 agent 结束/会话
+   *  空闲时也要重算，让计数归零。 */
+  private refreshRunningSubagents(key: string): void {
+    const run = this.active.get(key);
+    if (!run) return;
+    let counts: Record<string, number>;
+    try { counts = runningSubagentCounts(this.env.agentDir, Date.now(), { sweep: true }); } catch { return; }
+    const next = counts[key] ?? 0;
+    if (run.view.runningSubagents !== next) {
+      run.view.runningSubagents = next;
+      this.emit({ type: 'run', run: { ...run.view } });
+    }
+  }
+
   /** 内置默认包：装缺失的、检测同名冲突（用户优先，不擅自替换）。结果广播给渲染层提示。 */
   private async ensureBuiltins(): Promise<void> {
     if (!this.dataDir || this.builtinsInFlight) return;
@@ -457,6 +474,7 @@ export class PiBackend {
     if (run.view.timing && run.view.timing.endedAt === undefined) run.view.timing = { ...run.view.timing, endedAt };
     run.view.queue = [...run.deferredQueue]; run.view.pending = run.deferredQueue.length; run.queueImages = [];
     run.view.status = 'idle';
+    this.refreshRunningSubagents(key);
     this.refreshContextUsage(run);
     void this.flushPendingSwitches(key);
     if (run.view.retryGroup?.phase === 'completed') this.dispatchDeferred(run);
@@ -577,7 +595,7 @@ export class PiBackend {
         }
       } else {
         if (run.view.timing) run.view.timing = { ...run.view.timing, endedAt: Date.now() };
-        if (run.view.status !== 'stopping' && !run.stopUnconfirmed) run.view.status = 'idle';
+        if (run.view.status !== 'stopping' && !run.stopUnconfirmed) { run.view.status = 'idle'; this.refreshRunningSubagents(key); }
         this.refreshContextUsage(run);
         void this.flushPendingSwitches(key);
         if (run.view.retryGroup?.phase === 'completed') this.dispatchDeferred(run);
@@ -625,12 +643,7 @@ export class PiBackend {
       // 运行中计数算进 run view 并广播。侧栏会话行的菊花据此在主 run 结束后继续转
       // （用户 2026-10-17：不然会以为任务已结束）。主 run 通常正在 running，这里只是
       // 给 view 补一个字段，不引入新事件类型。
-      const run = this.active.get(key);
-      if (run) {
-        const counts = runningSubagentCounts(this.env.agentDir);
-        const next = counts[key] ?? 0;
-        if (run.view.runningSubagents !== next) { run.view.runningSubagents = next; this.emit({ type: 'run', run: { ...run.view } }); }
-      }
+      this.refreshRunningSubagents(key);
     }
     // 第三方 ask 桥接：暂存问卷入参（不可桥接时为 undefined，原生请求走通用对话框降级）。
     // 校验失败没有 UI 请求直接 end：stash 未消费即被下面清理，不留悬挂状态。
@@ -944,7 +957,7 @@ export class PiBackend {
     run.stopQueueSnapshot = undefined;
     run.queueImages = [];
     if (run.view.timing && run.view.timing.endedAt === undefined) run.view.timing = { ...run.view.timing, endedAt: Date.now() };
-    run.view.status = 'idle'; run.view.pending = 0; run.view.queue = []; this.emit({ type: 'run', run: { ...run.view } });
+    run.view.status = 'idle'; run.view.pending = 0; run.view.queue = []; this.refreshRunningSubagents(key); this.emit({ type: 'run', run: { ...run.view } });
     return queue || { steering: [], followUp: [] };
   }
   /**
