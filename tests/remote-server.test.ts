@@ -17,6 +17,7 @@ function makeProvider(): RemoteDataProvider {
         : null,
     version: () => '0.85.1-test',
     prompt: vi.fn(),
+    editResend: vi.fn(),
     stop: vi.fn(),
     respond: vi.fn(),
     pendingDialogs: vi.fn(() => [
@@ -153,6 +154,53 @@ describe('RemoteServer (LAN remote control)', () => {
     const expired = await postJson(base, '/api/respond', status.token, { key: 'k1', generation: 'g1', response: { id: 'r', value: 'x' } });
     expect(expired.status).toBe(400);
     expect(((await expired.json()) as { error: string }).error).toContain('已过期');
+  });
+
+  it('POST /api/edit validates shape and delegates to editResend', async () => {
+    const { status, base } = await start();
+    const bad = await postJson(base, '/api/edit', status.token, { key: 'k1', text: '改' });
+    expect(bad.status).toBe(400);
+    const empty = await postJson(base, '/api/edit', status.token, { key: 'k1', entryId: 'e1', text: '   ' });
+    expect(empty.status).toBe(400);
+    const unknown = await postJson(base, '/api/edit', status.token, { key: 'nope', entryId: 'e1', text: '改' });
+    expect(unknown.status).toBe(404);
+    const ok = await postJson(base, '/api/edit', status.token, { key: 'k1', entryId: 'e1', text: '改过的消息' });
+    expect(ok.status).toBe(200);
+    expect(provider.editResend).toHaveBeenCalledWith('k1', 'e1', '改过的消息');
+  });
+
+  it('POST /api/edit surfaces the half-commit prefix verbatim (forked-send-failed)', async () => {
+    // 半提交标记必须原样过 HTTP：页面靠前缀区分「fork 前被拒（可重试）」与
+    // 「fork 后发送失败（历史已回退，需走恢复路径）」。handlePost 的 catch 若
+    // 重写/包裹错误消息，这个区分就断了（reviewer P3-A）。
+    provider.editResend = vi.fn(() => { throw new Error('EDIT_RESEND_SEND_FAILED_AFTER_FORK:上游不可用'); });
+    const { status, base } = await start();
+    const res = await postJson(base, '/api/edit', status.token, { key: 'k1', entryId: 'e1', text: '改' });
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toBe('EDIT_RESEND_SEND_FAILED_AFTER_FORK:上游不可用');
+  });
+
+  it('viewer page carries the mobile edit/zoom affordances', () => {
+    const html = viewerPage();
+    // UI 缩放：锁定 viewport（maximum-scale + user-scalable=no），composer 16px 防 iOS 聚焦放大
+    expect(html).toContain('maximum-scale=1');
+    expect(html).toContain('user-scalable=no');
+    expect(html).toMatch(/composer textarea[^}]*font-size:16px/);
+    // 编辑重发 UI：消息编辑按钮 + 提交路由 /api/edit
+    expect(html).toContain('data-edit');
+    expect(html).toContain('/api/edit');
+    // 乐观发送：上屏先于 POST 成功（conn 文案）
+    expect(html).toContain('发送中…');
+    // 死卡片修复：respond 失败向桌面端权威对账后才决定撤卡（不盲目撤）
+    expect(html).toContain('失败不盲目撤卡');
+    // P1 修复：编辑原文从 viewPages 原始条目取，不从展示 DOM 反提
+    expect(html).toContain('originalUserText');
+    // P2 修复：乐观项按实例 id 撤回
+    expect(html).toContain('o.id !== optId');
+    // P2-3 修复：fork 后发送失败（半提交）与 fork 前拒绝分流，且明示恢复路径
+    expect(html).toContain('EDIT_RESEND_SEND_FAILED_AFTER_FORK');
+    expect(html).toContain('已回退到该消息，但发送失败');
+    expect(html).toContain('直接发送即可继续');
   });
 
   it('rejects oversized request bodies', async () => {
