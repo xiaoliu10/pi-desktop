@@ -8,7 +8,7 @@ import { PiRpcClient, piLogDir } from './rpc-client';
 import { SessionIndex, canonical, fileKey } from './session-index';
 import { runAutomationBridge, SCHEDULE_GUIDANCE } from './automation-bridge';
 import { cacheHitRateFromTotals, summarizeContext } from './context-details';
-import { detectThirdPartySubagent, migrateOldSubagentExtension, persistSubagentEvent } from './official-subagent';
+import { detectThirdPartySubagent, migrateOldSubagentExtension, persistSubagentEvent, runningSubagentCounts } from './official-subagent';
 import { detectThirdPartyAsk, bridgeableQuestions, planAnswer, type AskBridgeState, type AskBridgeQuestion } from './third-party-ask';
 import { clearMemoryEnv, memorySessionEnv } from './memory-bridge';
 import { repairPackages } from './packages-repair';
@@ -600,6 +600,16 @@ export class PiBackend {
     // (official, npm pi-subagents, custom) by observing RPC events, not extension internals.
     if (['tool_execution_start', 'tool_execution_update', 'tool_execution_end'].includes(event.type) && event.toolName === 'subagent') {
       persistSubagentEvent(this.env.agentDir, key, String(event.toolCallId ?? ''), event);
+      // 子代理 start/update/end 都与「这个会话还有没有子代理在跑」相关：顺手把该会话的
+      // 运行中计数算进 run view 并广播。侧栏会话行的菊花据此在主 run 结束后继续转
+      // （用户 2026-10-17：不然会以为任务已结束）。主 run 通常正在 running，这里只是
+      // 给 view 补一个字段，不引入新事件类型。
+      const run = this.active.get(key);
+      if (run) {
+        const counts = runningSubagentCounts(this.env.agentDir);
+        const next = counts[key] ?? 0;
+        if (run.view.runningSubagents !== next) { run.view.runningSubagents = next; this.emit({ type: 'run', run: { ...run.view } }); }
+      }
     }
     // 第三方 ask 桥接：暂存问卷入参（不可桥接时为 undefined，原生请求走通用对话框降级）。
     // 校验失败没有 UI 请求直接 end：stash 未消费即被下面清理，不留悬挂状态。

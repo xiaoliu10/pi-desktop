@@ -9,7 +9,7 @@ const MAX_JSON = 256 * 1024;
 const MAX_BYTES = 2 * 1024 * 1024;
 const MAX_CALLS = 32;
 const MAX_CHILDREN = 64;
-const STALE_MS = 5 * 60 * 1000;
+export const STALE_MS = 5 * 60 * 1000;
 
 export function subagentAsyncRoot(): string {
   const sanitize = (s: string) => s.trim().replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || 'unknown';

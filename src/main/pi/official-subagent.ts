@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import type { SessionIndex } from './session-index';
-import { childSessionPointer, readSnapshotJson, workflowSnapshots, type SubagentSnapshot } from './subagent-snapshots';
+import { childSessionPointer, readSnapshotJson, STALE_MS, workflowSnapshots, type SubagentSnapshot } from './subagent-snapshots';
 import { singleAsyncDetails, workflowDetails, workflowId, workflowState } from '../../shared/subagent-workflow';
 
 /**
@@ -236,6 +236,34 @@ export function cleanupSubagents(agentDir: string, sessionKey: string) {
  * Works for ALL subagent implementations (official, npm pi-subagents, custom) because
  * it observes RPC events, not the extension's internal onUpdate callback.
  */
+/** 按会话聚合「运行中子代理数」：侧栏会话行的菊花要在主 run 结束后继续转，
+ *  否则用户误以为任务已结束（子代理还在后台跑）。数据源是 persistSubagentEvent
+ *  落的快照文件；只数 status=running 且未 stale 的（STALE_MS 与 subagent-snapshots
+ *  同口径）——死快照不能让菊花永转。 */
+export function runningSubagentCounts(agentDir: string, now = Date.now()): Record<string, number> {
+  const dir = path.join(agentDir, 'subagents');
+  const counts: Record<string, number> = {};
+  let entries: string[];
+  try { entries = fs.readdirSync(dir); } catch { return counts; }
+  for (let i = 0; i < entries.length && i < 4096; i += 1) {
+    const name = entries[i]!;
+    if (!name.endsWith('.json')) continue;
+    // 文件名 = <sessionKey>_<callId>.json；sessionKey 是 64 位十六进制（调用方已校验过）。
+    const sep = name.indexOf('_');
+    if (sep !== 64) continue;
+    const sessionKey = name.slice(0, sep);
+    if (!/^[a-f0-9]{64}$/.test(sessionKey)) continue;
+    try {
+      const snap = JSON.parse(fs.readFileSync(path.join(dir, name), 'utf8'));
+      if (snap?.status !== 'running') continue;
+      const updatedAt = Number(snap.updatedAt) || 0;
+      if (!updatedAt || now - updatedAt > STALE_MS) continue;
+      counts[sessionKey] = (counts[sessionKey] ?? 0) + 1;
+    } catch { /* 快照损坏/半写：跳过，不影响其他会话 */ }
+  }
+  return counts;
+}
+
 export function persistSubagentEvent(agentDir: string, sessionKey: string, callId: string, event: Record<string, any>) {
   if (!/^[a-f0-9]{64}$/.test(sessionKey) || !workflowId(callId)) return;
   const dir = path.join(agentDir, 'subagents');
