@@ -169,6 +169,17 @@ describe('RemoteServer (LAN remote control)', () => {
     expect(provider.editResend).toHaveBeenCalledWith('k1', 'e1', '改过的消息');
   });
 
+  it('POST /api/edit surfaces the half-commit prefix verbatim (forked-send-failed)', async () => {
+    // 半提交标记必须原样过 HTTP：页面靠前缀区分「fork 前被拒（可重试）」与
+    // 「fork 后发送失败（历史已回退，需走恢复路径）」。handlePost 的 catch 若
+    // 重写/包裹错误消息，这个区分就断了（reviewer P3-A）。
+    provider.editResend = vi.fn(() => { throw new Error('EDIT_RESEND_SEND_FAILED_AFTER_FORK:上游不可用'); });
+    const { status, base } = await start();
+    const res = await postJson(base, '/api/edit', status.token, { key: 'k1', entryId: 'e1', text: '改' });
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toBe('EDIT_RESEND_SEND_FAILED_AFTER_FORK:上游不可用');
+  });
+
   it('viewer page carries the mobile edit/zoom affordances', () => {
     const html = viewerPage();
     // UI 缩放：锁定 viewport（maximum-scale + user-scalable=no），composer 16px 防 iOS 聚焦放大
