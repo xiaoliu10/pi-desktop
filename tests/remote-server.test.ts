@@ -180,8 +180,12 @@ describe('RemoteServer (LAN remote control)', () => {
     expect(html).toContain('/api/edit');
     // 乐观发送：上屏先于 POST 成功（conn 文案）
     expect(html).toContain('发送中…');
-    // 死卡片修复：respond 失败也撤卡
-    expect(html).toContain('过期/失败一律撤卡');
+    // 死卡片修复：respond 失败向桌面端权威对账后才决定撤卡（不盲目撤）
+    expect(html).toContain('失败不盲目撤卡');
+    // P1 修复：编辑原文从 viewPages 原始条目取，不从展示 DOM 反提
+    expect(html).toContain('originalUserText');
+    // P2 修复：乐观项按实例 id 撤回
+    expect(html).toContain('o.id !== optId');
   });
 
   it('rejects oversized request bodies', async () => {

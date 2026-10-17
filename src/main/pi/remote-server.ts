@@ -965,10 +965,15 @@ function respondDialog(d, response) {
   post('/api/respond', { key: d.key, generation: d.generation, response })
     .then(() => { dialogs.delete(id); renderDialog(); })
     .catch(e => {
-      // 过期/失败一律撤卡：桌面端已清的卡片若留在手机上，用户每点一次就再弹一次
-      // （死卡片循环）。桌面端权威态在 seedDialogs 对账，误删最多丢一次交互机会。
-      dialogs.delete(id); renderDialog();
-      document.getElementById('conn').textContent = String(e.message || e);
+      // 失败不盲目撤卡（review P2）：网络抖动/响应丢包时桌面端 dialog 仍有效，
+      // 撤了就丢一次交互机会。改为向桌面端对账——权威快照已无该 id 才撤（死卡片
+      // 循环的根治点）；仍有效则保留卡片，用户重试即可。
+      api('/api/state').then(s2 => {
+        const live = new Set();
+        for (const r of s2.runs || []) for (const dg of r.dialogs || []) live.add(dg.request.id);
+        if (!live.has(id)) { dialogs.delete(id); renderDialog(); }
+        document.getElementById('conn').textContent = live.has(id) ? '提交未送达，请重试' : String(e.message || e);
+      }).catch(() => { document.getElementById('conn').textContent = String(e.message || e); });
     });
 }
 function seedDialogs(state) {
@@ -1170,14 +1175,22 @@ document.getElementById('imgChips').addEventListener('click', e => {
 });
 // 编辑态：entryId 非空时，下一次提交不是新消息而是 fork 截断重发（对齐桌面语义）。
 let editingEntry = null;
+// 乐观项实例序号：同一文本连发/跨会话同文时，失败撤回按 id 精确命中自己那条。
+let optimisticSeq = 0;
+/** 按 entryId 从原始条目取完整用户文本：展示层有 8000 字截断且按钮文案混在
+ *  textContent 里（「用户编辑…」），从 DOM 反提会污染内容（review P1 实证）。 */
+function originalUserText(entryId) {
+  for (const e of viewPages.values()) {
+    if (e && e.type === 'message' && e.id === entryId && e.message && e.message.role === 'user') return textOf(e.message.content);
+  }
+  return '';
+}
 document.getElementById('feed').addEventListener('click', e => {
   const btn = e.target.closest('[data-edit]');
   if (!btn) return;
   const entryId = btn.getAttribute('data-edit');
-  const msg = btn.closest('.msg');
-  const text = msg ? msg.textContent.replace(/^用户/, '').replace(/编辑$/, '') : '';
   editingEntry = entryId;
-  ta.value = text.trim(); ta.focus();
+  ta.value = originalUserText(entryId).trim(); ta.focus();
   document.getElementById('composer').classList.add('editing');
   document.getElementById('conn').textContent = '编辑模式：修改后发送将重发该消息（截断其后对话）';
 });
@@ -1191,7 +1204,13 @@ document.getElementById('composer').addEventListener('submit', e => {
     const entryId = editingEntry; editingEntry = null;
     post('/api/edit', { key: current, entryId, text })
       .then(() => { ta.value = ''; ta.style.height = 'auto'; document.getElementById('composer').classList.remove('editing'); document.getElementById('conn').textContent = '已重发'; loadHistory(); })
-      .catch(err => { editingEntry = entryId; document.getElementById('conn').textContent = '重发失败：' + String(err.message || err); });
+      .catch(err => {
+      // 保留编辑态（输入框内容不丢）。后端 editResend 先做发送前置校验：此处失败
+      // 多数是「未截断」的可重试错误（运行中/待审批/斜杠命令）；若错误发生在 fork
+      // 之后（半提交：历史已截断但消息未发），后端消息会带 fork 成功标记，UI 明示。
+      editingEntry = entryId;
+      document.getElementById('conn').textContent = '重发失败：' + String(err.message || err);
+    });
     return;
   }
   const imgs = pendingImages.map(im => ({ type: 'image', mimeType: im.mimeType, data: im.data }));
@@ -1203,7 +1222,8 @@ document.getElementById('composer').addEventListener('submit', e => {
   editingEntry = null; document.getElementById('composer').classList.remove('editing');
   // 乐观发送先上屏（不等 POST）：backend.prompt 同步等 pi 的 prompt RPC 响应，
   // 慢模型/大附件时 POST 可拖到秒级——输入框与回显必须立刻响应。
-  optimistic.push({ match: sent, display: imgs.length ? ('📷 ' + imgs.length + ' 张' + (text ? '\\n' + text : '')) : text });
+  const optId = ++optimisticSeq;
+  optimistic.push({ match: sent, display: imgs.length ? ('📷 ' + imgs.length + ' 张' + (text ? '\\n' + text : '')) : text, id: optId });
   ta.value = ''; ta.style.height = 'auto';
   pendingImages = []; renderImgChips();
   render(null);
@@ -1211,8 +1231,9 @@ document.getElementById('composer').addEventListener('submit', e => {
   post('/api/prompt', body)
     .then(() => { document.getElementById('conn').textContent = '已发送'; })
     .catch(err => {
-      // 失败撤回乐观项：文本精确匹配才撤（回显已落定时不影响历史）。
-      optimistic = optimistic.filter(o => o.match !== sent);
+      // 失败只撤自己这条（按实例 id）：同文本并发发送时按 match 撤会误伤另一条
+      // （review P2：两条同文 pending，一条失败曾把两条都撤掉）。
+      optimistic = optimistic.filter(o => o.id !== optId);
       render(null);
       document.getElementById('conn').textContent = '发送失败：' + String(err.message || err);
     });

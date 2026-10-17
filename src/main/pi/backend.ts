@@ -801,6 +801,25 @@ export class PiBackend {
    * 分支仍留在文件里，TUI /tree 可回访）。截断成功后渲染层重发编辑文本，等价
    * ZCode 的「重置对话并发送」。运行中/有待审批时拒绝，与 refresh 同一口径。
    */
+  /** 发送前置校验（不触达 RPC）：fork 重发前先判定，避免截断后才被拒的半提交态。
+   *  与 prompt() 的入口校验保持同口径（空/超长/计划模式斜杠/不可发送状态）。 */
+  private assertResendable(run: Running, text: string): void {
+    if (!text.trim() || text.length > 200_000) throw new Error('输入为空或超过 200000 字符');
+    if (!['idle', 'running'].includes(run.view.status) || run.stopUnconfirmed || run.retryUncertain) throw new Error('当前会话暂不能发送；请先停止确认执行状态');
+    if (run.input.permission === 'plan' && text.trimStart().startsWith('/')) throw new Error('计划模式不运行斜杠命令，请使用普通输入研究项目。');
+  }
+
+  /** 编辑重发：fork 截断到该条目后重发新文本。发送侧可判定的校验先做
+   *  （半提交防护：fork 是不可逆截断，不能等 prompt 才拒）。 */
+  async editResend(key: string, entryId: string, text: string): Promise<void> {
+    const run = this.get(key); this.assertModelsUnlocked(run);
+    this.assertResendable(run, text);
+    await this.forkTo(key, entryId);
+    // fork 成功后的发送失败如实报：此时历史已截断，调用方（远控 UI）需明示
+    // 「已回退但未发送」，由用户在原会话继续或重试。
+    await this.prompt(key, text, 'followUp');
+  }
+
   async forkTo(key: string, entryId: string): Promise<string> {
     if (typeof entryId !== 'string' || !entryId) throw new Error('消息条目无效');
     const run = this.get(key); this.assertModelsUnlocked(run);
