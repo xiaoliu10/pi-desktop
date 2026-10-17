@@ -1631,6 +1631,25 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
             get().scanResources();
             get().loadPackages();
             break;
+          case 'builtin-packages': {
+            // 主进程内置默认包报告：装了什么/什么失败/与用户已装包的冲突。
+            const report = event.report;
+            const installed = report.installed.filter(Boolean);
+            const failed = report.failed.filter(Boolean);
+            const conflicts = report.conflicts ?? [];
+            if (installed.length) pushNotification({ kind: 'info', title: `已安装内置插件 ${installed.length} 个`, body: installed.join('、'), time: '刚刚' });
+            if (failed.length) pushNotification({ kind: 'error', title: `内置插件安装失败 ${failed.length} 个`, body: `${failed.join('、')}——功能可能缺失，可在设置→插件市场手动安装`, time: '刚刚' });
+            for (const c of conflicts) {
+              pushNotification({
+                kind: 'info',
+                title: `插件来源冲突：${c.existing}`,
+                body: `你已安装同名插件，Desktop 不擅自替换。内置版用途：${c.purpose}；如需切换，在插件页移除当前来源后重启。`,
+                time: '刚刚',
+              });
+            }
+            if (installed.length || failed.length) { get().loadPackages(); get().scanResources(); }
+            break;
+          }
           case 'run': {
             const prevRun = state.runs.find((r) => r.key === event.run.key);
             const watermark = queueWatermarks.get(event.run.key);

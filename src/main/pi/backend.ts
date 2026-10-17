@@ -12,6 +12,7 @@ import { detectThirdPartySubagent, migrateOldSubagentExtension, persistSubagentE
 import { detectThirdPartyAsk, bridgeableQuestions, planAnswer, type AskBridgeState, type AskBridgeQuestion } from './third-party-ask';
 import { clearMemoryEnv, memorySessionEnv } from './memory-bridge';
 import { repairPackages } from './packages-repair';
+import { ensureBuiltinPackages, builtinPackagesSeeded, markBuiltinPackagesSeeded } from './builtin-packages';
 import { repairCodemode } from './repair-codemode';
 import { RetryGroups } from './retry-groups';
 import { OutputPerformanceTracker } from './output-performance';
@@ -203,11 +204,31 @@ export class PiBackend {
     }).catch(() => undefined);
   }
 
+  /** 内置默认包：装缺失的、检测同名冲突（用户优先，不擅自替换）。结果广播给渲染层提示。 */
+  private async ensureBuiltins(): Promise<void> {
+    if (!this.dataDir || this.builtinsInFlight) return;
+    this.builtinsInFlight = true;
+    try {
+      const seeded = builtinPackagesSeeded(this.dataDir);
+      const report = await ensureBuiltinPackages(this.env.executable ?? undefined, this.env.agentDir, this.dataDir, { log: line => console.warn(line) });
+      // 没有变化就不广播（避免每次 launch 都打扰渲染层）。
+      if (report.installed.length || report.failed.length || report.conflicts.length || !seeded) {
+        if (!seeded && !report.installed.length && !report.conflicts.length && !report.failed.length) markBuiltinPackagesSeeded(this.dataDir);
+        this.emit({ type: 'builtin-packages', report });
+        if (report.installed.length) markBuiltinPackagesSeeded(this.dataDir);
+      }
+    } catch { /* 内置包装配失败不影响会话启动 */ } finally { this.builtinsInFlight = false; }
+  }
+  private builtinsInFlight = false;
+
   private async launch(input: Running['input']): Promise<PiRun> {
     if (!fs.existsSync(this.policyPath)) throw new Error("Desktop 工具权限扩展缺失，无法启动执行会话。");
     // pi 会话退出会写回旧 settings 副本抹掉包注册（/goal 等命令消失的根因）——
     // 每次启动会话前按期望列表补回，保证新会话总是带全 packages。
     if (this.dataDir) { repairPackages(this.dataDir, this.env.agentDir); repairCodemode(this.dataDir, this.env.agentDir); }
+    // 内置默认包：首次启动异步安装（不阻塞会话启动）；之后每次 launch 只做幂等检查。
+    // 已 seeded 且无冲突时纯本地读 settings，零开销。
+    void this.ensureBuiltins();
     const key = fileKey(input.file), generation = randomUUID();
     // The policy extension re-reads this file per tool call, so the access
     // mode can change mid-run without restarting the session process.
