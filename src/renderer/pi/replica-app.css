@@ -885,7 +885,33 @@
   color: var(--pi-muted);
 }
 
-.pireplica .pi-chdialog__form { margin: 0; }
+.pireplica .pi-chdialog__form { margin: 0; display: flex; flex-direction: column; gap: 18px; }
+
+/* 能力分组（ZCode 设置页卡片式）：通知 / 双向 / 通知场景各自成组，组标题 + 一句用途说明。 */
+.pireplica .pi-chdialog__group { display: flex; flex-direction: column; gap: 6px; }
+.pireplica .pi-chdialog__grouptitle {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 12px; font-weight: 600; letter-spacing: .02em;
+  color: var(--pi-muted, rgba(0,0,0,.55));
+  text-transform: uppercase;
+}
+.pireplica .pi-chdialog__groupdesc { font-size: 12px; line-height: 1.5; color: var(--pi-muted, rgba(0,0,0,.55)); margin: 0 0 4px; }
+
+/* 缺失必填项的醒目提示（真实反馈：钉钉配了 AppKey 但没 webhook，通知一条不发）。 */
+.pireplica .pi-chdialog__warn {
+  display: flex; align-items: flex-start; gap: 8px;
+  margin: 4px 0 0; padding: 8px 10px;
+  border: 1px solid var(--pi-danger, #d24);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--pi-danger, #d24) 8%, transparent);
+  font-size: 12px; line-height: 1.5;
+  color: var(--pi-danger, #d24);
+}
+.pireplica .pi-chdialog__warn svg { flex: none; margin-top: 1px; }
+
+/* 卡片内的输入框撑满控制列（复用设置页 control--wide 口径）。 */
+.pireplica .pi-chdialog__form .pi-settingrow__control input[type="checkbox"] { width: 16px; height: 16px; }
+.pireplica .pi-chdialog__form .pi-mono { width: 100%; }
 
 .pireplica .pi-chdialog__foot {
   display: flex;
