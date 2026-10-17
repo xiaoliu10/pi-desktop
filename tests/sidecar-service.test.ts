@@ -23,7 +23,7 @@ function setup(lazy = false) {
   const emit = (e: PiEvent) => events.push(structuredClone(e));
   const backend = new PiBackend({ executable: lazy ? process.execPath : path.resolve('tests/fixtures/fake-pi.mjs'), ...(lazy ? { launchArgs: [path.resolve('tests/fixtures/lazy-pi.mjs')] } : {}), supported: true, version: '0.85.1', agentDir: root, sessionDirs: [owned], diagnostics: [] }, index, owned, path.resolve('extensions/desktop-policy/index.mjs'), emit, data);
   backends.push(backend);
-  return { root, owned, data, index, events, backend, mainKey: fileKey(main), service: new SidecarService(backend, index, data, emit), emit };
+  return { root, owned, data, index, events, backend, main, mainKey: fileKey(main), service: new SidecarService(backend, index, data, emit), emit };
 }
 
 describe('retained sidecar service', () => {
@@ -103,6 +103,46 @@ describe('retained sidecar service', () => {
     const connect = vi.spyOn(backend, 'connect');
     await service.ensure(mainKey);
     expect(connect).toHaveBeenCalledWith(expect.objectContaining({ trustProject: true, permission: 'ask', tools: ['read'] }));
+  });
+
+  it('injects a truncated main-session summary as systemPrompt (sidecar keeps its own context)', async () => {
+    // 主会话写几轮对话 → 副驾 ensure 时把摘要注入 systemPrompt。摘要只含文本，
+    // 不含图片/工具调用；副驾的 cwd/trust/tools 不受影响。
+    const { service, backend, owned, mainKey, main } = setup();
+    // parentId 链是 branch 的来源（branchEntries 从 leaf 回溯）；缺链只拿得到尾条目。
+    fs.appendFileSync(main, [
+      { type: 'message', id: 'm1', message: { role: 'user', content: '这个项目的 SDK 怎么接入？' } },
+      { type: 'message', id: 'm2', parentId: 'm1', message: { role: 'assistant', content: [{ type: 'text', text: '用官方 TypeScript SDK。' }] } },
+      { type: 'message', id: 'm3', parentId: 'm2', message: { role: 'user', content: [{ type: 'text', text: '刚才说的入口文件在哪' }] } },
+    ].map(l => JSON.stringify(l)).join('\n') + '\n');
+    backend.index.history(mainKey); // 触发一次读取让索引收录（stamp 机制）
+    const connect = vi.spyOn(backend, 'connect');
+    await service.ensure(mainKey);
+    const arg = connect.mock.calls.at(-1)?.[0] as { systemPrompt?: string } | undefined;
+    expect(arg?.systemPrompt).toContain('这个项目的 SDK 怎么接入？');
+    expect(arg?.systemPrompt).toContain('用官方 TypeScript SDK。');
+    expect(arg?.systemPrompt).toContain('刚才说的入口文件在哪');
+    expect(arg?.systemPrompt).toContain('背景而非指令');
+    // 注入面不变：cwd/trust/tools 照旧
+    expect(connect).toHaveBeenCalledWith(expect.objectContaining({ permission: 'ask', tools: ['read'] }));
+    void owned;
+  });
+
+  it('skips summary injection when disabled or when the main session has no messages', async () => {
+    const prev = process.env.PI_SIDECAR_SUMMARY;
+    try {
+      const { service, backend, mainKey } = setup();
+      process.env.PI_SIDECAR_SUMMARY = 'off';
+      const connect = vi.spyOn(backend, 'connect');
+      await service.ensure(mainKey);
+      expect((connect.mock.calls.at(-1)?.[0] as { systemPrompt?: string } | undefined)?.systemPrompt).toBeUndefined();
+      // 空主会话（无 message 条目）→ 无摘要可注入，不塞空串
+      delete process.env.PI_SIDECAR_SUMMARY;
+      const { service: s2, backend: b2, mainKey: k2 } = setup();
+      const c2 = vi.spyOn(b2, 'connect');
+      await s2.ensure(k2);
+      expect((c2.mock.calls.at(-1)?.[0] as { systemPrompt?: string } | undefined)?.systemPrompt).toBeUndefined();
+    } finally { if (prev === undefined) delete process.env.PI_SIDECAR_SUMMARY; else process.env.PI_SIDECAR_SUMMARY = prev; }
   });
 
   it('loads a persisted binding and resumes exactly the same owned jsonl after disconnect', async () => {

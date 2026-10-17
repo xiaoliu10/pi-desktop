@@ -911,18 +911,28 @@
   color: var(--pi-text);
 }
 
-/* Retained auxiliary conversation; shares the workbench's theme tokens. */
+/* Retained auxiliary conversation; shares the workbench's theme tokens.
+   消息区/输入区复用主对话的 ChatView/Composer（chat.css 已全局加载），这里只做
+   380px 窄栏适配：隐藏导航刻度、压缩内边距，不改全局 chat.css。 */
 .pi-sidecar { width: var(--pi-sidecar-width, 380px); flex-shrink: 0; min-height: 0; display: flex; flex-direction: column; border-left: 1px solid var(--pi-border); background: var(--pi-bg); }
 .pi-sidecar > header { display: flex; justify-content: space-between; align-items: center; padding: 16px; border-bottom: 1px solid var(--pi-border); }
 .pi-sidecar > header strong { display: flex; align-items: center; gap: 8px; font-size: 14px; }
 .pi-sidecar__hint { padding: 12px 16px 0; color: var(--pi-text-tertiary); line-height: 1.5; }
-.pi-sidecar__messages { flex: 1; min-height: 0; overflow-y: auto; padding: 16px; overflow-wrap: anywhere; }
-.pi-sidecar__messages .pi-turn--user { border-radius: 8px; background: var(--pi-bg-hover); padding: 10px; }
-.pi-sidecar__messages .pi-turn { margin-bottom: 16px; }
-.pi-sidecar__error { color: var(--pi-red); white-space: pre-wrap; }
-.pi-sidecar > footer { display: flex; flex-direction: column; gap: 8px; padding: 12px 16px; border-top: 1px solid var(--pi-border); }
-.pi-sidecar textarea { width: 100%; box-sizing: border-box; min-height: 72px; max-height: 180px; resize: vertical; padding: 10px; background: var(--pi-bg); color: var(--pi-text); border: 1px solid var(--pi-border); border-radius: 8px; font: inherit; }
-.pi-sidecar > footer > button { align-self: flex-end; display: flex; align-items: center; gap: 6px; }
-.pi-sidecar__dialog { display: flex; flex-direction: column; gap: 8px; max-height: 240px; overflow: auto; }
-.pi-sidecar__dialog pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+.pi-sidecar .pi-chat { flex: 1; min-height: 0; }
+.pi-sidecar .pi-rail { display: none; }
+.pi-sidecar .pi-chat__inner { padding: 16px 16px 12px; gap: 28px; }
+.pi-sidecar__error { color: var(--pi-red); white-space: pre-wrap; padding: 8px 16px 0; margin: 0; font-size: 13px; }
+.pi-sidecar__status { padding: 12px 16px; color: var(--pi-text-tertiary); }
+.pi-sidecar__start, .pi-sidecar__retry { align-self: flex-start; margin: 12px 16px; }
+.pi-sidecar__fb-title { font-size: 13px; }
+.pi-sidecar__fb-msg { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; color: var(--pi-text-secondary); margin: 0; max-height: 160px; overflow: auto; }
+.pi-sidecar__fb-input { width: 100%; box-sizing: border-box; min-height: 60px; padding: 8px; background: var(--pi-bg); color: var(--pi-text); border: 1px solid var(--pi-border); border-radius: 8px; font: inherit; font-size: 13px; }
+.pi-sidecar__fb-row { display: flex; gap: 8px; justify-content: flex-end; }
+.pi-sidecar > .pi-composer-wrap, .pi-sidecar > .pi-ask-inline, .pi-sidecar > .pi-approval-inline, .pi-sidecar > .pi-extdock { width: auto; margin: 8px 12px 12px; }
+.pi-sidecar .pi-composer { padding: 10px 12px; border-radius: 14px; }
+/* 窄栏工具行压缩：小图标按钮收窄、胶囊文字允许收缩换行，发送键保持可点。 */
+.pi-sidecar .pi-composer__toolbar { row-gap: 6px; }
+.pi-sidecar .pi-composer__left, .pi-sidecar .pi-composer__right { min-width: 0; flex-wrap: wrap; }
+.pi-sidecar .pi-composer__pill { max-width: 140px; }
+.pi-sidecar .pi-composer__pill span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 

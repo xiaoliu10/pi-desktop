@@ -3,6 +3,19 @@ import path from 'node:path';
 import type { PiEvent, PiRun } from '../../shared/pi';
 import type { PiBackend } from './backend';
 import type { SessionIndex } from './session-index';
+import { sidecarSummaryPrompt } from './sidecar-summary';
+
+/** 主会话摘要注入开关/预算：桌面设置暂无入口，先走 env（与 verify-gate 的
+ *  PI_VERIFY_CMD 同风格）；off = 完全退回旧行为（无背景注入）。 */
+function summaryBudgetFrom(env: NodeJS.ProcessEnv = process.env): { maxMessages: number; maxChars: number; perMessageChars: number } | undefined {
+  if (env.PI_SIDECAR_SUMMARY === 'off') return undefined;
+  const num = (v: string | undefined, d: number) => { const n = Number(v); return Number.isFinite(n) && n > 0 ? Math.floor(n) : d; };
+  return {
+    maxMessages: num(env.PI_SIDECAR_SUMMARY_MAX_MESSAGES, 12),
+    maxChars: num(env.PI_SIDECAR_SUMMARY_MAX_CHARS, 4000),
+    perMessageChars: num(env.PI_SIDECAR_SUMMARY_PER_MESSAGE, 600),
+  };
+}
 
 /** One retained, independently persisted conversation per main session. */
 export class SidecarService {
@@ -61,7 +74,18 @@ export class SidecarService {
     if (active) return active;
     const context = this.backend.sessionContext(mainKey);
     const cwd = context?.cwd ?? this.index.history(mainKey).session.cwd;
-    const input = { cwd, trustProject: context?.trustProject ?? false, permission: 'ask' as const, tools: ['read'], sidecarOf: mainKey };
+    // 主会话摘要（最近几轮，预算截断）注入 systemPrompt：副驾是独立会话，否则
+    // 用户「接着主对话的问题」追问时它无从知道指代对象。注入失败（索引坏/超限）
+    // 不阻塞副驾启动——退化为无背景（与旧行为一致）。
+    let summary: string | undefined;
+    try {
+      const budget = summaryBudgetFrom();
+      if (budget) {
+        const branch = this.index.history(mainKey).branch ?? [];
+        summary = sidecarSummaryPrompt(branch, budget) || undefined;
+      }
+    } catch { /* 摘要失败不阻塞副驾 */ }
+    const input = { cwd, trustProject: context?.trustProject ?? false, permission: 'ask' as const, tools: ['read'], sidecarOf: mainKey, ...(summary ? { systemPrompt: summary } : {}) };
     let resume: string | undefined;
     if (bound) {
       // Fail closed on a stale/corrupt binding: never resume a main or external file.

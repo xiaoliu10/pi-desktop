@@ -1,6 +1,8 @@
 // 同一 mainKey 的两个辅助对话面板实例（顶栏 + workbench 内嵌）草稿同步：
 // localStorage 为唯一真理源。实例重新可见（IntersectionObserver 触发）或另一实例写入
 //（手动派发 storage 事件）时以存储值重同步——keep-alive 实例绝不拿陈旧草稿覆盖新输入（review P1）。
+// 注：输入区已复用主对话 Composer，键入落存储经 200ms 防抖（发送/卸载/失焦立即冲刷），
+// 断言一律 waitForFunction 等待落地，不再假设同步写入。
 // Vite at :5175 (bind 127.0.0.1): npx vite --port 5175 --host 127.0.0.1
 // playwright-cli -s workbench run-code --filename tests/sidecar-draft-sync.browser.cjs
 async (page) => {
@@ -29,13 +31,13 @@ async (page) => {
   });
   await page.waitForFunction(() => document.querySelectorAll('.pi-sidecar textarea').length === 2, undefined, { timeout: 5000 });
   const boxes = page.locator('.pi-sidecar textarea');
-  // 实例 A 输入（onChange 写存储 + 派发 storage）
+  // 实例 A 输入（Composer 200ms 防抖后 onChange 写存储 + 派发 storage）。
   await boxes.nth(0).fill('草稿第一版');
-  assert(await page.evaluate(() => localStorage.getItem('pi.sidecarDraft:main-1')) === '草稿第一版', 'typing persists the draft immediately');
+  await page.waitForFunction(() => localStorage.getItem('pi.sidecarDraft:main-1') === '草稿第一版', undefined, { timeout: 5000 });
   // 实例 B 收到 storage 事件同步（同页手动派发），随后 B 的输入成为最新值
   await page.waitForFunction(() => document.querySelectorAll('.pi-sidecar textarea')[1].value === '草稿第一版', undefined, { timeout: 5000 });
   await boxes.nth(1).fill('草稿第二版');
-  assert(await page.evaluate(() => localStorage.getItem('pi.sidecarDraft:main-1')) === '草稿第二版', 'latest typing wins storage');
+  await page.waitForFunction(() => localStorage.getItem('pi.sidecarDraft:main-1') === '草稿第二版', undefined, { timeout: 5000 });
   // 实例 A 重新可见（IntersectionObserver 触发 resync）→ 以存储值重同步，绝不回退到陈旧本地值
   await page.evaluate(() => {
     const a = document.getElementById('host-a');
