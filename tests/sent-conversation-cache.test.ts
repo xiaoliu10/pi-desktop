@@ -46,6 +46,35 @@ describe('sentConversationMessages segment cache', () => {
     expect(late.some(m => String(m.id).startsWith('live-tools'))).toBe(true);
   });
 
+  it('re-renders tool part when same-id tool progress content churns', () => {
+    // 同 toolCallId 的进度部分结果流式更新（text 变化）：tools 签名是 JSON.stringify，
+    // 仅计数签名会命中陈旧段（reviewer 变异测试证实该缺口）。
+    const branch = [entry('c-u1', 'user', 'q1')];
+    const tools = (text: string) => [{ toolCallId: 'tc1', name: 'bash', text, status: 'running' } as never];
+    const toolTexts = (out: ReturnType<typeof sentConversationMessages>) => out.flatMap(m => m.parts).filter((p): p is Extract<typeof p, { kind: 'tool' }> => p.kind === 'tool').map(p => (p.detailLines ?? [])[0]);
+    const first = sentConversationMessages(branch, undefined, tools('ls'), [], undefined);
+    const second = sentConversationMessages(branch, undefined, tools('ls -la src/'), [], undefined);
+    expect(toolTexts(first)).toContain('ls');
+    expect(toolTexts(second)).toContain('ls -la src/');
+    expect(toolTexts(second)).not.toContain('ls');
+  });
+
+  it('routes live message to its owner segment via _turnId', () => {
+    // live _turnId → owner 段路由直断言：无 sends 时 owner=undefined，带 _turnId 的 live
+    // 落入同 owner 段（live-tools 消息 id 后缀 = owner）。
+    const branch = [entry('t-u1', 'user', 'q1'), entry('t-a1', 'assistant', [{ type: 'text', text: 'r1' }])];
+    const out = sentConversationMessages(
+      branch,
+      { s1: { id: 's1', role: 'assistant', content: [{ type: 'text', text: 'live body' }] } },
+      [{ toolCallId: 'tc9', name: 'read', text: 'x', status: 'running' } as never],
+      [],
+      undefined,
+    );
+    // 两者 owner 均为 undefined → 都在唯一 segment 里渲染出来
+    expect(out.some(m => String(m.id).startsWith('live-') && m.parts.some(p => (p as { text?: string }).text === 'live body'))).toBe(true);
+    expect(out.some(m => String(m.id).startsWith('live-tools'))).toBe(true);
+  });
+
   it('picks up appended entries after an IPC refresh (new branch array)', () => {
     const branch1 = [entry('r-u1', 'user', 'q1'), entry('r-a1', 'assistant', [{ type: 'text', text: 'r1' }])];
     const first = sentConversationMessages(branch1, undefined, undefined, [], undefined);

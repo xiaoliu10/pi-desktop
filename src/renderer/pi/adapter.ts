@@ -738,6 +738,9 @@ export function sentConversationMessages(branch: PiEntry[], live: Record<string,
   // live/tools 内容签名) 缓存整个结果。owner 维度的 live/tools 过滤与签名每拍只算一次
   //（提到循环外），签名用 JSON.stringify：流式 delta 更新同 id 的 live 消息内容时
   //（'NEW' → 'NEW CONTINUED'）id 不变但内容变，id-only 签名会命中陈旧段。
+  // 不变量：_turnId/turnId 只会是 string | undefined（由 currentOwner = send id 或
+  // `history:${id}` 赋值，之后原样传递），null/number 不会出现。ownerKeyOf 的 null 合并
+  // 语义因此与旧实现 `=== owner` 严格等价（null 若真出现会改变路由，但不可达）。
   const ownerKeyOf = (owner: string | undefined) => owner ?? '\u0000';
   const liveByOwner = new Map<string, [Record<string, Record<string, unknown>>, string]>();
   for (const [id, m] of Object.entries(live ?? {})) {
@@ -764,7 +767,7 @@ export function sentConversationMessages(branch: PiEntry[], live: Record<string,
     const ownerKey = ownerKeyOf(owner);
     const livePart = liveByOwner.get(ownerKey);
     const toolsPart = toolsByOwner.get(ownerKey);
-    const cacheKey = `${entries[0]?.id ?? ''}\u0000${entries[entries.length - 1]?.id ?? ''}\u0000${entries.length}\u0000${ownerKey}\u0000${livePart?.[1] ?? ''}\u0000${toolsPart?.[1] ?? ''}\u0000${compactionAfter?.at ?? ''}`;
+    const cacheKey = `${entries[0]?.id ?? ''}\u0000${entries[entries.length - 1]?.id ?? ''}\u0000${entries.length}\u0000${ownerKey}\u0000${livePart?.[1] ?? ''}\u0000${toolsPart?.[1] ?? ''}\u0000${compactionAfter?.at ?? ''}\u0000${compactionAfter?.tokensAfter ?? ''}`;
     const hit = segmentCache.get(cacheKey);
     if (hit) return hit;
     const built = conversationMessages(entries, livePart?.[0], toolsPart?.[0], compactionAfter).map(m => m.id === 'live-tools' ? { ...m, id: `live-tools:${owner ?? 'initial'}` } : m);

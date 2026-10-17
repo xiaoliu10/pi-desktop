@@ -148,7 +148,7 @@
 
 **状态**：大部分满足。切片 1（labelsFor 缓存，v0.1.24 #120）已修 memo 击穿；切片 2a/2b（history() 去全扫 + 增量 tail 解析，实测 421ms → 平均 6.3ms）已修（PR #128）；**渲染侧热路径（Phase 2，实测 sentConversationMessages 热路径 259ms/拍 → 流式 tick 10-12ms，22×）：anchorOf/indexById O(1) 化 + 排序锚值预计算 + segment 整段缓存（branch 数组身份隔离，live/tools 内容签名穿透）+ ChatView queue/scrollRequest props 稳定化**；剩余：运行中会话改走 RPC get_entries（切片 2c）、可选虚拟化（切片 3）、活动段/历史段 useMemo 拆分（A1，若剩余 10ms/拍仍感知卡再做）。
 
-**回归触发**：改 `session-index.ts`（增量偏移/快路径）/`adapter.ts`（sentConversationMessages 及其 segment 缓存）/`PiReplicaApp.tsx`（ChatView props 稳定性）；pi RPC `get_entries` 增量契约变化。缓存正确性由 `tests/sent-conversation-cache.test.ts` 鉕住（同 id live 内容增长/历史身份恒定/late progress 穿透/refresh 追加）。
+**回归触发**：改 `session-index.ts`（增量偏移/快路径）/`adapter.ts`（sentConversationMessages 及其 segment 缓存）/`PiReplicaApp.tsx`（ChatView props 稳定性）；pi RPC `get_entries` 增量契约变化。缓存正确性由 `tests/sent-conversation-cache.test.ts` 钉住（同 id live 内容增长/历史身份恒定/late progress 穿透/refresh 追加）。
 
 ---
 
