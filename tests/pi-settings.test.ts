@@ -133,3 +133,17 @@ it('codemode 开关写 pi settings.json defaultTools，保留其他条目与未�
  service.setCodemode(false);
  expect(JSON.parse(fs.readFileSync(file,'utf8'))).toEqual({});
 });
+it('reads an extension by its catalog path id, not only the hashed id',()=>{const{agent,service,host}=setup();const file=path.join(agent,'extensions','demo.ts');fs.mkdirSync(path.dirname(file));fs.writeFileSync(file,'export const demo = 1;\n');
+  // renderer 拿到的 id 是 resource-catalog 的路径型（`user:extensions:<abs path>`）；settings 清单 id 是 hash。两种口径都必须能读。
+  const hashed=service.snapshot().resources.find(r=>r.path===file);expect(hashed).toBeDefined();expect(service.readResource(hashed!.id).text).toContain('export const demo');
+  const catalogId=`user:extensions:${file}`;
+  expect(service.readResource(catalogId).text).toContain('export const demo');
+  expect(service.resourcePath(catalogId)).toBe(file);
+  // 未知路径型 id 仍然报错（不放松越权面）
+  expect(()=>service.readResource('user:extensions:/nonexistent/x.ts')).toThrow('不存在');
+  // 保存同样兼容两种 id（编辑源码的主路径）
+  const doc=service.readResource(catalogId);service.saveResource({id:catalogId,text:doc.text+'\n// edited\n',revision:doc.revision});
+  expect(service.readResource(catalogId).text).toContain('// edited');
+  // 非资源 kind 的路径型 id 不伪造条目
+  expect(()=>service.readResource(`user:instructions:${path.join(agent,'AGENTS.md')}`)).toThrow('不存在');
+  expect(host.resources().some(r=>r.kind==='extensions')).toBe(true);});

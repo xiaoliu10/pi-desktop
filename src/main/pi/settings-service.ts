@@ -81,7 +81,13 @@ export class SettingsService {
     const project=this.cwd(cwd);if(project){let dir=project;for(;;){const chosen=['AGENTS.override.md','AGENTS.md','CLAUDE.md'].map(n=>path.join(dir,n)).find(fs.existsSync);if(chosen)add(chosen,'instructions','project','discovered',dir===project?'当前项目指令':'继承的上级目录指令',dir===project);const next=path.dirname(dir);if(next===dir)break;dir=next;}}
     return [...out.values()];
   }
-  private resource(id:string,cwd?:string){const r=this.resources(cwd).find(r=>r.id===id);if(!r)throw new Error('资源不存在，请刷新');return r;}
+  private resource(id:string,cwd?:string){const r=this.resources(cwd).find(r=>r.id===id)??this.pathResource(id,cwd);if(!r)throw new Error('资源不存在，请刷新');return r;}
+  /** renderer 拿到的扩展 id 是 resource-catalog 的路径型 id（`${scope}:${kind}:${绝对路径}`），
+   *  而本类的清单 id 是 hash(file+kind)。两者口径不一致时「编辑源码」必然找不到资源——
+   *  实测表现：插件页点「编辑源码」窗口一闪即消（ExtensionEditor 读失败即 onClose）。
+   *  这里按路径型 id 反查：hash(file) 命中即本类条目；否则用路径构造同构条目
+   *  （可编辑性与本类 editable 口径一致：位于 root 下对应 kind 目录、不在 node_modules 内）。 */
+  private pathResource(id:string,cwd?:string){if(!id.includes(':'))return undefined;const sep=id.indexOf(':',id.indexOf(':')+1);const file=id.slice(sep+1);if(!file.startsWith(path.sep))return undefined;const roots=this.roots(cwd);const hit=this.resources(cwd).find(r=>r.path===file);if(hit)return hit;const kind=id.slice(id.indexOf(':')+1,sep);if(!['extensions','skills','prompts'].includes(kind))return undefined;const root=roots.find(x=>file.startsWith(path.join(x.root,kind)+path.sep));if(!root||file.includes(`${path.sep}node_modules${path.sep}`))return undefined;return{id,path:file,name:path.basename(file)==='SKILL.md'?path.basename(path.dirname(file)):path.basename(file),kind:kind as ResourceKind,scope:root.scope,status:fs.existsSync(file)?'discovered':'missing',detail:'本地文件',editable:fs.existsSync(file)&&fs.statSync(file).isFile()};}
   resourcePath(id:string,cwd?:string){return this.resource(id,cwd).path;}
   readResource(id:string,cwd?:string):ResourceDocument {const r=this.resource(id,cwd);if(!fs.existsSync(r.path)||!fs.statSync(r.path).isFile())throw new Error('资源不是可读取的文件');if(fs.statSync(r.path).size>512*1024)throw new Error('文件超过 512 KiB，请在外部编辑器查看');return{id,text:fs.readFileSync(r.path,'utf8'),revision:revision(r.path)};}
   saveResource(input:{id:string;text:string;revision:string;cwd?:string}){const r=this.resource(input.id,input.cwd);if(!r.editable)throw new Error('包管理资源或继承指令请在原位置管理');if(typeof input.text!=='string')throw new Error('内容必须是文本');atomic(r.path,input.text,input.revision);}

@@ -474,6 +474,28 @@
   color: var(--pi-muted, rgba(0,0,0,.55));
 }
 
+/* 源码读取失败时保留窗口（不闪退）：红字告警 + 重试/复制路径 */
+.pireplica .pi-exteditor__readerror {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  border: 1px solid var(--pi-danger, #d24);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--pi-danger, #d24) 8%, transparent);
+  font-size: 12px;
+  color: var(--pi-danger, #d24);
+}
+.pireplica .pi-exteditor__readerror-actions {
+  display: flex;
+  gap: 8px;
+}
+.pireplica .pi-exteditor__readerror .pi-btn {
+  font-size: 12px;
+  padding: 4px 10px;
+}
+
 .pireplica .pi-exteditor__fields {
   display: flex;
   flex-wrap: wrap;
