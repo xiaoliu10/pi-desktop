@@ -283,67 +283,175 @@ export function ChannelConfigDialog(props: {
           )}
 
           {tab === 'manual' && (
-            <div className="pi-providerform pi-chdialog__form">
+            <div className="pi-chdialog__form">
+              {/* 能力分组（ZCode 设置页卡片式）：通知与双向是两条独立通道，各写清用途与缺失后果——
+                  早期版本把它们平铺在一个表单里，用户填了 AppKey 就以为完事，实际通知还需要
+                  group webhook（真实反馈：钉钉「配好了但没用」）。 */}
               {channel !== 'telegram' && channel !== 'wechat' && (
-                <>
-                  <label>
-                    <span>Webhook</span>
-                    <input className="pi-mono" value={im.webhook} placeholder={channel === 'dingtalk' ? 'https://oapi.dingtalk.com/robot/send?access_token=…' : 'https://open.feishu.cn/open-apis/bot/v2/hook/…'} onChange={(e) => props.onImChange({ ...im, webhook: e.target.value })} onBlur={(e) => void props.onSave({ webhook: e.target.value, provider: channel as ImConfig['provider'] })} />
+                <section className="pi-chdialog__group">
+                  <div className="pi-chdialog__grouptitle">
+                    <Icon name="bell" size={14} />
+                    <span>{zh ? '任务通知' : 'Task notifications'}</span>
+                  </div>
+                  <div className="pi-chdialog__groupdesc">
+                    {zh
+                      ? '在任意群聊添加「自定义机器人」，把 Webhook 地址填到这里。任务完成 / 出错 / 等待确认会推到这个群。'
+                      : 'Add a custom bot to any group chat and paste its Webhook here. Completion / error / attention notices go to that group.'}
+                  </div>
+                  <label className="pi-settingrow pi-settingrow--card">
+                    <div className="pi-settingrow__text">
+                      <div className="pi-settingrow__title">Webhook</div>
+                      <div className="pi-settingrow__desc">
+                        {zh ? '以 https:// 开头；加签密钥按机器人创建时勾选的校验方式选填。' : 'Must start with https://; the signing secret is optional.'}
+                      </div>
+                    </div>
+                    <div className="pi-settingrow__control pi-settingrow__control--wide">
+                      <input className="pi-mono" value={im.webhook} placeholder={channel === 'dingtalk' ? 'https://oapi.dingtalk.com/robot/send?access_token=…' : 'https://open.feishu.cn/open-apis/bot/v2/hook/…'} onChange={(e) => props.onImChange({ ...im, webhook: e.target.value })} onBlur={(e) => void props.onSave({ webhook: e.target.value, provider: channel as ImConfig['provider'] })} />
+                    </div>
                   </label>
-                  <label>
-                    <span>{zh ? '加签密钥（可选）' : 'Sign secret (optional)'}</span>
-                    <input className="pi-mono" value={im.secret ?? ''} onChange={(e) => props.onImChange({ ...im, secret: e.target.value })} onBlur={(e) => void props.onSave({ secret: e.target.value })} />
+                  <label className="pi-settingrow pi-settingrow--card">
+                    <div className="pi-settingrow__text">
+                      <div className="pi-settingrow__title">{zh ? '加签密钥' : 'Sign secret'}</div>
+                      <div className="pi-settingrow__desc">{zh ? '可选。创建机器人时选择「加签」校验才需要填写。' : 'Optional; only needed when the bot uses signature verification.'}</div>
+                    </div>
+                    <div className="pi-settingrow__control pi-settingrow__control--wide">
+                      <input className="pi-mono" value={im.secret ?? ''} placeholder={zh ? 'SEC…' : 'SEC…'} onChange={(e) => props.onImChange({ ...im, secret: e.target.value })} onBlur={(e) => void props.onSave({ secret: e.target.value })} />
+                    </div>
                   </label>
-                </>
+                  {!im.webhook && (im.notifyCompleted || im.notifyError || im.notifyAttention) && (
+                    <div className="pi-chdialog__warn" role="alert">
+                      <Icon name="shield-alert" size={14} />
+                      <span>{zh ? '还没有填 Webhook——任务通知开关虽然开着，但一条也发不出去。填好后点底部「发送测试消息」验证。' : 'No Webhook yet — notification switches are on but nothing can be delivered. Fill it in, then use “Send test message”.'}</span>
+                    </div>
+                  )}
+                </section>
               )}
-              {channel === 'telegram' ? (
-                <label>
-                  <span>Bot Token</span>
-                  <input className="pi-mono" value={im.botToken ?? ''} placeholder="123456:ABC-DEF…" onChange={(e) => props.onImChange({ ...im, botToken: e.target.value })} onBlur={(e) => void props.onSave({ botToken: e.target.value, provider: channel as ImConfig['provider'] })} />
-                </label>
-              ) : channel === 'wechat' ? (
-                <>
-                  <label>
-                    <span>{zh ? '推送服务' : 'Push service'}</span>
-                    <select className="pi-mono" value={im.pushProvider ?? 'serverchan'} onChange={(e) => void props.onSave({ pushProvider: e.target.value as ImConfig['pushProvider'], provider: channel as ImConfig['provider'] })}>
-                      <option value="serverchan">Server酱（sct.ftqq.com）</option>
-                      <option value="pushplus">PushPlus（pushplus.plus）</option>
-                    </select>
+
+              {channel === 'wechat' ? (
+                <section className="pi-chdialog__group">
+                  <div className="pi-chdialog__grouptitle">
+                    <Icon name="bell" size={14} />
+                    <span>{zh ? '任务通知' : 'Task notifications'}</span>
+                  </div>
+                  <div className="pi-chdialog__groupdesc">
+                    {zh ? '微信渠道为单向任务通知（完成 / 出错 / 等待确认）。双向对话需要微信出站接口，平台暂未提供——钉钉、飞书、Telegram 支持双向。' : 'WeChat is notification-only. Two-way chat needs an outbound API WeChat does not offer — DingTalk, Feishu and Telegram support it.'}
+                  </div>
+                  <label className="pi-settingrow pi-settingrow--card">
+                    <div className="pi-settingrow__text">
+                      <div className="pi-settingrow__title">{zh ? '推送服务' : 'Push service'}</div>
+                      <div className="pi-settingrow__desc">{zh ? 'Server酱或 PushPlus，二选一。' : 'Server酱 or PushPlus.'}</div>
+                    </div>
+                    <div className="pi-settingrow__control">
+                      <select className="pi-mono" value={im.pushProvider ?? 'serverchan'} onChange={(e) => void props.onSave({ pushProvider: e.target.value as ImConfig['pushProvider'], provider: channel as ImConfig['provider'] })}>
+                        <option value="serverchan">Server酱</option>
+                        <option value="pushplus">PushPlus</option>
+                      </select>
+                    </div>
                   </label>
-                  <label>
-                    <span>{(im.pushProvider ?? 'serverchan') === 'pushplus' ? 'Token' : 'SendKey'}{zh ? '（任务通知）' : ' (task notifications)'}</span>
-                    <input className="pi-mono" type="password" value={im.botToken ?? ''} placeholder={(im.pushProvider ?? 'serverchan') === 'pushplus' ? 'PushPlus token…' : 'SCT…'} onChange={(e) => props.onImChange({ ...im, botToken: e.target.value })} onBlur={(e) => void props.onSave({ botToken: e.target.value, provider: channel as ImConfig['provider'] })} />
+                  <label className="pi-settingrow pi-settingrow--card">
+                    <div className="pi-settingrow__text">
+                      <div className="pi-settingrow__title">{(im.pushProvider ?? 'serverchan') === 'pushplus' ? 'Token' : 'SendKey'}</div>
+                      <div className="pi-settingrow__desc">{zh ? '在对应平台登录后复制。' : 'Copy it after signing in to the platform.'}</div>
+                    </div>
+                    <div className="pi-settingrow__control pi-settingrow__control--wide">
+                      <input className="pi-mono" type="password" value={im.botToken ?? ''} placeholder={(im.pushProvider ?? 'serverchan') === 'pushplus' ? 'PushPlus token…' : 'SCT…'} onChange={(e) => props.onImChange({ ...im, botToken: e.target.value })} onBlur={(e) => void props.onSave({ botToken: e.target.value, provider: channel as ImConfig['provider'] })} />
+                    </div>
                   </label>
-                  <p className="pi-chdialog__scanhint">{zh ? '微信渠道为单向任务通知（完成/出错/等待确认）；双向对话需要微信出站接口，平台暂未提供——钉钉、飞书、Telegram 支持双向。' : 'WeChat is notification-only (done/error/attention); two-way chat needs an outbound API WeChat does not offer — DingTalk, Feishu and Telegram support it.'}</p>
-                </>
+                </section>
+              ) : channel === 'telegram' ? (
+                <section className="pi-chdialog__group">
+                  <div className="pi-chdialog__grouptitle">
+                    <Icon name="bot" size={14} />
+                    <span>Telegram</span>
+                  </div>
+                  <div className="pi-chdialog__groupdesc">
+                    {zh ? '通知与双向对话共用同一个 Bot Token。' : 'Notifications and two-way chat share one bot token.'}
+                  </div>
+                  <label className="pi-settingrow pi-settingrow--card">
+                    <div className="pi-settingrow__text">
+                      <div className="pi-settingrow__title">Bot Token</div>
+                      <div className="pi-settingrow__desc">{zh ? '找 @BotFather 发送 /newbot 创建后获得。' : 'From @BotFather (/newbot).'}</div>
+                    </div>
+                    <div className="pi-settingrow__control pi-settingrow__control--wide">
+                      <input className="pi-mono" value={im.botToken ?? ''} placeholder="123456:ABC-DEF…" onChange={(e) => props.onImChange({ ...im, botToken: e.target.value })} onBlur={(e) => void props.onSave({ botToken: e.target.value, provider: channel as ImConfig['provider'] })} />
+                    </div>
+                  </label>
+                </section>
               ) : (
-                <>
-                  <label>
-                    <span>{channel === 'dingtalk' ? 'AppKey' : 'App ID'}{zh ? '（双向对话）' : ' (two-way chat)'}</span>
-                    <input className="pi-mono" value={im.appKey ?? ''} onChange={(e) => props.onImChange({ ...im, appKey: e.target.value })} onBlur={(e) => void props.onSave({ appKey: e.target.value, provider: channel as ImConfig['provider'] })} />
+                <section className="pi-chdialog__group">
+                  <div className="pi-chdialog__grouptitle">
+                    <Icon name="bot" size={14} />
+                    <span>{zh ? '双向对话' : 'Two-way chat'}</span>
+                  </div>
+                  <div className="pi-chdialog__groupdesc">
+                    {zh ? '在钉钉 / 飞书里 @机器人 即可下达任务、查状态。Stream 模式是出站长连接，不需要公网服务器或回调地址。' : '@-mention the bot to run tasks. Stream mode is an outbound long connection — no public endpoint needed.'}
+                  </div>
+                  <label className="pi-settingrow pi-settingrow--card">
+                    <div className="pi-settingrow__text">
+                      <div className="pi-settingrow__title">{channel === 'dingtalk' ? 'AppKey' : 'App ID'}</div>
+                      <div className="pi-settingrow__desc">{zh ? '开放平台应用的凭据。' : 'App credential from the open platform.'}</div>
+                    </div>
+                    <div className="pi-settingrow__control pi-settingrow__control--wide">
+                      <input className="pi-mono" value={im.appKey ?? ''} onChange={(e) => props.onImChange({ ...im, appKey: e.target.value })} onBlur={(e) => void props.onSave({ appKey: e.target.value, provider: channel as ImConfig['provider'] })} />
+                    </div>
                   </label>
-                  <label>
-                    <span>App Secret</span>
-                    <input className="pi-mono" type="password" value={im.appSecret ?? ''} onChange={(e) => props.onImChange({ ...im, appSecret: e.target.value })} onBlur={(e) => void props.onSave({ appSecret: e.target.value })} />
+                  <label className="pi-settingrow pi-settingrow--card">
+                    <div className="pi-settingrow__text">
+                      <div className="pi-settingrow__title">App Secret</div>
+                      <div className="pi-settingrow__desc">{zh ? '与 AppKey 配对；只存在本地配置文件中。' : 'Pairs with the AppKey; stored only in the local config file.'}</div>
+                    </div>
+                    <div className="pi-settingrow__control pi-settingrow__control--wide">
+                      <input className="pi-mono" type="password" value={im.appSecret ?? ''} onChange={(e) => props.onImChange({ ...im, appSecret: e.target.value })} onBlur={(e) => void props.onSave({ appSecret: e.target.value })} />
+                    </div>
                   </label>
-                  <label className="pi-providerform__check">
-                    <input type="checkbox" checked={Boolean(im.twoWay)} onChange={(e) => void props.onSave({ twoWay: e.target.checked })} />
-                    <span>{zh ? '开启双向对话（出站长连接，无需公网服务器）' : 'Enable two-way chat (outbound long connection)'}</span>
+                  <label className="pi-settingrow pi-settingrow--card">
+                    <div className="pi-settingrow__text">
+                      <div className="pi-settingrow__title">{zh ? '启用双向对话' : 'Enable two-way chat'}</div>
+                      <div className="pi-settingrow__desc">{zh ? '开启后桌面端会保持一条到平台网关的长连接。' : 'Keeps one long connection to the platform gateway.'}</div>
+                    </div>
+                    <div className="pi-settingrow__control">
+                      <input type="checkbox" checked={Boolean(im.twoWay)} onChange={(e) => void props.onSave({ twoWay: e.target.checked })} />
+                    </div>
                   </label>
-                </>
+                  {!im.appKey && im.twoWay && (
+                    <div className="pi-chdialog__warn" role="alert">
+                      <Icon name="shield-alert" size={14} />
+                      <span>{zh ? '双向对话已开启但没有 AppKey——长连接不会建立。' : 'Two-way is on but AppKey is missing — no connection will be established.'}</span>
+                    </div>
+                  )}
+                </section>
               )}
-              <label className="pi-providerform__check">
-                <input type="checkbox" checked={im.notifyCompleted} onChange={(e) => void props.onSave({ notifyCompleted: e.target.checked })} />
-                <span>{zh ? '任务完成时通知' : 'Notify on completion'}</span>
-              </label>
-              <label className="pi-providerform__check">
-                <input type="checkbox" checked={im.notifyError} onChange={(e) => void props.onSave({ notifyError: e.target.checked })} />
-                <span>{zh ? '任务出错时通知' : 'Notify on errors'}</span>
-              </label>
-              <label className="pi-providerform__check">
-                <input type="checkbox" checked={im.notifyAttention} onChange={(e) => void props.onSave({ notifyAttention: e.target.checked })} />
-                <span>{zh ? '等待确认时通知' : 'Notify when awaiting confirmation'}</span>
-              </label>
+
+              <section className="pi-chdialog__group">
+                <div className="pi-chdialog__grouptitle">
+                  <Icon name="bell" size={14} />
+                  <span>{zh ? '通知场景' : 'Notify on'}</span>
+                </div>
+                <label className="pi-settingrow pi-settingrow--card">
+                  <div className="pi-settingrow__text">
+                    <div className="pi-settingrow__title">{zh ? '任务完成' : 'Completion'}</div>
+                  </div>
+                  <div className="pi-settingrow__control">
+                    <input type="checkbox" checked={im.notifyCompleted} onChange={(e) => void props.onSave({ notifyCompleted: e.target.checked })} />
+                  </div>
+                </label>
+                <label className="pi-settingrow pi-settingrow--card">
+                  <div className="pi-settingrow__text">
+                    <div className="pi-settingrow__title">{zh ? '任务出错' : 'Errors'}</div>
+                  </div>
+                  <div className="pi-settingrow__control">
+                    <input type="checkbox" checked={im.notifyError} onChange={(e) => void props.onSave({ notifyError: e.target.checked })} />
+                  </div>
+                </label>
+                <label className="pi-settingrow pi-settingrow--card">
+                  <div className="pi-settingrow__text">
+                    <div className="pi-settingrow__title">{zh ? '等待确认' : 'Awaiting confirmation'}</div>
+                  </div>
+                  <div className="pi-settingrow__control">
+                    <input type="checkbox" checked={im.notifyAttention} onChange={(e) => void props.onSave({ notifyAttention: e.target.checked })} />
+                  </div>
+                </label>
+              </section>
             </div>
           )}
         </div>
