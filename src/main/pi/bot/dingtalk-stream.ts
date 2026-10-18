@@ -47,11 +47,20 @@ export function decodeFrame(raw: string): { messageId: string; text: string; cha
   const topic = frame?.headers?.topic;
   const messageId = String(frame?.headers?.messageId ?? '');
   if (topic !== TOPIC_BOT_MESSAGE || !messageId) return null;
+  // data 形态兼容：官方 SDK 假设 data=base64(JSON)，但真实网关推送出现过三种形态
+  //（2026-10-18 实测帧 749B 走不到 base64 分支）：①base64 字符串 ②明文 JSON 字符串
+  // ③已是对象 / 挂在 event 字段。逐级尝试，全失败时回 null（上层有落盘日志）。
   let payload: any;
-  try {
-    payload = JSON.parse(Buffer.from(String(frame.data ?? ''), 'base64').toString('utf8'));
-  } catch {
-    return null;
+  const d = frame.data ?? frame.event;
+  if (d && typeof d === 'object') {
+    payload = d;
+  } else {
+    const raw = String(d ?? '');
+    try {
+      payload = JSON.parse(Buffer.from(raw, 'base64').toString('utf8'));
+    } catch {
+      try { payload = JSON.parse(raw); } catch { return null; }
+    }
   }
   const text = String(payload?.text?.content ?? payload?.content ?? '').trim();
   const chatId = String(payload?.conversationId ?? payload?.senderStaffId ?? payload?.senderNick ?? 'unknown');

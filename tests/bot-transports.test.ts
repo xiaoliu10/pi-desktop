@@ -147,3 +147,26 @@ describe('Feishu long-conn events', () => {
     expect(extractFeishuEvent({ header: { event_type: 'other' } })).toBeNull();
   });
 });
+
+// 真实网关帧形态兼容（2026-10-18 实测：推送的 data 不是 base64 字符串，旧解码全丢）
+describe('decodeFrame data 形态兼容', () => {
+  const headers = { topic: '/v1.0/im/bot/messages/get', messageId: 'm1' };
+  const payload = { text: { content: '你好' }, conversationId: 'cid-1', sessionWebhook: 'https://w' };
+
+  it('base64 字符串（官方 SDK 形态）', () => {
+    const frame = JSON.stringify({ headers, data: Buffer.from(JSON.stringify(payload)).toString('base64') });
+    expect(decodeFrame(frame)).toMatchObject({ text: '你好', chatId: 'cid-1' });
+  });
+  it('明文 JSON 字符串', () => {
+    const frame = JSON.stringify({ headers, data: JSON.stringify(payload) });
+    expect(decodeFrame(frame)).toMatchObject({ text: '你好' });
+  });
+  it('data 已是对象', () => {
+    const frame = JSON.stringify({ headers, data: payload });
+    expect(decodeFrame(frame)).toMatchObject({ text: '你好' });
+  });
+  it('挂在 event 字段的对象', () => {
+    const frame = JSON.stringify({ headers, event: payload });
+    expect(decodeFrame(frame)).toMatchObject({ text: '你好' });
+  });
+});
