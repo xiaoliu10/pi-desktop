@@ -31,6 +31,9 @@ const frameDrops: FrameSample[] = [];
 /** 已结束的阶段区间：PerformanceObserver 回调是异步批量的，晚于 end() 到达，
  *  所以不能只看「当前在哪个 phase」，要按时间区间匹配（startedAt..endedAt）。 */
 const phaseWindows: { phase: Phase; startedAt: number; endedAt: number }[] = [];
+/** 阶段耗时累计（全部记录，不看阈值）：流式 flush 这类「单次 <50ms 但每 150ms 一次」
+ *  的活不进长任务列表，却持续占用主线程——报告里以「累计/次数/均耗」呈现。 */
+const phaseTotals = new Map<Phase, { n: number; total: number; max: number }>();
 /** 每类事件的最近 N 条明细（报告里给出 top 样本，便于判断是「打字时」还是「聚焦时」） */
 const MAX_SAMPLES = 500;
 let enabled = true;
@@ -100,7 +103,14 @@ export function endPhase(phase: Phase): void {
   const now = performance.now();
   for (let i = phaseWindows.length - 1; i >= 0; i -= 1) {
     const w = phaseWindows[i]!;
-    if (w.phase === phase && !Number.isFinite(w.endedAt)) { w.endedAt = now; return; }
+    if (w.phase === phase && !Number.isFinite(w.endedAt)) {
+      w.endedAt = now;
+      const dur = now - w.startedAt;
+      const t = phaseTotals.get(phase) ?? { n: 0, total: 0, max: 0 };
+      t.n += 1; t.total += dur; t.max = Math.max(t.max, dur);
+      phaseTotals.set(phase, t);
+      return;
+    }
   }
 }
 
@@ -157,6 +167,18 @@ export function perfReport(): string {
   }
   const frames = summarize(frameDrops.map(f => f.delta));
   lines.push(`掉帧（>32ms）: n=${frames.n} p50=${frames.p50}ms max=${frames.max}ms`);
+  if (phaseTotals.size) {
+    lines.push(`阶段累计（含 <50ms 的高频活）:`);
+    for (const [phase, t] of [...phaseTotals.entries()].sort((a, b) => b[1].total - a[1].total)) {
+      lines.push(`  ${phase.padEnd(20)} n=${t.n} avg=${(t.total / t.n).toFixed(1)}ms max=${t.max.toFixed(0)}ms 总=${t.total.toFixed(0)}ms`);
+    }
+  }
+  // 长任务时间线：尖峰定位用——「几点几秒发生了多长的任务、归因到哪」。
+  const timeline = longTasks.filter(t => t.duration >= 300).sort((a, b) => a.at - b.at);
+  if (timeline.length) {
+    lines.push(`长任务时间线（≥300ms，t 为页面内秒）:`);
+    for (const t of timeline.slice(-30)) lines.push(`  t+${(t.at / 1000).toFixed(1)}s  ${Math.round(t.duration)}ms  ${t.phase}`);
+  }
   lines.push(`未归因长任务: ${longTasks.filter(t => t.phase === 'other').length} / ${longTasks.length}`);
   if (inputSamples.length) {
     const worst = [...inputSamples].sort((a, b) => b.delay - a.delay).slice(0, 5);
@@ -172,6 +194,7 @@ export function resetPerfProbe(): void {
   inputSamples.length = 0;
   longTasks.length = 0;
   phaseWindows.length = 0;
+  phaseTotals.clear();
   frameDrops.length = 0;
   startedAt = Date.now();
 }

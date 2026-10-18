@@ -690,6 +690,11 @@ function segmentCacheFor(branch: PiEntry[]): Map<string, ChatMessage[]> {
 }
 
 export function sentConversationMessages(branch: PiEntry[], live: Record<string, Record<string, unknown>> | undefined, tools: ToolProgress[] | undefined, sends: OptimisticSend[], compactionAfter?: CompactionAfter): ChatMessage[] {
+  startPhase('messages-rebuild');
+  try { return sentConversationMessagesInner(branch, live, tools, sends, compactionAfter); } finally { endPhase('messages-rebuild'); }
+}
+
+function sentConversationMessagesInner(branch: PiEntry[], live: Record<string, Record<string, unknown>> | undefined, tools: ToolProgress[] | undefined, sends: OptimisticSend[], compactionAfter?: CompactionAfter): ChatMessage[] {
   // Every persisted user is a boundary, including consumed follow-up/steer
   // items (which intentionally have no optimistic send). Missing confirmed
   // boundaries remain absent: their transient work is quarantined in state,
