@@ -133,6 +133,20 @@ export class DingTalkStreamTransport implements ImTransport {
         .onMessage({ chatId: msg.chatId, text: msg.text } satisfies IncomingMessage)
         .then(async (reply) => {
           imLog(`钉钉消息已处理（chat=${msg.chatId.slice(0, 16)}…，回复 ${reply.length} 字）`);
+          if (!msg.sessionWebhook) {
+            // 「已处理」≠「已送达」：帧内无 sessionWebhook 时回复无处可发（此前静默跳过，
+            // 用户在钉钉侧永远看不到回复而日志显示一切正常）。落盘 payload 结构供适配。
+            let payloadShape = '(decode 未捕获)';
+            try {
+              const f = JSON.parse(String(raw));
+              const d = f?.data ?? f?.event;
+              const inner = typeof d === 'string' ? (() => { try { return JSON.parse(Buffer.from(d, 'base64').toString('utf8')); } catch { try { return JSON.parse(d); } catch { return undefined; } } })() : d;
+              payloadShape = JSON.stringify({ dataKeys: inner && typeof inner === 'object' ? Object.keys(inner) : typeof inner, dataPreview: JSON.stringify(inner)?.slice(0, 400) });
+            } catch { /* 观测失败不影响主流程 */ }
+            imLog(`回复无法送达：帧内无 sessionWebhook。payload=${payloadShape}`);
+            ws.send(ackFrame(msg.messageId, true));
+            return;
+          }
           if (msg.sessionWebhook) {
             // webhook 失败必须 ack false：钉钉会对失败消息重推，静默丢回复无痕迹。
             try { await this.postJson(msg.sessionWebhook, { msgtype: 'text', content: { text: reply } }); }
