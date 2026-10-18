@@ -77,7 +77,11 @@ export class DingTalkStreamTransport implements ImTransport {
   ) {}
 
   async start(ctx: TransportContext): Promise<void> {
+    // 幂等保护：重连路径（close → 定时 start）先清掉旧连接/旧定时器，连续断线时
+    // 不会堆积多个并发 ws（旧连接可能把消息收走后 ack 失败——消息静默丢失）。
+    await this.stop();
     this.closedByUs = false;
+    console.error(`[im-bot] 钉钉 Stream 连接中（appKey=${this.creds.appKey.slice(0, 6)}…）`);
     const { endpoint, ticket } = await openConnection(this.gatewayUrl, this.creds, this.postJson);
     const url = new URL(endpoint);
     if (ticket) url.searchParams.set('ticket', ticket);
@@ -96,28 +100,32 @@ export class DingTalkStreamTransport implements ImTransport {
       if (!msg) return;
       void ctx
         .onMessage({ chatId: msg.chatId, text: msg.text } satisfies IncomingMessage)
-        .then((reply) => {
+        .then(async (reply) => {
+          console.error(`[im-bot] 钉钉消息已处理（chat=${msg.chatId.slice(0, 16)}…，回复 ${reply.length} 字）`);
           if (msg.sessionWebhook) {
-            void this.postJson(msg.sessionWebhook, { msgtype: 'text', content: { text: reply } });
+            // webhook 失败必须 ack false：钉钉会对失败消息重推，静默丢回复无痕迹。
+            try { await this.postJson(msg.sessionWebhook, { msgtype: 'text', content: { text: reply } }); }
+            catch (err) { console.error(`[im-bot] 回复发送失败：${String(err).slice(0, 200)}`); ws.send(ackFrame(msg.messageId, false)); return; }
           }
           ws.send(ackFrame(msg.messageId, true));
         })
-        .catch(() => ws.send(ackFrame(msg.messageId, false)));
+        .catch((err) => { console.error(`[im-bot] 消息处理异常：${String(err).slice(0, 200)}`); ws.send(ackFrame(msg.messageId, false)); });
     });
     await new Promise<void>((resolve, reject) => {
       ws.once('open', resolve);
       ws.once('error', reject);
     });
-    ws.on('error', (err) => ctx.onStatus?.(`钉钉连接错误：${err.message}`));
+    ws.on('open', () => console.error('[im-bot] 钉钉 Stream 已连接'));
+    ws.on('error', (err) => { ctx.onStatus?.(`钉钉连接错误：${err.message}`); console.error(`[im-bot] 钉钉连接错误：${err.message}`); });
     ws.on('close', () => {
       if (this.closedByUs) return;
       ctx.onStatus?.('钉钉连接断开，5 秒后重连');
-      this.pingTimer && setTimeout(() => void this.start(ctx).catch(() => undefined), 5000);
+      console.error('[im-bot] 钉钉连接断开，5 秒后重连');
+      setTimeout(() => void this.start(ctx).catch((err) => console.error(`[im-bot] 重连失败：${String(err).slice(0, 200)}`)), 5000);
     });
-    // Keep-alive ping per the stream protocol.
-    this.pingTimer = setInterval(() => {
-      if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ code: 'ping', headers: {}, body: 'ping' }));
-    }, 60_000);
+    // Keep-alive：钉钉 Stream 协议是「服务端发 ping、客户端回 pong」（上面 message 分支）。
+    // 客户端主动发 ping 不是协议的一部分，违规帧可能导致网关断开——不发。
+    this.pingTimer = null;
   }
 
   async stop(): Promise<void> {

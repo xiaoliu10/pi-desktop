@@ -126,6 +126,7 @@ export class ImBot {
     }
     if (!transport) return;
     this.transport = transport;
+    console.error(`[im-bot] 启动 ${cfg.provider} 双向通道`);
     const bindings = (this.config.bindings ??= {});
     await transport.start({
       onMessage: async (msg) => {
@@ -135,7 +136,7 @@ export class ImBot {
           return `出错了：${String((e as Error).message || e)}`;
         }
       },
-      onStatus: () => undefined,
+      onStatus: (msg) => console.error(`[im-bot] ${msg}`),
     });
   }
 
