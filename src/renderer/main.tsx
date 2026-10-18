@@ -1,6 +1,7 @@
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import App from './App';
+import { installPerfProbe, installPerfGlobals } from './perf-probe';
 import './styles.css';
 
 /**
@@ -9,6 +10,9 @@ import './styles.css';
  *  - ?preview=1: the UI replica preview with demo data (no window.pi access)
  * The normal entry never falls back to fake data.
  */
+
+installPerfProbe();
+installPerfGlobals();
 
 const params = new URLSearchParams(window.location.search);
 const root = createRoot(document.getElementById('root')!);

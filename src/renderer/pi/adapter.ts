@@ -41,6 +41,7 @@ import type {
   ProjectNavItem,
   SessionNavItem,
 } from '../replica/contracts';
+import { startPhase, endPhase } from '../perf-probe';
 import type { LocalPiApi, PiEntry, PiEvent, PiEnvironment, PiHistory, PiModelCatalog, PiResource, PiReview, PiRun, PiSearchHit, PiSession, PiUiRequest } from '../../shared/pi';
 
 export type Dialog = { key: string; generation: string; request: PiUiRequest };
@@ -1155,7 +1156,9 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
       // 首屏一屏（tail=HISTORY_PAGE）：大会话打开速度的关键（205MB 会话全量序列化
       // 实测 3.5s/次）。「打开就有完整历史」由 loadEarlierHistory 的无缝补拉提供——
       // 顶部按钮/触底触发，按钮显示真实剩余条数，不是把整个会话塞进首屏。
-      const value = await api.history(key, state.leaf, { tail: HISTORY_PAGE });
+      startPhase('history-ipc');
+      let value: PiHistory;
+      try { value = await api.history(key, state.leaf, { tail: HISTORY_PAGE }); } finally { endPhase('history-ipc'); }
       if (seq !== loadSeq || get().selectedKey !== key || get().runs.find(r => r.key === key)?.generation !== generation) return false;
       settlePendingPrompt(value, key);
       if (historyReloadTimer) { clearTimeout(historyReloadTimer); historyReloadTimer = null; }
@@ -1183,7 +1186,9 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
     if (!oldest || !s0.history?.truncated) return; // 未被截断：没有更早的页
     set({ earlierLoading: true });
     try {
-      const value = await api.history(key, s0.leaf, { before: oldest, count: HISTORY_PAGE });
+      startPhase('history-earlier-ipc');
+      let value: PiHistory;
+      try { value = await api.history(key, s0.leaf, { before: oldest, count: HISTORY_PAGE }); } finally { endPhase('history-earlier-ipc'); }
       if (get().selectedKey !== key || get().leaf !== s0.leaf) return;
       // 只接受「真的更长了」的结果：竞态（补拉期间又刷了一次）可能拿到同一页。
       if (value.branch.length <= branch.length) return;
@@ -1298,7 +1303,8 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
       for (const [key, list] of pendingTools) toolProgress[key] = list;
       pendingTools.clear();
     }
-    set({ live, toolProgress });
+    startPhase('stream-flush');
+    try { set({ live, toolProgress }); } finally { endPhase('stream-flush'); }
   };
   const scheduleStreamFlush = (immediate = false) => {
     if (immediate) { if (streamFlushTimer) { clearTimeout(streamFlushTimer); } flushStreamEvents(); return; }
