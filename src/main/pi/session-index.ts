@@ -96,6 +96,16 @@ export class SessionIndex {
   private debounce?: ReturnType<typeof setTimeout>;
   /** 超限降级缓存（只有元数据）：history() 据此拒绝全量读取。 */
   private oversized = new WeakSet<PiHistory>();
+  /** watch 事件待处理路径（绝对路径，可能是文件/目录/已删除路径）。 */
+  private pendingPaths = new Set<string>();
+  /** 兜底计数：每 N 次 check 做一次全量 walk（纠正 watch 漏事件/新目录）。 */
+  private checkCount = 0;
+  /** 会话文件 → 所属 root real path 的表：增量 check 用它免掉全量 walk。
+   *  （scan() 全量时重建。） */
+  private fileDirs = new Map<string, string>();
+  /** 已知目录集合（全量 walk 时记录）：增量 check 对它们做顶层 readdir 以发现新
+   *  文件（watch 失效时的轮询兜底），比全树递归便宜一个量级。 */
+  private knownDirs = new Set<string>();
   constructor(public roots: string[], private readonly ownedRoot: string, private readonly outlines?: OutlineCache) {}
   private stampOf(file: string): { stat: fs.Stats; stamp: string } | undefined {
     try {
@@ -231,6 +241,7 @@ export class SessionIndex {
       if (depth > 8) return;
       let real: string;
       try { real = fs.realpathSync(dir); } catch { return; }
+      this.knownDirs.add(real);
       try { for (const item of fs.readdirSync(dir, { withFileTypes: true })) {
         const full = path.join(dir, item.name);
         if (item.isSymbolicLink()) continue;
@@ -465,13 +476,158 @@ export class SessionIndex {
     let last = signature(this.scan(true));
     const check = () => {
       try {
-        const next = signature(this.scan(true));
+        // watch 事件定向处理（不 walk）：流式期间 pi 每 delta 追加一次会话文件，
+        // watch 每 120ms 触发——若这里每次全量 walk（312 目录 scandir，实测 244ms/次）
+        // 就是主进程满核（用户 2026-10-18 实测 100.6% CPU 的根因）。定向 stat 已知
+        // 文件 + 处理 watch 报告的路径，常态 ~15ms。
+        const targets = [...this.pendingPaths]; this.pendingPaths.clear();
+        let rescan = false;
+        if (targets.length) rescan = this.refreshTargets(targets);
+        // 已知文件的 stat 增量（watch 漏事件兜底之外的主路径）
+        let sawChange = false;
+        for (const [key, entry] of [...this.cache.entries()]) {
+          const file = entry.history.session.path;
+          const stamped = this.stampOf(file);
+          if (!stamped) { this.refreshOne(file, this.fileDirs.get(file) ?? ''); sawChange = true; continue; }
+          if (this.cache.get(key)?.stamp === stamped.stamp) continue;
+          this.refreshOne(file, this.fileDirs.get(file) ?? '');
+          sawChange = true;
+        }
+        // 已知目录顶层 readdir：发现新会话文件（watch 失效时的轮询兜底，~20ms）
+        for (const dir of this.knownDirs) {
+          let items: fs.Dirent[];
+          try { items = fs.readdirSync(dir, { withFileTypes: true }); } catch { continue; }
+          for (const item of items) {
+            if (!item.isFile() || !item.name.endsWith('.jsonl')) continue;
+            const full = path.join(dir, item.name);
+            let real: string;
+            try { real = fs.realpathSync(full); } catch { continue; }
+            if (this.fileDirs.has(real)) continue;
+            this.fileDirs.set(real, this.roots.find(r => real.startsWith(canonical(r))) ?? '');
+            this.refreshOne(real, this.fileDirs.get(real)!);
+            sawChange = true;
+          }
+        }
+        // 已知目录的浅层发现（含新子目录一层）：只在纯轮询拍做（watch 事件拍不做——
+        // 流式期间 watch 每 120ms 触发，这一步每拍 ~50ms 也会吃掉半核）。
+        if (targets.length === 0) {
+          const queue = [...this.knownDirs];
+          for (let i = 0; i < queue.length; i += 1) {
+            const dir = queue[i]!;
+            let items: fs.Dirent[];
+            try { items = fs.readdirSync(dir, { withFileTypes: true }); } catch { continue; }
+            for (const item of items) {
+              const full = path.join(dir, item.name);
+              if (item.isDirectory()) {
+                let real: string;
+                try { real = fs.realpathSync(full); } catch { continue; }
+                if (!this.knownDirs.has(real)) { this.knownDirs.add(real); queue.push(real); }
+                continue;
+              }
+              if (!item.isFile() || !item.name.endsWith('.jsonl')) continue;
+              let real: string;
+              try { real = fs.realpathSync(full); } catch { continue; }
+              if (this.fileDirs.has(real)) continue;
+              this.fileDirs.set(real, this.roots.find(r => real.startsWith(canonical(r))) ?? '');
+              this.refreshOne(real, this.fileDirs.get(real)!);
+              sawChange = true;
+            }
+          }
+        }
+        // 增量态 signature 直接从 cache 构建：refreshOne 已同步更新 session 元数据，
+        // 流式追加/新文件都不需要全量 walk（此前每次变化都付 244ms 全量 scan）。
+        let next: string;
+        if (rescan) {
+          next = signature(this.scan(true)); // 目录级变化：统一 nested 推断
+        } else {
+          this.checkCount += 1;
+          if (this.checkCount >= 30) { this.checkCount = 0; this.scan(true); }
+          next = signature([...this.cache.values()].map(x => x.history.session));
+        }
         if (next !== last) { last = next; changed(); }
       } catch { /* retry on next poll */ }
       if (this.dirty.size) this.scheduleSettle(changed);
     };
-    for (const root of this.roots) try { this.watchers.push(fs.watch(root, { recursive: true }, () => { clearTimeout(this.debounce); this.debounce = setTimeout(check, 120); })); } catch { /* Poll fallback includes new roots. */ }
+    for (const root of this.roots) {
+      // roots 始终在发现队列：目录可能尚不存在（测试/首次启动），watch 建不起来时
+      // 纯轮询靠浅层发现循环兜底——readdir 失败自然跳过，目录出现后首轮 check 即发现。
+      try { this.knownDirs.add(canonical(root)); } catch { this.knownDirs.add(root); }
+      try {
+      this.watchers.push(fs.watch(root, { recursive: true }, (_event, filename) => {
+        if (filename) this.pendingPaths.add(path.resolve(root, filename));
+        else this.pendingPaths.add(root); // 平台不给 filename（少见）：退化为扫该 root 顶层
+        clearTimeout(this.debounce); this.debounce = setTimeout(check, 120);
+      }));
+      } catch { /* Poll fallback includes new roots. */ }
+    }
     this.timer = setInterval(check, 1200); this.timer.unref();
+  }
+
+  /** watch 报告的路径定向处理：文件走 refreshOne；目录只 walk 该目录；删除清缓存。
+   *  返回是否需要全量 rescan（目录级变化/无法定位归属时）。 */
+  private refreshTargets(targets: string[]): boolean {
+    let rescan = false;
+    for (const target of targets) {
+      let st: fs.Stats | undefined;
+      try { st = fs.statSync(target); } catch { st = undefined; }
+      if (st?.isDirectory()) { rescan = true; continue; } // 新目录树：交给全量 walk 統一处理
+      if (st?.isFile() && target.endsWith('.jsonl')) {
+        try {
+          const real = fs.realpathSync(target);
+          const root = this.fileDirs.get(real) ?? this.roots.find(r => real.startsWith(canonical(r))) ?? '';
+          this.fileDirs.set(real, root);
+          this.refreshOne(real, root);
+        } catch { /* 并发删除：下轮 stat 兜底清理 */ }
+        continue;
+      }
+      if (!st) {
+        // 路径消失：可能是文件或目录。按文件清；目录级清理交给全量兜底。
+        for (const [key, entry] of [...this.cache.entries()]) {
+          if (entry.history.session.path === target) { this.cache.delete(key); this.branchMemo.delete(key); this.outlines?.delete(key); this.fileDirs.delete(target); }
+        }
+      }
+    }
+    return rescan;
+  }
+
+  /** 单文件处理（scan 循环体与 watch 定向路径共用）：按 stamp 决定跳过/更新元数据/
+   *  解析/降级/清理。file 不存在时走清理分支。 */
+  private refreshOne(file: string, root: string): void {
+    const key = fileKey(file);
+    try {
+      const stamped = this.stampOf(file);
+      if (!stamped) { this.cache.delete(key); this.branchMemo.delete(key); this.outlines?.delete(key); this.dirty.delete(key); this.fileDirs.delete(file); return; }
+      const { stat, stamp } = stamped;
+      const cached = this.cache.get(key);
+      if (cached?.stamp === stamp) { this.fileDirs.set(file, root || this.fileDirs.get(file) || ''); return; }
+      if (cached && stat.size > DEFER_PARSE_BYTES) {
+        cached.history.session.size = stat.size;
+        cached.history.session.updatedAt = stat.mtimeMs;
+        this.dirty.set(key, file);
+        return;
+      }
+      this.parseFile(file, key);
+      if (root) this.fileDirs.set(file, root);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') { this.cache.delete(key); this.branchMemo.delete(key); this.outlines?.delete(key); this.dirty.delete(key); this.fileDirs.delete(file); return; }
+      if (err instanceof OversizedSessionError) {
+        try {
+          const stub = sessionStub(file);
+          const stamped = this.stampOf(file);
+          if (!stub || !stamped) return;
+          const { stat, stamp } = stamped;
+          const degraded = {
+            session: { key, id: String(stub.header.id ?? key), path: file, cwd: String(stub.header.cwd ?? path.dirname(file)), name: String(stub.firstUserText || '未命名 pi 会话').slice(0, 180), updatedAt: stat.mtimeMs, size: stat.size, warnings: [err.message], owned: file.startsWith(canonical(this.ownedRoot) + path.sep), parentSession: typeof stub.header.parentSession === 'string' ? stub.header.parentSession : this.nestedParents.get(file), sidecarOf: path.basename(file).startsWith('sidecar_') ? '' : undefined } as PiSession,
+            entries: [], branch: [], leaves: [], leafId: null as string | null, syncedAt: Date.now(),
+          };
+          this.oversized.add(degraded);
+          this.cache.set(key, { stamp, history: degraded, parsedBytes: 0, pendingTail: Buffer.alloc(0), parsedIno: stat.ino });
+        } catch { /* 并发删除：下轮兜底 */ }
+        return;
+      }
+      const old = this.cache.get(key);
+      if (old) old.history.session.warnings = [(err as Error).message];
+    }
   }
   close() { clearInterval(this.timer); clearTimeout(this.debounce); clearTimeout(this.settleTimer); this.watchers.forEach(w => w.close()); this.watchers = []; this.dirty.clear(); }
 }
