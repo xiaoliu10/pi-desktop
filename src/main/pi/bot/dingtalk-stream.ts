@@ -68,6 +68,7 @@ export function ackFrame(messageId: string, ok: boolean): string {
 export class DingTalkStreamTransport implements ImTransport {
   readonly id = 'dingtalk-stream';
   private ws: WebSocket | null = null;
+  private retryTimer: ReturnType<typeof setTimeout> | null = null;
   private pingTimer: NodeJS.Timeout | null = null;
   private closedByUs = false;
 
@@ -83,7 +84,16 @@ export class DingTalkStreamTransport implements ImTransport {
     await this.stop();
     this.closedByUs = false;
     imLog(`钉钉 Stream 连接中（appKey=${this.creds.appKey.slice(0, 6)}…）`);
-    const { endpoint, ticket } = await openConnection(this.gatewayUrl, this.creds, this.postJson);
+    let endpoint: string; let ticket: string;
+    try {
+      ({ endpoint, ticket } = await openConnection(this.gatewayUrl, this.creds, this.postJson));
+    } catch (err) {
+      // 网关失败（超时/网络/凭据）必须可见且可恢复：close handler 只管 ws 层，
+      // 这一步挂了此前既无日志也无重试——通道静默死亡。
+      imLog(`钉钉网关连接失败：${String((err as Error)?.message ?? err).slice(0, 160)}，5 秒后重试`);
+      if (!this.closedByUs) this.retryTimer = setTimeout(() => void this.start(ctx).catch(e => imLog(`重试失败：${String(e).slice(0, 120)}`)), 5000);
+      return;
+    }
     const url = new URL(endpoint);
     if (ticket) url.searchParams.set('ticket', ticket);
     const ws = new WebSocket(url, { handshakeTimeout: 15000 });
@@ -133,6 +143,7 @@ export class DingTalkStreamTransport implements ImTransport {
     this.closedByUs = true;
     if (this.pingTimer) clearInterval(this.pingTimer);
     this.pingTimer = null;
+    if (this.retryTimer) { clearTimeout(this.retryTimer); this.retryTimer = null; }
     const ws = this.ws;
     this.ws = null;
     if (ws && ws.readyState !== WebSocket.CLOSED) await new Promise<void>((resolve) => {
@@ -143,8 +154,11 @@ export class DingTalkStreamTransport implements ImTransport {
   }
 }
 
+const GATEWAY_TIMEOUT_MS = 10_000;
 async function defaultPostJson(url: string, body: unknown): Promise<any> {
-  const res = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  // 10s 超时：代理环境下 gateway 请求可能挂死（2026-10-18 实测卡「连接中」2 分钟
+  // 无任何后续——fetch 无超时时永不返回，重连逻辑也永远等不到）。
+  const res = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body), signal: AbortSignal.timeout(GATEWAY_TIMEOUT_MS) });
   if (!res.ok) throw new Error(`钉钉网关 ${res.status}`);
   return res.json();
 }
