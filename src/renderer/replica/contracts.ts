@@ -61,6 +61,9 @@ export interface SidebarProps {
   addingProject?: boolean;
   onOpenSearch?: () => void;
   onOpenAutomations?: () => void;
+  onToggleSessionMap?: () => void;
+  sessionMapOpen?: boolean;
+  sessionMapLabel?: string;
   shortcutHints?: { newSession: string; search: string };
   searchOpen?: boolean;
 
@@ -123,6 +126,8 @@ export interface TopBarProps {
   onExpandSidebar?: () => void;
   onNewSession: () => void;
   onOpenSearch: () => void;
+  onToggleSessionMap?: () => void;
+  sessionMapOpen?: boolean;
   onToggleWorkbench: () => void;
   workbenchOpen: boolean;
   /** 内置终端切换（pi 集成传入；demo 预览不传则不渲染）。 */
@@ -138,6 +143,7 @@ export interface TopBarLabels {
   search: string;
   workbench: string;
   terminal?: string;
+  sessionMap?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -437,6 +443,11 @@ export interface ChatViewProps {
   /** 会话内搜索定位：非空时滚到该 entry 对应的消息并清空（onJumpToMessage 也照旧触发）。 */
   pendingJump?: string | null;
   onJumpConsumed?: () => void;
+  /** 会话地图（大纲）：主进程 sessionOutline 聚合的 user 轮列表。open 时 ChatView 右侧展开。 */
+  sessionMapOpen?: boolean;
+  outline?: import('../../shared/pi').PiOutlineItem[];
+  outlineLoading?: boolean;
+  onCloseSessionMap?: () => void;
   /** 编辑并重发已发送的用户消息（fork 截断回该条目后重发）；缺省=仅复制不可编辑。 */
   onEditUserMessage?: (entryId: string, text: string) => void;
   /** 补拉更早一页历史（首屏 tail + 分页的用户入口）。缺省/加载中时按钮禁用。 */
@@ -875,6 +886,8 @@ export interface GlobalSearchProps {
 }
 
 export interface SearchLabels {
+  /** 会话地图按钮 tooltip。 */
+  sessionMap?: string;
   placeholder: string;
   newTask: string;
   today: string;

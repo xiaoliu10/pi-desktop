@@ -945,6 +945,9 @@ export default function PiReplicaApp() {
             addingProject={s.addingProject}
             onOpenSearch={() => s.setSearchOpen(true)}
             searchOpen={s.searchOpen}
+            onToggleSessionMap={s.selectedKey && s.view === 'chat' ? () => s.setSessionMapOpen(!s.sessionMapOpen) : undefined}
+            sessionMapOpen={s.sessionMapOpen}
+            sessionMapLabel={s.sessionMapOpen ? (s.lang === 'zh' ? '会话地图' : 'Session map') : undefined}
             shortcutHints={{ newSession: (s.desktopPreferences?.shortcuts.newSession ?? 'Mod+Shift+N').replace('Mod', navigator.platform.includes('Mac') ? '⌘' : 'Ctrl').replace('Shift', '⇧').replaceAll('+', ' '), search: (s.desktopPreferences?.shortcuts.search ?? 'Mod+K').replace('Mod', navigator.platform.includes('Mac') ? '⌘' : 'Ctrl').replace('Shift', '⇧').replaceAll('+', ' ') }}
             onToggleProject={s.toggleProject}
             onToggleCollapse={s.toggleSidebar}
@@ -970,6 +973,8 @@ export default function PiReplicaApp() {
                 onExpandSidebar={s.sidebarCollapsed ? s.toggleSidebar : undefined}
                 onNewSession={s.startNewSession}
                 onOpenSearch={() => s.setSearchOpen(true)}
+                onToggleSessionMap={s.selectedKey && s.view === 'chat' ? () => s.setSessionMapOpen(!s.sessionMapOpen) : undefined}
+                sessionMapOpen={s.sessionMapOpen}
                 onToggleWorkbench={s.toggleWorkbench}
                 workbenchOpen={s.workbenchOpen}
                 onToggleTerminal={()=>setTerminalOpen(value=>!value)}
@@ -1040,6 +1045,10 @@ export default function PiReplicaApp() {
                     onJumpToMessage={noop}
                     pendingJump={s.pendingJump}
                     onJumpConsumed={s.clearPendingJump}
+                    sessionMapOpen={s.sessionMapOpen}
+                    outline={s.outline}
+                    outlineLoading={s.outlineLoading}
+                    onCloseSessionMap={() => s.setSessionMapOpen(false)}
                     onEditUserMessage={editUserMessage}
                     onDownloadImage={downloadImage}
                     onRefreshProcess={s.refreshConversation}

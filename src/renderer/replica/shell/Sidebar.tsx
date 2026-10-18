@@ -22,6 +22,11 @@ export function Sidebar(props: SidebarProps) {
     <button className="pi-sidebar__action" onClick={props.onOpenSearch} disabled={!props.onOpenSearch} aria-expanded={props.searchOpen ?? false} title={props.labels.search}>
       <Icon name="search" size={16} /><span>{props.labels.search}</span><kbd>{props.shortcutHints?.search}</kbd>
     </button>
+    {props.onToggleSessionMap && (
+      <button className={`pi-sidebar__action ${props.sessionMapOpen ? 'pi-sidebar__action--active' : ''}`} onClick={props.onToggleSessionMap} aria-current={props.sessionMapOpen ? 'page' : undefined} title={props.sessionMapLabel ?? '会话地图'}>
+        <Icon name="outline" size={16} /><span>{props.sessionMapLabel ?? '会话地图'}</span>
+      </button>
+    )}
     <button className={`pi-sidebar__action ${props.activeOverlay === 'automations' ? 'pi-sidebar__action--active' : ''}`} aria-current={props.activeOverlay === 'automations' ? 'page' : undefined} onClick={props.onOpenAutomations} disabled={!props.onOpenAutomations} title={props.onOpenAutomations ? (zh ? '自动化' : 'Automations') : (zh ? '自动化：定时任务功能尚未实现' : 'Automations: scheduling is not implemented yet')}>
       <Icon name="calendar-clock" size={16} /><span>{zh ? '自动化' : 'Automations'}</span>
     </button>

@@ -16,13 +16,15 @@ export type IconName =
   | 'file' | 'code' | 'globe' | 'diff' | 'check' | 'check-circle' | 'x' | 'warning'
   | 'refresh' | 'download-cloud' | 'link' | 'trash' | 'pencil' | 'circle' | 'more' | 'copy'
   | 'globe-scope' | 'edit-files' | 'read-files' | 'network' | 'terminal' | 'switch' | 'grip' | 'arrow-up' | 'panel-right'
-  | 'smartphone' | 'loader' | 'notepad' | 'arrow-right' | 'arrow-left' | 'mic' | 'image';
+  | 'smartphone' | 'loader' | 'notepad' | 'arrow-right' | 'arrow-left' | 'mic' | 'image' | 'outline';
 
 const paths: Record<IconName, ReactNode> = {
   'expand-diagonal': <><path d="M14 3h7v7M21 3l-7 7M10 21H3v-7M3 21l7-7"/></>,
   'collapse-diagonal': <><path d="M10 14H3m7 0v7m0-7-7 7M14 10h7m-7 0V3m0 7 7-7"/></>,
   grip: <><circle cx="9" cy="6" r="1.2"/><circle cx="15" cy="6" r="1.2"/><circle cx="9" cy="12" r="1.2"/><circle cx="15" cy="12" r="1.2"/><circle cx="9" cy="18" r="1.2"/><circle cx="15" cy="18" r="1.2"/></>,
   'arrow-up': <><path d="M12 19V5M5 12l7-7 7 7"/></>,
+  // 会话地图（大纲）：三条长度不一的横线——目录/章节语义，与 search 放大镜区分
+  outline: <><path d="M4 6h16M4 12h11M4 18h7"/></>,
   'git-commit': <><circle cx="12" cy="12" r="3"/><path d="M3 12h6m6 0h6"/></>,
   'file-plus': <><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9zM14 3v6h6M12 12v6M9 15h6"/></>,
   pin: <><path d="m16 3 5 5-4 1-4 4v4l-2 2-6-6 2-2h4l4-4 1-4Z"/><path d="m8 16-5 5"/></>,

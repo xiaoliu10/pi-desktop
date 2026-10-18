@@ -22,6 +22,7 @@ export type ReplicaLang = 'en' | 'zh';
 const en = {
   topbar: {
     newSession: 'New session',
+    sessionMap: 'Session map',
     search: 'Search',
     workbench: 'Work panel',
     terminal: 'Terminal',
@@ -264,6 +265,7 @@ const en = {
 const zh: typeof en = {
   topbar: {
     newSession: '新会话',
+    sessionMap: '会话地图',
     search: '搜索',
     workbench: '工作面板',
     terminal: '终端',

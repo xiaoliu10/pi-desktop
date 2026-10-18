@@ -42,7 +42,7 @@ import type {
   SessionNavItem,
 } from '../replica/contracts';
 import { startPhase, endPhase } from '../perf-probe';
-import type { LocalPiApi, PiEntry, PiEvent, PiEnvironment, PiHistory, PiModelCatalog, PiResource, PiReview, PiRun, PiSearchHit, PiSession, PiUiRequest } from '../../shared/pi';
+import type { LocalPiApi, PiEntry, PiEvent, PiEnvironment, PiHistory, PiModelCatalog, PiOutlineItem, PiResource, PiReview, PiRun, PiSearchHit, PiSession, PiUiRequest } from '../../shared/pi';
 
 export type Dialog = { key: string; generation: string; request: PiUiRequest };
 export type Behavior = 'steer' | 'followUp';
@@ -934,6 +934,10 @@ export interface PiReplicaState {
   entrySearching: boolean;
   /** 会话内搜索定位请求：ChatView 消费后清空（entryId → 滚到该消息）。 */
   pendingJump: string | null;
+  /** 会话地图（大纲）：主进程 sessionOutline 聚合的 user 轮。 */
+  sessionMapOpen: boolean;
+  outline: PiOutlineItem[];
+  outlineLoading: boolean;
   notificationsOpen: boolean;
   notifications: NotificationItem[];
   notice?: string;
@@ -1007,6 +1011,7 @@ export interface PiReplicaActions {
   selectWorkbenchTab: (tab: 'review' | 'files' | 'browser' | 'aux' | 'home') => void;
   setSearchOpen: (open: boolean) => void;
   jumpToMessage: (entryId: string) => void;
+  setSessionMapOpen: (open: boolean) => void;
   clearPendingJump: () => void;
   setSearchQuery: (q: string) => void;
   toggleNotifications: () => void;
@@ -1568,10 +1573,10 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
     try {
       const entry = result.entry;
       if (entry.view === 'chat' && entry.key) {
-        setNow({ selectedKey: entry.key, leaf: undefined, history: undefined, earlierLoading: false, review: undefined, view: 'chat', ...(switchComposerOwner(getNow, entry.key) ?? {}), recoveredSubagents: [], subagentDismissed: getNow().desktopPreferences?.subagentDismissed?.[entry.key] ?? [], navHistory: result.history });
+        setNow({ selectedKey: entry.key, leaf: undefined, history: undefined, earlierLoading: false, review: undefined, view: 'chat', outline: [], outlineLoading: false, ...(switchComposerOwner(getNow, entry.key) ?? {}), recoveredSubagents: [], subagentDismissed: getNow().desktopPreferences?.subagentDismissed?.[entry.key] ?? [], navHistory: result.history });
         refresh();
       } else if (entry.view === 'chat') {
-        setNow({ view: 'home', selectedKey: null, history: undefined, earlierLoading: false, leaf: undefined, review: undefined, ...(switchComposerOwner(getNow, `home:${getNow().draftCwd ?? ''}`) ?? {}), navHistory: result.history });
+        setNow({ view: 'home', selectedKey: null, history: undefined, earlierLoading: false, leaf: undefined, review: undefined, outline: [], outlineLoading: false, ...(switchComposerOwner(getNow, `home:${getNow().draftCwd ?? ''}`) ?? {}), navHistory: result.history });
       } else if (entry.view === 'home') {
         const draft = switchComposerOwner(getNow, `home:${getNow().draftCwd ?? ''}`);
         setNow({ view: 'home', selectedKey: null, history: undefined, leaf: undefined, review: undefined, ...(draft ?? {}), navHistory: result.history });
@@ -1640,6 +1645,9 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
     entryTotal: 0,
     entrySearching: false,
     pendingJump: null,
+    sessionMapOpen: false,
+    outline: [],
+    outlineLoading: false,
     notificationsOpen: false,
     notifications: [],
     notice: undefined,
@@ -2396,6 +2404,18 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
 
     setSearchOpen: (searchOpen) => set({ searchOpen, searchQuery: searchOpen ? get().searchQuery : '' }),
     jumpToMessage: (entryId) => set({ pendingJump: entryId }),
+    setSessionMapOpen: (sessionMapOpen) => {
+      set({ sessionMapOpen });
+      // 打开即拉大纲（8ms/355 轮实测）；已有数据不重复拉。并发保护：loading 中去重。
+      if (!sessionMapOpen || get().outline.length || get().outlineLoading) return;
+      const key = get().selectedKey;
+      const api = typeof window !== 'undefined' ? window.localPi : undefined;
+      if (!key || !api) return;
+      set({ outlineLoading: true });
+      void api.sessionOutline(key)
+        .then(o => { if (get().selectedKey === key) set({ outline: o.turns, outlineLoading: false }); })
+        .catch(() => set({ outlineLoading: false }));
+    },
     clearPendingJump: () => set({ pendingJump: null }),
     setSearchQuery: (searchQuery) => {
       set({ searchQuery });

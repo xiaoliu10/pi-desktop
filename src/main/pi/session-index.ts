@@ -81,6 +81,10 @@ export class SessionIndex {
    *  大会话流式期间每次只追加几 KB，history() 对脏文件走增量 tail 解析（毫秒级），
    *  不再全量重读（实测 103MB 会话全量重解析 421ms，同步阻塞主进程）。 */
   private cache = new Map<string, { stamp: string; history: PiHistory; parsedBytes: number; pendingTail: Buffer; parsedIno: number }>();
+  /** 分支 memo：leaf 模式下每次 history() 都要从全量 entries 回溯分支（17609 条实测
+   *  ~500ms）。entries 引用 + leaf 不变则复用——流式期间每拍都调 history()，这是
+   *  主进程阻塞的第一根因（埋点报告 history-ipc 33 次共 17.6s）。 */
+  private branchMemo = new Map<string, Map<string, { entries: PiEntry[]; branch: PiEntry[] }>>();
   /** 嵌套子会话（pi-subagents async 布局）文件 → 推断的主会话路径。 */
   private nestedParents = new Map<string, string>();
   /** 已有缓存但文件又增长了的会话：等写入平息后再全量重解析。 */
@@ -129,7 +133,7 @@ export class SessionIndex {
       catch { warnings.push(`第 ${i + 1} 行损坏，已跳过`); }
     }
     const header = parsed[0];
-    if (header?.type !== 'session' || typeof header.id !== 'string' || typeof header.cwd !== 'string') { this.cache.delete(key); return; }
+    if (header?.type !== 'session' || typeof header.id !== 'string' || typeof header.cwd !== 'string') { this.cache.delete(key); this.branchMemo.delete(key); return; }
     const entries = parsed.slice(1), branch = branchEntries(entries);
     const first = entries.find(e => e.type === 'message' && e.message?.role === 'user')?.message?.content;
     const title = typeof first === 'string' ? first : Array.isArray(first) ? first.filter(b => b.type === 'text').map(b => b.text).join(' ') : '';
@@ -249,7 +253,7 @@ export class SessionIndex {
       const file = history.session.path;
       // Parent creation/removal changes visibility even when the child file itself is unchanged.
       if (!files.has(file) || previousParents.get(file) !== this.nestedParents.get(file)) {
-        this.cache.delete(key);
+        this.cache.delete(key); this.branchMemo.delete(key);
         this.dirty.delete(key);
       }
     }
@@ -270,7 +274,7 @@ export class SessionIndex {
         }
         this.parseFile(file, key);
       } catch (err) {
-        if ((err as NodeJS.ErrnoException).code === 'ENOENT') { this.cache.delete(key); continue; }
+        if ((err as NodeJS.ErrnoException).code === 'ENOENT') { this.cache.delete(key); this.branchMemo.delete(key); continue; }
         if (err instanceof OversizedSessionError) {
           // 超限会话降级为「元数据可见」：列表/侧栏照常显示（此前整个会话从侧栏消失，
           // 用户看到「该项目还没有会话」——96MB ashare 主会话 2026-10-09 的真实事故）。
@@ -392,13 +396,28 @@ export class SessionIndex {
     if (dirtyFile) { try { this.parseFile(dirtyFile, key, true); } catch { /* 保留旧缓存 */ } }
     return this.fromCache(key, leaf, opts);
   }
+  /** memo 化的 branchEntries：同 key 同 leaf 且 entries 未被增量解析替换时直接复用。
+   *  注意 entries 是「同一引用」才命中——parseFile 增量会整体换数组，天然失效。 */
+  private cachedBranch(key: string, entries: PiEntry[], leaf: string | undefined): PiEntry[] {
+    // 每 leaf 一槽：两个 leaf 交替读（tail 首屏用最新 leaf、补拉/搜索定位用历史 leaf）
+    // 不会互相顶掉。leaf 数有界（会话分叉数），entries 引用变化天然失效。
+    const leafKey = leaf ?? '';
+    let slots = this.branchMemo.get(key);
+    if (!slots) { slots = new Map(); this.branchMemo.set(key, slots); }
+    const memo = slots.get(leafKey);
+    if (memo && memo.entries === entries) return memo.branch;
+    const branch = branchEntries(entries, leaf);
+    slots.set(leafKey, { entries, branch });
+    return branch;
+  }
+
   private fromCache(key: string, leaf?: string, opts?: { tail?: number; before?: string; count?: number }): PiHistory {
     const cached = this.cache.get(key)?.history;
     if (!cached) throw new Error('会话不存在、不可读或不在选定目录中。');
     // 超限会话只做了元数据降级：列表可见但全量历史不可读，给可执行错误而不是空历史。
     if (this.oversized.has(cached)) throw new OversizedSessionError(cached.session.path, cached.session.size);
     if (leaf && !cached.entries.some(e => e.id === leaf)) throw new Error('Unknown leaf');
-    const full = leaf ? { ...cached, branch: branchEntries(cached.entries, leaf), leafId: leaf } : cached;
+    const full = leaf ? { ...cached, branch: this.cachedBranch(key, cached.entries, leaf), leafId: leaf } : cached;
     const tail = opts?.tail;
     const before = opts?.before;
     // tail/before 只裁 branch（渲染层消费的那一份）。entries/leaves 保持全量：分页

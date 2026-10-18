@@ -39,6 +39,7 @@ import {
   MODEL_MENU_LIMIT,
   parseMenuState,
 } from './helpers';
+import { SessionMap } from './SessionMap';
 import './chat.css';
 import { acquireImageUrl, releaseImageUrl } from './image-url';
 import { toolFilePreview } from '../../pi/tool-file-preview';
@@ -880,6 +881,20 @@ export const ChatView = memo(function ChatView(props: ChatViewProps) {
     }
     return result;
   }, [props.messages, props.runTiming, renderLimit]);
+  // 会话地图高亮：最后一个已渲染的 user 轮（ ChatMessage.id 形如 history:<entryId>）。
+  // 不跟滚动采样（MessageNav 那套）：地图的用途是「点章节跳转」，高亮只是辅助；
+  // 加滚动采样会让每帧多一次 querySelectorAll，违背本面板的省成本初衷。
+  const activeTurnEntryId = useMemo(() => {
+    for (let i = turns.length - 1; i >= 0; i -= 1) {
+      const t = turns[i]!;
+      if (t.role !== 'user') continue;
+      const first = t.messageIds[0];
+      if (!first) return undefined;
+      const idx = first.indexOf(':');
+      return idx > 0 ? first.slice(idx + 1) : first;
+    }
+    return undefined;
+  }, [turns]);
   // 历史落地交换（agent_settled → refreshHistory → 消息数组整体重建）后，贴底滚动走
   // ResizeObserver+rAF，在 paint 之后才执行，中间那一帧会闪现较早的消息。这里在提交
   // 前同步贴底（仅在已处于跟随状态时），消除刷屏感。
@@ -961,6 +976,15 @@ export const ChatView = memo(function ChatView(props: ChatViewProps) {
   return (
     <div className="pi-chat">
       <MessageNav turns={turns} listRef={listRef} onJump={jump} />
+      {props.sessionMapOpen && (
+        <SessionMap
+          items={props.outline ?? []}
+          loading={props.outlineLoading}
+          activeEntryId={activeTurnEntryId}
+          onJump={(entryId) => { props.onJumpToMessage(entryId); jump(entryId); }}
+          onClose={() => props.onCloseSessionMap?.()}
+        />
+      )}
       <div className="pi-chat__scroll" ref={listRef}>
         <div className="pi-chat__inner">
           {/* 补拉按钮（盘上还有更早的历史）：始终显示在窗口按钮之上——用户要的是「回到更早」，

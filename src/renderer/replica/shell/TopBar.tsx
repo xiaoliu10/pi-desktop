@@ -26,6 +26,17 @@ export function TopBar(props: TopBarProps) {
         <button className="pi-iconbtn" onClick={props.onOpenSearch} aria-label={props.labels.search} title={props.labels.search}>
           <Icon name="search" />
         </button>
+        {props.onToggleSessionMap && (
+          <button
+            className={`pi-iconbtn${props.sessionMapOpen ? ' pi-iconbtn--on' : ''}`}
+            onClick={props.onToggleSessionMap}
+            aria-label={props.labels.sessionMap ?? 'Session map'}
+            title={props.labels.sessionMap ?? 'Session map'}
+            aria-pressed={props.sessionMapOpen}
+          >
+            <Icon name="outline" />
+          </button>
+        )}
         {props.sidecar && (
           <button className={`pi-iconbtn${props.sidecar.attention ? ' pi-iconbtn--attention' : ''}`} onClick={props.sidecar.onToggle} aria-label={props.sidecar.title} title={props.sidecar.title} aria-pressed={props.sidecar.open}>
             <Icon name="chat" />
