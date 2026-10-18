@@ -286,7 +286,9 @@ function registerIpc() {
     return result;
   });
   handle('sessions', () => {
-    const sessions = host.index.scan();
+    // cache 视图而非全量 scan：流式期间 signature 每 120ms 变化触发 renderer 重拉，
+    // 每次 scan 全量 walk（244ms 同步）会把主进程打满（实测 text-input 排队 616ms）。
+    const sessions = host.index.sessionsView();
     // 延续合并：被「编辑重发」fork 的旧快照不进列表；延续条目顶层化并继承链头名字
     // （用户 rename 优先）。subagent 内部会话仍由渲染层按 parentSession 过滤。
     try {

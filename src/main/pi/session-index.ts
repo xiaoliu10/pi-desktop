@@ -324,6 +324,15 @@ export class SessionIndex {
     }
     return [...this.cache.values()].map(x => x.history.session).filter(s => includeSidecars || s.sidecarOf === undefined).sort((a, b) => b.updatedAt - a.updatedAt);
   }
+  /** 会话列表视图：直接从 cache 构建（check 的增量维护保证新鲜）。IPC sessions
+   *  handler 用它替代 scan()——流式期间 signature 每 120ms 变一次，每次都全量
+   *  walk（244ms 同步）会让主进程持续满载、所有 IPC 排队（text-input 尖峰的
+   *  排队 600ms 即由此来）。新文件/删除由 check 的增量路径维护进 cache。
+   *  需要全量一致性的场景（启动、30 次兜底）仍走 scan()。 */
+  sessionsView(includeSidecars = false): PiSession[] {
+    return [...this.cache.values()].map(x => x.history.session).filter(s => includeSidecars || s.sidecarOf === undefined);
+  }
+
   /** Polling must not trigger a filesystem scan/reparse of every session. The
    * normal index watcher/history path owns refresh; expose only an indexed key. */
   subagentHistory(key: string, leaf?: string): PiHistory {

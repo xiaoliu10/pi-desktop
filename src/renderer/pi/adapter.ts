@@ -123,6 +123,8 @@ function branchSavedMessages(branch: PiEntry[]): Set<string> {
 const HISTORY_PAGE = 500;
 /** 会话内搜索 IPC 的竞态序号：连打只接受最后一次结果（typing 时会有多个在途）。 */
 let entrySearchSeq = 0;
+let lastSessionsReload = 0;
+let lastHistoryOnChanged = 0;
 
 // 会话预热在途表：selectSession 触发后台 connect，send 到达时若预热未完成则 await
 // 同一份 Promise，避免同一会话并发两次 connect 各自 spawn 一个 pi 进程。
@@ -1731,10 +1733,21 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
         if (!alive()) return;
         const state = get();
         switch (event.type) {
-          case 'sessions-changed':
-            void reloadSessions();
-            void refreshHistory();
+          case 'sessions-changed': {
+            // 节流：流式期间 signature 每 120ms 变一次，原样转发会形成
+            // 「sessions scan + history 刷新」的重 IPC 风暴（实测占主进程 24%）。
+            // 会话列表 1s 合并；历史刷新 300ms 合并（message_end 反正会再刷）。
+            const now = Date.now();
+            if (now - lastSessionsReload > 1000) {
+              lastSessionsReload = now;
+              void reloadSessions();
+            }
+            if (now - lastHistoryOnChanged > 300) {
+              lastHistoryOnChanged = now;
+              void refreshHistory();
+            }
             break;
+          }
           case 'resources-changed':
             get().scanResources();
             get().loadPackages();
