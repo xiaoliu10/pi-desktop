@@ -8,6 +8,7 @@ import { filePreview } from './pi/file-preview';
 import { gitStatus } from './pi/git-status';
 import fs from 'node:fs/promises';
 import fsSync from 'node:fs';
+import { monitorEventLoopDelay } from 'node:perf_hooks';
 import { AutomationService } from './pi/automation-service';
 import { importAttachments, clipboardAttachments, readAttachment, downloadImage } from './pi/attachments';
 import { createProjectWorktree } from './pi/project-worktree';
@@ -23,6 +24,8 @@ import { projectFiles, projectContext, readContext, projectBranch, skillChoices 
 import { isAccessMode } from '../shared/access-mode';
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, shell } from 'electron';
 import path from 'node:path';
+import nodePath from 'node:path';
+import nodeOs from 'node:os';
 import { spawn } from 'node:child_process';
 import { SettingsService } from './pi/settings-service';
 import { VoiceService } from './pi/voice-service';
@@ -125,7 +128,17 @@ function registerIpc() {
   terminals = new TerminalService(event => {
     if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(event.type === 'terminalData' ? 'local-pi:terminalData' : 'local-pi:terminalExit', event);
   });
+  // IPC 慢调用观测：>100ms 落盘到 main-perf.log（与 event-loop 监控互补——尖峰时
+  // 直接看到是哪条通道在阻塞主进程）。零开销路径：快调用只有一次 Date.now()。
+  const perfLog = (line: string) => { try { fsSync.appendFileSync(nodePath.join(nodeOs.homedir(), 'Library', 'Logs', 'PI Desktop', 'main-perf.log'), `${new Date().toISOString()} ${line}\n`); } catch { /* 不可见不影响主流程 */ } };
   const handle = (name: string, fn: (...args: any[]) => unknown) => ipcMain.handle(`local-pi:${name}`, (event, ...args) => {
+    const __t0 = Date.now();
+    const __done = () => { const c = Date.now() - __t0; if (c > 100) perfLog(`ipc ${name} ${c}ms`); };
+    try {
+      const __r = fn(...args);
+      if (__r && typeof (__r as Promise<unknown>).then === 'function') { void (__r as Promise<unknown>).then(() => __done(), () => __done()); return __r; }
+      __done();
+    } catch (e) { __done(); throw e; }
     if (!mainWindow || event.sender !== mainWindow.webContents || event.senderFrame !== mainWindow.webContents.mainFrame) throw new Error('非法 IPC 来源');
     return fn(...args);
   });
@@ -641,6 +654,17 @@ if (!primaryInstance) {
   setTimeout(() => { if (!primaryInstance) { clearInterval(lockRetry); app.quit(); } }, 8_000);
 }
 app.on('second-instance',()=>{if(mainWindow&&!mainWindow.isDestroyed()){if(mainWindow.isMinimized())mainWindow.restore();mainWindow.show();mainWindow.focus();}else if(host)createWindow();});
+// 主进程 event-loop 阻塞监控：5s 窗口内 max>400ms 落盘（与 IPC 计时互补：
+// 非 IPC 的同步长任务（fs 同步/大计算）只有它能看见）。
+const __eld = monitorEventLoopDelay({ resolution: 20 });
+__eld.enable();
+setInterval(() => {
+  if (__eld.max > 400) {
+    try { fsSync.appendFileSync(nodePath.join(nodeOs.homedir(), 'Library', 'Logs', 'PI Desktop', 'main-perf.log'), `${new Date().toISOString()} event-loop 阻塞 ${(__eld.max / 1e6).toFixed(0)}ms\n`); } catch { /* ignore */ }
+  }
+  __eld.reset();
+}, 5000).unref();
+
 void app.whenReady().then(() => {
   if(!primaryInstance)return;
   const policy = app.isPackaged ? path.join(process.resourcesPath, 'desktop-policy/index.mjs') : path.join(app.getAppPath(), 'extensions/desktop-policy/index.mjs');

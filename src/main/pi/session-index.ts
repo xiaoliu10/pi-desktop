@@ -595,7 +595,10 @@ export class SessionIndex {
         // 定向路径，不依赖这里）。全表 stat（数百文件）磁盘忙时单次数百 ms，限频 2s。
         let sawChange = false;
         const statSweepNow = Date.now();
-        if (statSweepNow - this.lastStatSweep >= 2_000) {
+        // 30s 低频兜底：watch 健康（FSEvents 正常报告文件事件）时全表 stat 只是
+        // 漏事件保险——此前 2s 一轮，磁盘忙时一轮几百 ms（772 个 statSync）就是
+        // 周期 100% 尖峰（实测 uv_fs_* 风暴）。定向路径（watch 报告的文件）不受影响。
+        if (statSweepNow - this.lastStatSweep >= 30_000) {
           this.lastStatSweep = statSweepNow;
           for (const [key, entry] of [...this.cache.entries()]) {
             const file = entry.history.session.path;
@@ -627,7 +630,8 @@ export class SessionIndex {
         // 最小间隔 2s：FSEvents 高频发空 filename 事件时（目录操作密集期），浅层
         // 发现每拍 ~50ms 仍会吃掉半核——限频后最坏 ~2.5%。
         const nowMs = Date.now();
-        const shallowDue = nowMs - this.lastShallowScan >= 2_000;
+        // 30s 低频兜底（同上）：watch 空文件名事件（pendingDirsScan）仍即时触发浅层发现。
+        const shallowDue = nowMs - this.lastShallowScan >= 30_000;
         if ((targets.length === 0 || dirsScan) && shallowDue) {
           this.lastShallowScan = nowMs;
           const queue = [...this.knownDirs];
