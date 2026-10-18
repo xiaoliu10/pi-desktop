@@ -322,10 +322,19 @@ export class PiBackend {
       ...(scheduleArgs.length
         ? ['--append-system-prompt', [input.systemPrompt, SCHEDULE_GUIDANCE].filter(Boolean).join('\n')]
         : input.systemPrompt ? ['--append-system-prompt', input.systemPrompt] : []),
-      ...(input.permission === 'plan'
-        // 计划模式：只读工具 + ask_user_question（提问无副作用，正好用于澄清需求）+ 任务清单。
-        ? ['--tools', [...(input.tools ?? ['read', 'grep', 'find', 'ls']).filter(t => ['read', 'grep', 'find', 'ls'].includes(t)), 'ask_user_question', 'desktop_update_plan'].join(',')]
-        : input.tools ? ['--tools', input.tools.join(',')] : []),
+      // 任务清单（desktop_update_plan）全模式可用：用户 2026-10-18 要求「所有模式都能建
+      // 清单」——此前只 plan 模式注入，普通模式切进来后侧栏「进程」区块直接空掉，看起来
+      // 像功能坏了（真实原因是工具没注入）。plan 模式仍是只读工具 + ask_user_question +
+      // 清单；其他模式沿用各自 tools，仅把清单补进去（已显式列了 tools 的场景也补——
+      // 调用方若不想让模型建清单可以不列，但那不是默认体验）。
+      ...(() => {
+        const withPlan = (tools: string[]) => tools.includes('desktop_update_plan') ? tools : [...tools, 'desktop_update_plan'];
+        if (input.permission === 'plan') {
+          // 计划模式：只读工具 + ask_user_question（提问无副作用，正好用于澄清需求）+ 任务清单。
+          return ['--tools', withPlan([...(input.tools ?? ['read', 'grep', 'find', 'ls']).filter(t => ['read', 'grep', 'find', 'ls'].includes(t)), 'ask_user_question']).join(',')];
+        }
+        return input.tools ? ['--tools', withPlan(input.tools).join(',')] : [];
+      })(),
       ...(input.model ? ['--model', input.model] : []),
     ];
     const client = (this.clientFactory ?? ((cmd: string, a: string[], cwd: string, e: NodeJS.ProcessEnv) => new PiRpcClient(cmd, a, cwd, e)))(this.env.executable!, args, input.cwd, env);
