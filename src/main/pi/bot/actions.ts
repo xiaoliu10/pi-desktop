@@ -29,12 +29,14 @@ export function createBotActions(host: PiHost, settings: SettingsService): BotAc
   const latestRun = (cwd?: string): PiRun | undefined =>
     runsFor(cwd).slice().sort((a, b) => (b.timing?.startedAt ?? 0) - (a.timing?.startedAt ?? 0))[0];
 
+  // 只列桌面端当前打开的工作区（有活跃 run，sidecar 除外）：历史会话的目录
+  // 大多已关闭——列出来会让 /bind 绑到半天前的项目（用户 2026-10-18 反馈
+  // 「列出项目把已经关闭的项目也列出来了」）。prompt 对无 run 的 cwd 仍可
+  // 自动新建会话，但列表与 /bind 的默认目标都应该是活的。
   const projects = (): string[] => {
-    const sessions = host.index.scan();
-    const byCwd = new Map<string, number>();
-    for (const s of sessions) byCwd.set(s.cwd, Math.max(byCwd.get(s.cwd) ?? 0, s.updatedAt));
-    for (const r of host.backend.runs()) if (r.sidecarOf === undefined && !byCwd.has(r.cwd)) byCwd.set(r.cwd, r.timing?.startedAt ?? 0);
-    return [...byCwd.entries()].sort((a, b) => b[1] - a[1]).map(([cwd]) => cwd);
+    const byStarted = new Map<string, number>();
+    for (const r of runsFor()) byStarted.set(r.cwd, Math.max(byStarted.get(r.cwd) ?? 0, r.timing?.startedAt ?? 0));
+    return [...byStarted.entries()].sort((a, b) => b[1] - a[1]).map(([cwd]) => cwd);
   };
 
   return {
