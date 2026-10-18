@@ -424,6 +424,16 @@ export class SessionIndex {
    * 语义：truncated 字段告知调用方还有多少条没给（renderer 据此显示「更早的消息」）。
    */
   history(key: string, leaf?: string, opts?: { tail?: number; before?: string; count?: number }): PiHistory {
+    const __t0 = Date.now();
+    try {
+      return this.historyInner(key, leaf, opts);
+    } finally {
+      const __cost = Date.now() - __t0;
+      if (__cost > 100) console.error(`[perf] history(key=${key.slice(0, 8)}..., tail=${opts?.tail ?? '-'}) ${__cost}ms`);
+    }
+  }
+
+  private historyInner(key: string, leaf?: string, opts?: { tail?: number; before?: string; count?: number }): PiHistory {
     // 快路径：缓存命中且目标文件 stamp 未变 → 直接增量消费尾部（若有新增）并返回。
     // 不再每次全扫 scan()（实测热扫也要 173ms，冷扫 3.5s——主进程同步阻塞是打字卡顿的
     // 第一根因）；新增/删除会话由 watcher/轮询的 changed() 驱动，单会话读取不依赖它。
