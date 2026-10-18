@@ -76,7 +76,7 @@ describe('DingTalk stream protocol', () => {
       `http://127.0.0.1:${wsPort}/gateway`,
       async (url, body) => {
         if (url.includes('/reply')) {
-          replies.push(String((body as { content?: { text?: string } })?.content?.text ?? ''));
+          replies.push(String((body as { text?: { content?: string } })?.text?.content ?? ''));
           return {};
         }
         // gateway call
