@@ -16,6 +16,8 @@ export function gitStatusCached(cwd: string): Promise<GitStatus> {
   return promise;
 }
 
+export const gitStatus = gitStatusImpl;
+
 async function gitStatusImpl(cwd: string): Promise<GitStatus> {
   const result: GitStatus = {root: cwd, repository:false, branch:'', branches:[], added:0,removed:0,changed:0,untracked:0,binary:0,ahead:0,behind:0};
   const run = async (args: string[]) => (await exec('git', ['-c','core.fsmonitor=false', ...args], {cwd, timeout:10000, maxBuffer:4*1024*1024, env:{...process.env,GIT_OPTIONAL_LOCKS:'0'}})).stdout;
