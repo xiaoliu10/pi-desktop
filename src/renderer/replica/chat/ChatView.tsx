@@ -1106,7 +1106,12 @@ function QueueRow({ item, labels, onNow, onRecall, onRemove }: {
   );
 }
 
-export function Composer(props: ComposerProps) {
+/** 调试埋点：Composer 重渲染计数（浏览器 __piPerf 探针读）。用来量化「流式 setState
+ *  期间键入时 Composer 被重渲多少次」——无 selector 订阅下它是整棵树的一部分。 */
+export const composerRenderCount = { n: 0 };
+
+function ComposerImpl(props: ComposerProps) {
+  composerRenderCount.n += 1;
   // 本地优先：按键只更新本地状态，store 镜像防抖 200ms（对齐 ZCode：键入不碰全局状态，
   // 否则每键触发整棵应用树重渲染造成输入卡顿）；发送/卸载时立即冲刷，外部注入同步回本地。
   const [localText, setLocalText] = useState(props.draftText ?? '');
@@ -1739,6 +1744,18 @@ export function Composer(props: ComposerProps) {
 }
 
 /** Home welcome view (U03): mascot + greeting + composer + fixed-agent pills. */
+/** memo：Composer 的 props 里 slots/labels/数组每次 render 都会新建（PiReplicaApp 无
+ *  selector 订阅，每次 store set 都重建这些 JSX），不加 memo 时每次 store 更新都会
+ *  重渲整个输入框子树——键入按键被排队在这些渲染后面（打字卡顿渲染侧根因）。
+ *  自定义比较：draftText/onSend 等值 prop 按值比，slots 按引用比（slots 是 JSX 元素，
+ *  PiReplicaApp 侧需稳定化——见该文件内注释）。 */
+export const Composer = memo(ComposerImpl, (prev, next) => {
+  for (const key of Object.keys(next) as (keyof ComposerProps)[]) {
+    if (prev[key] !== next[key]) return false;
+  }
+  return true;
+});
+
 export function HomeView(props: {
   greeting: string;
   composer: React.ReactNode;

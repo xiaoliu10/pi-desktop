@@ -13,6 +13,8 @@ import './styles.css';
 
 installPerfProbe();
 installPerfGlobals();
+// 调试埋点出口：Composer 重渲染计数（打字卡顿量化用，见 perf-probe.ts 同源说明）
+void import('./replica/chat/ChatView').then(m => { (window as any).__piComposerRenders = () => m.composerRenderCount.n; });
 
 const params = new URLSearchParams(window.location.search);
 const root = createRoot(document.getElementById('root')!);

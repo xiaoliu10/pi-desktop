@@ -511,6 +511,11 @@ export default function PiReplicaApp() {
       s.searchMarketplace('');
     }
   }, [s.view, pluginTab, s.market.length, s.marketLoading, s.marketQuery]);
+  // 稳定引用：ChatView 是 memo 组件，这两个 prop 每次 render 新建箭头函数会让 memo 必败
+  // （整棵对话树 + Composer 跟着重渲——流式期间每 150ms 一次，正是打字卡顿的渲染侧根因）。
+  const loadEarlier = useCallback(() => { void s.loadEarlierHistory(); }, [s.loadEarlierHistory]);
+  const closeSessionMap = useCallback(() => { s.setSessionMapOpen(false); }, [s.setSessionMapOpen]);
+  const draftChange = useCallback((text: string, owner?: string | null) => { writeComposerDraftText(text, owner); }, []);
   const openToolFile: NonNullable<import('../replica/contracts').ChatViewProps['onOpenToolFile']> = useCallback(part => {
     const preview = toolFilePreview(part);
     if (!preview) return;
@@ -552,13 +557,50 @@ export default function PiReplicaApp() {
   const reviewDiffs = useMemo(() => (s.review ? reviewDiffEntries(s.review) : []), [s.review]);
   const runModels = run?.models ?? [];
 
+  // Composer memo 的稳定 props：labels 每次新建会击穿 memo。lang 只有两种取值，useMemo 缓存。
+  const composerLabels = useMemo(() => ({ ...t.composer, refreshModels: s.lang === 'zh' ? '刷新模型列表' : 'Refresh model list' }), [t.composer, s.lang]);
+  const runRef = useRef(run);
+  runRef.current = run;
+  // ── Composer memo 稳定 props（第二轮）：这些每次 render 新建，不加这层 memo 必败 ──
+  // slashCommands：内容只随 (run?.commands, lang) 变；数组每拍重建 = memo 每拍失效。
+  const slashCommands = useMemo(() => [
+    ...(run ? [{ name: '/compact', description: s.lang === 'zh' ? '手动压缩会话上下文' : 'Manually compact the session context' }] : []),
+    ...(run ? [{ name: '/reload', description: s.lang === 'zh' ? '重载扩展/skills/prompts 等资源' : 'Reload extensions/skills/prompts' }] : []),
+    ...(run?.commands ?? []).map((c) => ({ name: `/${c.name}`, description: c.description ?? '' })),
+  ], [run?.commands, s.lang, run]);
+  const onSlashCommandsEmpty = useCallback(() => {
+    if (!runRef.current) return;
+    void window.localPi!.refreshCommands(runRef.current.key).catch(() => { /* 会话可能已关闭 */ });
+  }, []);
+  const onRefreshModels = useCallback(() => {
+    const run0 = runRef.current;
+    if (!run0) return;
+    void window.localPi!.refreshModels(run0.key).then(result => { s.notify({ kind: 'info', title: s.lang === 'zh' ? '模型列表已刷新' : 'Model list refreshed', time: '刚刚' }); void result; }).catch(() => { /* 忽略 */ });
+  }, [s.notify, s.lang]);
+  const onQueueNow = useCallback((index: number) => s.queueEdit({ type: 'now', index }), [s.queueEdit]);
+  const onQueueEdit = useCallback((index: number, text: string) => s.queueEdit({ type: 'edit', index, text }), [s.queueEdit]);
+  const onQueueRecallCb = useCallback((index: number) => s.queueRecall(index), [s.queueRecall]);
+  const onQueueRemove = useCallback((index: number) => s.queueEdit({ type: 'remove', index }), [s.queueEdit]);
+  const onRestoreHistoryEntry = useCallback((text: string, items: readonly Omit<import('../../shared/composer').ContextItem, 'id'>[], phase: 'enter' | 'browse' | 'exit') => {
+    const st = usePiStore.getState();
+    if (phase === 'enter') historySnapshotRef.current = { owner: composerOwnerKeyOf(st), text: st.draftText, items: st.contextItems };
+    if (phase === 'exit') {
+      const snap = historySnapshotRef.current; historySnapshotRef.current = null;
+      const restored = snap?.owner === composerOwnerKeyOf(st) ? snap : { text: '', items: [] as import('../../shared/composer').ContextItem[] };
+      usePiStore.setState({ draftText: restored.text, contextItems: restored.items });
+      return { text: restored.text };
+    }
+    usePiStore.setState({ draftText: text, contextItems: items.map((item, i) => ({ ...item, id: `hist-${Date.now()}-${i}` })) });
+    return { text };
+  }, []);
+  const pickModelStable = useCallback((id: string) => { setImageTarget(null); s.pickModel(id); }, [s.pickModel]);
   const composer = (
     <>
       <Composer
       key={composerOwnerKeyOf(s) ?? 'home'}
       draftText={s.draftText}
       draftOwnerKey={composerOwnerKeyOf(s)}
-      onDraftChange={(text, owner) => writeComposerDraftText(text, owner)}
+      onDraftChange={draftChange}
       preparing={s.connecting || s.changingAccessMode || attachmentLoading}
       hasAttachments={s.contextItems.length > 0}
       onPaste={pasteAttachments}
@@ -568,25 +610,20 @@ export default function PiReplicaApp() {
       reasoning="off"
       agentMode="agent"
       permissionMode="ask"
-      slashCommands={[
-        // 内置命令：get_commands 只回扩展命令/模板/skills，手动补上 Desktop 已拦截路由的内置项。
-        ...(run ? [{ name: '/compact', description: s.lang === 'zh' ? '手动压缩会话上下文' : 'Manually compact the session context' }] : []),
-        ...(run ? [{ name: '/reload', description: s.lang === 'zh' ? '重载扩展/skills/prompts 等资源（重启 pi，历史保留）' : 'Reload extensions/skills/prompts (restarts pi, keeps history)' }] : []),
-        ...(run?.commands ?? []).map((c) => ({ name: `/${c.name}`, description: c.description ?? '' })),
-      ]}
-      onSlashCommandsEmpty={run ? () => { void window.localPi!.refreshCommands(run.key).catch(() => { /* 会话可能已关闭 */ }); } : undefined}
-      onRefreshModels={run ? () => { void window.localPi!.refreshModels(run.key).then(result => { s.notify({ kind: 'info', title: result.status === 'refreshed' ? (s.lang === 'zh' ? `已刷新，会话内可用模型 ${result.count} 个` : `Refreshed: ${result.count} models available`) : (result.message ?? (s.lang === 'zh' ? '模型配置待刷新' : 'Model refresh pending')), time: '刚刚' }); }).catch((e) => s.notify({ kind: 'error', title: String(e), time: '刚刚' })); } : undefined}
+      slashCommands={slashCommands}
+      onSlashCommandsEmpty={run ? onSlashCommandsEmpty : undefined}
+      onRefreshModels={run ? onRefreshModels : undefined}
       files={[]}
       running={Boolean(run && ['running', 'starting', 'stopping'].includes(run.status)) || Boolean(s.selectedKey && s.retrying[s.selectedKey])}
       sending={(s.sends ?? []).some(send => send.key === s.selectedKey && isAwaitingSend(send)) || Boolean(launchPrompt)}
       queued={run?.pending ?? 0}
       queue={run?.queue}
-      onQueueNow={(index) => s.queueEdit({ type: 'now', index })}
-      onQueueEdit={(index, text) => s.queueEdit({ type: 'edit', index, text })}
-      onQueueRecall={(index) => s.queueRecall(index)}
-      onQueueRemove={(index) => s.queueEdit({ type: 'remove', index })}
+      onQueueNow={onQueueNow}
+      onQueueEdit={onQueueEdit}
+      onQueueRecall={onQueueRecallCb}
+      onQueueRemove={onQueueRemove}
       demo={false}
-      labels={{ ...t.composer, refreshModels: s.lang === 'zh' ? '刷新模型列表' : 'Refresh model list' }}
+      labels={composerLabels}
       modelDisabled={s.connecting}
       pendingModelId={run?.pendingModel ? `${run.pendingModel.provider}/${run.pendingModel.id}` : undefined}
       headerSlot={<ProjectHeader cwd={composerCwd} locked={!!s.selectedKey || s.connecting} onChoose={s.chooseWorkspace} projects={sidebar.projects.map(p=>({path:p.path,name:p.name}))} onSelect={path=>usePiStore.setState({draftCwd:path})} />}
@@ -617,23 +654,13 @@ export default function PiReplicaApp() {
       statusSlot={run ? <ContextUsageChip key={`${run.key}:${run.generation}`} usage={run.contextUsage} model={run.model ? `${run.model.provider} / ${run.model.name || run.model.id}` : undefined} zh={s.lang === 'zh'} compact /> : undefined}
       onSend={onComposerSend}
       promptHistory={promptHistory}
-      onRestoreHistoryEntry={(text, items, phase) => {
-        const st = usePiStore.getState();
-        if (phase === 'enter') historySnapshotRef.current = { owner: composerOwnerKeyOf(st), text: st.draftText, items: st.contextItems };
-        if (phase === 'exit') {
-          const snap = historySnapshotRef.current; historySnapshotRef.current = null;
-          const restored = snap?.owner === composerOwnerKeyOf(st) ? snap : { text: '', items: [] as import('../../shared/composer').ContextItem[] };
-          usePiStore.setState({ draftText: restored.text, contextItems: restored.items });
-          return { text: restored.text };
-        }
-        usePiStore.setState({ draftText: text, contextItems: items.map((item, i) => ({ ...item, id: `hist-${Date.now()}-${i}` })) });
-      }}
+      onRestoreHistoryEntry={onRestoreHistoryEntry}
       imageModels={imageModels}
       imageTarget={imageTarget}
       onPickImageModel={setImageTarget}
       onImageGenerate={onImageGenerate}
       onStop={s.stop}
-      onPickModel={id => { setImageTarget(null); s.pickModel(id); }}
+      onPickModel={pickModelStable}
       onPickReasoning={() => undefined}
       onPickAgentMode={() => undefined}
       onPickPermission={() => undefined}
@@ -1022,7 +1049,7 @@ export default function PiReplicaApp() {
                   <ChatView
                     messages={messages}
                     conversationKey={s.selectedKey}
-                    onLoadEarlier={() => void s.loadEarlierHistory()}
+                    onLoadEarlier={loadEarlier}
                     earlierLoading={s.earlierLoading}
                     earlierTotal={s.history?.truncated?.total}
                     runTiming={run?.timing}
@@ -1048,7 +1075,7 @@ export default function PiReplicaApp() {
                     sessionMapOpen={s.sessionMapOpen}
                     outline={s.outline}
                     outlineLoading={s.outlineLoading}
-                    onCloseSessionMap={() => s.setSessionMapOpen(false)}
+                    onCloseSessionMap={closeSessionMap}
                     onEditUserMessage={editUserMessage}
                     onDownloadImage={downloadImage}
                     onRefreshProcess={s.refreshConversation}
