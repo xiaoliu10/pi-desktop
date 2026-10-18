@@ -299,7 +299,7 @@ function registerIpc() {
     return { key: run.key, run };
   });
   handle('sidecarBinding', mainKey => host.sidecar.bindingOf(mainKey));
-  handle('history', (key, leaf) => host.index.history(key, leaf));
+  handle('history', (key, leaf, opts) => host.index.history(key, leaf, opts));
   handle('resources', cwd => host.resources(cwd));
   handle('connect', input => {
     if (!input || typeof input.trustProject !== 'boolean' || !isAccessMode(input.permission)) throw new Error('连接参数无效');
@@ -338,7 +338,7 @@ function registerIpc() {
   handle('filePreview', (cwd, file) => filePreview(cwd, file));
   handle('officialSubagentStatus', () => officialSubagentStatus(host.environment.agentDir));
   handle('enableOfficialSubagent', () => enableOfficialSubagent(host.environment.agentDir));
-  handle('recoverSubagents', (key: string, leaf?: string) => recoverSubagents(host.environment.agentDir, key, host.index, leaf));
+  handle('recoverSubagents', (key: string, leaf?: string, pinned?: string[]) => recoverSubagents(host.environment.agentDir, key, host.index, leaf, pinned));
   handle('subagentChildTranscript', (key: string, callId: string, childId: string) => subagentChildTranscript(host.environment.agentDir, key, host.index, callId, childId));
   handle('cleanupSubagents', (key: string) => cleanupSubagents(host.environment.agentDir, key));
   // 记忆衔接层：探测 CLI 记忆插件（如 pi-memory），未启用时回退 Desktop 内置桥

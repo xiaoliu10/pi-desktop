@@ -103,6 +103,23 @@ function messageTime(value: unknown): number | undefined {
 // 缓存会 100% 失效 → 每次刷新全量重建 + 全量重渲染（千条会话秒级卡死）。
 const messageCache = new Map<string, ChatMessage>();
 
+// savedMessages（assistant 的 timestamp/id 集合）只依赖 branch 内容，而 branch 数组只在
+// refreshHistory（IPC 返回新数组）时换引用、流式 delta 不改它。旧实现每拍全量
+// filter+map 重建（24637 条），是流式期 GC 高压来源之一。按 branch 数组身份（WeakMap）
+// 缓存：同一拍内多次 segment() 复用。口径与 sentConversationMessages 内联版逐字一致。
+const branchSavedCache = new WeakMap<PiEntry[], Set<string>>();
+function branchSavedMessages(branch: PiEntry[]): Set<string> {
+  const hit = branchSavedCache.get(branch);
+  if (hit) return hit;
+  const saved = new Set(branch.filter(e => e.message?.role === 'assistant').map(e => String(e.message?.timestamp ?? e.message?.id)));
+  branchSavedCache.set(branch, saved);
+  return saved;
+}
+
+// 历史分页首屏条数（branch 尾部）。500 条约覆盖上百轮对话的真实会话；超过即大会话，
+// 首屏只传一屏的量，更早的按需补拉。主进程 99% CPU 的根因是全量传输，不是条数本身。
+const HISTORY_TAIL = 500;
+
 // 会话预热在途表：selectSession 触发后台 connect，send 到达时若预热未完成则 await
 // 同一份 Promise，避免同一会话并发两次 connect 各自 spawn 一个 pi 进程。
 const prewarmInFlight = new Map<string, Promise<void>>();
@@ -732,7 +749,7 @@ export function sentConversationMessages(branch: PiEntry[], live: Record<string,
   }
   // Saved message identity also outranks event arrival order. Suppress saved
   // live copies globally, not per segment (a late end may have a stale owner).
-  const savedMessages = new Set(branch.filter(e => e.message?.role === 'assistant').map(e => String(e.message?.timestamp ?? e.message?.id)));
+  const savedMessages = branchSavedMessages(branch);
   // segment() 旧实现每拍被调用 320 次（每轮一次），每次都：过滤 live（O(live)）+ 过滤 tools
   // + conversationMessages（内部 saved/pending 两次 O(n) 预扫 + historyToMessages 数组重建）。
   // 历史段的 (entries, owner) 组合在流式期间逐拍重复且输入不变——按 (entries 区间, owner,
@@ -1115,7 +1132,12 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
     const seq = ++loadSeq;
     const generation = state.runs.find(r => r.key === key)?.generation;
     try {
-      const value = await api.history(key, state.leaf);
+      // 大会话分页首屏：只拉 branch 尾部 HISTORY_TAIL 条。用户真实会话 201MB /
+      // 117 张图 / 195MB base64，全量 IPC 每几秒一次把主进程吃到 99% CPU（解析 +
+      // 结构化克隆双份常驻）。尾部窗口覆盖绝大多数会话的全部用户轮；被裁掉的条数由
+      // truncated 告知，ChatView 的「更早的消息」按钮据此显示还可加载多少。
+      // 刷新（流式期间每拍）同样走 tail：新消息永远在尾部，早于窗口的条目不会变。
+      const value = await api.history(key, state.leaf, { tail: HISTORY_TAIL });
       if (seq !== loadSeq || get().selectedKey !== key || get().runs.find(r => r.key === key)?.generation !== generation) return false;
       settlePendingPrompt(value, key);
       if (historyReloadTimer) { clearTimeout(historyReloadTimer); historyReloadTimer = null; }

@@ -267,7 +267,14 @@ export class SessionIndex {
     if (leaf && !found.entries.some(e => e.id === leaf)) throw new Error('Unknown leaf');
     return leaf ? { ...found, branch: branchEntries(found.entries, leaf), leafId: leaf } : found;
   }
-  history(key: string, leaf?: string): PiHistory {
+  /**
+   * 读取会话历史。opts.tail：只返回 branch 尾部 N 条（大会话分页首屏用）。
+   * 动机：用户真实会话 201MB / 117 张图 / 195MB base64，全量序列化经 IPC 到渲染层
+   * 每几秒一次，主进程被吃到 99% CPU（解析 + 结构化克隆双份常驻）。尾部窗口首屏 +
+   * 按需补拉更早的页，把单次传输从「整个会话」降到「一屏」。
+   * 语义：truncated 字段告知调用方还有多少条没给（renderer 据此显示「更早的消息」）。
+   */
+  history(key: string, leaf?: string, opts?: { tail?: number; before?: string; count?: number }): PiHistory {
     // 快路径：缓存命中且目标文件 stamp 未变 → 直接增量消费尾部（若有新增）并返回。
     // 不再每次全扫 scan()（实测热扫也要 173ms，冷扫 3.5s——主进程同步阻塞是打字卡顿的
     // 第一根因）；新增/删除会话由 watcher/轮询的 changed() 驱动，单会话读取不依赖它。
@@ -280,28 +287,48 @@ export class SessionIndex {
           try { this.parseFile(file, key, true); } catch { /* 增量失败保留旧缓存 */ }
         }
         if (this.oversized.has(this.cache.get(key)!.history)) throw new OversizedSessionError(file, this.cache.get(key)!.history.session.size);
-        return this.fromCache(key, leaf);
+        return this.fromCache(key, leaf, opts);
       }
       // stamp 变了（增长或截断替换）或文件消失：增长走增量，其余走慢路径清理。
       if (stamped && stamped.stat.size >= fast.parsedBytes) {
         try { this.parseFile(file, key, true); } catch (err) { if (err instanceof OversizedSessionError) throw err; }
         const updated = this.cache.get(key);
-        if (updated && updated.stamp === stamped.stamp) return this.fromCache(key, leaf);
+        if (updated && updated.stamp === stamped.stamp) return this.fromCache(key, leaf, opts);
       }
     }
     this.scan();
     // 目标会话有未落地的脏数据时同步重解析该文件（只此一个），保证刷新拿到完整尾部。
     const dirtyFile = this.dirty.get(key);
     if (dirtyFile) { try { this.parseFile(dirtyFile, key, true); } catch { /* 保留旧缓存 */ } }
-    return this.fromCache(key, leaf);
+    return this.fromCache(key, leaf, opts);
   }
-  private fromCache(key: string, leaf?: string): PiHistory {
+  private fromCache(key: string, leaf?: string, opts?: { tail?: number; before?: string; count?: number }): PiHistory {
     const cached = this.cache.get(key)?.history;
     if (!cached) throw new Error('会话不存在、不可读或不在选定目录中。');
     // 超限会话只做了元数据降级：列表可见但全量历史不可读，给可执行错误而不是空历史。
     if (this.oversized.has(cached)) throw new OversizedSessionError(cached.session.path, cached.session.size);
     if (leaf && !cached.entries.some(e => e.id === leaf)) throw new Error('Unknown leaf');
-    return leaf ? { ...cached, branch: branchEntries(cached.entries, leaf), leafId: leaf } : cached;
+    const full = leaf ? { ...cached, branch: branchEntries(cached.entries, leaf), leafId: leaf } : cached;
+    const tail = opts?.tail;
+    const before = opts?.before;
+    // tail/before 只裁 branch（渲染层消费的那一份）。entries/leaves 保持全量：分页
+    // 游标与叶子切换要用完整结构；且它们不含消息正文（content 在 branch 的 entry 里），
+    // 体积远小于 branch。裁掉的条数通过 truncated 告知调用方。
+    // before：向上补拉一页——返回 [before 之前 count 条] + [before 起的全部尾部]，
+    // 调用方把新页拼到自己已有 branch 的前面即得到更长的历史。
+    if (before) {
+      const at = full.branch.findIndex(e => e.id === before);
+      if (at > 0) {
+        const count = Math.max(1, Math.min(opts?.count ?? 500, at));
+        const page = full.branch.slice(Math.max(0, at - count), at);
+        return { ...full, branch: [...page, ...full.branch.slice(at)], truncated: { total: full.branch.length, returned: page.length + (full.branch.length - at) } };
+      }
+      return full;
+    }
+    if (typeof tail === 'number' && tail > 0 && full.branch.length > tail) {
+      return { ...full, branch: full.branch.slice(full.branch.length - tail), truncated: { total: full.branch.length, returned: tail } };
+    }
+    return full;
   }
   start(changed: () => void) {
     this.close();

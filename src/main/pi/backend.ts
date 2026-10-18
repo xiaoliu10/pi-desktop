@@ -204,6 +204,29 @@ export class PiBackend {
     }).catch(() => undefined);
   }
 
+  /** 重算并广播该会话的运行中子代理数。
+   *  只在 subagent 事件路径调用不够：最后一个子代理跑完后如果没有新事件，
+   *  run.view.runningSubagents 会停在旧值——侧栏菊花就此永转（真实 bug：用户看到
+   *  「5 个正在运行」但实际 0 个，那些快照已陈旧 4 天）。因此在 agent 结束/会话
+   *  空闲时也要重算，让计数归零。 */
+  private refreshRunningSubagents(key: string): void {
+    const run = this.active.get(key);
+    if (!run) return;
+    // sweep（把陈旧 running 快照改写为终态）只在会话不处于 running 时做：
+    // 活跃会话里子代理可能正处在长模型生成期（数分钟无事件），快照静默 ≠ 进程死亡；
+    // 在这里 sweep 会把活快照改成 interrupted——工作流卡片进度清零（用户实测反馈）。
+    // 会话结束/空闲/停止路径（agent_settled、forceSettle、stop、压缩收口）时子代理
+    // 理应已收尾，此时仍 running 的快照才是真死。
+    const sweep = run.view.status !== 'running';
+    let counts: Record<string, number>;
+    try { counts = runningSubagentCounts(this.env.agentDir, Date.now(), sweep ? { sweep: true } : {}); } catch { return; }
+    const next = counts[key] ?? 0;
+    if (run.view.runningSubagents !== next) {
+      run.view.runningSubagents = next;
+      this.emit({ type: 'run', run: { ...run.view } });
+    }
+  }
+
   /** 内置默认包：装缺失的、检测同名冲突（用户优先，不擅自替换）。结果广播给渲染层提示。 */
   private async ensureBuiltins(): Promise<void> {
     if (!this.dataDir || this.builtinsInFlight) return;
@@ -299,10 +322,19 @@ export class PiBackend {
       ...(scheduleArgs.length
         ? ['--append-system-prompt', [input.systemPrompt, SCHEDULE_GUIDANCE].filter(Boolean).join('\n')]
         : input.systemPrompt ? ['--append-system-prompt', input.systemPrompt] : []),
-      ...(input.permission === 'plan'
-        // 计划模式：只读工具 + ask_user_question（提问无副作用，正好用于澄清需求）+ 任务清单。
-        ? ['--tools', [...(input.tools ?? ['read', 'grep', 'find', 'ls']).filter(t => ['read', 'grep', 'find', 'ls'].includes(t)), 'ask_user_question', 'desktop_update_plan'].join(',')]
-        : input.tools ? ['--tools', input.tools.join(',')] : []),
+      // 任务清单（desktop_update_plan）全模式可用：用户 2026-10-18 要求「所有模式都能建
+      // 清单」——此前只 plan 模式注入，普通模式切进来后侧栏「进程」区块直接空掉，看起来
+      // 像功能坏了（真实原因是工具没注入）。plan 模式仍是只读工具 + ask_user_question +
+      // 清单；其他模式沿用各自 tools，仅把清单补进去（已显式列了 tools 的场景也补——
+      // 调用方若不想让模型建清单可以不列，但那不是默认体验）。
+      ...(() => {
+        const withPlan = (tools: string[]) => tools.includes('desktop_update_plan') ? tools : [...tools, 'desktop_update_plan'];
+        if (input.permission === 'plan') {
+          // 计划模式：只读工具 + ask_user_question（提问无副作用，正好用于澄清需求）+ 任务清单。
+          return ['--tools', withPlan([...(input.tools ?? ['read', 'grep', 'find', 'ls']).filter(t => ['read', 'grep', 'find', 'ls'].includes(t)), 'ask_user_question']).join(',')];
+        }
+        return input.tools ? ['--tools', withPlan(input.tools).join(',')] : [];
+      })(),
       ...(input.model ? ['--model', input.model] : []),
     ];
     const client = (this.clientFactory ?? ((cmd: string, a: string[], cwd: string, e: NodeJS.ProcessEnv) => new PiRpcClient(cmd, a, cwd, e)))(this.env.executable!, args, input.cwd, env);
@@ -351,6 +383,9 @@ export class PiBackend {
         : client.closedLocally?.() ? 'Desktop 已主动断开该会话'
         : `pi 进程已退出${exit ? `（${exit}）` : ''}`;
       view.error = `${how}，请断开后重连。任务未自动重放。${suffix}`;
+      // 子代理计数一并清零：侧栏 busy 判定含「runningSubagents > 0」，不清零会让
+      // 已断开的错误态会话一直显示假忙（子代理进程随 pi 一起退出，快照也不会再更新）。
+      view.runningSubagents = 0;
       this.clearDialogs(run); this.emit({ type: 'run', run: { ...view } });
       // sidecarOf 随事件带出：active 已 delete，消费端事后查 runs() 会漏（时序盲区）。
       this.emit({ type: 'closed', key, generation, ...(run.input.sidecarOf !== undefined ? { sidecarOf: run.input.sidecarOf } : {}) });
@@ -457,6 +492,7 @@ export class PiBackend {
     if (run.view.timing && run.view.timing.endedAt === undefined) run.view.timing = { ...run.view.timing, endedAt };
     run.view.queue = [...run.deferredQueue]; run.view.pending = run.deferredQueue.length; run.queueImages = [];
     run.view.status = 'idle';
+    this.refreshRunningSubagents(key);
     this.refreshContextUsage(run);
     void this.flushPendingSwitches(key);
     if (run.view.retryGroup?.phase === 'completed') this.dispatchDeferred(run);
@@ -577,7 +613,7 @@ export class PiBackend {
         }
       } else {
         if (run.view.timing) run.view.timing = { ...run.view.timing, endedAt: Date.now() };
-        if (run.view.status !== 'stopping' && !run.stopUnconfirmed) run.view.status = 'idle';
+        if (run.view.status !== 'stopping' && !run.stopUnconfirmed) { run.view.status = 'idle'; this.refreshRunningSubagents(key); }
         this.refreshContextUsage(run);
         void this.flushPendingSwitches(key);
         if (run.view.retryGroup?.phase === 'completed') this.dispatchDeferred(run);
@@ -625,12 +661,7 @@ export class PiBackend {
       // 运行中计数算进 run view 并广播。侧栏会话行的菊花据此在主 run 结束后继续转
       // （用户 2026-10-17：不然会以为任务已结束）。主 run 通常正在 running，这里只是
       // 给 view 补一个字段，不引入新事件类型。
-      const run = this.active.get(key);
-      if (run) {
-        const counts = runningSubagentCounts(this.env.agentDir);
-        const next = counts[key] ?? 0;
-        if (run.view.runningSubagents !== next) { run.view.runningSubagents = next; this.emit({ type: 'run', run: { ...run.view } }); }
-      }
+      this.refreshRunningSubagents(key);
     }
     // 第三方 ask 桥接：暂存问卷入参（不可桥接时为 undefined，原生请求走通用对话框降级）。
     // 校验失败没有 UI 请求直接 end：stash 未消费即被下面清理，不留悬挂状态。
@@ -944,7 +975,7 @@ export class PiBackend {
     run.stopQueueSnapshot = undefined;
     run.queueImages = [];
     if (run.view.timing && run.view.timing.endedAt === undefined) run.view.timing = { ...run.view.timing, endedAt: Date.now() };
-    run.view.status = 'idle'; run.view.pending = 0; run.view.queue = []; this.emit({ type: 'run', run: { ...run.view } });
+    run.view.status = 'idle'; run.view.pending = 0; run.view.queue = []; this.refreshRunningSubagents(key); this.emit({ type: 'run', run: { ...run.view } });
     return queue || { steering: [], followUp: [] };
   }
   /**
@@ -1105,7 +1136,7 @@ export class PiBackend {
       // 造成同一会话两个压缩并发；保持忙碌直到 compaction_end 到达或后端自愈核实。
       // rpc-client 的超时文案是中文「…超时；…」（拼写见 request()），匹配需含中文「超时」。
       const settled = !/timed? ?out|超时/i.test(raw);
-      if (settled) this.settleAfterCompact(run);
+      if (settled) this.settleAfterCompact(key, run);
       if (/hit the token cap|summary is incomplete/i.test(raw)) {
         throw new Error(settled
           ? '压缩失败：摘要生成达到模型输出上限被截断。可重试并附加自定义指令要求更精简的摘要（如「300 字以内，只列关键决定」）；仍失败建议新开会话继续工作。'
@@ -1115,17 +1146,21 @@ export class PiBackend {
       throw error;
     }
     this.refreshContextUsage(run);
-    this.settleAfterCompact(run);
+    this.settleAfterCompact(key, run);
     return result;
   }
   /** 压缩结束（成功或失败）的统一状态收口：compaction_start 已把状态置为 running
    *  （TS 看不到事件改写，故宽化比较）；排队中的消息不动。失败路径同样必须收口，
    *  否则状态永久停留 running（假转圈），重试/发送/重载全被 guard 拒绝。 */
-  private settleAfterCompact(run: Running) {
+  private settleAfterCompact(key: string, run: Running) {
     const view = run.view;
     const statusAfter = view.status as string;
     if (statusAfter === 'running' && !view.pending && !view.queue?.length) {
       view.status = 'idle';
+      // 压缩路径明确不发 agent_settled，这是第 4 个「会话转空闲」的点。子代理计数
+      // 必须在这里也重算：否则「结算时后台子代理在跑（计数 N）→ 后台静默完成（无
+      // RPC 事件）→ 手动 /compact」会让侧栏菊花停在 N 直到下一次子代理事件。
+      this.refreshRunningSubagents(key);
       if (view.timing && view.timing.endedAt === undefined) view.timing = { ...view.timing, endedAt: Date.now() };
       this.emit({ type: 'run', run: { ...view } });
     }

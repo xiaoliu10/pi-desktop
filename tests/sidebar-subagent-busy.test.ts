@@ -38,6 +38,26 @@ describe('runningSubagentCounts', () => {
     expect(counts).toEqual({ [sessionA]: 2, [sessionB]: 1 });
   });
 
+  it('sweeps stale running snapshots so ghost rows cannot survive an agent end', () => {
+    const agentDir = setupAgentDir();
+    const now = Date.now();
+    const stale = `${sessionA}_call_stale.json`;
+    const fresh = `${sessionA}_call_fresh.json`;
+    fs.writeFileSync(path.join(agentDir, 'subagents', stale), JSON.stringify({ callId: 'call_stale', status: 'running', updatedAt: now - 10 * 60 * 1000 }));
+    fs.writeFileSync(path.join(agentDir, 'subagents', fresh), JSON.stringify({ callId: 'call_fresh', status: 'running', updatedAt: now }));
+    const counts = runningSubagentCounts(agentDir, now, { sweep: true });
+    expect(counts).toEqual({ [sessionA]: 1 });
+    // 删除会让 pointers() 的崩溃调用补齐失效（详情卡片与 transcript 指针全消失）：
+    // sweep 必须改写为终态而不是 unlink。
+    const rewritten = JSON.parse(fs.readFileSync(path.join(agentDir, 'subagents', stale), 'utf8'));
+    expect(rewritten.status).toBe('interrupted');
+    expect(fs.existsSync(path.join(agentDir, 'subagents', fresh))).toBe(true);
+    // 幂等：第二次 sweep 不改写已终态的条目（无谓写盘）。
+    const before = fs.statSync(path.join(agentDir, 'subagents', stale)).mtimeMs;
+    runningSubagentCounts(agentDir, now, { sweep: true });
+    expect(fs.statSync(path.join(agentDir, 'subagents', stale)).mtimeMs).toBe(before);
+  });
+
   it('returns {} when the snapshot dir is missing', () => {
     const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'sidebar-subagent-busy-')));
     roots.push(root);

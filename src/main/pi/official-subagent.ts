@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import type { SessionIndex } from './session-index';
-import { childSessionPointer, readSnapshotJson, STALE_MS, workflowSnapshots, type SubagentSnapshot } from './subagent-snapshots';
+import { childSessionPointer, readSnapshotJson, STALE_MS, subagentAsyncRoot, workflowSnapshots, type SubagentSnapshot } from './subagent-snapshots';
 import { singleAsyncDetails, workflowDetails, workflowId, workflowState } from '../../shared/subagent-workflow';
 
 /**
@@ -76,12 +76,15 @@ export function enableOfficialSubagent(agentDir: string) {
 }
 
 /** Recover only the selected, trusted session/branch. No renderer-supplied paths. */
-export async function recoverSubagents(agentDir: string, sessionKey: string, index: Pick<SessionIndex, 'subagentHistory'>, leaf?: string): Promise<SubagentSnapshot[]> {
+export async function recoverSubagents(agentDir: string, sessionKey: string, index: Pick<SessionIndex, 'subagentHistory'>, leaf?: string, pinned?: string[]): Promise<SubagentSnapshot[]> {
   if (!/^[a-f0-9]{64}$/.test(sessionKey) || (leaf !== undefined && typeof leaf !== 'string')) return [];
   let history;
   try { history = index.subagentHistory(sessionKey, leaf); } catch { return []; }
   const persisted = await readPersistedSnapshots(agentDir, sessionKey);
-  const workflows = await workflowSnapshots(history, persisted);
+  // pinned：渲染层正在展示的 callId（尤其尾窗 32 条之外的老工作流卡片）。它们必须
+  // 读盘校正终态——tool result 里的 workflowChildren.workflowState 是落盘快照，
+  // 工作流结束后不回写，不校正就会永远显示「运行中/等待工作流报告子任务」。
+  const workflows = await workflowSnapshots(history, persisted, subagentAsyncRoot(), Date.now(), pinned);
   // single-async records are already normalized into `workflows`; leaving them in
   // legacy would duplicate the callId and let the raw record shadow the snapshot.
   const legacy = persisted.filter(rec => !workflowDetails(rec.details, rec.callId) && !singleAsyncDetails(rec.details, rec.callId));
@@ -239,8 +242,11 @@ export function cleanupSubagents(agentDir: string, sessionKey: string) {
 /** 按会话聚合「运行中子代理数」：侧栏会话行的菊花要在主 run 结束后继续转，
  *  否则用户误以为任务已结束（子代理还在后台跑）。数据源是 persistSubagentEvent
  *  落的快照文件；只数 status=running 且未 stale 的（STALE_MS 与 subagent-snapshots
- *  同口径）——死快照不能让菊花永转。 */
-export function runningSubagentCounts(agentDir: string, now = Date.now()): Record<string, number> {
+ *  同口径）——死快照不能让菊花永转。顺手把 stale 文件删掉：workflow 型快照的
+ *  completed 清理被特意跳过（recoverSubagents 要读它做详情恢复），于是「跑到一半
+ *  进程死了」的快照会永远留在 running 态——用户侧栏因此显示幽灵运行中
+ *  （真实 bug：4 天前的快照让侧栏常驻 5 个「正在运行」）。 */
+export function runningSubagentCounts(agentDir: string, now = Date.now(), opts: { sweep?: boolean } = {}): Record<string, number> {
   const dir = path.join(agentDir, 'subagents');
   const counts: Record<string, number> = {};
   let entries: string[];
@@ -257,7 +263,18 @@ export function runningSubagentCounts(agentDir: string, now = Date.now()): Recor
       const snap = JSON.parse(fs.readFileSync(path.join(dir, name), 'utf8'));
       if (snap?.status !== 'running') continue;
       const updatedAt = Number(snap.updatedAt) || 0;
-      if (!updatedAt || now - updatedAt > STALE_MS) continue;
+      if (!updatedAt || now - updatedAt > STALE_MS) {
+        // stale 的 running 快照：进程早死了，事件不会再更新它。**改写为终态而不是删除**——
+        // pointers() 靠持久化快照补齐「有 toolCall 无 toolResult」的崩溃调用，删文件会让
+        // 详情卡片与子代理 transcript 指针一起消失（code review 探针实测：删后 0 张卡）。
+        // 改写成终态同样让计数归零，且保留崩溃现场供恢复。
+        if (opts.sweep && !snap.__swept) {
+          try {
+            fs.writeFileSync(path.join(dir, name), JSON.stringify({ ...snap, status: 'interrupted', updatedAt: now, __swept: true }));
+          } catch { /* best-effort：写失败保持原样，计数侧同样不认它 */ }
+        }
+        continue;
+      }
       counts[sessionKey] = (counts[sessionKey] ?? 0) + 1;
     } catch { /* 快照损坏/半写：跳过，不影响其他会话 */ }
   }

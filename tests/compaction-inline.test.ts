@@ -64,7 +64,8 @@ describe('compaction record renders inline in the process list', () => {
 
   it('renders the compaction row inside the execution group at its chronological spot', () => {
     const messages = historyToMessages(compactionBranch);
-    const markup = renderToStaticMarkup(createElement(ChatView, { messages, running: false, queued: 0, demo: false, labels, onJumpToMessage: () => {} }));
+    // running 使执行组展开（组级按需渲染：折叠组不含组内行）
+    const markup = renderToStaticMarkup(createElement(ChatView, { messages, running: true, queued: 0, demo: false, labels, onJumpToMessage: () => {} }));
     expect(markup).toContain('上下文压缩 · 用时 148.7s');
     const stepsStart = markup.indexOf('pi-execution__steps');
     const compaction = markup.indexOf('上下文压缩');

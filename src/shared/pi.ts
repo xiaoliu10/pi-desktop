@@ -23,7 +23,7 @@ export interface PiEnvironment {
 export interface PiUpgradeResult { exitCode: number; stdout: string; stderr: string }
 export interface PiSession { key: string; id: string; path: string; cwd: string; name: string; updatedAt: number; size: number; warnings: string[]; owned: boolean; parentSession?: string; sidecarOf?: string }
 export interface PiEntry { type: string; id?: string; parentId?: string | null; timestamp?: string; message?: Record<string, unknown>; [key: string]: unknown }
-export interface PiHistory { session: PiSession; entries: PiEntry[]; branch: PiEntry[]; leaves: string[]; leafId: string | null; syncedAt: number }
+export interface PiHistory { session: PiSession; entries: PiEntry[]; branch: PiEntry[]; leaves: string[]; leafId: string | null; syncedAt: number; /** 分页元信息：本次只返回了 branch 尾部 returned 条（大会话首屏降载），total 是完整条数。 */ truncated?: { total: number; returned: number } }
 export interface PiResource { id: string; name: string; kind: string; path: string; scope: 'user' | 'project'; status: 'discovered' | 'callable' | 'disabled' | 'missing' | 'error'; detail: string }
 export interface PiCommand { name: string; description?: string; source?: string; path?: string }
 export interface PiModel { id: string; name: string; provider: string; reasoning?: boolean; input?: string[] }
@@ -127,7 +127,7 @@ export interface LocalPiApi extends importSettingsApi {
   setSessionArchived(key: string, archived: boolean): Promise<string[]>;
   /** 手动删除归档会话：会话文件移到系统废纸篓（可恢复），索引条目随之清除。 */
   deleteArchivedSession(key: string): Promise<string[]>;
-  history(key: string, leafId?: string): Promise<PiHistory>;
+  history(key: string, leafId?: string, opts?: { tail?: number; before?: string; count?: number }): Promise<PiHistory>;
   resources(cwd?: string): Promise<PiResource[]>;
   connect(input: { sourceKey?: string; cwd?: string; trustProject: boolean; permission: AccessMode; executionMode?: Exclude<AccessMode, 'plan'> }): Promise<PiRun>;
   sidecarEnsure(mainKey: string): Promise<{ key: string; run: PiRun }>;
@@ -164,7 +164,7 @@ export interface LocalPiApi extends importSettingsApi {
   review(cwd: string): Promise<PiReview>;
   officialSubagentStatus(): Promise<{installed:boolean;thirdParty:boolean;thirdPartySource?:string;outdated:boolean;scoutExists:boolean;path:string}>;
   enableOfficialSubagent(): Promise<{path:string;upgraded:boolean}>;
-  recoverSubagents(sessionKey: string, leaf?: string): Promise<Array<{callId:string;status:string;details?:unknown;error?:string;startedAt?:number;updatedAt?:number}>>;
+  recoverSubagents(sessionKey: string, leaf?: string, pinned?: string[]): Promise<Array<{callId:string;status:string;details?:unknown;error?:string;startedAt?:number;updatedAt?:number}>>;
   subagentChildTranscript(sessionKey: string, callId: string, childId: string): Promise<{messages:Record<string,unknown>[];truncated:boolean}|{error:string}>;
   /** 记忆衔接层状态：探测 CLI 记忆插件并返回当前链路。cwd 指定时附加项目存储类型与目录。 */
   memoryAssistStatus(enabled: boolean, cwd?: string): Promise<{ enabled: boolean; plugin: { kind: 'extension'; id: string; label?: string } | { kind: 'builtin' }; builtinDir: string; hint: string; /** scoped = 集中存储（memory-projects/<key>/），project-local = 项目内 .pi/memory/。 */ storageKind?: 'scoped' | 'project-local'; /** 对应存储类型的实际项目记忆目录（后端计算，不在渲染端重新推导）。 */ projectDir?: string }>;

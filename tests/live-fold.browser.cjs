@@ -70,14 +70,16 @@ async (page) => {
       details: article.querySelectorAll('details.pi-execution').length,
       open: only?.open,
       stepsTopLevel: steps,
-      subgroupText: only.textContent.includes('终端 · 3 条命令'),
+      // 组级按需渲染（perf 契约）：折叠汇总组的 steps 不进 DOM，聚合行要点开才渲染；
+      // 摘要行上的「执行过程 · N 步」是折叠态可见的聚合口径
+      summarySteps: only?.querySelector('.pi-execution__title')?.textContent ?? '',
       narration: [...article.querySelectorAll('.pi-msg__answer')].map(a => a.textContent.trim()),
       head: !!article.querySelector('.pi-msg__runninghead'),
     };
   });
   assert(folded.details === 1, '折叠后只剩一条汇总组，实际 ' + folded.details);
   assert(!folded.open, '汇总组默认收起');
-  assert(folded.subgroupText, '汇总组聚合整轮 3 个步骤（终端 · 3 条命令）');
+  assert(folded.summarySteps.includes('3'), '汇总组摘要聚合整轮 3 个步骤（执行过程 · 3 步），实际 ' + folded.summarySteps);
   assert(folded.narration.length === 2, '折叠不藏叙述文本，实际 ' + JSON.stringify(folded.narration));
   assert(folded.head, '运行头保持顶部');
   await page.screenshot({ path: '/Users/jason/projects/opensource/pi-desktop/output/playwright/live-fold-collapsed.png', fullPage: true });
