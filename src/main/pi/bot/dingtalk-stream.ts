@@ -129,9 +129,12 @@ export class DingTalkStreamTransport implements ImTransport {
         // 终极观测：真实 payload 原文（截 800 字）——text/sessionWebhook 的提取路径
         // 必须按真实结构适配，不能再猜（用户发 /bind 被当 free text 的教训）。
         const d = frame?.data ?? frame?.event;
-        const inner = typeof d === 'string'
-          ? (() => { try { return Buffer.from(d, 'base64').toString('utf8'); } catch { return d; } })()
-          : JSON.stringify(d);
+        const decode = (x: string) => {
+          try { const j = JSON.parse(x); return JSON.stringify(j); } catch { /* not plain json */ }
+          try { const j = JSON.parse(Buffer.from(x, 'base64').toString('utf8')); return JSON.stringify(j); } catch { /* not base64 json */ }
+          return x;
+        };
+        const inner = typeof d === 'string' ? decode(d) : JSON.stringify(d);
         imLog(`payload 原文：${String(inner).slice(0, 800)}`);
       }
       const msg = decodeFrame(text);
@@ -156,8 +159,12 @@ export class DingTalkStreamTransport implements ImTransport {
           }
           if (msg.sessionWebhook) {
             // webhook 失败必须 ack false：钉钉会对失败消息重推，静默丢回复无痕迹。
-            try { await this.postJson(msg.sessionWebhook, { msgtype: 'text', content: { text: reply } }); }
-            catch (err) { imLog(`回复发送失败：${String(err).slice(0, 200)}`); ws.send(ackFrame(msg.messageId, false)); return; }
+            try {
+              const res = await this.postJson(msg.sessionWebhook, { msgtype: 'text', content: { text: reply } });
+              // HTTP 200 ≠ 钉钉接收：sessionWebhook 业务失败（过期/限流/非法消息体）也是 200+errcode≠0
+              const errcode = (res as { errcode?: number })?.errcode;
+              if (errcode !== undefined && errcode !== 0) imLog(`回复被钉钉拒绝：errcode=${errcode}，errmsg=${String((res as { errmsg?: string })?.errmsg ?? '').slice(0, 120)}`);
+            } catch (err) { imLog(`回复发送失败：${String(err).slice(0, 200)}`); ws.send(ackFrame(msg.messageId, false)); return; }
           }
           ws.send(ackFrame(msg.messageId, true));
         })
