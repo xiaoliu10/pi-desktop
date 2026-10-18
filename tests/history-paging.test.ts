@@ -34,8 +34,11 @@ describe('history paging (tail / before)', () => {
       expect(tail.branch.length).toBe(100);
       expect(tail.truncated).toEqual({ total: 1000, returned: 100 });
       expect(tail.branch.at(-1)!.id).toBe(ids.at(-1));
-      // entries 保持全量（分页游标要用完整结构）
-      expect(tail.entries.length).toBe(1000);
+      // IPC 瘦身（wireLite）：分页模式下 entries 用 branch 顶替——renderer 对
+      // entries 零消费，全量 entries 过 IPC 是打字尖峰的最后根因（17609 条的
+      // 序列化/反序列化各 ~500ms）。游标只需要 branch 的 id，不需要 entries。
+      expect(tail.entries.length).toBe(100);
+      expect(tail.entries).toBe(tail.branch); // 同一引用：瘦身是替身不是拷贝
     } finally { rmSync(dir, { recursive: true, force: true }); }
   });
 

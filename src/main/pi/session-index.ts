@@ -439,6 +439,16 @@ export class SessionIndex {
     if (dirtyFile) { try { this.parseFile(dirtyFile, key, true); } catch { /* 保留旧缓存 */ } }
     return this.fromCache(key, leaf, opts);
   }
+  /** 分页模式的 IPC 瘦身：PiHistory.entries 全量（大会话 17609 条）每次 history()
+   *  都过 IPC——主进程序列化 + renderer 反序列化各约 500ms（埋点：history-ipc 阶段
+   *  avg 1202ms，text-input 尖峰 max 与 phase max 完全重合）。renderer 对 entries
+   *  零消费（只用 branch/leaves/leafId/session，grep 2026-10-18 核实），分页模式下
+   *  用 branch 顶替（类型合规），IPC 体积砍 ~97%。需要全量 entries 的调用方走
+   *  主进程内部（cache 直读），不走 IPC 分页契约。 */
+  private wireLite(history: PiHistory): PiHistory {
+    return { ...history, entries: history.branch };
+  }
+
   /** memo 化的 branchEntries：同 key 同 leaf 且 entries 未被增量解析替换时直接复用。
    *  注意 entries 是「同一引用」才命中——parseFile 增量会整体换数组，天然失效。 */
   private cachedBranch(key: string, entries: PiEntry[], leaf: string | undefined): PiEntry[] {
@@ -490,14 +500,15 @@ export class SessionIndex {
       if (at > 0) {
         const count = Math.max(1, Math.min(opts?.count ?? 500, at));
         const page = full.branch.slice(Math.max(0, at - count), at);
-        return { ...full, branch: [...page, ...full.branch.slice(at)], truncated: { total: full.branch.length, returned: page.length + (full.branch.length - at) } };
+        return this.wireLite({ ...full, branch: [...page, ...full.branch.slice(at)], truncated: { total: full.branch.length, returned: page.length + (full.branch.length - at) } });
       }
       return full;
     }
     if (typeof tail === 'number' && tail > 0 && full.branch.length > tail) {
-      return { ...full, branch: full.branch.slice(full.branch.length - tail), truncated: { total: full.branch.length, returned: tail } };
+      const branch = full.branch.slice(full.branch.length - tail);
+      return this.wireLite({ ...full, branch, truncated: { total: full.branch.length, returned: tail } });
     }
-    return full;
+    return opts?.tail ? this.wireLite(full) : full;
   }
   start(changed: () => void) {
     this.close();
