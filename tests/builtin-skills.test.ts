@@ -112,7 +112,7 @@ describe('syncBuiltinSkills', () => {
 
   it('仓库内置资源包含四个办公技能且 frontmatter 合法', () => {
     const source = join(__dirname, '..', 'resources', 'builtin-skills');
-    for (const name of ['pptx', 'docx', 'xlsx', 'pdf']) {
+    for (const name of ['pptx', 'docx', 'xlsx', 'pdf', 'code-review']) {
       const md = readFileSync(join(source, name, 'SKILL.md'), 'utf8');
       expect(md).toMatch(/^---\r?\nname: /);
       expect(md).toContain('builtin: true');
