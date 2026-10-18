@@ -343,7 +343,7 @@ function registerIpc() {
   // 只读状态：内置 subagent 已删（2026-10-18），这里只报告第三方包的供给情况，
   // 供设置页展示「当前哪个扩展在提供子代理能力」。无写入入口。
   handle('subagentCapabilityStatus', () => subagentCapabilityStatus(host.environment.agentDir));
-  handle('recoverSubagents', (key: string, leaf?: string, pinned?: string[]) => recoverSubagents(host.environment.agentDir, key, host.index, leaf, pinned));
+  handle('recoverSubagents', (key: string, leaf?: string, pinned?: string[], knownSignature?: string) => recoverSubagents(host.environment.agentDir, key, host.index, leaf, pinned, knownSignature));
   handle('subagentChildTranscript', (key: string, callId: string, childId: string) => subagentChildTranscript(host.environment.agentDir, key, host.index, callId, childId));
   handle('cleanupSubagents', (key: string) => cleanupSubagents(host.environment.agentDir, key));
   // 记忆衔接层：探测 CLI 记忆插件（如 pi-memory），未启用时回退 Desktop 内置桥

@@ -61,7 +61,7 @@ export function migrateOldSubagentExtension(agentDir: string): boolean {
  */
 
 /** Recover only the selected, trusted session/branch. No renderer-supplied paths. */
-export async function recoverSubagents(agentDir: string, sessionKey: string, index: Pick<SessionIndex, 'subagentHistory'>, leaf?: string, pinned?: string[]): Promise<SubagentSnapshot[]> {
+export async function recoverSubagents(agentDir: string, sessionKey: string, index: Pick<SessionIndex, 'subagentHistory'>, leaf?: string, pinned?: string[], knownSignature?: string): Promise<SubagentSnapshot[] | { unchanged: true }> {
   if (!/^[a-f0-9]{64}$/.test(sessionKey) || (leaf !== undefined && typeof leaf !== 'string')) return [];
   let history;
   try { history = index.subagentHistory(sessionKey, leaf); } catch { return []; }
@@ -73,7 +73,18 @@ export async function recoverSubagents(agentDir: string, sessionKey: string, ind
   // single-async records are already normalized into `workflows`; leaving them in
   // legacy would duplicate the callId and let the raw record shadow the snapshot.
   const legacy = persisted.filter(rec => !workflowDetails(rec.details, rec.callId) && !singleAsyncDetails(rec.details, rec.callId));
-  return [...legacy, ...workflows];
+  const records = [...legacy, ...workflows];
+  // 与 renderer 同款轻量签名：未变化时只回 {unchanged:true}，避免每 10s 把
+  // 数百子代理快照（含转录）过一遍 IPC 结构化克隆（周期 100% 尖峰实测来源，
+  // ValueSerializer 热点）。签名与 renderer/subagent-polling 的字段保持一致。
+  if (knownSignature !== undefined) {
+    const sig = records.map(r => {
+      const d = r.details as { snapshotAt?: number; runId?: string } | undefined;
+      return `${r.callId}|${r.status}|${r.error ?? ''}|${r.startedAt ?? ''}|${d?.snapshotAt ?? ''}|${d?.runId ?? ''}`;
+    }).join('\n');
+    if (sig === knownSignature) return { unchanged: true };
+  }
+  return records;
 }
 
 /** Event-level persisted snapshots for one session (hash-owned file names only). */

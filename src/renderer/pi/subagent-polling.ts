@@ -33,7 +33,7 @@ export function pollSubagents(options: {
   /** 渲染层正在展示的 subagent callId：主进程据此让这些指针穿透 MAX_CALLS 尾窗，
    *  保证老工作流卡片也能读到 asyncDir/status.json 的终态校正（不穿透则永远假活）。 */
   pinned?: () => string[] | undefined;
-  recover: (key: string, leaf?: string, pinned?: string[]) => Promise<RecoveredSubagent[]>;
+  recover: (key: string, leaf?: string, pinned?: string[], knownSignature?: string) => Promise<RecoveredSubagent[] | { unchanged: true }>;
   isCurrent: () => boolean;
   publish: (records: RecoveredSubagent[]) => void;
   interval?: number;
@@ -50,7 +50,17 @@ export function pollSubagents(options: {
   const tick = async () => {
     const leaf = options.leaf?.();
     try {
-      const records = await options.recover(options.key, leaf, options.pinned?.());
+      const result = await options.recover(options.key, leaf, options.pinned?.(), lastSignature || undefined);
+      // 主进程签名一致：只回了 {unchanged:true}——快照没有任何变化，跳过 publish
+      // 与后续处理（大 payload 的 IPC 克隆已在主进程侧归零）。
+      if (result && typeof result === 'object' && 'unchanged' in result) {
+        lastSignature = lastSignature || JSON.stringify(lastRecords.map((r) => {
+          const d = (r as { details?: { snapshotAt?: number; runId?: string } }).details;
+          return `${(r as { callId?: string }).callId}|${(r as { status?: string }).status}|${(r as { error?: string }).error ?? ''}|${(r as { startedAt?: number }).startedAt ?? ''}|${d?.snapshotAt ?? ''}|${d?.runId ?? ''}`;
+        }).join('\n'));
+        return;
+      }
+      const records = result as RecoveredSubagent[];
       // Branch consistency: a response carries data for the branch selected at
       // request time. If the user switched branches meanwhile (leaf changed),
       // drop it — the next tick reads the current branch. Only meaningful when

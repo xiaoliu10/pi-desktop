@@ -174,7 +174,10 @@ export interface LocalPiApi extends importSettingsApi {
   review(cwd: string): Promise<PiReview>;
   /** 只读：当前哪个扩展在提供子代理能力（内置 subagent 已删，2026-10-18）。 */
   subagentCapabilityStatus(): Promise<{available:boolean;source?:string}>;
-  recoverSubagents(sessionKey: string, leaf?: string, pinned?: string[]): Promise<Array<{callId:string;status:string;details?:unknown;error?:string;startedAt?:number;updatedAt?:number}>>;
+  /** knownSignature：renderer 上次的快照签名——主进程算出的签名相同则返回
+   *  { unchanged:true }（几十字节），跳过大 payload 的 IPC 结构化克隆
+   *  （数百子代理的快照含转录，每 10s 轮询克隆一次 = 周期性 100% 尖峰）。 */
+  recoverSubagents(sessionKey: string, leaf?: string, pinned?: string[], knownSignature?: string): Promise<Array<{callId:string;status:string;details?:unknown;error?:string;startedAt?:number;updatedAt?:number}> | { unchanged: true }>;
   subagentChildTranscript(sessionKey: string, callId: string, childId: string): Promise<{messages:Record<string,unknown>[];truncated:boolean}|{error:string}>;
   /** 记忆衔接层状态：探测 CLI 记忆插件并返回当前链路。cwd 指定时附加项目存储类型与目录。 */
   memoryAssistStatus(enabled: boolean, cwd?: string): Promise<{ enabled: boolean; plugin: { kind: 'extension'; id: string; label?: string } | { kind: 'builtin' }; builtinDir: string; hint: string; /** scoped = 集中存储（memory-projects/<key>/），project-local = 项目内 .pi/memory/。 */ storageKind?: 'scoped' | 'project-local'; /** 对应存储类型的实际项目记忆目录（后端计算，不在渲染端重新推导）。 */ projectDir?: string }>;

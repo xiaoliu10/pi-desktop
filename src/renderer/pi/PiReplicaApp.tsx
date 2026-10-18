@@ -312,7 +312,7 @@ export default function PiReplicaApp() {
       }
       return ids.length ? ids.slice(-200) : undefined;
     };
-    return pollSubagents({ key, leaf: () => usePiStore.getState().leaf ?? undefined, pinned, recover: (k, l, pin) => api.recoverSubagents(k, l, pin),
+    return pollSubagents({ key, leaf: () => usePiStore.getState().leaf ?? undefined, pinned, recover: (k, l, pin, sig) => api.recoverSubagents(k, l, pin, sig),
       isCurrent: () => usePiStore.getState().selectedKey === key,
       publish: records => usePiStore.setState(state => ({ recoveredSubagents: mergeSubagentSnapshots(state.recoveredSubagents ?? [], records) })),
     });
