@@ -160,7 +160,9 @@ export class DingTalkStreamTransport implements ImTransport {
           if (msg.sessionWebhook) {
             // webhook 失败必须 ack false：钉钉会对失败消息重推，静默丢回复无痕迹。
             try {
-              const res = await this.postJson(msg.sessionWebhook, { msgtype: 'text', content: { text: reply } });
+              // 钉钉 webhook 的 text 消息格式是顶级 text.content（此前写成 content.text，
+// 每条回复都被拒 errcode=400201 miss param : text，而 HTTP 200 掩盖了它）
+const res = await this.postJson(msg.sessionWebhook, { msgtype: 'text', text: { content: reply } });
               // HTTP 200 ≠ 钉钉接收：sessionWebhook 业务失败（过期/限流/非法消息体）也是 200+errcode≠0
               const errcode = (res as { errcode?: number })?.errcode;
               if (errcode !== undefined && errcode !== 0) imLog(`回复被钉钉拒绝：errcode=${errcode}，errmsg=${String((res as { errmsg?: string })?.errmsg ?? '').slice(0, 120)}`);
