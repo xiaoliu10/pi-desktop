@@ -172,8 +172,8 @@ export interface LocalPiApi extends importSettingsApi {
   filePreview(cwd: string, file: string): Promise<{path: string; content?: string; diff: string; note: string; image?: {mime: string; base64: string}}>;
   gitStatus(cwd: string): Promise<import('./conversation-status').GitStatus>;
   review(cwd: string): Promise<PiReview>;
-  officialSubagentStatus(): Promise<{installed:boolean;thirdParty:boolean;thirdPartySource?:string;outdated:boolean;scoutExists:boolean;path:string}>;
-  enableOfficialSubagent(): Promise<{path:string;upgraded:boolean}>;
+  /** 只读：当前哪个扩展在提供子代理能力（内置 subagent 已删，2026-10-18）。 */
+  subagentCapabilityStatus(): Promise<{available:boolean;source?:string}>;
   recoverSubagents(sessionKey: string, leaf?: string, pinned?: string[]): Promise<Array<{callId:string;status:string;details?:unknown;error?:string;startedAt?:number;updatedAt?:number}>>;
   subagentChildTranscript(sessionKey: string, callId: string, childId: string): Promise<{messages:Record<string,unknown>[];truncated:boolean}|{error:string}>;
   /** 记忆衔接层状态：探测 CLI 记忆插件并返回当前链路。cwd 指定时附加项目存储类型与目录。 */

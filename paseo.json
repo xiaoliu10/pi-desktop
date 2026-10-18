@@ -1,0 +1,12 @@
+{
+  "worktree": {
+    "setup": "npm ci\\ncp \\\"$PASEO_SOURCE_CHECKOUT_PATH/.env\\\" .env\\nnpm run db:migrate",
+    "teardown": "npm run db:drop || true"
+  },
+  "scripts": {
+    "dev": {
+      "type": "service",
+      "command": "npm run dev"
+    }
+  }
+}

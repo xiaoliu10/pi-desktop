@@ -66,7 +66,7 @@ export function SettingsFeatures({page,cwd,query,workspace,loadedExtensionPaths,
     {error&&<div className="pi-features__alert" role="alert">{error}</div>}{notice&&<div className="pi-features__notice" role="status">{notice}</div>}
     {/* 诊断提示只在与 mcp.json 相关的页面展示，避免在每个设置页顶部都出现。 */}
     {page==='mcp'&&data?.diagnostics.map(d=><p className="pi-features__alert" key={d}>{d}</p>)}
-    {page==='subagents'&&<OfficialSubagentSetup onInstalled={load}/>}
+    {page==='subagents'&&<OfficialSubagentSetup/>}
     {/* ZCode 式资源范围选择：小型 pill 下拉（仅全局资源 / 项目名），右侧资源计数；授权提示收进 tooltip 与下方小字。 */}
     {['instructions','skills','subagents','mcp'].includes(page)&&(
       <div className="pi-features__scopebar">

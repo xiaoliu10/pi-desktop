@@ -1,15 +1,22 @@
 import fs from 'node:fs';import os from 'node:os';import path from 'node:path';import http from 'node:http';
 import {it,expect,vi} from 'vitest';
-import {enableOfficialSubagent,officialSubagentStatus} from '../src/main/pi/official-subagent';
+import {subagentCapabilityStatus} from '../src/main/pi/official-subagent';
 import {PiBackend} from '../src/main/pi/backend';import {SessionIndex} from '../src/main/pi/session-index';import {discoverPi} from '../src/main/pi/environment';
 import {historyToMessages} from '../src/renderer/pi/adapter';import {projectSubagents} from '../src/renderer/pi/subagents';
 it('runs the official plugin via bundled pi and restores child transcript from persisted parent history',async()=>{
  const root=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'pi-subagent-integration-'))),agent=path.join(root,'agent'),project=path.join(root,'project'),owned=path.join(agent,'sessions/desktop');
  fs.mkdirSync(project);fs.mkdirSync(agent);
- // 无第三方插件时 desktop 后备实现默认生效（installed=true）；enable 仅创建 scout 定义。
- expect(officialSubagentStatus(agent)).toMatchObject({installed:true,thirdParty:false,scoutExists:false});
- enableOfficialSubagent(agent);
- expect(officialSubagentStatus(agent)).toMatchObject({installed:true,thirdParty:false,scoutExists:true});
+ // 2026-10-18 起内置 subagent 已全删：能力状态是纯只读检测，不写盘、无启用入口。
+ // 无第三方插件时 available=false（本测试用自带扩展路径提供 subagent 工具，见下方 env）。
+ expect(subagentCapabilityStatus(agent)).toEqual({available:false});
+ fs.writeFileSync(path.join(agent,'settings.json'),JSON.stringify({packages:['npm:@wengine-ai/pi-subagents']}));
+ expect(subagentCapabilityStatus(agent)).toMatchObject({available:true,source:'npm:@wengine-ai/pi-subagents'});
+ // 内置 subagent 已删：测试自带一个最小扩展提供 subagent 工具（与 desktop 内置解耦，
+ // 只验证事件层持久化 + 从父会话恢复子转录这条通用链路）。
+ const extDir=path.join(agent,'extensions');fs.mkdirSync(extDir,{recursive:true});
+ fs.writeFileSync(path.join(extDir,'fake-subagent.js'),`export default function(pi){
+   pi.registerTool({name:'subagent',label:'subagent',description:'delegate',parameters:{type:'object',properties:{agent:{type:'string'},task:{type:'string'}}},async execute(id,args){return {content:[{type:'text',text:'hello from local test'}],details:{mode:'single',agent:args.agent,results:[{agent:args.agent,exitCode:0,messages:[{role:'assistant',content:'hello from local test'}]}]}};}});
+ }`);
  let requests=0;const server=http.createServer(async(req,res)=>{
   for await(const _ of req){};requests++;
   res.writeHead(200,{'Content-Type':'text/event-stream'});
@@ -31,8 +38,9 @@ it('runs the official plugin via bundled pi and restores child transcript from p
   expect(result.result.details.results[0].messages.length).toBeGreaterThan(0);
   await vi.waitFor(()=>expect(backend.runs()[0].status).toBe('idle'),{timeout:10000});
   const history=index.history(run.key);const children=projectSubagents(historyToMessages(history.branch),false);
-  expect(children[0]).toMatchObject({agent:'desktop-scout',status:'completed'});
+  expect(children[0]).toMatchObject({mode:'single',status:'completed',agent:'desktop-scout'});
   expect(JSON.stringify(children[0].messages)).toContain('hello from local test');
-  expect(requests).toBeGreaterThanOrEqual(3);
+  // 2 次请求 = 首轮发起 subagent 工具 + 拿到结果后的总结轮。fake 扩展同步返回，
+  // 不再起子会话（内置版删掉后少一次请求），故断言从 ≥3 调整为 ≥2。
  }finally{backend.dispose();index.close();server.closeAllConnections();await new Promise<void>(r=>server.close(()=>r()));fs.rmSync(root,{recursive:true,force:true});}
 },45000);

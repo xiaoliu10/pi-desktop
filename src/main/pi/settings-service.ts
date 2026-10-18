@@ -4,7 +4,6 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import type { PiHost } from './host';
-import { detectThirdPartySubagent } from './official-subagent';
 import { canonical, fileKey } from './session-index';
 import { repairPackages } from './packages-repair';
 import { recordCodemodeDesired, repairCodemode } from './repair-codemode';
@@ -66,11 +65,9 @@ export class SettingsService {
     const resources=this.resources(cwd),mcp:McpServerRow[]=[];
     for(const {root,scope}of this.roots(cwd)){const file=path.join(root,'mcp.json');try{const cfg=this.mcpMigrate(file);const seen=new Set<string>();const target=(c:any)=>c.command?path.basename(String(c.command)):(()=>{try{const url=new URL(c.url);return url.origin+url.pathname;}catch{return 'URL 无效';}})();for(const[name,c]of Object.entries(cfg.mcpServers||{}) as [string,any][]){seen.add(name);if(!object(c)){diagnostics.push(`MCP ${name} 配置无效`);continue;}mcp.push({id:hash(file+'\0'+name),name,scope,transport:c.command?'stdio':'Streamable HTTP',target:target(c),enabled:c.enabled!==false,path:file,revision:revision(file)});}}catch(e){diagnostics.push(`${file}：${(e as Error).message}`);}}
     const prefs=this.preferences(),sessions=this.host.index.scan(),paths=[...new Set([...prefs.projects.map(p=>p.path),...sessions.map(s=>s.cwd)].map(canonical))];
-    // 与 backend 的 -e 加载决策同源：用户装了第三方 subagent（npm:pi-subagents 等）时
-    // 内置 desktop-subagent 不加载——这里若照旧报「已加载」，设置页会显示两个
-    // subagent 徽标，用户误以为双轨在跑（2026-10-18 反馈）。
-    const thirdPartySubagent=detectThirdPartySubagent(this.host.environment.agentDir).detected;
-    const loadedExtensions=[path.join(this.policyDir,'index.mjs'),path.join(this.policyDir,'mcp-bridge.mjs'),path.join(this.policyDir,'..','desktop-ask','index.mjs'),...(thirdPartySubagent?[]:[path.join(this.policyDir,'..','desktop-subagent','index.mjs')]),path.join(this.policyDir,'..','desktop-memory','index.mjs')].map(p=>path.resolve(p)).filter(p=>fs.existsSync(p));
+    // 内置 desktop-subagent 已全删（2026-10-18，用户二选一）：这里只列仍然内置的
+    // 三个扩展。子代理能力由用户自选扩展提供，设置页用只读状态 IPC 展示。
+    const loadedExtensions=[path.join(this.policyDir,'index.mjs'),path.join(this.policyDir,'mcp-bridge.mjs'),path.join(this.policyDir,'..','desktop-ask','index.mjs'),path.join(this.policyDir,'..','desktop-memory','index.mjs')].map(p=>path.resolve(p)).filter(p=>fs.existsSync(p));
     return {preferences:prefs,ai:{defaultProvider:String(ai.defaultProvider||''),defaultModel:String(ai.defaultModel||''),defaultThinkingLevel:String(ai.defaultThinkingLevel||'off'),autoCompact:ai.compaction?.enabled!==false,retry:ai.retry?.enabled!==false,codemode:Array.isArray(ai.defaultTools)&&(ai.defaultTools as unknown[]).includes('+codemode'),revision:revision(this.settingsPath())},resources,mcp,mcpRevisions:Object.fromEntries(this.roots(cwd).map(r=>[r.scope,revision(path.join(r.root,'mcp.json'))])),diagnostics,projects:paths.map(p=>({path:p,name:prefs.projects.find(x=>canonical(x.path)===p)?.name||path.basename(p),registered:prefs.projects.some(x=>canonical(x.path)===p),exists:fs.existsSync(p),sessions:sessions.filter(s=>canonical(s.cwd)===p).length})),loadedExtensions};
   }
   saveAi(value:SettingsSnapshot['ai']) {if(!value||!['off','minimal','low','medium','high','xhigh','max'].includes(value.defaultThinkingLevel)||typeof value.autoCompact!=='boolean'||typeof value.retry!=='boolean'||typeof value.defaultProvider!=='string'||typeof value.defaultModel!=='string'||value.defaultProvider.length>200||value.defaultModel.length>200)throw new Error('AI 设置无效');mergeJson(this.settingsPath(),p=>{for(const k of ['defaultProvider','defaultModel']as const){if(value[k].trim())p[k]=value[k].trim();else delete p[k];}p.defaultThinkingLevel=value.defaultThinkingLevel;p.compaction={...p.compaction,enabled:value.autoCompact};p.retry={...p.retry,enabled:value.retry};},value.revision); }

@@ -1,4 +1,4 @@
-import { enableOfficialSubagent, officialSubagentStatus, recoverSubagents, cleanupSubagents, subagentChildTranscript } from './pi/official-subagent';
+import { subagentCapabilityStatus, recoverSubagents, cleanupSubagents, subagentChildTranscript } from './pi/official-subagent';
 import { startDingTalkRegistration, pollDingTalkRegistration } from './pi/dingtalk-registration';
 import { syncBuiltinSkills, syncBuiltinPrompts } from './pi/builtin-skills';
 import { applyContinuations, loadContinuations } from './pi/session-continuations';
@@ -340,8 +340,9 @@ function registerIpc() {
   handle('review', cwd => host.review(cwd));
   handle('gitStatus', cwd => gitStatus(cwd));
   handle('filePreview', (cwd, file) => filePreview(cwd, file));
-  handle('officialSubagentStatus', () => officialSubagentStatus(host.environment.agentDir));
-  handle('enableOfficialSubagent', () => enableOfficialSubagent(host.environment.agentDir));
+  // 只读状态：内置 subagent 已删（2026-10-18），这里只报告第三方包的供给情况，
+  // 供设置页展示「当前哪个扩展在提供子代理能力」。无写入入口。
+  handle('subagentCapabilityStatus', () => subagentCapabilityStatus(host.environment.agentDir));
   handle('recoverSubagents', (key: string, leaf?: string, pinned?: string[]) => recoverSubagents(host.environment.agentDir, key, host.index, leaf, pinned));
   handle('subagentChildTranscript', (key: string, callId: string, childId: string) => subagentChildTranscript(host.environment.agentDir, key, host.index, callId, childId));
   handle('cleanupSubagents', (key: string) => cleanupSubagents(host.environment.agentDir, key));

@@ -8,7 +8,7 @@ import { PiRpcClient, piLogDir } from './rpc-client';
 import { SessionIndex, canonical, fileKey } from './session-index';
 import { runAutomationBridge, SCHEDULE_GUIDANCE } from './automation-bridge';
 import { cacheHitRateFromTotals, summarizeContext } from './context-details';
-import { detectThirdPartySubagent, migrateOldSubagentExtension, persistSubagentEvent, runningSubagentCounts } from './official-subagent';
+import { migrateOldSubagentExtension, persistSubagentEvent, runningSubagentCounts } from './official-subagent';
 import { detectThirdPartyAsk, bridgeableQuestions, planAnswer, type AskBridgeState, type AskBridgeQuestion } from './third-party-ask';
 import { clearMemoryEnv, memorySessionEnv } from './memory-bridge';
 import { repairPackages } from './packages-repair';
@@ -287,13 +287,11 @@ export class PiBackend {
     // freshly computed per-project injection. See memorySessionEnv for the tradeoff.
     clearMemoryEnv(env);
     Object.assign(env, memorySessionEnv(memory, input.cwd, this.env.agentDir));
-    // Subagent fallback：仅在用户没有安装第三方 subagent 插件时加载。
-    // 检测 agentDir/extensions/ + settings.json packages 里的 subagent 扩展。
-    // 旧版 desktop-official-subagent 在 agentDir/extensions/ 里会和 npm 包冲突，
-    // 迁移时自动删除旧目录，改用 -e 加载消除冲突。
+    // 子代理能力 2026-10-18 起完全交由用户自选扩展（如 npm:@wengine-ai/pi-subagents）：
+    // 内置 desktop-subagent 已删除（全删内置，用户二选一）。旧版遗留目录
+    // （desktop-official-subagent）仍在迁移时清掉，避免与 npm 包冲突。
     migrateOldSubagentExtension(this.env.agentDir);
-    const subagentPath = path.join(path.dirname(this.policyPath), '..', 'desktop-subagent', 'index.mjs');
-    const subagentArgs = fs.existsSync(subagentPath) && !detectThirdPartySubagent(this.env.agentDir).detected ? ['-e', subagentPath] : [];
+    const subagentArgs: string[] = [];
     // codemode 采用率引导：非 GPT 系模型对弱 guideline 不敏感，随会话注入
     // 可判定规则 + 运行中提醒（缺失不阻塞会话）。
     const nudgePath = path.join(path.dirname(this.policyPath), '..', 'desktop-codemode-nudge', 'index.mjs');

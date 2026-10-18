@@ -4,9 +4,18 @@ import type { SessionIndex } from './session-index';
 import { childSessionPointer, readSnapshotJson, STALE_MS, subagentAsyncRoot, workflowSnapshots, type SubagentSnapshot } from './subagent-snapshots';
 import { singleAsyncDetails, workflowDetails, workflowId, workflowState } from '../../shared/subagent-workflow';
 
+
+/** 只读能力状态（替代已删的 officialSubagentStatus/enableOfficialSubagent）：
+ *  不写盘、不注册任何东西——内置 subagent 已删，只报告第三方供给情况。 */
+export function subagentCapabilityStatus(agentDir: string): { available: boolean; source?: string } {
+  const detected = detectThirdPartySubagent(agentDir);
+  return { available: detected.detected, source: detected.source };
+}
+
 /**
  * Detect whether a third-party subagent extension/package is installed.
- * Desktop's fallback subagent loads via -e ONLY when this returns false.
+ * 2026-10-18 起内置 desktop-subagent 已全删，子代理能力由用户自选扩展提供；
+ * 此函数仅用于设置页状态展示（告诉用户当前哪个包在提供子代理能力）。
  * Checks: settings.json packages for npm:*subagent*, and agentDir/extensions/
  * for any directory with "subagent" in the name (except desktop's own).
  */
@@ -44,36 +53,12 @@ export function migrateOldSubagentExtension(agentDir: string): boolean {
 }
 
 /** Status for the UI: is desktop's fallback active, or is a third-party plugin in use? */
-export function officialSubagentStatus(agentDir: string) {
-  const thirdParty = detectThirdPartySubagent(agentDir);
-  const oldDir = path.join(agentDir, 'extensions', 'desktop-official-subagent');
-  const outdated = fs.existsSync(oldDir);
-  const scout = path.join(agentDir, 'agents', 'desktop-scout.md');
-  return {
-    installed: !thirdParty.detected,        // desktop fallback is active when no third-party present
-    thirdParty: thirdParty.detected,
-    thirdPartySource: thirdParty.source,
-    outdated,                               // old extension still in agentDir/extensions/ (needs migration)
-    scoutExists: fs.existsSync(scout),
-    path: path.join(agentDir, 'extensions', 'desktop-official-subagent', 'index.ts'),
-  };
-}
 
 /**
  * Enable desktop's subagent support: create the scout agent definition.
  * The fallback extension itself is loaded via -e in backend.launch(), not from disk.
  * This is idempotent and safe to call repeatedly.
  */
-export function enableOfficialSubagent(agentDir: string) {
-  migrateOldSubagentExtension(agentDir);
-  const agentRoot = path.join(agentDir, 'agents');
-  fs.mkdirSync(agentRoot, { recursive: true });
-  const scout = path.join(agentRoot, 'desktop-scout.md');
-  if (!fs.existsSync(scout)) {
-    fs.writeFileSync(scout, '---\nname: desktop-scout\ndescription: 只读检查项目并汇总发现\ntools: read, grep, find, ls\n---\n你是只读研究助手。检查任务涉及的代码，报告结论、证据和不确定性。不要修改文件。\n', { mode: 0o600 });
-  }
-  return { path: scout, upgraded: true };
-}
 
 /** Recover only the selected, trusted session/branch. No renderer-supplied paths. */
 export async function recoverSubagents(agentDir: string, sessionKey: string, index: Pick<SessionIndex, 'subagentHistory'>, leaf?: string, pinned?: string[]): Promise<SubagentSnapshot[]> {
