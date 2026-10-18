@@ -80,7 +80,7 @@ const localPi: LocalPiApi = {
   importSession: () => invoke('importSession'), runSubagent: (id, cwd, task, parentKey) => invoke('runSubagent', id, cwd, task, parentKey),
   environment: () => invoke('environment'), configure: value => invoke('configure', value),
   refreshEnvironment: () => invoke('refreshEnvironment'), upgradeLocalPi: () => invoke('upgradeLocalPi'),
-  sessions: () => invoke('sessions'), history: (key, leaf) => invoke('history', key, leaf),
+  sessions: () => invoke('sessions'), history: (key, leaf, opts) => invoke('history', key, leaf, opts),
   resources: cwd => invoke('resources', cwd), connect: input => invoke('connect', input),
   sidecarEnsure: mainKey => invoke('sidecarEnsure', mainKey), sidecarBinding: mainKey => invoke('sidecarBinding', mainKey),
   runs: () => invoke('runs'), prompt: (key, text, behavior, images) => invoke('prompt', key, text, behavior, images),

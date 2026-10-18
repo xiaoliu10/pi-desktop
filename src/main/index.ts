@@ -299,7 +299,7 @@ function registerIpc() {
     return { key: run.key, run };
   });
   handle('sidecarBinding', mainKey => host.sidecar.bindingOf(mainKey));
-  handle('history', (key, leaf) => host.index.history(key, leaf));
+  handle('history', (key, leaf, opts) => host.index.history(key, leaf, opts));
   handle('resources', cwd => host.resources(cwd));
   handle('connect', input => {
     if (!input || typeof input.trustProject !== 'boolean' || !isAccessMode(input.permission)) throw new Error('连接参数无效');

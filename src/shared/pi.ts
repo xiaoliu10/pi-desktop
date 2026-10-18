@@ -23,7 +23,7 @@ export interface PiEnvironment {
 export interface PiUpgradeResult { exitCode: number; stdout: string; stderr: string }
 export interface PiSession { key: string; id: string; path: string; cwd: string; name: string; updatedAt: number; size: number; warnings: string[]; owned: boolean; parentSession?: string; sidecarOf?: string }
 export interface PiEntry { type: string; id?: string; parentId?: string | null; timestamp?: string; message?: Record<string, unknown>; [key: string]: unknown }
-export interface PiHistory { session: PiSession; entries: PiEntry[]; branch: PiEntry[]; leaves: string[]; leafId: string | null; syncedAt: number }
+export interface PiHistory { session: PiSession; entries: PiEntry[]; branch: PiEntry[]; leaves: string[]; leafId: string | null; syncedAt: number; /** 分页元信息：本次只返回了 branch 尾部 returned 条（大会话首屏降载），total 是完整条数。 */ truncated?: { total: number; returned: number } }
 export interface PiResource { id: string; name: string; kind: string; path: string; scope: 'user' | 'project'; status: 'discovered' | 'callable' | 'disabled' | 'missing' | 'error'; detail: string }
 export interface PiCommand { name: string; description?: string; source?: string; path?: string }
 export interface PiModel { id: string; name: string; provider: string; reasoning?: boolean; input?: string[] }
@@ -127,7 +127,7 @@ export interface LocalPiApi extends importSettingsApi {
   setSessionArchived(key: string, archived: boolean): Promise<string[]>;
   /** 手动删除归档会话：会话文件移到系统废纸篓（可恢复），索引条目随之清除。 */
   deleteArchivedSession(key: string): Promise<string[]>;
-  history(key: string, leafId?: string): Promise<PiHistory>;
+  history(key: string, leafId?: string, opts?: { tail?: number; before?: string; count?: number }): Promise<PiHistory>;
   resources(cwd?: string): Promise<PiResource[]>;
   connect(input: { sourceKey?: string; cwd?: string; trustProject: boolean; permission: AccessMode; executionMode?: Exclude<AccessMode, 'plan'> }): Promise<PiRun>;
   sidecarEnsure(mainKey: string): Promise<{ key: string; run: PiRun }>;
