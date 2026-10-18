@@ -1077,9 +1077,28 @@ function stashComposerDraft(key: string, draft: ComposerDraft) {
 /** 测试用：清空全部草稿转存。 */
 export function resetComposerDrafts() { composerDrafts.clear(); }
 /** Composer 的 200ms 防抖回调按挂载归属路由：owner 已切换时写回转存而不是 live 草稿。 */
+/** 正在输入的 live 草稿（防抖后的最新文本 + 归属）。**不进 store**：打字每 200ms
+ *  镜像一次 draftText 进 zustand 会让无 selector 的 PiReplicaApp 全树重渲（Composer
+ *  已 memo，但树的其他部分每拍重建）——流式期间两路 set 交错直接把主线程占满
+ *  （用户实测：流式中打字 p50=1298ms，而同一时段页面点击仅 9-45ms）。会话切换的
+ *  转存（switchComposerOwner）与拼接注入（readComposerLiveDraft）从这里取最新值。 */
+let liveDraft: { owner: string | null; text: string } | null = null;
+
+/** 读 live 草稿（拼接类注入的基准文本）：打字中 liveDraft 最新；否则退回 store 值。 */
+export function readComposerLiveDraft(fallback: string): string {
+  const st = usePiStore.getState();
+  const owner = composerKeyOf(st);
+  return liveDraft && liveDraft.owner === owner ? liveDraft.text : fallback;
+}
+
 export function writeComposerDraftText(text: string, ownerKey: string | null | undefined) {
   const st = usePiStore.getState();
-  if (ownerKey == null || ownerKey === composerKeyOf(st)) { st.setDraftText(text); return; }
+  if (ownerKey == null || ownerKey === composerKeyOf(st)) {
+    // 只记 liveDraft，不 set({draftText})——见 liveDraft 注释。会话切换时
+    // switchComposerOwner 会把它转存进 composerDrafts 并经 setNow 恢复。
+    liveDraft = { owner: composerKeyOf(st), text };
+    return;
+  }
   const prev = composerDrafts.get(ownerKey);
   stashComposerDraft(ownerKey, { text, items: prev?.items ?? [] });
 }
@@ -1093,7 +1112,11 @@ function switchComposerOwner(get: () => PiReplicaStore, nextKey: string | null):
   const state = get();
   const prevKey = composerKeyOf(state);
   if (prevKey === nextKey) return undefined; // 原地回放/重选：live 草稿即最新，不动
-  if (prevKey !== null) stashComposerDraft(prevKey, { text: state.draftText, items: state.contextItems });
+  // 转存基准：flush 刚写入的 liveDraft 优先（store 的 draftText 现在只在低频注入时
+  // 更新，打字期间落后于真实输入——用它会丢尾字）。
+  const liveText = liveDraft && liveDraft.owner === prevKey ? liveDraft.text : state.draftText;
+  liveDraft = null;
+  if (prevKey !== null) stashComposerDraft(prevKey, { text: liveText, items: state.contextItems });
   const draft = nextKey === null ? undefined : composerDrafts.get(nextKey);
   if (nextKey !== null) composerDrafts.delete(nextKey);
   return draft ? { draftText: draft.text, contextItems: [...draft.items] } : { draftText: '', contextItems: [] };
@@ -1980,7 +2003,12 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
         void window.localPi?.saveDesktopSettings({ subagentDismissed: map }).catch(() => undefined);
       }
     },
-    setDraftText: (draftText) => set({ draftText }),
+    setDraftText: (draftText) => {
+      // 外部注入（队列召回/历史回填/状态面板请求）也是 live 基准的一部分：
+      // 注入后 readComposerLiveDraft 必须返回新值，否则拼接类功能用旧文本。
+      liveDraft = { owner: composerKeyOf(get()), text: draftText };
+      set({ draftText });
+    },
 
     resendEdited: async (entryId, text) => {
       const s = get();
@@ -2009,7 +2037,8 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
         const run = currentRun(state);
         if (!run) { set({ error: '没有运行中的任务；先发起对话后再重载。', errorKey: state.selectedKey ?? undefined }); return; }
         if (run.status !== 'idle') { set({ error: '任务运行中，请等空闲后再重载。', errorKey: state.selectedKey ?? undefined }); return; }
-        set({ draftText: '' });
+        liveDraft = { owner: composerKeyOf(get()), text: '' };
+      set({ draftText: '' });
         pushNotification({ kind: 'info', title: '正在重载扩展、skills 与提示词模板…', time: '刚刚' });
         window.localPi!.sessionReload(run.key)
           .then(() => pushNotification({ kind: 'success', title: '已重载扩展、skills 与提示词模板', time: '刚刚' }))
@@ -2021,7 +2050,8 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
         if (!run) { set({ error: '没有运行中的任务；先发起对话后再压缩上下文。', errorKey: state.selectedKey ?? undefined }); return; }
         if (run.status !== 'idle') { set({ error: '任务运行中，请等空闲后再压缩上下文。', errorKey: state.selectedKey ?? undefined }); return; }
         const customInstructions = trimmedCommand.startsWith('/compact ') ? trimmedCommand.slice('/compact '.length).trim() || undefined : undefined;
-        set({ draftText: '' });
+        liveDraft = { owner: composerKeyOf(get()), text: '' };
+      set({ draftText: '' });
         void window.localPi!.compact(run.key, customInstructions)
           .then((result) => {
             const before = (result as { tokensBefore?: number } | null)?.tokensBefore;

@@ -9,7 +9,7 @@ const ls = { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, 
 
 const adapter = await import('../src/renderer/pi/adapter');
 const { usePiStore } = adapter;
-const { resetComposerDrafts, writeComposerDraftText } = adapter;
+const { resetComposerDrafts, writeComposerDraftText, readComposerLiveDraft } = adapter;
 const homeKey = (cwd?: string) => (cwd ? `home:${cwd}` : null);
 const ownerOf = () => { const st = usePiStore.getState(); return st.selectedKey ?? homeKey(st.draftCwd); };
 
@@ -131,5 +131,40 @@ describe('未发送草稿按会话保留（切换不丢）', () => {
     usePiStore.getState().selectSession('sess-a');
     expect(usePiStore.getState().draftText).toBe('');
     expect(usePiStore.getState().contextItems).toEqual([]);
+  });
+});
+
+
+describe('打字草稿不进 store（liveDraft 通道，性能契约）', () => {
+  beforeEach(() => {
+    resetComposerDrafts();
+    usePiStore.setState({ connecting: false, error: undefined, env: { supported: true } as any, draftCwd: '/tmp/proj' });
+  });
+
+  it('live 归属的防抖写入不更新 store.draftText（零全树重渲）', () => {
+    seed();
+    const before = usePiStore.getState().draftText;
+    let notified = 0;
+    const unsub = usePiStore.subscribe(() => { notified += 1; });
+    writeComposerDraftText('正在打的字', ownerOf()); // 同归属 = live 路径
+    unsub();
+    expect(usePiStore.getState().draftText).toBe(before); // store 不动
+    expect(notified).toBe(0); // 零订阅通知 = 零重渲
+    expect(readComposerLiveDraft('')).toBe('正在打的字'); // live 基准正确
+  });
+
+  it('切换会话把 liveDraft 转存（尾字不丢），store 恢复走 setNow', () => {
+    seed();
+    writeComposerDraftText('打了一半的问题', ownerOf());
+    usePiStore.getState().selectSession('sess-b'); // 切走：转存 liveDraft
+    usePiStore.getState().selectSession('sess-a'); // 切回：恢复
+    expect(usePiStore.getState().draftText).toBe('打了一半的问题');
+  });
+
+  it('外部注入（setDraftText）更新 live 基准，拼接类功能读到新值', () => {
+    seed();
+    writeComposerDraftText('旧文本', ownerOf());
+    usePiStore.getState().setDraftText('注入的新文本');
+    expect(readComposerLiveDraft('')).toBe('注入的新文本');
   });
 });
