@@ -8,6 +8,7 @@ import { readModelCatalog, mergeModelCatalog, writeDefaultModel, writeModelProvi
 import { mergeRuntimeProviders, packagesFromSettings, runtimeModelsFromRuns } from './provider-registry';
 import { UsageStatsService } from './usage-stats';
 import { SessionIndex } from './session-index';
+import { OutlineCache } from './outline-cache';
 import { PiBackend } from './backend';
 import { SidecarService } from './sidecar-service';
 import { resourceCatalog } from './resource-catalog';
@@ -23,12 +24,15 @@ export class PiHost {
   sidecar: SidecarService;
   private resourcesTimer?: ReturnType<typeof setInterval>;
   private usage = new UsageStatsService(() => this.index.scan());
+  /** 会话大纲持久化缓存（userData/outline-cache.json）：点开大会话直接读，不重扫。 */
+  private outlines!: OutlineCache;
   constructor(dataDir: string, private policyPath: string, private emit: (e: PiEvent) => void, private sharedSkillsDir?: string, private appVersion?: string) {
     this.dataDir = dataDir;
     try { this.preferences = JSON.parse(fs.readFileSync(path.join(dataDir, 'pi-desktop.json'), 'utf8')); } catch { this.preferences = {}; }
     this.environment = this.withAppVersion(discoverPi(this.preferences));
     const owned = path.join(this.environment.agentDir, 'sessions', 'desktop');
-    this.index = new SessionIndex([...new Set([...this.environment.sessionDirs, owned])], owned);
+    this.outlines = new OutlineCache(path.join(dataDir, 'outline-cache.json'));
+    this.index = new SessionIndex([...new Set([...this.environment.sessionDirs, owned])], owned, this.outlines);
     this.backend = new PiBackend(this.environment, this.index, owned, policyPath, emit, this.dataDir);
     this.sidecar = new SidecarService(this.backend, this.index, this.dataDir, emit);
     this.index.start(() => emit({ type: 'sessions-changed' }));
@@ -66,7 +70,7 @@ export class PiHost {
     this.accounts.dispose(); this.backend.dispose(); this.index.close();
     this.environment = this.withAppVersion(discoverPi(this.preferences));
     const owned = path.join(this.environment.agentDir, 'sessions', 'desktop');
-    this.index = new SessionIndex([...new Set([...this.environment.sessionDirs, owned])], owned);
+    this.index = new SessionIndex([...new Set([...this.environment.sessionDirs, owned])], owned, this.outlines);
     this.backend = new PiBackend(this.environment, this.index, owned, this.policyPath, this.emit, this.dataDir);
     this.sidecar = new SidecarService(this.backend, this.index, this.dataDir, this.emit);
     this.index.start(() => this.emit({ type: 'sessions-changed' })); this.emit({ type: 'sessions-changed' });
@@ -146,5 +150,5 @@ export class PiHost {
     if (!this.index.scan().some(s => s.cwd === cwd) && !this.backend.runs().some(r => r.cwd === cwd)) throw new Error('请先选择该项目的会话');
     return workspaceReview(cwd);
   }
-  dispose() { this.accounts.dispose(); clearInterval(this.resourcesTimer); this.index.close(); this.backend.dispose(); }
+  dispose() { this.accounts.dispose(); clearInterval(this.resourcesTimer); this.outlines.flushNow(); this.index.close(); this.backend.dispose(); }
 }

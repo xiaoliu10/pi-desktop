@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import type { PiEntry, PiHistory, PiOutline, PiOutlineItem, PiSearchHit, PiSearchResult, PiSession } from '../../shared/pi';
+import { OutlineCache } from './outline-cache';
 import { MAX_SESSION, OversizedSessionError, sessionStub } from './session-size';
 /** 大于该值的会话文件变更时只更新元数据、延后全量解析：流式期间活动会话每个 delta
  * 都在追加，若每次 watch/轮询都重读重解析整个 MB 级文件，主进程会被持续拖死。 */
@@ -95,7 +96,7 @@ export class SessionIndex {
   private debounce?: ReturnType<typeof setTimeout>;
   /** 超限降级缓存（只有元数据）：history() 据此拒绝全量读取。 */
   private oversized = new WeakSet<PiHistory>();
-  constructor(public roots: string[], private readonly ownedRoot: string) {}
+  constructor(public roots: string[], private readonly ownedRoot: string, private readonly outlines?: OutlineCache) {}
   private stampOf(file: string): { stat: fs.Stats; stamp: string } | undefined {
     try {
       const stat = fs.statSync(file);
@@ -133,7 +134,7 @@ export class SessionIndex {
       catch { warnings.push(`第 ${i + 1} 行损坏，已跳过`); }
     }
     const header = parsed[0];
-    if (header?.type !== 'session' || typeof header.id !== 'string' || typeof header.cwd !== 'string') { this.cache.delete(key); this.branchMemo.delete(key); return; }
+    if (header?.type !== 'session' || typeof header.id !== 'string' || typeof header.cwd !== 'string') { this.cache.delete(key); this.branchMemo.delete(key); this.outlines?.delete(key); return; }
     const entries = parsed.slice(1), branch = branchEntries(entries);
     const first = entries.find(e => e.type === 'message' && e.message?.role === 'user')?.message?.content;
     const title = typeof first === 'string' ? first : Array.isArray(first) ? first.filter(b => b.type === 'text').map(b => b.text).join(' ') : '';
@@ -253,7 +254,7 @@ export class SessionIndex {
       const file = history.session.path;
       // Parent creation/removal changes visibility even when the child file itself is unchanged.
       if (!files.has(file) || previousParents.get(file) !== this.nestedParents.get(file)) {
-        this.cache.delete(key); this.branchMemo.delete(key);
+        this.cache.delete(key); this.branchMemo.delete(key); this.outlines?.delete(key);
         this.dirty.delete(key);
       }
     }
@@ -274,7 +275,7 @@ export class SessionIndex {
         }
         this.parseFile(file, key);
       } catch (err) {
-        if ((err as NodeJS.ErrnoException).code === 'ENOENT') { this.cache.delete(key); this.branchMemo.delete(key); continue; }
+        if ((err as NodeJS.ErrnoException).code === 'ENOENT') { this.cache.delete(key); this.branchMemo.delete(key); this.outlines?.delete(key); continue; }
         if (err instanceof OversizedSessionError) {
           // 超限会话降级为「元数据可见」：列表/侧栏照常显示（此前整个会话从侧栏消失，
           // 用户看到「该项目还没有会话」——96MB ashare 主会话 2026-10-09 的真实事故）。
@@ -337,10 +338,27 @@ export class SessionIndex {
     return { total, hits };
   }
 
-  /** 会话大纲：每个 user entry 一章（title=首行截断，toolCount=该轮工具数，hasImages）。 */
+  /** 会话大纲：每个 user entry 一章（title=首行截断，toolCount=该轮工具数，hasImages）。
+   *  持久化缓存（outline-cache）：结果只随「user 标题/工具数/图片标记」变化，会话不增长
+   *  就不变——点开大会话时读一个小 JSON 而不是重扫 205MB（用户 2026-10-18 要求）。
+   *  失效 = (size, mtimeMs, leafId) 任一变化，宁肯多算一次不可返回过期数据。 */
   sessionOutline(key: string): PiOutline {
-    const cached = this.cache.get(key)?.history;
+    // 先走一次 history() 的快路径：它负责「缓存未变则直接返回、变了则增量解析」。
+    // 少了这一步，文件增长后 sessionOutline 会拿着 scan() 时的旧 entries 聚合——
+    // 既是过期数据（正确性），也让持久化缓存永远命中旧 stamp（用户看到的大纲不更新）。
+    // history() 已按 (entries 引用, leaf) memo，热路径 0.42ms，不会成为新瓶颈。
+    let cached = this.cache.get(key)?.history;
+    try { this.history(key); cached = this.cache.get(key)?.history ?? cached; } catch { /* 超限/读取失败：退回旧缓存聚合 */ }
     if (!cached) return { turns: [], total: 0 };
+    const file = cached.session.path;
+    const stamped = this.stampOf(file);
+    const stat = stamped ? { size: stamped.stat.size, mtimeMs: stamped.stat.mtimeMs } : undefined;
+    const leafId = cached.leafId ?? undefined;
+    const fileKey = key; // SessionIndex 内部 key 即 fileKey(file)（host 用 index.scan() 的 key）
+    if (this.outlines && stat) {
+      const hit = this.outlines.get(fileKey, stat, leafId);
+      if (hit) return { turns: hit, total: hit.length };
+    }
     const turns: PiOutlineItem[] = [];
     let current: PiOutlineItem | undefined;
     for (const entry of cached.entries) {
@@ -358,7 +376,9 @@ export class SessionIndex {
         if (block?.type === 'image') current.hasImages = true;
       }
     }
-    return { turns: turns.slice(-500), total: turns.length };
+    const page = turns.slice(-500);
+    if (this.outlines && stat) this.outlines.set(fileKey, stat, leafId, page);
+    return { turns: page, total: turns.length };
   }
 
   /**

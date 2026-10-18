@@ -2406,7 +2406,9 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
     jumpToMessage: (entryId) => set({ pendingJump: entryId }),
     setSessionMapOpen: (sessionMapOpen) => {
       set({ sessionMapOpen });
-      // 打开即拉大纲（8ms/355 轮实测）；已有数据不重复拉。并发保护：loading 中去重。
+      // 打开即拉大纲。主进程侧已持久化（outline-cache：热路径 0.4ms vs 冷聚合 8ms，
+      // 用户 2026-10-18「每次点开对话直接加载不需要每次都重建」），这里只做并发保护：
+      // 同会话已有数据不重复拉；loading 中去重。
       if (!sessionMapOpen || get().outline.length || get().outlineLoading) return;
       const key = get().selectedKey;
       const api = typeof window !== 'undefined' ? window.localPi : undefined;
