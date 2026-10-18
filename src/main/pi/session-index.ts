@@ -202,7 +202,19 @@ export class SessionIndex {
     }
     // 会话头只出现在首行，增量段不会引入 header；session_info 改名也能增量生效。
     const entries = [...history.entries, ...added];
-    const branch = branchEntries(entries);
+    // 流式追加占每次 history() 的大头：若每次都 branchEntries 全量回溯（17609 条建
+    // Map + 走链，实测 550ms），工具循环每轮 message_end 触发的刷新都会打满主线程
+    // （埋点：history-ipc n=206 共 120s）。新增条目从旧 branch 尾部顺序链接时（流式
+    // 追加的绝对多数形态），branch 就是 O(新增) 的数组拼接；只有分叉/换父才全量回溯。
+    const oldBranch = history.branch;
+    const oldTailId = oldBranch.at(-1)?.id;
+    let sequential = added.length > 0 && added[0]!.parentId === oldTailId;
+    if (sequential) for (let i = 1; i < added.length; i += 1) {
+      if (added[i]!.parentId !== added[i - 1]!.id) { sequential = false; break; }
+    }
+    const branch = sequential ? [...oldBranch, ...added] : branchEntries(entries);
+    // entries 引用已换：per-leaf memo 全部失效（尾 leaf 不走 memo，直接引用 cache.branch）
+    this.branchMemo.delete(key);
     const parents = new Set(entries.map(e => e.parentId));
     const name = [...added].reverse().find(e => e.type === 'session_info' && typeof e.name === 'string')?.name;
     // 增量路径也要派生标题（全量时 entries 为空、首条 user 晚到）：header-only 首扫后
@@ -437,6 +449,19 @@ export class SessionIndex {
     if (!slots) { slots = new Map(); this.branchMemo.set(key, slots); }
     const memo = slots.get(leafKey);
     if (memo && memo.entries === entries) return memo.branch;
+    // 前缀快路径：cache.branch 是「当前尾」的分支；同一链上更早的 leaf 的分支就是它的
+    // 前缀（findIndex O(n) 字符串比较 ~几 ms，vs branchEntries 全量回溯 550ms）。分叉
+    // leaf 不在当前分支上，才走全量回溯（低频：切换分支/跨分叉定位）。
+    const base = this.cache.get(key)?.history.branch;
+    if (base && base.length) {
+      const idx = base.findIndex(e => e.id === leaf);
+      if (idx === base.length - 1) { slots.set(leafKey, { entries, branch: base }); return base; }
+      if (idx >= 0) {
+        const branch = base.slice(0, idx + 1);
+        slots.set(leafKey, { entries, branch });
+        return branch;
+      }
+    }
     const branch = branchEntries(entries, leaf);
     slots.set(leafKey, { entries, branch });
     return branch;
@@ -448,7 +473,11 @@ export class SessionIndex {
     // 超限会话只做了元数据降级：列表可见但全量历史不可读，给可执行错误而不是空历史。
     if (this.oversized.has(cached)) throw new OversizedSessionError(cached.session.path, cached.session.size);
     if (leaf && !cached.entries.some(e => e.id === leaf)) throw new Error('Unknown leaf');
-    const full = leaf ? { ...cached, branch: this.cachedBranch(key, cached.entries, leaf), leafId: leaf } : cached;
+    // leaf 为空或就是当前尾（流式期间 history(key, leafId) 的绝对多数形态）：
+    // cache.branch 本身就是这条分支（parseAppends 已增量维护），直接引用，零回溯。
+    const full = !leaf || leaf === cached.leafId
+      ? cached // leaf 为空或就是当前尾：cache.branch 即目标分支（parseAppends 已增量维护）
+      : { ...cached, branch: this.cachedBranch(key, cached.entries, leaf), leafId: leaf };
     const tail = opts?.tail;
     const before = opts?.before;
     // tail/before 只裁 branch（渲染层消费的那一份）。entries/leaves 保持全量：分页
