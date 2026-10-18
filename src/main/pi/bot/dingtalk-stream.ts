@@ -69,6 +69,8 @@ export class DingTalkStreamTransport implements ImTransport {
   readonly id = 'dingtalk-stream';
   private ws: WebSocket | null = null;
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
+  private frameWatch: ReturnType<typeof setInterval> | null = null;
+  private lastFrameAt = 0;
   private pingTimer: NodeJS.Timeout | null = null;
   private closedByUs = false;
 
@@ -102,6 +104,7 @@ export class DingTalkStreamTransport implements ImTransport {
     // segment as the handshake response is processed synchronously after 'open'
     // fires, and would be dropped if the listener were attached a microtask late.
     ws.on('message', (raw) => {
+      this.lastFrameAt = Date.now(); // 任何入站帧（含服务端 ping）都是链路存活证据
       const text = String(raw);
       if (text.includes('"ping"')) {
         ws.send(JSON.stringify({ code: 200, headers: {}, body: '{}', message: 'pong' }));
@@ -153,6 +156,20 @@ export class DingTalkStreamTransport implements ImTransport {
       imLog(`钉钉 WebSocket 握手失败：${String((err as Error)?.message ?? err).slice(0, 160)}，close 后 5 秒自动重连`);
       throw err;
     }
+    // 死链检测：代理/NAT 静默断链时 TCP 不发 FIN/RST，ws 永远不会 close——
+    // 通道假活、消息收不到（2026-10-18 实测：连接 7 分钟后消息不到，对端 TCP 已消失
+    // 而日志零记录）。服务端 ping 有固定周期；超过 3 分钟任何帧都没有即判死，主动
+    // terminate 触发既有 close 重连。不发 ping 帧（协议违规），只做被动观测。
+    this.lastFrameAt = Date.now();
+    if (this.frameWatch) clearInterval(this.frameWatch);
+    this.frameWatch = setInterval(() => {
+      if (this.closedByUs || !this.ws) return;
+      const silent = Date.now() - this.lastFrameAt;
+      if (silent > 180_000) {
+        imLog(`超过 ${Math.round(silent / 1000)}s 未收到钉钉任何帧，链路疑似失活，主动重连`);
+        try { this.ws.terminate(); } catch { /* close handler 驱动重连 */ }
+      }
+    }, 15_000);
     // Keep-alive：钉钉 Stream 协议是「服务端发 ping、客户端回 pong」（上面 message 分支）。
     // 客户端主动发 ping 不是协议的一部分，违规帧可能导致网关断开——不发。
     this.pingTimer = null;
@@ -163,6 +180,7 @@ export class DingTalkStreamTransport implements ImTransport {
     if (this.pingTimer) clearInterval(this.pingTimer);
     this.pingTimer = null;
     if (this.retryTimer) { clearTimeout(this.retryTimer); this.retryTimer = null; }
+    if (this.frameWatch) { clearInterval(this.frameWatch); this.frameWatch = null; }
     const ws = this.ws;
     this.ws = null;
     if (ws && ws.readyState !== WebSocket.CLOSED) await new Promise<void>((resolve) => {
