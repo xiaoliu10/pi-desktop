@@ -299,7 +299,20 @@ export default function PiReplicaApp() {
     if (!api?.recoverSubagents || !key) return;
     // 只绑定会话：leaf 每来一条消息就推进，若参与 isCurrent/依赖，活跃会话的轮询响应
     // 会几乎全部被当过期丢弃（子代理卡片「经常不出现」的根因）。leaf 在 tick 内现取。
-    return pollSubagents({ key, leaf: () => usePiStore.getState().leaf ?? undefined, recover: (k, l) => api.recoverSubagents(k, l),
+    // pinned：当前会话全部 subagent callId（尾窗外的老工作流卡片也要终态校正）。
+    // 取最近 200 个封顶，避免超长会话把 pinned 列表本身变成传输负担。
+    const pinned = () => {
+      const ids: string[] = [];
+      for (const entry of usePiStore.getState().history?.branch ?? []) {
+        const content = entry.message?.content;
+        if (!Array.isArray(content)) continue;
+        for (const block of content) {
+          if (block?.type === 'toolCall' && block.name === 'subagent' && typeof block.id === 'string') ids.push(block.id);
+        }
+      }
+      return ids.length ? ids.slice(-200) : undefined;
+    };
+    return pollSubagents({ key, leaf: () => usePiStore.getState().leaf ?? undefined, pinned, recover: (k, l, pin) => api.recoverSubagents(k, l, pin),
       isCurrent: () => usePiStore.getState().selectedKey === key,
       publish: records => usePiStore.setState(state => ({ recoveredSubagents: mergeSubagentSnapshots(state.recoveredSubagents ?? [], records) })),
     });

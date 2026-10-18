@@ -164,7 +164,7 @@ export interface LocalPiApi extends importSettingsApi {
   review(cwd: string): Promise<PiReview>;
   officialSubagentStatus(): Promise<{installed:boolean;thirdParty:boolean;thirdPartySource?:string;outdated:boolean;scoutExists:boolean;path:string}>;
   enableOfficialSubagent(): Promise<{path:string;upgraded:boolean}>;
-  recoverSubagents(sessionKey: string, leaf?: string): Promise<Array<{callId:string;status:string;details?:unknown;error?:string;startedAt?:number;updatedAt?:number}>>;
+  recoverSubagents(sessionKey: string, leaf?: string, pinned?: string[]): Promise<Array<{callId:string;status:string;details?:unknown;error?:string;startedAt?:number;updatedAt?:number}>>;
   subagentChildTranscript(sessionKey: string, callId: string, childId: string): Promise<{messages:Record<string,unknown>[];truncated:boolean}|{error:string}>;
   /** 记忆衔接层状态：探测 CLI 记忆插件并返回当前链路。cwd 指定时附加项目存储类型与目录。 */
   memoryAssistStatus(enabled: boolean, cwd?: string): Promise<{ enabled: boolean; plugin: { kind: 'extension'; id: string; label?: string } | { kind: 'builtin' }; builtinDir: string; hint: string; /** scoped = 集中存储（memory-projects/<key>/），project-local = 项目内 .pi/memory/。 */ storageKind?: 'scoped' | 'project-local'; /** 对应存储类型的实际项目记忆目录（后端计算，不在渲染端重新推导）。 */ projectDir?: string }>;

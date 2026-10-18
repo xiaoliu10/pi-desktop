@@ -30,7 +30,10 @@ export function pollSubagents(options: {
    *  活跃会话里几乎每次轮询都会被丢弃（子代理卡片因此迟迟不出现）。分支正确性由
    *  主进程按当次 leaf 读历史保证，跨会话保护由 isCurrent（只比 sessionKey）承担。 */
   leaf?: () => string | undefined;
-  recover: (key: string, leaf?: string) => Promise<RecoveredSubagent[]>;
+  /** 渲染层正在展示的 subagent callId：主进程据此让这些指针穿透 MAX_CALLS 尾窗，
+   *  保证老工作流卡片也能读到 asyncDir/status.json 的终态校正（不穿透则永远假活）。 */
+  pinned?: () => string[] | undefined;
+  recover: (key: string, leaf?: string, pinned?: string[]) => Promise<RecoveredSubagent[]>;
   isCurrent: () => boolean;
   publish: (records: RecoveredSubagent[]) => void;
   interval?: number;
@@ -40,7 +43,7 @@ export function pollSubagents(options: {
   const tick = async () => {
     const leaf = options.leaf?.();
     try {
-      const records = await options.recover(options.key, leaf);
+      const records = await options.recover(options.key, leaf, options.pinned?.());
       // Branch consistency: a response carries data for the branch selected at
       // request time. If the user switched branches meanwhile (leaf changed),
       // drop it — the next tick reads the current branch. Only meaningful when

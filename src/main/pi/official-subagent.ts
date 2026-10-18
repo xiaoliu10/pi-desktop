@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import type { SessionIndex } from './session-index';
-import { childSessionPointer, readSnapshotJson, STALE_MS, workflowSnapshots, type SubagentSnapshot } from './subagent-snapshots';
+import { childSessionPointer, readSnapshotJson, STALE_MS, subagentAsyncRoot, workflowSnapshots, type SubagentSnapshot } from './subagent-snapshots';
 import { singleAsyncDetails, workflowDetails, workflowId, workflowState } from '../../shared/subagent-workflow';
 
 /**
@@ -76,12 +76,15 @@ export function enableOfficialSubagent(agentDir: string) {
 }
 
 /** Recover only the selected, trusted session/branch. No renderer-supplied paths. */
-export async function recoverSubagents(agentDir: string, sessionKey: string, index: Pick<SessionIndex, 'subagentHistory'>, leaf?: string): Promise<SubagentSnapshot[]> {
+export async function recoverSubagents(agentDir: string, sessionKey: string, index: Pick<SessionIndex, 'subagentHistory'>, leaf?: string, pinned?: string[]): Promise<SubagentSnapshot[]> {
   if (!/^[a-f0-9]{64}$/.test(sessionKey) || (leaf !== undefined && typeof leaf !== 'string')) return [];
   let history;
   try { history = index.subagentHistory(sessionKey, leaf); } catch { return []; }
   const persisted = await readPersistedSnapshots(agentDir, sessionKey);
-  const workflows = await workflowSnapshots(history, persisted);
+  // pinned：渲染层正在展示的 callId（尤其尾窗 32 条之外的老工作流卡片）。它们必须
+  // 读盘校正终态——tool result 里的 workflowChildren.workflowState 是落盘快照，
+  // 工作流结束后不回写，不校正就会永远显示「运行中/等待工作流报告子任务」。
+  const workflows = await workflowSnapshots(history, persisted, subagentAsyncRoot(), Date.now(), pinned);
   // single-async records are already normalized into `workflows`; leaving them in
   // legacy would duplicate the callId and let the raw record shadow the snapshot.
   const legacy = persisted.filter(rec => !workflowDetails(rec.details, rec.callId) && !singleAsyncDetails(rec.details, rec.callId));

@@ -95,10 +95,24 @@ function pointers(history: PiHistory, persisted: SubagentSnapshot[], pinned?: st
 
 /** Main-process-only adapter. No scans, no session/transcript/prompt reads and no
  * returned filesystem pointers. The caller supplies trusted selected-branch history. */
-export async function workflowSnapshots(history: PiHistory, persisted: SubagentSnapshot[], root = subagentAsyncRoot(), now = Date.now()): Promise<SubagentSnapshot[]> {
+export async function workflowSnapshots(history: PiHistory, persisted: SubagentSnapshot[], root = subagentAsyncRoot(), now = Date.now(), pinned?: string[]): Promise<SubagentSnapshot[]> {
   const budget = { bytes: MAX_BYTES };
   const output: SubagentSnapshot[] = [];
-  for (const pointer of pointers(history, persisted)) {
+  // 渲染层已 pinned 的 callId 全部穿透尾窗：列表渲染保持 32 条有界，但这些卡片用户正
+  // 在看——不穿透的话它们永远拿不到 asyncDir/status.json 的终态校正（tool result 里
+  // 冻结的 workflowChildren.workflowState 永远是 'running'），于是「已结束的工作流」
+  // 在面板里显示为「等待工作流报告子任务 · 运行中」（用户 2026-10-18 实测，238 对调用
+  // 的会话里 16 个假活）。与渲染侧 pointers 的 pinned 修复（PR #132）同思路。
+  // pinned 逐个取「该 callId 的指针」——注意 pointers() 返回的是整个尾窗（pinned 只保证
+  // 它在里面），所以这里过滤到目标那一条，否则每个 pinned 都会把 32 条尾窗再吐一遍。
+  for (const callId of pinned ?? []) {
+    if (!workflowId(callId) || output.some(o => o.callId === callId)) continue;
+    const pointer = pointers(history, persisted, callId).find(p => p.callId === callId);
+    if (pointer) output.push(await resolveWorkflowPointer(pointer, history, root, now, budget));
+  }
+/** Resolve one workflow pointer into a display snapshot (asyncDir/status.json 校正)。
+ *  拆出来供 pinned 穿透路径复用：尾窗外的卡片同样要读盘校正终态。 */
+async function resolveWorkflowPointer(pointer: SubagentSnapshot, history: PiHistory, root: string, now: number, budget: { bytes: number }): Promise<SubagentSnapshot> {
     const d = obj(pointer.details)!;
     const runId = d.runId;
     const isSingle = !!singleAsyncDetails(d, pointer.callId);
@@ -158,7 +172,11 @@ export async function workflowSnapshots(history: PiHistory, persisted: SubagentS
       if (isSingle) detail.steps = [{ childId: 'single', runId, agent: text(d.agent), state: 'unknown' }];
       else detail.steps = workflowRows(d).map(row => ({ childId: row.childId, runId: row.runId, agent: text(row.agent), state: 'unknown' }));
     }
-    output.push({ callId: pointer.callId, status: detail.state, details: detail, updatedAt });
+  return { callId: pointer.callId, status: detail.state, details: detail, updatedAt };
+}
+
+  for (const pointer of pointers(history, persisted)) {
+    output.push(await resolveWorkflowPointer(pointer, history, root, now, budget));
   }
   return output;
 }
