@@ -6,7 +6,10 @@ import path from 'node:path';
  *  此前只写 console.error——Finder/Dock 启动的 Electron 主进程 stderr 不可见，
  *  而既有 pi-stderr.log 是 pi 子进程的 stderr（rpc-client.ts 落盘），钉钉排障
  *  一直失明（2026-10-18 实测：连接活着但日志零条，无法定位断点）。 */
-const LOG_DIR = path.join(os.homedir(), 'Library', 'Logs', 'PI Desktop');
+// 测试环境（vitest/PI_SMOKE）不得写真实日志文件：2026-10-18 实测测试的 fake
+// 配置日志（appKey=k…）污染了用户的 im-bot.log，排障时真假难辨。
+const UNDER_TEST = process.env.VITEST === 'true' || process.env.PI_SMOKE === '1';
+const LOG_DIR = UNDER_TEST ? fs.mkdtempSync(path.join(os.tmpdir(), 'im-bot-log-')) : path.join(os.homedir(), 'Library', 'Logs', 'PI Desktop');
 const LOG_FILE = path.join(LOG_DIR, 'im-bot.log');
 
 export function imLog(line: string): void {

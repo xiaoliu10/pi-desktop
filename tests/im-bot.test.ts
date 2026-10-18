@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, beforeAll } from 'vitest';
+process.env.VITEST = 'true';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
