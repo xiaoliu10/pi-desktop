@@ -119,7 +119,7 @@ export function toolRowIcon(part: ToolPart, isCodeMode: boolean, mcpName: string
   return isCodeMode ? 'code' as const : mcpName ? 'plug' as const : part.tool === 'subagent' ? 'bot' as const : ['bash','run_command'].includes(part.tool) ? 'terminal' : ['grep','find','ls'].includes(part.tool) ? 'search' : ['edit','write'].includes(part.tool) ? 'pencil' : part.tool === 'read' ? 'book' : part.tool === 'desktop_schedule' ? 'timer' : 'plug';
 }
 
-export function ToolCard({ part, labels, onOpenToolFile, live }: { part: ToolPart; labels: ChatViewProps['labels']; onOpenToolFile?: ChatViewProps['onOpenToolFile']; /** 组流式中且这是最后一个 part：运行中的工具行展示加粗「正在执行」（与正在思考同款） */ live?: boolean }) {
+export const ToolCard = memo(function ToolCard({ part, labels, onOpenToolFile, live, defaultOpen }: { part: ToolPart; labels: ChatViewProps['labels']; onOpenToolFile?: ChatViewProps['onOpenToolFile']; /** 组流式中且这是最后一个 part：运行中的工具行展示加粗「正在执行」（与正在思考同款） */ live?: boolean; /** 初始展开（测试口子；生产路径不传，详情子树按需渲染） */ defaultOpen?: boolean }) {
   const openSubagents=useContext(SubagentNavigation);
   const zh = labels.you === '你';
   let args: Record<string, unknown> = {};
@@ -146,9 +146,14 @@ export function ToolCard({ part, labels, onOpenToolFile, live }: { part: ToolPar
     if (edits) for (const e of edits) { if (!e || typeof e !== 'object') continue; deletions += count((e as { oldText?: unknown }).oldText); additions += count((e as { newText?: unknown }).newText); }
     else { deletions += count(args.oldText ?? args.old_string); additions += count(args.newText ?? args.new_string); }
   }
+  // 折叠态不构建详情子树：大会话里 16879 个 tool part（实测）若都无条件创建
+  // detailLines/<pre>/DiffBlock 的 element，每拍就是几十万个节点——真实会话 SSR
+  // 实测 289ms/拍（renderer CPU 51% 的直接来源）。summary 行始终渲染（信息密度不变），
+  // 展开时才付详情成本。details/summary 的原生语义保留（键盘/无障碍行为一致）。
+  const [open, setOpen] = useState(defaultOpen ?? false);
   return (
     <div className={`pi-tool ${part.status === 'error' ? 'pi-tool--error' : ''}`}>
-      <details>
+      <details open={open} onToggle={e => setOpen((e.currentTarget as HTMLDetailsElement).open)}>
         <summary className="pi-tool__summary">
           <Icon name={icon} size={17} />
           {live && part.status === 'running' && <strong className="pi-execution__thinking">{zh ? '正在执行' : 'Executing'}</strong>}
@@ -161,8 +166,8 @@ export function ToolCard({ part, labels, onOpenToolFile, live }: { part: ToolPar
           </span>
           <Icon name="chevron-right" size={12} className="pi-execution__chevron" />
         </summary>
-        {officialSubagentDetails(part)&&openSubagents&&<button type="button" className="pi-btn pi-btn--ghost" onClick={()=>openSubagents(part.callId||part.id)}>查看子代理任务与过程</button>}
-        <div className="pi-tool__detail">
+        {open && officialSubagentDetails(part)&&openSubagents&&<button type="button" className="pi-btn pi-btn--ghost" onClick={()=>openSubagents(part.callId||part.id)}>查看子代理任务与过程</button>}
+        {open && <div className="pi-tool__detail">
           {isCodeMode && code
             ? <><h4>{zh ? '脚本' : 'Script'}</h4><pre className="pi-tool__output">{code}</pre></>
             : part.argumentsText && !['bash','run_command'].includes(part.tool) && <><h4>{zh ? '调用参数' : 'Input'}</h4><pre className="pi-tool__output">{part.argumentsText}</pre></>}
@@ -182,11 +187,11 @@ export function ToolCard({ part, labels, onOpenToolFile, live }: { part: ToolPar
             return null;
           })()}
           {part.diff && <DiffBlock diff={part.diff} />}
-        </div>
+        </div>}
       </details>
     </div>
   );
-}
+});
 
 function MessageParts({ parts, labels, onOpenToolFile, live, hiddenErrors }: { parts: MessagePart[]; labels: ChatViewProps['labels']; onOpenToolFile?: ChatViewProps['onOpenToolFile']; /** 组处于流式且这是最后一个 part：思考行滚动展示内容 */ live?: boolean; hiddenErrors?: Set<string> }) {
   return (
@@ -199,7 +204,9 @@ function MessageParts({ parts, labels, onOpenToolFile, live, hiddenErrors }: { p
             // 保留是为了投影形状变化时不退化成每拍拼 base64。
             return <HeldImage key={p.id} part={p} className="pi-message-image" alt="附件图片" />;
           case 'text':
-            return <ChatMarkdown key={p.id} text={p.text} zh={labels.you === '你'} />;
+            return live
+              ? <StreamMarkdown key={p.id} text={p.text} zh={labels.you === '你'} />
+              : <ChatMarkdown key={p.id} text={p.text} zh={labels.you === '你'} />;
           case 'thinking':
             return <ExecutionNote key={p.id} zh={labels.you === '你'} title={`${labels.you === '你' ? '思考' : 'Thought'}${p.durationMs !== undefined ? ` · ${labels.you === '你' ? `用时 ${Math.max(1, Math.ceil(p.durationMs / 1000))} 秒` : `took ${Math.max(1, Math.ceil(p.durationMs / 1000))}s`}` : ''}`} text={p.text} active={live} />;
           case 'tool':
@@ -333,21 +340,24 @@ function UserMessageParts({ parts, labels, onOpenToolFile, onDownloadImage }: { 
   );
 }
 
-function ExecutionNote({ title, text, active, zh }: { title: string; text: string; /** 这条思考正在流式输出：行内滚动展示内容尾部，完成后恢复计时标题 */ active?: boolean; zh?: boolean }) {
+export function ExecutionNote({ title, text, active, zh, defaultOpen }: { title: string; text: string; /** 这条思考正在流式输出：行内滚动展示内容尾部，完成后恢复计时标题 */ active?: boolean; zh?: boolean; /** 初始展开（测试口子；生产路径不传） */ defaultOpen?: boolean }) {
   // 受控开合：流式渲染每 ~150ms 重渲染，非受控 details 的 open 会被 React 重置，
   // 用户点开后立即被关上 → 看不到正文。用 state 跟随 toggle。
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(defaultOpen ?? false);
   // 流式中的滚动带：剥掉 markdown 装饰后取尾部（新内容从右持续推入，旧行被推走）。
   const tail = active
     ? text.replace(/\*\*(.+?)\*\*/g, '$1').replace(/\*(.+?)\*/g, '$1').replace(/`([^`]+?)`/g, '$1').replace(/\s+/g, ' ').trim().slice(-160)
     : '';
+  // 折叠态不渲染 markdown 正文：大会话实测 2414 个思考段，每段全文走 ChatMarkdown
+  // 是打开会话与流式重渲的大头。与 ToolCard 同策略——summary（含流式滚动带）始终渲染，
+  // 展开才付正文成本。运行中「过程段强制展开」的语义不受影响（open 时正文照常）。
   return <details className="pi-execution__note" open={open} onToggle={(e) => setOpen(e.currentTarget.open)}>
     <summary><Icon name="brain" size={17}/>
       {active
         ? <><strong className="pi-execution__thinking">正在思考</strong><span className="pi-execution__ticker"><span className="pi-execution__ticker-inner">{tail}</span></span></>
         : <span>{title}</span>}
       <Icon name="chevron-right" size={12} className="pi-execution__chevron" /></summary>
-    <div className="pi-execution__note-body"><ChatMarkdown text={text} zh={zh} /></div>
+    {open && <div className="pi-execution__note-body"><ChatMarkdown text={text} zh={zh} /></div>}
   </details>;
 }
 
@@ -392,7 +402,10 @@ export function ExecutionGroup({ turn, parts, running, active, expanded, showEla
       {live && headerChrome && <Spinner label={zh ? '运行中' : 'Running'} />}
       <Icon name="chevron-right" size={14} className="pi-execution__chevron" />
     </summary>
-    <div className="pi-execution__steps">{renderSteps(parts, live, zh, labels, onOpenToolFile)}</div>
+    {/* 组级门控：完成态历史里组默认折叠，steps（工具/思考段各几十个）的 element 不必
+        构建——这是大会话打开与流式重渲的大头（组内段级还有自己的折叠门控，双保险）。
+        运行中 open=running=true，实时可见性不受影响；文字回复（answer）在组外，永远可见。 */}
+    {open && <div className="pi-execution__steps">{renderSteps(parts, live, zh, labels, onOpenToolFile)}</div>}
   </details>;
 }
 
@@ -597,6 +610,24 @@ export function MessageNav({ turns, listRef, onJump }: { turns: ChatTurn[]; list
 // own props changed.
 /** 单轮消息：memo 化 + turn/消息身份稳定（adapter 缓存 + executionTurns 缓存），
  *  千条级会话流式时每次事件只重渲染活动轮，而不是全量 600+ 行。 */
+/** 流式中的 markdown 节流渲染：live 文本每拍（~150ms）都在变 → ChatMarkdown 的 memo
+ *  必失配，长输出（数十 KB）每拍全量重解析 + 重排。参考 VSCode 聊天面板的增量渲染
+ *  （chatMarkdownContentPart 的 morpher 思路）：解析频率与 delta 频率解耦——同一段文本
+ *  ≥400ms 才重渲染一次，停更/落定后 400ms 内补上最终版本。视觉上是「一块一块蹦」，
+ *  换取长输出期间的持续流畅。 */
+const StreamMarkdown = memo(function StreamMarkdown({ text, zh }: { text: string; zh?: boolean }) {
+  const [rendered, setRendered] = useState(text);
+  const lastAt = useRef(0);
+  useEffect(() => {
+    if (text === rendered) return;
+    const wait = Math.max(0, STREAM_RENDER_MIN_MS - (Date.now() - lastAt.current));
+    const timer = setTimeout(() => { lastAt.current = Date.now(); setRendered(text); }, wait);
+    return () => clearTimeout(timer);
+  }, [text, rendered]);
+  return <ChatMarkdown text={rendered} zh={zh} />;
+});
+const STREAM_RENDER_MIN_MS = 400;
+
 export const TurnArticle = memo(function TurnArticle({ m, liveTurn, retrying, suppressModelErrors, retryingError, labels, onOpenToolFile, onEditUser, editCorrection, onDownloadImage }: { m: ChatTurn; liveTurn: boolean; retrying?: boolean; suppressModelErrors?: boolean; /** 本次重试的错误首行：只藏末尾同类的失败，异类错误保持可见。 */ retryingError?: string; labels: ChatViewProps['labels']; onOpenToolFile?: ChatViewProps['onOpenToolFile']; /** 提供时用户消息可「编辑并重发」（先 fork 截断再发送，等价 ZCode 编辑语义）。 */ onEditUser?: (entryId: string, text: string) => void; /** 任务运行中：提交不再是 fork 重发而是作为更正发送（fork 会截断在跑 agent 的上下文）。 */ editCorrection?: boolean; onDownloadImage?: ChatViewProps['onDownloadImage'] }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
@@ -717,7 +748,9 @@ export const TurnArticle = memo(function TurnArticle({ m, liveTurn, retrying, su
               }
               if (seg.kind === 'text' && seg.parts.length > 0) {
                 if (seg.parts.every(part => hiddenErrors?.has(part.id))) return null;
-                return <div key={`${m.id}-seg-${si}`} className="pi-msg__answer"><MessageParts parts={seg.parts} labels={labels} onOpenToolFile={onOpenToolFile} hiddenErrors={hiddenErrors} /></div>;
+                // 最后一个 text 段且轮次在跑 = 正在流式输出的应答：走节流渲染
+                const streaming = liveTurn && liveSegment && si === segs.length - 1;
+                return <div key={`${m.id}-seg-${si}`} className="pi-msg__answer"><MessageParts parts={seg.parts} labels={labels} onOpenToolFile={onOpenToolFile} hiddenErrors={hiddenErrors} live={streaming} /></div>;
               }
               return null;
               });

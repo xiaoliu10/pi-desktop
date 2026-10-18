@@ -1,24 +1,30 @@
 import { describe, expect, it } from 'vitest';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { ChatView } from '../src/renderer/replica/chat/ChatView';
-import type { ChatViewProps, ChatMessage } from '../src/renderer/replica/contracts';
+import { ExecutionNote } from '../src/renderer/replica/chat/ChatView';
 
-const labels = { you: '你', assistant: '助手', simulatedRun: '模拟', toolRunning: '运行中', toolDone: '完成', toolError: '出错', working: '工作中', queued: '已排队', jumpToMessage: '跳转' } as unknown as ChatViewProps['labels'];
-const base = { onJumpToMessage: () => undefined, demo: true, running: false, queued: 0, messages: [], labels } as unknown as ChatViewProps;
-
+// 折叠态摘要（流式 ticker）不得泄漏 markdown 字面符号；正文（展开时）走 markdown 渲染。
+// 详情子树按需渲染（perf 契约）：折叠时 body 不在 DOM——这两个测试用 defaultOpen 钉正文路径。
 describe('thinking excerpt plain text', () => {
-  it('does not leak literal markdown ** in the collapsed summary (model writes bold titles)', () => {
-    // 模型经路由返回的思考摘要常是 `**Doing X**` 形式；折叠态摘要要把星号去掉，不能露字面 **。
-    const thinking: ChatMessage = { id: 'm1', timestamp: 1, role: 'assistant', parts: [{ kind: 'thinking', id: 't1', text: '**Investigating SDK support**' }] };
-    const html = renderToStaticMarkup(createElement(ChatView, { ...base, messages: [thinking] }));
+  it('does not leak literal markdown ** in the active summary ticker', () => {
+    const html = renderToStaticMarkup(createElement(ExecutionNote, { title: '思考', text: '**Investigating SDK support**', active: true, zh: true }));
     expect(html).toContain('Investigating SDK support');
     expect(html).not.toContain('**');
   });
-  it('keeps inline code backticks out of the excerpt but visible in the body', () => {
-    const thinking: ChatMessage = { id: 'm1', timestamp: 1, role: 'assistant', parts: [{ kind: 'thinking', id: 't1', text: 'Looking at `parseContextPrompt` to round-trip.' }] };
-    const html = renderToStaticMarkup(createElement(ChatView, { ...base, messages: [thinking] }));
-    expect(html).toContain('parseContextPrompt');
-    expect(html).not.toMatch(/`parseContextPrompt`/); // 摘要里不应有字面反引号
+  it('renders the body via markdown when opened (bold resolved, no literal asterisks)', () => {
+    const html = renderToStaticMarkup(createElement(ExecutionNote, { title: '思考', text: '**Investigating SDK support**', defaultOpen: true, zh: true }));
+    expect(html).toContain('Investigating SDK support');
+    expect(html).toContain('<strong>');
+    expect(html).not.toContain('**');
+  });
+  it('keeps inline code backticks out of every path (collapsed shows nothing, body resolves code)', () => {
+    const text = 'Looking at `parseContextPrompt` to round-trip.';
+    const collapsed = renderToStaticMarkup(createElement(ExecutionNote, { title: '思考', text, zh: true }));
+    // 折叠态是纯 summary（perf 契约：正文不进 DOM），不露任何正文与字面反引号
+    expect(collapsed).not.toContain('parseContextPrompt');
+    expect(collapsed).not.toMatch(/`parseContextPrompt`/);
+    const open = renderToStaticMarkup(createElement(ExecutionNote, { title: '思考', text, defaultOpen: true, zh: true }));
+    expect(open).toContain('parseContextPrompt'); // 正文经 markdown 渲染（<code>），无字面反引号
+    expect(open).not.toMatch(/`parseContextPrompt`/);
   });
 });

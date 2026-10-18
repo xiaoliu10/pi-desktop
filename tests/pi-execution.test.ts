@@ -2,7 +2,7 @@ import { createElement } from 'react';
 import { describe, expect, it } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { executionTurns } from '../src/renderer/replica/chat/execution';
-import { ChatView, TurnArticle } from '../src/renderer/replica/chat/ChatView';
+import { ChatView, TurnArticle, ExecutionGroup } from '../src/renderer/replica/chat/ChatView';
 import { conversationMessages, historyToMessages, liveToMessages } from '../src/renderer/pi/adapter';
 import type { PiEntry } from '../src/shared/pi';
 import type { ToolPart } from '../src/renderer/replica/contracts';
@@ -53,21 +53,29 @@ describe('nested execution transcript',()=>{
   it('displays native mcp__ tools as server / tool with the plug icon',()=>{
     const labels={you:'你',assistant:'pi',simulatedRun:'演示',toolRunning:'运行中',toolDone:'完成',toolError:'失败',details:'详情',queued:'排队',working:'执行中'};
     const messages=[{id:'u',role:'user' as const,parts:[]},{id:'a',role:'assistant' as const,parts:[{id:'t',kind:'tool',tool:'mcp__filesystem__read_file',status:'done',phase:'result',summary:'x'} as never]}];
-    const markup=renderToStaticMarkup(createElement(ChatView,{messages,running:false,queued:0,demo:false,labels,onJumpToMessage:()=>{}}));
+    // 组展开态（running 使执行组强制展开）：详情子树按需渲染（perf 契约），折叠态不含工具行
+    const markup=renderToStaticMarkup(createElement(ChatView,{messages,running:true,queued:0,demo:false,labels,onJumpToMessage:()=>{}}));
     expect(markup).toContain('filesystem / read_file');
   });
   it('renders mid-turn narration as visible commentary paragraphs inside the execution group',()=>{
     const labels={you:'你',assistant:'pi',simulatedRun:'演示',toolRunning:'运行中',toolDone:'完成',toolError:'失败',details:'详情',queued:'排队',working:'执行中'};
-    const markup=renderToStaticMarkup(createElement(ChatView, {messages:historyToMessages(branch),running:false,queued:0,demo:false,labels,onJumpToMessage:()=>{}}));
-    // 组内以 commentary 段落出现（展开执行过程可见），且不再并入思考正文
+    // 完成态组展开路径（expanded）：组级按需渲染下，steps（含 commentary）只在展开时进 DOM；
+    // 运行中（liveSegments）叙述按设计移出组外，commentary 类只在完成态组里出现。
+    const turn=executionTurns(historyToMessages(branch) as never).find(t=>t.steps.length>0)!;
+    const markup=renderToStaticMarkup(createElement(ExecutionGroup,{turn,parts:turn.steps,expanded:true,labels} as never));
     expect(markup).toContain('pi-execution__commentary');
     expect(markup).toContain('我先读取文件。');
-    expect(markup).toContain('最终回复保持直接可见。');
+    // 折叠组不渲染 steps（perf 契约）
+    const collapsed=renderToStaticMarkup(createElement(ExecutionGroup,{turn,parts:turn.steps,labels} as never));
+    expect(collapsed).not.toContain('pi-execution__commentary');
+    // 文字回复在组外，折叠态也直接可见
+    const chat=renderToStaticMarkup(createElement(ChatView, {messages:historyToMessages(branch),running:false,queued:0,demo:false,labels,onJumpToMessage:()=>{}}));
+    expect(chat).toContain('最终回复保持直接可见。');
   });
   it('renders two collapsed disclosure levels with visible failure summary and normal text-only responses',()=>{
     const labels={you:'你',assistant:'pi',simulatedRun:'演示',toolRunning:'运行中',toolDone:'完成',toolError:'失败',details:'详情',queued:'排队',working:'执行中'};
     const markup=renderToStaticMarkup(createElement(ChatView, {messages:historyToMessages(branch),running:false,queued:0,demo:false,labels,onJumpToMessage:()=>{}}));
-    expect(markup).not.toContain('2 次工具调用');expect(markup).not.toContain('2 段思考');expect(markup).toContain('1 项失败');expect(markup).not.toMatch(/<details[^>]*\sopen(?:[=>\s])/);expect(markup).toContain('调用参数');expect(markup).toContain('执行输出');
+    expect(markup).not.toContain('2 次工具调用');expect(markup).not.toContain('2 段思考');expect(markup).toContain('1 项失败');expect(markup).not.toMatch(/<details[^>]*\sopen(?:[=>\s])/);expect(markup).not.toContain('调用参数');expect(markup).not.toContain('执行输出');
     const plain=executionTurns([{id:'hello',role:'assistant',parts:[{id:'text',kind:'text',text:'Hi'}]}])[0];expect(plain.steps).toEqual([]);expect(plain.answer[0].kind).toBe('text');
   });
 });
