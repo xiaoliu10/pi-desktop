@@ -31,7 +31,7 @@ export interface PiSearchResult { total: number; hits: PiSearchHit[] }
 export interface PiOutlineItem { entryId: string; title: string; at: number; toolCount: number; hasImages: boolean }
 export interface PiOutline { turns: PiOutlineItem[]; total: number }
 
-export interface PiHistory { session: PiSession; entries: PiEntry[]; branch: PiEntry[]; leaves: string[]; leafId: string | null; syncedAt: number; /** 分页元信息：本次只返回了 branch 尾部 returned 条（大会话首屏降载），total 是完整条数。 */ truncated?: { total: number; returned: number } }
+export interface PiHistory { session: PiSession; entries: PiEntry[]; branch: PiEntry[]; leaves: string[]; leafId: string | null; syncedAt: number; /** 分页元信息：本次只返回了 branch 尾部 returned 条（大会话首屏降载），total 是完整条数。 */ truncated?: { total: number; returned: number }; /** 会话最后一次成功的 desktop_update_plan 清单（全量 branch 扫描，分页窗口外也能显示）。 */ plan?: import('./conversation-status').PlanItem[] }
 export interface PiResource { id: string; name: string; kind: string; path: string; scope: 'user' | 'project'; status: 'discovered' | 'callable' | 'disabled' | 'missing' | 'error'; detail: string }
 export interface PiCommand { name: string; description?: string; source?: string; path?: string }
 export interface PiModel { id: string; name: string; provider: string; reasoning?: boolean; input?: string[] }

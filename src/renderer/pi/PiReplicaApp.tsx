@@ -352,7 +352,9 @@ export default function PiReplicaApp() {
   // 审批通过后右侧面板保留展示计划快照+任务清单进度，用户可手动关闭；依赖布尔翻转，关闭后不会立即重弹。
   const planApprovalActive=run?.accessMode==='plan'&&run.status==='idle'&&run.planReady&&Boolean(planDoc);
   useEffect(()=>{ if (planApprovalActive) setPlanOpen(true); },[planApprovalActive]);
-  const planChecklist=useMemo(()=>conversationPlan(messages),[messages]);
+  // 进程清单：实时解析（渲染窗口内最近一轮）优先；窗口外的清单调用（长任务早期
+  // 建的板）回退 history.plan（主进程全量扫描下发）。
+  const planChecklist=useMemo(()=>{const live=conversationPlan(messages);return live.length?live:(s.history?.plan??[]);},[messages,s.history?.plan]);
   // 未走计划模式的会话：任务清单合成为可审阅的计划文档，避免面板空态。
   const synthesizedPlan=useMemo(()=>!planDoc&&planChecklist.length?planDocumentFromChecklist(planChecklist,s.lang):null,[planDoc,planChecklist,s.lang]);
   const effectivePlanDoc=planDoc??synthesizedPlan;

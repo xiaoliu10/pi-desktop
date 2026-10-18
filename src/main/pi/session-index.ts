@@ -103,6 +103,8 @@ export class SessionIndex {
   /** root 级 watch 事件（filename 为空）：触发本轮浅层目录发现而非全量 scan。 */
   private pendingDirsScan = false;
   private lastShallowScan = 0;
+  private lastStatSweep = 0;
+  private planMemo: { entries: PiEntry[]; plan: import('../../shared/conversation-status').PlanItem[] | undefined } | null = null;
   /** 会话文件 → 所属 root real path 的表：增量 check 用它免掉全量 walk。
    *  （scan() 全量时重建。） */
   private fileDirs = new Map<string, string>();
@@ -468,7 +470,29 @@ export class SessionIndex {
    *  用 branch 顶替（类型合规），IPC 体积砍 ~97%。需要全量 entries 的调用方走
    *  主进程内部（cache 直读），不走 IPC 分页契约。 */
   private wireLite(history: PiHistory): PiHistory {
-    return { ...history, entries: history.branch };
+    return { ...history, entries: history.branch, plan: this.lastPlan(history) };
+  }
+
+  /** 会话最后一次成功的 desktop_update_plan 清单：renderer 实时解析只看渲染窗口
+   *  （tail 500），长任务把清单调用裁出窗口后「进程」区块就空了。主进程有全量
+   *  branch，扫最后一次成功结果随 history 下发。O(n) 按 entries 引用 memo。 */
+  private lastPlan(history: PiHistory): import('../../shared/conversation-status').PlanItem[] | undefined {
+    if (this.planMemo && this.planMemo.entries === history.entries) return this.planMemo.plan;
+    let plan: import('../../shared/conversation-status').PlanItem[] | undefined;
+    for (const entry of history.entries) {
+      const content = entry.message?.content;
+      if (!Array.isArray(content)) continue;
+      for (const block of content) {
+        if (block?.type !== 'toolResult' || block.toolName !== 'desktop_update_plan') continue;
+        try {
+          const text = Array.isArray(block.content) ? block.content.map((b: any) => b?.text ?? '').join('') : String(block.content ?? '');
+          const value = JSON.parse(text)?.plan;
+          if (Array.isArray(value) && value.length <= 30 && value.every((p: any) => p && typeof p.step === 'string' && ['pending', 'in_progress', 'completed'].includes(p.status))) plan = value;
+        } catch { /* 半截流式结果不替换上一份有效清单 */ }
+      }
+    }
+    this.planMemo = { entries: history.entries, plan };
+    return plan;
   }
 
   /** memo 化的 branchEntries：同 key 同 leaf 且 entries 未被增量解析替换时直接复用。
@@ -546,15 +570,20 @@ export class SessionIndex {
         let rescan = false;
         if (targets.length) rescan = this.refreshTargets(targets);
         const dirsScan = this.pendingDirsScan; this.pendingDirsScan = false;
-        // 已知文件的 stat 增量（watch 漏事件兜底之外的主路径）
+        // 已知文件的 stat 增量：watch 漏事件兜底（watch 报告的文件走 refreshTargets
+        // 定向路径，不依赖这里）。全表 stat（数百文件）磁盘忙时单次数百 ms，限频 2s。
         let sawChange = false;
-        for (const [key, entry] of [...this.cache.entries()]) {
-          const file = entry.history.session.path;
-          const stamped = this.stampOf(file);
-          if (!stamped) { this.refreshOne(file, this.fileDirs.get(file) ?? ''); sawChange = true; continue; }
-          if (this.cache.get(key)?.stamp === stamped.stamp) continue;
-          this.refreshOne(file, this.fileDirs.get(file) ?? '');
-          sawChange = true;
+        const statSweepNow = Date.now();
+        if (statSweepNow - this.lastStatSweep >= 2_000) {
+          this.lastStatSweep = statSweepNow;
+          for (const [key, entry] of [...this.cache.entries()]) {
+            const file = entry.history.session.path;
+            const stamped = this.stampOf(file);
+            if (!stamped) { this.refreshOne(file, this.fileDirs.get(file) ?? ''); sawChange = true; continue; }
+            if (this.cache.get(key)?.stamp === stamped.stamp) continue;
+            this.refreshOne(file, this.fileDirs.get(file) ?? '');
+            sawChange = true;
+          }
         }
         // 已知目录顶层 readdir：发现新会话文件（watch 失效时的轮询兜底，~20ms）
         for (const dir of this.knownDirs) {
