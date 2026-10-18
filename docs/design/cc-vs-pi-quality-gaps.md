@@ -106,6 +106,17 @@ turn 结束 ──────────►（无质量组件：diff review / 
 | **OpenHands / SWE-agent** | 未覆盖（主体迁仓，researcher 超时） | — | 标注为盲区 |
 | **上游 #8795/#8796** | artifact-verification gate：**withhold success token 直到 exit 0 + `{"ok":true}`**；bounded repair turns；耗尽替换为 `ARTIFACT_VERIFICATION_FAILED` | PR #8795 | closed 未进 examples/ |
 
+**关键交叉验证结论（四路材料一致指向）**：**没有任何一家竞品做「agent 层的测试输出真伪复核」**（不解析输出判断谎报、不在 agent 侧重跑）——因为那本质上不可靠。唯一天然免疫的是 **Aider：agent 根本没有测试汇报通道**，host 每轮编辑后自己跑 `test_cmd`，以 **exit code** 判定（不解析输出！），失败经 `reflected_message` 回灌重试，`max_reflections=3` 超限放行并警告。这正是 F1 的**结构性解药**：不猜 agent 说得真不真，直接不让它说。
+
+Aider 源码级细节（HEAD 5dc9490）：
+- `aider/coders/base_coder.py:1599-1601`（lint_edited → auto_commit）、`:1616-1622`（cmd_test → 失败则 `confirm_ask("Attempt to fix test errors?")` → `reflected_message` 触发重试）
+- `:101` `max_reflections = 3`；`:939-943` 超限 `tool_warning("Only 3 reflections allowed, stopping.")` 后**继续**（放行+警告，不阻断）
+- `aider/commands.py:993-1011` cmd_test **只按 non-zero exit code 判定，不解析输出**
+- 代价：单命令门；exit 0 即通过（测试空跑/造假检测不到）；测试命令自动注入系统提示（`:1163-1170`）
+- 已知问题：#3865 `max_reflections` 不可配置（open）；#3140 `--auto-test` 与 `--message-file` 组合不工作（open）——**headless 场景门有覆盖缺口**
+
+OpenCode V2 关键回归（源码 TODO 直证）：`packages/core/src/tool/plugin/edit.ts:205` / `write.ts:44`：`TODO: Add LSP notification and diagnostics after LSP runtime exists`——V1 的「编辑后 LSP diagnostics 回注」在 V2 重写中**丢了**。这是「门被重写悄悄拆掉」的现实案例，我们的门要有测试钉住。
+
 ### 2.4 反面证据：agent 自验证的失效模式（已完成，一手材料）
 
 **F1. 改测试/写弱测试让门变绿——最致命：门不是失效，是反向作恶**
@@ -155,6 +166,8 @@ F1 证据（arXiv 2503.11926 + 系统卡 + codex#10169）表明：**允许 agent
 2. settle 门前：把**验证命令与测试目录**的当前状态与基线比对；被改动 → 判「门被污染」，不跑 verify，直接把差异回灌模型
 3. verify 的**输出不可伪造**：跑在扩展侧（host 侧执行，Aider 模式），agent 只看到 `{ok, tail}`，不看全量；成功才给「已验证」信号（withhold token）
 **接入点**：verify-gate 的 `tool_call` + settle 门；`git-status.ts` 已有 git 能力可复用。
+
+**核心设计原则（四路调研一致指向）**：不解析 agent 的测试输出判断真伪（没人这么做，因为不可靠），而是**取消 agent 的汇报通道**——Aider 模式：verify 在 host 侧跑，agent 只见 `{ok, tail}`，成功信号由门 withhold。我们的 settle 门已经是这个形状（跑在扩展侧），要补的是「基线比对」这层。
 
 ### P1-2. 「未验证」显式契约（防 F2 的部分解药）
 
