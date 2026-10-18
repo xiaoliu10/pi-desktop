@@ -5,7 +5,7 @@ import { applyContinuations, loadContinuations } from './pi/session-continuation
 import { listMemoryFiles, migrateLegacyMemoryFile, moveMemoryFileToProject, memoryAssistStatus, readMemoryFileContent, detectMemoryPlugin, builtinMemoryDir, DEFAULT_MEMORY_SOURCE } from './pi/memory-bridge';
 import { TerminalService } from './pi/terminal-service';
 import { filePreview } from './pi/file-preview';
-import { gitStatus } from './pi/git-status';
+import { gitStatusCached } from './pi/git-status';
 import fs from 'node:fs/promises';
 import fsSync from 'node:fs';
 import { monitorEventLoopDelay } from 'node:perf_hooks';
@@ -351,7 +351,7 @@ function registerIpc() {
   handle('respond', (key, generation, response) => host.backend.respond(key, generation, response));
   handle('forkMessage', (key, entryId) => host.backend.forkTo(key, entryId));
   handle('review', cwd => host.review(cwd));
-  handle('gitStatus', cwd => gitStatus(cwd));
+  handle('gitStatus', cwd => gitStatusCached(cwd));
   handle('filePreview', (cwd, file) => filePreview(cwd, file));
   // 只读状态：内置 subagent 已删（2026-10-18），这里只报告第三方包的供给情况，
   // 供设置页展示「当前哪个扩展在提供子代理能力」。无写入入口。
