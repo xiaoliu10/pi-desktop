@@ -242,7 +242,10 @@ function MessageParts({ parts, labels, onOpenToolFile, live, hiddenErrors }: { p
 /** 持有式图片：blob URL 的生命周期绑定挂载周期（acquire/release 配对），
  *  避免 base64 每拍重拼、也避免淘汰时 revoke 掉正在显示的 URL。 */
 function HeldImage({ part, className, alt }: { part: Extract<MessagePart, { kind: 'image' }>; className?: string; alt?: string }) {
-  const [src, setSrc] = useState(() => acquireImageUrl(part));
+  // 只在 effect 里 acquire/release：useState 初始化器也 acquire 会让 StrictMode 的
+  // 「挂→卸→挂」序列把引用计数永久停在 1（初始化 +1、effect +1、cleanup 只 -1）——
+  // 位图永不忘释放、evict 永不 revoke，内存只涨不减（大会话图片越多越卡）。
+  const [src, setSrc] = useState<string | undefined>(undefined);
   useEffect(() => {
     const url = acquireImageUrl(part);
     setSrc(url);
@@ -256,7 +259,8 @@ function MessageImage({ part, labels, onDownload }: { part: Extract<MessagePart,
   const [open, setOpen] = useState(false);
   // blob URL 按挂载周期持有/释放：base64 只在首次编码时拼一次（195MB 大会话里这是
   // GB 级垃圾与 RSS 3.5G 的根因），卸载即释放，不会每拍重拼。
-  const [dataUrl, setDataUrl] = useState(() => acquireImageUrl(part));
+  // 同 HeldImage：引用计数只在 effect 里增减（StrictMode 双挂载会泄漏计数器）。
+  const [dataUrl, setDataUrl] = useState<string | undefined>(undefined);
   useEffect(() => {
     const url = acquireImageUrl(part);
     setDataUrl(url);
@@ -279,7 +283,7 @@ function MessageImage({ part, labels, onDownload }: { part: Extract<MessagePart,
     {open && createPortal(
       <div className="pi-lightbox" role="dialog" aria-modal="true" aria-label={labels.viewImage} onClick={() => setOpen(false)}>
         <div className="pi-lightbox__bar" onClick={e => e.stopPropagation()}>
-          {onDownload && <button type="button" className="pi-lightbox__btn" title={labels.downloadImage} aria-label={labels.downloadImage} onClick={() => onDownload(dataUrl, name)}><Icon name="download-cloud" size={22} /></button>}
+          {onDownload && <button type="button" className="pi-lightbox__btn" title={labels.downloadImage} aria-label={labels.downloadImage} onClick={() => dataUrl && onDownload(dataUrl, name)}><Icon name="download-cloud" size={22} /></button>}
           <button type="button" className="pi-lightbox__btn" title={labels.close} aria-label={labels.close} onClick={() => setOpen(false)}><Icon name="x" size={22} /></button>
         </div>
         <img className="pi-lightbox__img" src={dataUrl} alt="附件图片" onClick={e => e.stopPropagation()} />
@@ -745,7 +749,10 @@ export const TurnArticle = memo(function TurnArticle({ m, liveTurn, retrying, su
               const liveSegment = si === segs.length - 1;
               const retryHead = retrying && si === lastStepsSegment;
               if (seg.kind === 'steps' && seg.parts.length > 0) {
-                return <ExecutionGroup key={`${m.id}-seg-${si}`} turn={m} parts={seg.parts} running={liveSegment && !retrying} expanded showElapsed={retryHead} headerChrome={retryHead} labels={labels} onOpenToolFile={onOpenToolFile} onCollapseAll={() => setProcessCollapsed(true)} />;
+                // 只有「正在输出的那一轮」强制展开过程段（用户要求的运行中可见性）；更早的
+                // 轮次恢复完成态折叠——否则流式期间每拍都要为全部历史轮建 steps 树，
+                // 三级折叠门控形同虚设（实测这就是「打字还是卡」的直接原因）。
+                return <ExecutionGroup key={`${m.id}-seg-${si}`} turn={m} parts={seg.parts} running={liveSegment && !retrying} expanded={liveTurn} showElapsed={retryHead} headerChrome={retryHead} labels={labels} onOpenToolFile={onOpenToolFile} onCollapseAll={() => setProcessCollapsed(true)} />;
               }
               if (seg.kind === 'text' && seg.parts.length > 0) {
                 if (seg.parts.every(part => hiddenErrors?.has(part.id))) return null;

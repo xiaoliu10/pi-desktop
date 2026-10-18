@@ -116,9 +116,6 @@ function branchSavedMessages(branch: PiEntry[]): Set<string> {
   return saved;
 }
 
-// 历史分页首屏条数（branch 尾部）。500 条约覆盖上百轮对话的真实会话；超过即大会话，
-// 首屏只传一屏的量，更早的按需补拉。主进程 99% CPU 的根因是全量传输，不是条数本身。
-const HISTORY_TAIL = 500;
 
 // 会话预热在途表：selectSession 触发后台 connect，send 到达时若预热未完成则 await
 // 同一份 Promise，避免同一会话并发两次 connect 各自 spawn 一个 pi 进程。
@@ -1132,12 +1129,11 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
     const seq = ++loadSeq;
     const generation = state.runs.find(r => r.key === key)?.generation;
     try {
-      // 大会话分页首屏：只拉 branch 尾部 HISTORY_TAIL 条。用户真实会话 201MB /
-      // 117 张图 / 195MB base64，全量 IPC 每几秒一次把主进程吃到 99% CPU（解析 +
-      // 结构化克隆双份常驻）。尾部窗口覆盖绝大多数会话的全部用户轮；被裁掉的条数由
-      // truncated 告知，ChatView 的「更早的消息」按钮据此显示还可加载多少。
-      // 刷新（流式期间每拍）同样走 tail：新消息永远在尾部，早于窗口的条目不会变。
-      const value = await api.history(key, state.leaf, { tail: HISTORY_TAIL });
+      // 全量历史：用户 2026-10-18 明确要求「打开就有完整对话历史」——tail=500 的首屏
+      // 让 27219 条的会话只剩三段可见，是不可接受的回归。主进程 CPU 的治理改由
+      // 「刷新节流 + 图片懒加载」承担（不在本提交回退范围内先恢复正确性）。
+      // opts.tail/before 保留给按需补拉（ChatView 的「更早的消息」展开超已载入范围时）。
+      const value = await api.history(key, state.leaf);
       if (seq !== loadSeq || get().selectedKey !== key || get().runs.find(r => r.key === key)?.generation !== generation) return false;
       settlePendingPrompt(value, key);
       if (historyReloadTimer) { clearTimeout(historyReloadTimer); historyReloadTimer = null; }
