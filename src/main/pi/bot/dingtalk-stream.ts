@@ -126,6 +126,13 @@ export class DingTalkStreamTransport implements ImTransport {
         const topic = frame?.headers?.topic ?? '(无 topic)';
         const dataLen = String(frame?.data ?? '').length;
         imLog(`收到事件帧：topic=${topic}，data ${dataLen}B，messageId=${String(frame?.headers?.messageId ?? '-').slice(0, 18)}`);
+        // 终极观测：真实 payload 原文（截 800 字）——text/sessionWebhook 的提取路径
+        // 必须按真实结构适配，不能再猜（用户发 /bind 被当 free text 的教训）。
+        const d = frame?.data ?? frame?.event;
+        const inner = typeof d === 'string'
+          ? (() => { try { return Buffer.from(d, 'base64').toString('utf8'); } catch { return d; } })()
+          : JSON.stringify(d);
+        imLog(`payload 原文：${String(inner).slice(0, 800)}`);
       }
       const msg = decodeFrame(text);
       if (!msg) { imLog(`事件帧未解码为机器人消息（topic 不符或结构异常），忽略`); return; }
