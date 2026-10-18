@@ -105,3 +105,46 @@ it('derives the session title from the first user message landing via increments
   fs.appendFileSync(file, JSON.stringify({ type: 'message', id: 'u', parentId: null, message: { role: 'user', content: '帮我分析这段报错日志' } }) + '\n');
   expect(index.history(key).session.name).toBe('帮我分析这段报错日志');
 });
+
+// 「进程」区块跨窗口持久（2026-10-18）：主进程 lastPlan 从全量 entries 提取最后一次
+// 成功的 desktop_update_plan 结果。真实 jsonl 形态：toolResult 是独立 entry，
+// toolName 在 message 层——此前误扫 message.content 里的 block，一次都扫不到。
+describe('history.plan extraction (desktop_update_plan)', () => {
+  it('extracts the last successful plan from toolResult entries (message-level toolName)', () => {
+    const root = temp(), file = path.join(root, 's.jsonl');
+    const planResult = (id: string, parentId: string, plan: unknown[]) => ({
+      type: 'message', id, parentId,
+      message: { role: 'toolResult', toolCallId: `call_${id}`, toolName: 'desktop_update_plan', content: [{ type: 'text', text: JSON.stringify({ plan }) }] },
+    });
+    // 500+ 条填充，把清单调用挤出 tail 窗口——模拟长任务早期建板
+    const fillers = Array.from({ length: 520 }, (_, i) => ({ type: 'message', id: `f${i}`, parentId: null, message: { role: 'assistant', content: `filler ${i}` } }));
+    write(file, [
+      header,
+      { type: 'message', id: 'u0', parentId: null, message: { role: 'user', content: 'do it' } },
+      { type: 'message', id: 'c1', parentId: 'u0', message: { role: 'assistant', content: [{ type: 'toolCall', id: 'call_p1', name: 'desktop_update_plan', arguments: { plan: [] } }] } },
+      planResult('p1', 'c1', [{ step: '旧任务', status: 'completed' }]),
+      ...fillers,
+      { type: 'message', id: 'c2', parentId: 'f519', message: { role: 'assistant', content: [{ type: 'toolCall', id: 'call_p2', name: 'desktop_update_plan', arguments: { plan: [] } }] } },
+      planResult('p2', 'c2', [{ step: '新任务A', status: 'completed' }, { step: '新任务B', status: 'in_progress' }]),
+    ]);
+    const index = new SessionIndex([root], root);
+    const key = index.scan()[0].key;
+    const h = index.history(key, undefined, { tail: 500 });
+    expect(h.plan).toEqual([{ step: '新任务A', status: 'completed' }, { step: '新任务B', status: 'in_progress' }]);
+  });
+
+  it('ignores malformed plan payloads and keeps scanning', () => {
+    const root = temp(), file = path.join(root, 's.jsonl');
+    write(file, [
+      header,
+      { type: 'message', id: 'c0', parentId: null, message: { role: 'assistant', content: 'x' } },
+      { type: 'message', id: 'bad', parentId: 'c0', message: { role: 'toolResult', toolCallId: 'x', toolName: 'desktop_update_plan', content: [{ type: 'text', text: '{"plan":"不是数组"}' }] } },
+      { type: 'message', id: 'good', parentId: 'bad', message: { role: 'toolResult', toolCallId: 'y', toolName: 'desktop_update_plan', content: [{ type: 'text', text: '{"plan":[{"step":"唯一","status":"pending"}]}' }] } },
+    ]);
+    const index = new SessionIndex([root], root);
+    const key = index.scan()[0].key;
+    // renderer 的 history 调用总带 tail（首屏分页契约）；plan 只在 wireLite 路径附发。
+    const h = index.history(key, undefined, { tail: 500 });
+    expect(h.plan).toEqual([{ step: '唯一', status: 'pending' }]);
+  });
+});

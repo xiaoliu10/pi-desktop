@@ -499,16 +499,18 @@ export class SessionIndex {
     if (scanFrom === 0) plan = undefined;
     for (let index = scanFrom; index < entries.length; index += 1) {
       const entry = entries[index];
-      const content = entry.message?.content;
-      if (!Array.isArray(content)) continue;
-      for (const block of content) {
-        if (block?.type !== 'toolResult' || block.toolName !== 'desktop_update_plan') continue;
-        try {
-          const text = Array.isArray(block.content) ? block.content.map((b: any) => b?.text ?? '').join('') : String(block.content ?? '');
-          const value = JSON.parse(text)?.plan;
-          if (Array.isArray(value) && value.length <= 30 && value.every((p: any) => p && typeof p.step === 'string' && ['pending', 'in_progress', 'completed'].includes(p.status))) plan = value;
-        } catch { /* 半截流式结果不替换上一份有效清单 */ }
-      }
+      // pi 的 toolResult 是独立 entry：message.role='toolResult'，toolName 在
+      // message 层（此前误扫 message.content 里的 block——那里既没有 type=
+      // 'toolResult' 的块也没有 toolName 字段，真实会话 125 次调用一次都扫不到，
+      // 「跨窗口持久」等于没上线）。
+      const m = entry.message as { role?: string; toolName?: string; content?: unknown } | undefined;
+      if (!m || m.role !== 'toolResult' || m.toolName !== 'desktop_update_plan') continue;
+      try {
+        const blocks = Array.isArray(m.content) ? m.content : [];
+        const text = blocks.map((b: any) => b?.text ?? '').join('');
+        const value = JSON.parse(text)?.plan;
+        if (Array.isArray(value) && value.length <= 30 && value.every((p: any) => p && typeof p.step === 'string' && ['pending', 'in_progress', 'completed'].includes(p.status))) plan = value;
+      } catch { /* 半截流式结果不替换上一份有效清单 */ }
     }
     this.planMemo = { entries, plan };
     return plan;

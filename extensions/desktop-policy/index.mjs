@@ -68,7 +68,7 @@ export default function desktopPolicy(pi) {
   });
   pi.on('before_agent_start', event => {
     const current = readModeFile();
-    return { systemPrompt: event.systemPrompt + '\nTask checklist (desktop_update_plan) is MANDATORY for any non-trivial task: before starting work, create a checklist of 3-10 steps covering the whole task. While working: keep exactly one step in_progress at a time; mark a step completed the moment it is done (never batch updates); add newly discovered steps as you go. Never mark anything completed that has not been verified.' + (current === 'plan'
+    return { systemPrompt: event.systemPrompt + '\nTask checklist (desktop_update_plan) is MANDATORY for any non-trivial task: each NEW user task gets its OWN checklist — do not assume an earlier checklist still applies. Before starting work, create a checklist of 3-10 steps covering the whole task. While working: keep exactly one step in_progress at a time; mark a step completed the moment it is done (never batch updates); add newly discovered steps as you go. Never mark anything completed that has not been verified.' + (current === 'plan'
       ? '\nDesktop 当前为计划模式。只研究项目并给出实施计划，不修改文件、不执行命令、不调用有副作用的工具。完成计划后等待用户点击“按计划执行”。'
       : `\nDesktop 访问模式：${labels[current]}。被策略拒绝时说明原因，不要通过其他工具绕过权限。`) };
   });
