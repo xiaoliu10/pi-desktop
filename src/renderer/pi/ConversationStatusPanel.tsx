@@ -10,7 +10,7 @@ import { conversationPlan } from './conversation-plan';
 import './conversation-status.css';
 
 /** 1234→1.2k, 1234567→1.23M —— 状态栏紧凑数字。 */
-const fmtTokens = (n: number): string => n >= 1e6 ? `${(n / 1e6).toFixed(2)}M` : n >= 1e3 ? `${(n / 1e3).toFixed(1)}k` : String(n);
+const fmtTokens = (n: number): string => n >= 1e9 ? `${(n / 1e9).toFixed(2)}B` : n >= 1e6 ? `${(n / 1e6).toFixed(2)}M` : n >= 1e3 ? `${(n / 1e3).toFixed(1)}k` : String(n);
 /** 百分比/速率统一口径：有限非负值保留一位小数，未知（null/NaN/负数）显示 —。 */
 const fmtRate = (n: number | null | undefined, unit: string): string => n != null && Number.isFinite(n) && n >= 0 ? `${n.toFixed(1)}${unit}` : '—';
 
