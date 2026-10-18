@@ -469,17 +469,36 @@ export class SessionIndex {
    *  零消费（只用 branch/leaves/leafId/session，grep 2026-10-18 核实），分页模式下
    *  用 branch 顶替（类型合规），IPC 体积砍 ~97%。需要全量 entries 的调用方走
    *  主进程内部（cache 直读），不走 IPC 分页契约。 */
-  private wireLite(history: PiHistory): PiHistory {
-    return { ...history, entries: history.branch, plan: this.lastPlan(history) };
+  private wireLite(full: PiHistory): PiHistory {
+    // plan 扫全量 entries（branch 是分页裁切，可能只是尾部 500 条——若按 branch
+    // 扫就会漏掉任务早期建的清单）。memo 键 = full.entries 引用：parseFile 增量
+    // 解析换新数组才重算，静止/流式期间（每拍 refreshHistory）命中即零成本。
+    // 注意：wireLite 的调用方传的是分页*之前*的 full，裁切只影响返回值。
+    return { ...full, entries: full.branch, plan: this.lastPlan(full.entries) };
   }
 
   /** 会话最后一次成功的 desktop_update_plan 清单：renderer 实时解析只看渲染窗口
    *  （tail 500），长任务把清单调用裁出窗口后「进程」区块就空了。主进程有全量
    *  branch，扫最后一次成功结果随 history 下发。O(n) 按 entries 引用 memo。 */
-  private lastPlan(history: PiHistory): import('../../shared/conversation-status').PlanItem[] | undefined {
-    if (this.planMemo && this.planMemo.entries === history.entries) return this.planMemo.plan;
-    let plan: import('../../shared/conversation-status').PlanItem[] | undefined;
-    for (const entry of history.entries) {
+  private lastPlan(entries: PiEntry[]): import('../../shared/conversation-status').PlanItem[] | undefined {
+    const memo = this.planMemo;
+    // 增量：新数组若是旧数组的超集（parseAppends 的形态），只扫新增尾部——
+    // 否则静止会话每拍全扫 17609 条 entries（流式期间每 delta 一次），正是
+    // 主进程 V8 反复重编译（deopt 风暴）的燃料。全量重算只在换分支/缓存
+    // 重建（非前缀关系）时发生。
+    let plan = memo?.plan;
+    let scanFrom = 0;
+    if (memo && entries.length > memo.entries.length && entries.length - memo.entries.length <= memo.entries.length + 64) {
+      // 前缀对齐校验：旧 entries 全部仍是新数组的前缀才敢增量
+      let prefixOk = true;
+      for (let i = 0; i < memo.entries.length; i += 1) {
+        if (entries[i] !== memo.entries[i]) { prefixOk = false; break; }
+      }
+      if (prefixOk) { plan = memo.plan; scanFrom = memo.entries.length; }
+    }
+    if (scanFrom === 0) plan = undefined;
+    for (let index = scanFrom; index < entries.length; index += 1) {
+      const entry = entries[index];
       const content = entry.message?.content;
       if (!Array.isArray(content)) continue;
       for (const block of content) {
@@ -491,7 +510,7 @@ export class SessionIndex {
         } catch { /* 半截流式结果不替换上一份有效清单 */ }
       }
     }
-    this.planMemo = { entries: history.entries, plan };
+    this.planMemo = { entries, plan };
     return plan;
   }
 
