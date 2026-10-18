@@ -100,6 +100,9 @@ export class SessionIndex {
   private pendingPaths = new Set<string>();
   /** 兜底计数：每 N 次 check 做一次全量 walk（纠正 watch 漏事件/新目录）。 */
   private checkCount = 0;
+  /** root 级 watch 事件（filename 为空）：触发本轮浅层目录发现而非全量 scan。 */
+  private pendingDirsScan = false;
+  private lastShallowScan = 0;
   /** 会话文件 → 所属 root real path 的表：增量 check 用它免掉全量 walk。
    *  （scan() 全量时重建。） */
   private fileDirs = new Map<string, string>();
@@ -523,6 +526,7 @@ export class SessionIndex {
         const targets = [...this.pendingPaths]; this.pendingPaths.clear();
         let rescan = false;
         if (targets.length) rescan = this.refreshTargets(targets);
+        const dirsScan = this.pendingDirsScan; this.pendingDirsScan = false;
         // 已知文件的 stat 增量（watch 漏事件兜底之外的主路径）
         let sawChange = false;
         for (const [key, entry] of [...this.cache.entries()]) {
@@ -548,9 +552,15 @@ export class SessionIndex {
             sawChange = true;
           }
         }
-        // 已知目录的浅层发现（含新子目录一层）：只在纯轮询拍做（watch 事件拍不做——
-        // 流式期间 watch 每 120ms 触发，这一步每拍 ~50ms 也会吃掉半核）。
-        if (targets.length === 0) {
+        // 已知目录的浅层发现（含新子目录一层）：纯轮询拍或 root 级事件拍才做。
+        // 文件级 watch 事件拍跳过（流式期间 watch 每 120ms 触发，这步每拍 ~50ms
+        // 也会吃掉半核）。
+        // 最小间隔 2s：FSEvents 高频发空 filename 事件时（目录操作密集期），浅层
+        // 发现每拍 ~50ms 仍会吃掉半核——限频后最坏 ~2.5%。
+        const nowMs = Date.now();
+        const shallowDue = nowMs - this.lastShallowScan >= 2_000;
+        if ((targets.length === 0 || dirsScan) && shallowDue) {
+          this.lastShallowScan = nowMs;
           const queue = [...this.knownDirs];
           for (let i = 0; i < queue.length; i += 1) {
             const dir = queue[i]!;
@@ -594,8 +604,12 @@ export class SessionIndex {
       try { this.knownDirs.add(canonical(root)); } catch { this.knownDirs.add(root); }
       try {
       this.watchers.push(fs.watch(root, { recursive: true }, (_event, filename) => {
+        // macOS FSEvents 对目录级事件（子目录创建/删除/重命名）经常不给 filename。
+        // 此前把整个 root 塞进 pendingPaths → statSync(root)=目录 → rescan=true →
+        // 每次 watch 事件都全量 scan（244ms）→ 流式期间主进程实测 99.8%。
+        // 现在只置一个轻量标志：本轮做 knownDirs 浅层发现（~几十 ms），不触发全量。
         if (filename) this.pendingPaths.add(path.resolve(root, filename));
-        else this.pendingPaths.add(root); // 平台不给 filename（少见）：退化为扫该 root 顶层
+        else this.pendingDirsScan = true;
         clearTimeout(this.debounce); this.debounce = setTimeout(check, 120);
       }));
       } catch { /* Poll fallback includes new roots. */ }
@@ -610,7 +624,23 @@ export class SessionIndex {
     for (const target of targets) {
       let st: fs.Stats | undefined;
       try { st = fs.statSync(target); } catch { st = undefined; }
-      if (st?.isDirectory()) { rescan = true; continue; } // 新目录树：交给全量 walk 統一处理
+      if (st?.isDirectory()) {
+        // 目录级事件：只浅层 readdir 该目录一层发现新会话文件（此前 rescan=true
+        // 每次全量 walk 244ms——流式期间子会话目录操作频繁，主进程被打满）。
+        try {
+          const root = this.roots.find(r => target.startsWith(canonical(r))) ?? '';
+          for (const item of fs.readdirSync(target, { withFileTypes: true })) {
+            if (!item.isFile() || !item.name.endsWith('.jsonl')) continue;
+            const full = path.join(target, item.name);
+            let real: string;
+            try { real = fs.realpathSync(full); } catch { continue; }
+            if (this.fileDirs.has(real)) continue;
+            this.fileDirs.set(real, root);
+            this.refreshOne(real, root);
+          }
+        } catch { /* 目录又被删：下轮兜底 */ }
+        continue;
+      }
       if (st?.isFile() && target.endsWith('.jsonl')) {
         try {
           const real = fs.realpathSync(target);
