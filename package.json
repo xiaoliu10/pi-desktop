@@ -1,7 +1,7 @@
 {
   "name": "pi-desktop",
   "productName": "PI Desktop",
-  "version": "0.1.27",
+  "version": "0.1.28",
   "description": "Local-first AI coding agent desktop: Electron host core + agent runtime + multi-provider models",
   "license": "Apache-2.0",
   "author": "xiaoliu10",
@@ -139,7 +139,7 @@
     "mac": {
       "icon": "resources/icon.icns",
       "extendInfo": {
-        "NSMicrophoneUsageDescription": "PI Desktop \u9700\u8981\u9ea6\u514b\u98ce\u6743\u9650\u4ee5\u8fdb\u884c\u8bed\u97f3\u8f93\u5165\u3002"
+        "NSMicrophoneUsageDescription": "PI Desktop 需要麦克风权限以进行语音输入。"
       },
       "target": [
         "dmg",
