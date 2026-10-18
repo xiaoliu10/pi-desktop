@@ -107,8 +107,16 @@ export class DingTalkStreamTransport implements ImTransport {
         ws.send(JSON.stringify({ code: 200, headers: {}, body: '{}', message: 'pong' }));
         return;
       }
+      if (!text.includes('"ping"')) {
+        // 观测点：收到任何非 ping 帧都落盘（此前 decode 失败静默丢弃——连接活着
+        // 却「收不到消息」时无法区分帧没到还是解析挂了，2026-10-18 实测盲区）。
+        const frame = (() => { try { return JSON.parse(text); } catch { return null; } })();
+        const topic = frame?.headers?.topic ?? '(无 topic)';
+        const dataLen = String(frame?.data ?? '').length;
+        imLog(`收到事件帧：topic=${topic}，data ${dataLen}B，messageId=${String(frame?.headers?.messageId ?? '-').slice(0, 18)}`);
+      }
       const msg = decodeFrame(text);
-      if (!msg) return;
+      if (!msg) { imLog(`事件帧未解码为机器人消息（topic 不符或结构异常），忽略`); return; }
       void ctx
         .onMessage({ chatId: msg.chatId, text: msg.text } satisfies IncomingMessage)
         .then(async (reply) => {
