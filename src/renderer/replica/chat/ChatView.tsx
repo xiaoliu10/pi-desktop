@@ -887,6 +887,20 @@ export const ChatView = memo(function ChatView(props: ChatViewProps) {
   useLayoutEffect(() => {
     if (followingRef.current && listRef.current) listRef.current.scrollTop = listRef.current.scrollHeight;
   }, [lastTurnKey]);
+  // 会话内搜索定位（主进程索引层命中 → store.pendingJump）：等 renderLimit 窗口内出现该
+  // 消息再滚。命中可能在首屏之外，此时由调用方先补拉；补拉后 branch 变更触发本 effect 重跑。
+  useEffect(() => {
+    const id = props.pendingJump;
+    if (!id) return;
+    const target = turns.find(t => t.messageIds.includes(id))?.id || id;
+    const el = Array.from(listRef.current?.querySelectorAll<HTMLElement>('[data-msg]') || []).find(e => e.dataset.msg === target);
+    if (!el) return; // 还没渲染（窗口未覆盖）：等下一次 branch/limit 变更
+    el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    props.onJumpToMessage(id);
+    props.onJumpConsumed?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [props.pendingJump, turns.length]);
+
   const jump = (id: string) => {
     const target = turns.find(t => t.messageIds.includes(id))?.id || id;
     const el = Array.from(listRef.current?.querySelectorAll<HTMLElement>('[data-msg]') || []).find(e => e.dataset.msg === target);

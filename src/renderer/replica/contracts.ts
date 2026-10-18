@@ -434,6 +434,9 @@ export interface ChatViewProps {
   labels: ChatLabels;
   /** Anchor element ids per message for the nav rail + jump links. */
   onJumpToMessage: (id: string) => void;
+  /** 会话内搜索定位：非空时滚到该 entry 对应的消息并清空（onJumpToMessage 也照旧触发）。 */
+  pendingJump?: string | null;
+  onJumpConsumed?: () => void;
   /** 编辑并重发已发送的用户消息（fork 截断回该条目后重发）；缺省=仅复制不可编辑。 */
   onEditUserMessage?: (entryId: string, text: string) => void;
   /** 补拉更早一页历史（首屏 tail + 分页的用户入口）。缺省/加载中时按钮禁用。 */
@@ -863,6 +866,12 @@ export interface GlobalSearchProps {
   onQuery: (q: string) => void;
   onClose: () => void;
   onSelect: (item: SearchItem) => void;
+  /** 当前会话 key：非空时搜索框同时搜「会话内全文」（主进程索引层 searchSession）。 */
+  selectedKey?: string | null;
+  /** 会话内命中点击：定位到该 entry（渲染层取回那段并高亮）。 */
+  onSelectEntry?: (entryId: string) => void;
+  /** 会话内搜索中（主进程 IPC 在途）。 */
+  entrySearching?: boolean;
 }
 
 export interface SearchLabels {

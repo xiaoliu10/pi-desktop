@@ -23,6 +23,14 @@ export interface PiEnvironment {
 export interface PiUpgradeResult { exitCode: number; stdout: string; stderr: string }
 export interface PiSession { key: string; id: string; path: string; cwd: string; name: string; updatedAt: number; size: number; warnings: string[]; owned: boolean; parentSession?: string; sidecarOf?: string }
 export interface PiEntry { type: string; id?: string; parentId?: string | null; timestamp?: string; message?: Record<string, unknown>; [key: string]: unknown }
+/** 会话内搜索命中：只回定位信息（entryId + 预览），全文由 history(before) 取回。
+ *  索引=entry 链表本身（稳定 id + parentId），摘要=user 消息/工具 summary，零额外结构。 */
+export interface PiSearchHit { entryId: string; role: string; preview: string; at: number; /** 命中所在 user 轮的 entryId（章节定位） */ turnEntryId?: string }
+export interface PiSearchResult { total: number; hits: PiSearchHit[] }
+/** 会话大纲（轮次地图）：每个 user entry 一章，title=首行截断。 */
+export interface PiOutlineItem { entryId: string; title: string; at: number; toolCount: number; hasImages: boolean }
+export interface PiOutline { turns: PiOutlineItem[]; total: number }
+
 export interface PiHistory { session: PiSession; entries: PiEntry[]; branch: PiEntry[]; leaves: string[]; leafId: string | null; syncedAt: number; /** 分页元信息：本次只返回了 branch 尾部 returned 条（大会话首屏降载），total 是完整条数。 */ truncated?: { total: number; returned: number } }
 export interface PiResource { id: string; name: string; kind: string; path: string; scope: 'user' | 'project'; status: 'discovered' | 'callable' | 'disabled' | 'missing' | 'error'; detail: string }
 export interface PiCommand { name: string; description?: string; source?: string; path?: string }
@@ -128,6 +136,8 @@ export interface LocalPiApi extends importSettingsApi {
   /** 手动删除归档会话：会话文件移到系统废纸篓（可恢复），索引条目随之清除。 */
   deleteArchivedSession(key: string): Promise<string[]>;
   history(key: string, leafId?: string, opts?: { tail?: number; before?: string; count?: number }): Promise<PiHistory>;
+  searchSession(key: string, query: string, opts?: { limit?: number }): Promise<PiSearchResult>;
+  sessionOutline(key: string): Promise<PiOutline>;
   resources(cwd?: string): Promise<PiResource[]>;
   connect(input: { sourceKey?: string; cwd?: string; trustProject: boolean; permission: AccessMode; executionMode?: Exclude<AccessMode, 'plan'> }): Promise<PiRun>;
   sidecarEnsure(mainKey: string): Promise<{ key: string; run: PiRun }>;

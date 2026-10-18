@@ -36,7 +36,10 @@ function fingerprint(p: MessagePart & { kind: 'image' }): string {
 
 function encode(p: MessagePart & { kind: 'image' }): { url: string; blob: boolean } {
   try {
-    const binary = atob(p.data);
+    // base64 标准允许忽略空白：pi 序列化/换行的长块可能带 \n，atob 对含空白的串直接抛
+    // InvalidCharacterError——那时整批图会静默降级成 data URL（每张常驻两份 + 每拍重拼），
+    // 正是「图片预览看不到 + 越用越卡」的静默根因。先剥空白再解。
+    const binary = atob(p.data.replace(/\s+/g, ''));
     const bytes = new Uint8Array(binary.length);
     for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
     return { url: URL.createObjectURL(new Blob([bytes], { type: p.mimeType })), blob: true };

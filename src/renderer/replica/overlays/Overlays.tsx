@@ -4,12 +4,14 @@
  */
 
 import { useEffect, useRef, useState } from 'react';
+import type { PiSearchHit } from '../../../shared/pi';
 import type { GlobalSearchProps, NotificationItem, NotificationsProps } from '../contracts';
 import { Icon } from '../Icons';
 import './overlays.css';
 
-export function GlobalSearch(props: GlobalSearchProps) {
+export function GlobalSearch(props: GlobalSearchProps & { entryHits?: PiSearchHit[]; entryTotal?: number }) {
   const inputRef = useRef<HTMLInputElement>(null);
+  const entryHits = props.entryHits ?? [];
   useEffect(() => {
     if (!props.open) return;
     inputRef.current?.focus();
@@ -51,6 +53,30 @@ export function GlobalSearch(props: GlobalSearchProps) {
           </button>
         )}
         {!q && <div className="pi-search__group">{props.labels.today}</div>}
+        {/* 会话内全文命中（主进程索引层：entry 链表 + preview）。选中会话且 query 非空时出现。 */}
+        {q && props.selectedKey && (
+          <>
+            <div className="pi-search__group">
+              {props.entrySearching ? '会话内搜索中…' : `会话内 · ${props.entryTotal ?? entryHits.length} 条命中`}
+            </div>
+            <div className="pi-search__list" role="listbox" aria-label="会话内搜索结果">
+              {entryHits.map((hit, i) => (
+                <button
+                  key={hit.entryId}
+                  role="option"
+                  aria-selected={i === 0}
+                  className={`pi-search__row ${i === 0 ? 'pi-search__row--sel' : ''}`}
+                  onClick={() => props.onSelectEntry?.(hit.entryId)}
+                >
+                  <Icon name="chat" size={14} />
+                  <span className="pi-search__title">{hit.preview}</span>
+                  <span className="pi-search__source">{hit.role === 'user' ? '你' : hit.role === 'assistant' ? 'pi' : hit.role}</span>
+                </button>
+              ))}
+              {!props.entrySearching && entryHits.length === 0 && <div className="pi-search__empty">会话内无匹配</div>}
+            </div>
+          </>
+        )}
         <div className="pi-search__list" role="listbox">
           {items.map((item, i) => (
             <button

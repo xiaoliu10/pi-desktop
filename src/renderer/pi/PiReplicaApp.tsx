@@ -1038,6 +1038,8 @@ export default function PiReplicaApp() {
                     labels={t.chat}
                     onOpenToolFile={openToolFile}
                     onJumpToMessage={noop}
+                    pendingJump={s.pendingJump}
+                    onJumpConsumed={s.clearPendingJump}
                     onEditUserMessage={editUserMessage}
                     onDownloadImage={downloadImage}
                     onRefreshProcess={s.refreshConversation}
@@ -1128,6 +1130,24 @@ export default function PiReplicaApp() {
         onQuery={s.setSearchQuery}
         onClose={() => s.setSearchOpen(false)}
         onSelect={onSelectSearch}
+        selectedKey={s.selectedKey}
+        entryHits={s.entryHits}
+        entryTotal={s.entryTotal}
+        entrySearching={s.entrySearching}
+        onSelectEntry={(entryId) => {
+          s.setSearchOpen(false);
+          // 命中可能在首屏 500 条之外：先补拉（幂等，branch 已含则秒回），再定位滚动。
+          void (async () => {
+            for (let i = 0; i < 40; i += 1) {
+              const branch = s.history?.branch;
+              if (!branch) break;
+              if (branch.some(e => e.id === entryId) || !s.history?.truncated) break;
+              if (s.earlierLoading) await new Promise(r => setTimeout(r, 60));
+              else await s.loadEarlierHistory();
+            }
+            s.jumpToMessage?.(entryId) ?? noop();
+          })();
+        }}
       />
       <Notifications
         open={s.notificationsOpen}

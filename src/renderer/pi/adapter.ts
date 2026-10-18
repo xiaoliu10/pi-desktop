@@ -41,7 +41,7 @@ import type {
   ProjectNavItem,
   SessionNavItem,
 } from '../replica/contracts';
-import type { LocalPiApi, PiEntry, PiEvent, PiEnvironment, PiHistory, PiModelCatalog, PiResource, PiReview, PiRun, PiSession, PiUiRequest } from '../../shared/pi';
+import type { LocalPiApi, PiEntry, PiEvent, PiEnvironment, PiHistory, PiModelCatalog, PiResource, PiReview, PiRun, PiSearchHit, PiSession, PiUiRequest } from '../../shared/pi';
 
 export type Dialog = { key: string; generation: string; request: PiUiRequest };
 export type Behavior = 'steer' | 'followUp';
@@ -120,6 +120,8 @@ function branchSavedMessages(branch: PiEntry[]): Set<string> {
 // 历史分页大小（首屏与每页补拉的条数）。500 条约覆盖上百轮真实对话；超过即大会话，
 // 走「一屏 + 按需补拉」而不是一次传完（205MB 会话全量序列化实测 3.5s/次，主进程被吃满）。
 const HISTORY_PAGE = 500;
+/** 会话内搜索 IPC 的竞态序号：连打只接受最后一次结果（typing 时会有多个在途）。 */
+let entrySearchSeq = 0;
 
 // 会话预热在途表：selectSession 触发后台 connect，send 到达时若预热未完成则 await
 // 同一份 Promise，避免同一会话并发两次 connect 各自 spawn 一个 pi 进程。
@@ -925,6 +927,12 @@ export interface PiReplicaState {
 
   searchOpen: boolean;
   searchQuery: string;
+  /** 会话内全文搜索（主进程索引层 searchSession）：命中/总数/在途。 */
+  entryHits: PiSearchHit[];
+  entryTotal: number;
+  entrySearching: boolean;
+  /** 会话内搜索定位请求：ChatView 消费后清空（entryId → 滚到该消息）。 */
+  pendingJump: string | null;
   notificationsOpen: boolean;
   notifications: NotificationItem[];
   notice?: string;
@@ -997,6 +1005,8 @@ export interface PiReplicaActions {
   toggleWorkbench: () => void;
   selectWorkbenchTab: (tab: 'review' | 'files' | 'browser' | 'aux' | 'home') => void;
   setSearchOpen: (open: boolean) => void;
+  jumpToMessage: (entryId: string) => void;
+  clearPendingJump: () => void;
   setSearchQuery: (q: string) => void;
   toggleNotifications: () => void;
   markAllRead: () => void;
@@ -1620,6 +1630,10 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
 
     searchOpen: false,
     searchQuery: '',
+    entryHits: [],
+    entryTotal: 0,
+    entrySearching: false,
+    pendingJump: null,
     notificationsOpen: false,
     notifications: [],
     notice: undefined,
@@ -2375,7 +2389,21 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
     },
 
     setSearchOpen: (searchOpen) => set({ searchOpen, searchQuery: searchOpen ? get().searchQuery : '' }),
-    setSearchQuery: (searchQuery) => set({ searchQuery }),
+    jumpToMessage: (entryId) => set({ pendingJump: entryId }),
+    clearPendingJump: () => set({ pendingJump: null }),
+    setSearchQuery: (searchQuery) => {
+      set({ searchQuery });
+      const key = get().selectedKey;
+      const api = typeof window !== 'undefined' ? window.localPi : undefined;
+      if (!key || !api) { set({ entryHits: [], entryTotal: 0 }); return; }
+      const needle = searchQuery.trim();
+      if (!needle) { set({ entryHits: [], entryTotal: 0, entrySearching: false }); return; }
+      const seq = ++entrySearchSeq;
+      set({ entrySearching: true });
+      void api.searchSession(key, needle, { limit: 50 })
+        .then(res => { if (seq === entrySearchSeq) { set({ entryHits: res.hits, entryTotal: res.total, entrySearching: false }); } })
+        .catch(() => { if (seq === entrySearchSeq) set({ entryHits: [], entryTotal: 0, entrySearching: false }); });
+    },
     toggleNotifications: () => set({ notificationsOpen: !get().notificationsOpen }),
     markAllRead: () => set({ notifications: get().notifications.map((n) => ({ ...n, read: true })) }),
     dismissNotification: (id) => set({ notifications: get().notifications.filter((n) => n.id !== id) }),

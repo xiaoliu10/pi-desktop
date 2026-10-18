@@ -1,11 +1,45 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
-import type { PiEntry, PiHistory, PiSession } from '../../shared/pi';
+import type { PiEntry, PiHistory, PiOutline, PiOutlineItem, PiSearchHit, PiSearchResult, PiSession } from '../../shared/pi';
 import { MAX_SESSION, OversizedSessionError, sessionStub } from './session-size';
 /** 大于该值的会话文件变更时只更新元数据、延后全量解析：流式期间活动会话每个 delta
  * 都在追加，若每次 watch/轮询都重读重解析整个 MB 级文件，主进程会被持续拖死。 */
 const DEFER_PARSE_BYTES = 256 * 1024;
+/** entry 消息的纯文本（搜索/摘要用）：text 块 + toolCall 参数 + toolResult 内容，封顶防巨型单块拖垮匹配。 */
+function entryText(message: any): string {
+  const cap = (t: unknown) => typeof t === 'string' ? (t.length > 20_000 ? t.slice(0, 20_000) : t) : '';
+  const content = message?.content;
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return '';
+  const out: string[] = [];
+  for (const block of content) {
+    if (!block || typeof block !== 'object') continue;
+    if (block.type === 'text') out.push(cap(block.text));
+    else if (block.type === 'thinking') out.push(cap(block.thinking));
+    else if (block.type === 'toolCall') {
+      // 只取定位性字段（command/path/pattern/query/url）：整包 JSON 会把源码噪声喂给搜索，
+      // 命中的 preview 就变成代码行（实测「打字」命中一堆 if (e.key === ' ')，毫无可读性）。
+      const a = block.arguments;
+      if (a && typeof a === 'object') for (const k of ['command', 'path', 'pattern', 'query', 'url', 'file_path']) {
+        const v = (a as Record<string, unknown>)[k];
+        if (typeof v === 'string') out.push(`${k}: ${v.slice(0, 200)}`);
+      }
+    }
+    else if (block.type === 'toolResult') {
+      const c = block.content;
+      if (typeof c === 'string') out.push(cap(c));
+      else if (Array.isArray(c)) for (const b of c) if (b?.type === 'text') out.push(cap(b.text));
+    }
+  }
+  return out.join('\n');
+}
+
+function entryHasImage(message: any): boolean {
+  const content = message?.content;
+  return Array.isArray(content) && content.some((b: any) => b?.type === 'image');
+}
+
 export function canonical(file: string): string { try { return fs.realpathSync(file); } catch { try { return path.join(fs.realpathSync(path.dirname(file)), path.basename(file)); } catch { return path.resolve(file); } } }
 export const fileKey = (file: string) => createHash('sha256').update(canonical(file)).digest('hex');
 export function branchEntries(entries: PiEntry[], leaf?: string): PiEntry[] {
@@ -267,6 +301,62 @@ export class SessionIndex {
     if (leaf && !found.entries.some(e => e.id === leaf)) throw new Error('Unknown leaf');
     return leaf ? { ...found, branch: branchEntries(found.entries, leaf), leafId: leaf } : found;
   }
+  /**
+   * 会话内全文搜索：扫已解析的 entries（主进程持有全量，O(n) 字符串匹配，205MB 实测
+   * <100ms），只回定位信息。索引不需要另建——entry 链表本身就是有序索引（稳定 id +
+   * parentId），user 消息是天然的轮次边界。渲染层命中后走 history(before) 取回那段。
+   * 只搜当前 branch（与渲染一致）；空 query 返回空（调用方负责拦截）。
+   */
+  searchSession(key: string, query: string, opts?: { limit?: number }): PiSearchResult {
+    const cached = this.cache.get(key)?.history;
+    if (!cached) return { total: 0, hits: [] };
+    const needle = query.trim();
+    if (!needle) return { total: 0, hits: [] };
+    const limit = Math.max(1, Math.min(opts?.limit ?? 50, 200));
+    const hits: PiSearchHit[] = [];
+    let total = 0;
+    let turnEntryId: string | undefined;
+    const entries = cached.entries;
+    for (const entry of entries) {
+      const message = entry.message;
+      if (message?.role === 'user' && entry.id) turnEntryId = entry.id;
+      if (!message) continue;
+      const text = entryText(message);
+      if (!text || !text.includes(needle)) continue;
+      total += 1;
+      if (hits.length >= limit) continue;
+      const at = entry.timestamp ? Date.parse(entry.timestamp) : NaN;
+      const cut = text.indexOf(needle);
+      const preview = (cut > 60 ? `…${text.slice(cut - 60, cut + 140)}` : text.slice(0, 200)).replace(/\s+/g, ' ').trim();
+      hits.push({ entryId: entry.id ?? '', role: String(message.role ?? ''), preview: preview.length > 200 ? `${preview.slice(0, 200)}…` : preview, at: Number.isFinite(at) ? at : 0, turnEntryId });
+    }
+    return { total, hits };
+  }
+
+  /** 会话大纲：每个 user entry 一章（title=首行截断，toolCount=该轮工具数，hasImages）。 */
+  sessionOutline(key: string): PiOutline {
+    const cached = this.cache.get(key)?.history;
+    if (!cached) return { turns: [], total: 0 };
+    const turns: PiOutlineItem[] = [];
+    let current: PiOutlineItem | undefined;
+    for (const entry of cached.entries) {
+      const message = entry.message;
+      if (!message) continue;
+      const at = entry.timestamp ? Date.parse(entry.timestamp) : NaN;
+      if (message.role === 'user' && entry.id) {
+        current = { entryId: entry.id, title: entryText(message).slice(0, 80), at: Number.isFinite(at) ? at : 0, toolCount: 0, hasImages: entryHasImage(message) };
+        turns.push(current);
+        continue;
+      }
+      if (!current) continue;
+      if (Array.isArray(message.content)) for (const block of message.content) {
+        if (block?.type === 'toolCall') current.toolCount += 1;
+        if (block?.type === 'image') current.hasImages = true;
+      }
+    }
+    return { turns: turns.slice(-500), total: turns.length };
+  }
+
   /**
    * 读取会话历史。opts.tail：只返回 branch 尾部 N 条（大会话分页首屏用）。
    * 动机：用户真实会话 201MB / 117 张图 / 195MB base64，全量序列化经 IPC 到渲染层
