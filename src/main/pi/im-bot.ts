@@ -82,6 +82,8 @@ export class ImBot {
     private readonly configPath: string,
     private readonly post: (url: string, body: Record<string, unknown>) => Promise<void> = defaultPost,
     private readonly actions?: BotActions | (() => BotActions),
+    /** 测试注入点：替换真实 transport 工厂，避免测试连真实 IM 网关。 */
+    private readonly makeTransport?: (cfg: ImConfig) => ImTransport | null,
   ) {
     this.config = { ...DEFAULT_IM_CONFIG, ...readJson(configPath) };
   }
@@ -112,20 +114,33 @@ export class ImBot {
     const cfg = this.config;
     const key = `${cfg.provider}|${cfg.twoWay ? 1 : 0}|${cfg.appKey ?? ''}|${cfg.appSecret ?? ''}|${cfg.botToken ?? ''}`;
     if (key === this.transportKey) return;
-    this.transportKey = key;
     await this.stopTransport();
-    const actions = this.actions2;
-    if (!actions || !cfg.twoWay || cfg.provider === 'off') return;
-    let transport: ImTransport | null = null;
-    if (cfg.provider === 'dingtalk' && cfg.appKey && cfg.appSecret) {
-      transport = new DingTalkStreamTransport({ appKey: cfg.appKey, appSecret: cfg.appSecret });
-    } else if (cfg.provider === 'feishu' && cfg.appKey && cfg.appSecret) {
-      transport = new FeishuLongConnTransport({ appId: cfg.appKey, appSecret: cfg.appSecret });
-    } else if (cfg.provider === 'telegram' && cfg.botToken) {
-      transport = new TelegramPollingTransport(cfg.botToken);
-    }
-    if (!transport) return;
+    // actions2 是 lazy 工厂：启动期 host/settings 未就绪时它会抛。此前先把
+    // transportKey 钉死再取 actions，异常被 index.ts 的 .catch(() => undefined)
+    // 静默吞掉 → 之后 save() 因 key 相同直接 return，通道永久不启动且无日志
+    // （2026-10-18 实测：配置正确但 [im-bot] 零条输出）。现在：取 actions 失败
+    // 不记 key（允许下次重试），并打日志暴露原因。
+    let actions: BotActions | undefined;
+    try { actions = this.actions2; }
+    catch (e) { console.error('[im-bot] 双向通道启动失败（actions 未就绪，稍后重试）：', (e as Error)?.message ?? e); return; }
+    if (!actions || !cfg.twoWay || cfg.provider === 'off') { this.transportKey = key; return; }
+    let transport: ImTransport | null = this.makeTransport
+      ? this.makeTransport(cfg)
+      : (() => {
+          if (cfg.provider === 'dingtalk' && cfg.appKey && cfg.appSecret) {
+            return new DingTalkStreamTransport({ appKey: cfg.appKey, appSecret: cfg.appSecret });
+          }
+          if (cfg.provider === 'feishu' && cfg.appKey && cfg.appSecret) {
+            return new FeishuLongConnTransport({ appId: cfg.appKey, appSecret: cfg.appSecret });
+          }
+          if (cfg.provider === 'telegram' && cfg.botToken) {
+            return new TelegramPollingTransport(cfg.botToken);
+          }
+          return null;
+        })();
+    if (!transport) { this.transportKey = key; return; } // 凭据不满足是稳态：记 key 避免反复重试
     this.transport = transport;
+    this.transportKey = key; // 只有真正启动才记 key：中途异常不钉死，允许重试
     console.error(`[im-bot] 启动 ${cfg.provider} 双向通道`);
     const bindings = (this.config.bindings ??= {});
     await transport.start({

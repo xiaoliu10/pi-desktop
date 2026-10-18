@@ -158,3 +158,41 @@ describe('ImBot event routing', () => {
     expect(reloaded.current.secret).toBe('s');
   });
 });
+
+describe('syncTransport 启动失败不钉死 key（2026-10-18 实测 bug）', () => {
+  const cfg = (extra: Record<string, unknown> = {}) => ({ provider: 'dingtalk', twoWay: true, appKey: 'k', appSecret: 's', ...extra });
+
+  it('actions 工厂抛错时不记 transportKey：host 就绪后能再次启动', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'imbot-retry-'));
+    const file = path.join(dir, 'im-bot.json');
+    fs.writeFileSync(file, JSON.stringify(cfg()));
+    let ready = false;
+    const started: number[] = [];
+    const bot = new ImBot(file, undefined, () => {
+      if (!ready) throw new Error('pi 尚未就绪'); // 启动期 host 未就绪（真实场景）
+      return {} as never;
+    }, () => ({ start: async () => { started.push(1); }, stop: async () => {} } as never));
+    await bot.syncTransport();               // 第一次：抛错，不记 key、不向上抛
+    expect(started.length).toBe(0);
+    ready = true;
+    bot.save({ notifyCompleted: true });     // 同 key 的 save → syncTransport 必须再走启动分支
+    await new Promise(r => setTimeout(r, 20));
+    expect(started.length).toBe(1);          // 证明 key 没被钉死
+    await bot.stopTransport();
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('凭据不满足时记 key（稳态不反复重试）', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'imbot-nokey-'));
+    const file = path.join(dir, 'im-bot.json');
+    fs.writeFileSync(file, JSON.stringify({ provider: 'dingtalk', twoWay: true })); // 无 appKey
+    const started: number[] = [];
+    // fake 工厂遵循真实工厂的凭据语义：dingtalk 缺 appKey/secret → null（不启动）
+    const bot = new ImBot(file, undefined, () => ({} as never), c => (c.provider === 'dingtalk' && c.appKey && c.appSecret ? ({ start: async () => { started.push(1); }, stop: async () => {} } as never) : null));
+    await bot.syncTransport();
+    expect(started.length).toBe(0);
+    await bot.syncTransport();
+    expect(started.length).toBe(0); // 记了 key：第二次直接 return
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+});

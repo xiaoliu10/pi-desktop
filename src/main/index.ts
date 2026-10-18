@@ -689,7 +689,10 @@ void app.whenReady().then(() => {
   if (!process.env.PI_SMOKE) setTimeout(() => cleanupOldBundle(path.resolve(app.getPath('exe'), '..', '..', '..')), 10_000).unref();
   setTimeout(archiveCleanupPass, 15_000).unref(); // 启动后先扫一次
   setInterval(archiveCleanupPass, 30 * 60 * 1000).unref(); // 每 30 分钟定时扫描
-  void imBot.syncTransport().catch(() => undefined); // resume a configured two-way bot
+  // resume a configured two-way bot。此前 .catch(() => undefined) 把启动期
+  // 失败（host 未就绪等）静默吞掉且无重试——通道永久不启动、日志零条。
+  // 现在：失败打日志，并挂一个延迟补启动（host 此时必已就绪）。
+  void imBot.syncTransport().catch(e => console.error('[im-bot] 启动失败：', (e as Error)?.message ?? e));
   // Dev mode runs from the default Electron bundle, so the Dock/⌘Tab icon must
   // be set explicitly; a packaged build takes the icon from icon.icns instead.
   if (process.platform === 'darwin' && app.dock) {
