@@ -10,6 +10,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { imLog } from './bot/im-log';
 import type { PiEvent } from '../../shared/pi';
 import { handleMessage, type BotActions } from './bot/engine';
 import type { ImTransport } from './bot/transport';
@@ -122,7 +123,7 @@ export class ImBot {
     // 不记 key（允许下次重试），并打日志暴露原因。
     let actions: BotActions | undefined;
     try { actions = this.actions2; }
-    catch (e) { console.error('[im-bot] 双向通道启动失败（actions 未就绪，稍后重试）：', (e as Error)?.message ?? e); return; }
+    catch (e) { imLog(`双向通道启动失败（actions 未就绪，稍后重试）：${(e as Error)?.message ?? e}`); return; }
     if (!actions || !cfg.twoWay || cfg.provider === 'off') { this.transportKey = key; return; }
     let transport: ImTransport | null = this.makeTransport
       ? this.makeTransport(cfg)
@@ -141,7 +142,7 @@ export class ImBot {
     if (!transport) { this.transportKey = key; return; } // 凭据不满足是稳态：记 key 避免反复重试
     this.transport = transport;
     this.transportKey = key; // 只有真正启动才记 key：中途异常不钉死，允许重试
-    console.error(`[im-bot] 启动 ${cfg.provider} 双向通道`);
+    imLog(`启动 ${cfg.provider} 双向通道`);
     const bindings = (this.config.bindings ??= {});
     await transport.start({
       onMessage: async (msg) => {
@@ -151,7 +152,7 @@ export class ImBot {
           return `出错了：${String((e as Error).message || e)}`;
         }
       },
-      onStatus: (msg) => console.error(`[im-bot] ${msg}`),
+      onStatus: (msg) => imLog(msg),
     });
   }
 
