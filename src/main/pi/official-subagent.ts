@@ -261,9 +261,15 @@ export function runningSubagentCounts(agentDir: string, now = Date.now(), opts: 
       if (snap?.status !== 'running') continue;
       const updatedAt = Number(snap.updatedAt) || 0;
       if (!updatedAt || now - updatedAt > STALE_MS) {
-        // stale 的 running 快照：进程早死了，事件不会再更新它。删掉，别再让任何
-        // 消费者（侧栏计数/详情恢复）把它当成活着的工作。
-        if (opts.sweep) { try { fs.unlinkSync(path.join(dir, name)); } catch { /* best-effort */ } }
+        // stale 的 running 快照：进程早死了，事件不会再更新它。**改写为终态而不是删除**——
+        // pointers() 靠持久化快照补齐「有 toolCall 无 toolResult」的崩溃调用，删文件会让
+        // 详情卡片与子代理 transcript 指针一起消失（code review 探针实测：删后 0 张卡）。
+        // 改写成终态同样让计数归零，且保留崩溃现场供恢复。
+        if (opts.sweep && !snap.__swept) {
+          try {
+            fs.writeFileSync(path.join(dir, name), JSON.stringify({ ...snap, status: 'interrupted', updatedAt: now, __swept: true }));
+          } catch { /* best-effort：写失败保持原样，计数侧同样不认它 */ }
+        }
         continue;
       }
       counts[sessionKey] = (counts[sessionKey] ?? 0) + 1;

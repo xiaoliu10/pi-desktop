@@ -40,7 +40,7 @@ import {
   parseMenuState,
 } from './helpers';
 import './chat.css';
-import { imageDataUrl } from './image-url';
+import { acquireImageUrl, releaseImageUrl } from './image-url';
 import { toolFilePreview } from '../../pi/tool-file-preview';
 import { executionTurns, formatElapsed, type ChatTurn } from './execution';
 
@@ -194,10 +194,10 @@ function MessageParts({ parts, labels, onOpenToolFile, live, hiddenErrors }: { p
       {parts.map((p) => {
         switch (p.kind) {
           case 'image':
-            // data URL 必须按 part 缓存：大会话里一张 base64 图可达数 MB（实测某会话
-            // 117 张图共 195MB），模板串每拍渲染都新建一份等同大小的字符串——流式期间
-            // 每拍拼一遍就是 GB 级垃圾，GC 常年高压（打字卡的根因之一）。
-            return <img key={p.id} className="pi-message-image" src={imageDataUrl(p)} alt="附件图片" />;
+            // 与 MessageImage 同源：blob URL + 挂载期持有。这个分支实际不可达
+            // （image part 只从 user 消息产出并被 UserMessageParts 提前过滤），
+            // 保留是为了投影形状变化时不退化成每拍拼 base64。
+            return <HeldImage key={p.id} part={p} className="pi-message-image" alt="附件图片" />;
           case 'text':
             return <ChatMarkdown key={p.id} text={p.text} zh={labels.you === '你'} />;
           case 'thinking':
@@ -231,10 +231,29 @@ function MessageParts({ parts, labels, onOpenToolFile, live, hiddenErrors }: { p
   );
 }
 
+/** 持有式图片：blob URL 的生命周期绑定挂载周期（acquire/release 配对），
+ *  避免 base64 每拍重拼、也避免淘汰时 revoke 掉正在显示的 URL。 */
+function HeldImage({ part, className, alt }: { part: Extract<MessagePart, { kind: 'image' }>; className?: string; alt?: string }) {
+  const [src, setSrc] = useState(() => acquireImageUrl(part));
+  useEffect(() => {
+    const url = acquireImageUrl(part);
+    setSrc(url);
+    return () => releaseImageUrl(part);
+  }, [part]);
+  return <img className={className} src={src} alt={alt} />;
+}
+
 /** 已发送的图片附件：点击放大（灯箱，Esc/点背景关闭），灯箱工具条可下载原图。 */
 function MessageImage({ part, labels, onDownload }: { part: Extract<MessagePart, { kind: 'image' }>; labels: ChatViewProps['labels']; onDownload?: ChatViewProps['onDownloadImage'] }) {
   const [open, setOpen] = useState(false);
-  const dataUrl = `data:${part.mimeType};base64,${part.data}`;
+  // blob URL 按挂载周期持有/释放：base64 只在首次编码时拼一次（195MB 大会话里这是
+  // GB 级垃圾与 RSS 3.5G 的根因），卸载即释放，不会每拍重拼。
+  const [dataUrl, setDataUrl] = useState(() => acquireImageUrl(part));
+  useEffect(() => {
+    const url = acquireImageUrl(part);
+    setDataUrl(url);
+    return () => releaseImageUrl(part);
+  }, [part]);
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
@@ -802,21 +821,24 @@ export const ChatView = memo(function ChatView(props: ChatViewProps) {
 
   const retryUI = retryPresentation(props.retryGroup, props.retrying, props.stopping);
   // 长会话只渲染尾部窗口（TAIL_WINDOW）+ 顶部滚动补载步长（LOAD_STEP）。声明必须在
-  // 下面的 turns useMemo 之前：useMemo 首帧先执行，晚于它的 const 还在 TDZ。
+  // 下面的 turns useMemo 之前：useMemo 首帧先执行，晚于它的 const/state 还在 TDZ。
   const TAIL_WINDOW = 60;
   const LOAD_STEP = 60;
+  const [renderLimit, setRenderLimit] = useState(TAIL_WINDOW);
   const turns = useMemo(() => {
-    // 只聚合要渲染的尾部 turn（默认 60 + 向上补载步长）：本 useMemo 在流式期间每拍
-    // 重算，全量聚合 24637 条大会话的 12000+ group 是长帧主因。多取一个 LOAD_STEP
-    // 的余量，避免 renderLimit 变化当拍还要重算。
-    const result = executionTurns(props.messages, TAIL_WINDOW + LOAD_STEP);
+    // 只聚合要渲染的尾部 turn：本 useMemo 在流式期间每拍重算，全量聚合 24637 条
+    // 大会话的 12000+ group 是长帧主因。limit 必须跟随 renderLimit——分页状态机
+    // （renderLimit → hiddenCount → 「更早的消息」按钮）假设 turns 覆盖所有已展开的
+    // 历史；写成静态 TAIL_WINDOW+LOAD_STEP 会让补载一次后按钮消失、更早历史永久
+    // 不可达。流式期间 renderLimit 不变，每拍成本不变；补载时才多付一次 O(窗口)。
+    const result = executionTurns(props.messages, renderLimit + LOAD_STEP);
     const last = result[result.length - 1];
     const timing = props.runTiming;
     if (last?.role === 'assistant' && timing && ((last.endedAt ?? 0) >= timing.startedAt || (last.startedAt ?? 0) >= timing.startedAt - 1000)) {
       result[result.length - 1] = { ...last, startedAt: timing.startedAt, endedAt: timing.endedAt };
     }
     return result;
-  }, [props.messages, props.runTiming]);
+  }, [props.messages, props.runTiming, renderLimit]);
   // 历史落地交换（agent_settled → refreshHistory → 消息数组整体重建）后，贴底滚动走
   // ResizeObserver+rAF，在 paint 之后才执行，中间那一帧会闪现较早的消息。这里在提交
   // 前同步贴底（仅在已处于跟随状态时），消除刷屏感。
@@ -841,7 +863,6 @@ export const ChatView = memo(function ChatView(props: ChatViewProps) {
   // 长会话只渲染尾部窗口：全量 2000+ 轮一次性上 DOM 是打开大会话秒级长帧的主因
   // （布局/绘制成本也随总节点数走，流式期间每次 flush 都在付）。顶部滚动到近处
   // 自动补载更早消息（并保留视口锚点），顶部常驻一条「更早消息」提示可手动点。
-  const [renderLimit, setRenderLimit] = useState(TAIL_WINDOW);
   const limitEpochRef = useRef('');
   const firstTurnId = turns[0]?.id ?? '';
   useEffect(() => {
@@ -857,8 +878,11 @@ export const ChatView = memo(function ChatView(props: ChatViewProps) {
   const loadEarlier = useCallback(() => {
     const list = listRef.current;
     if (list) prependAnchorRef.current = { height: list.scrollHeight };
-    setRenderLimit((limit) => Math.min(turns.length, limit + LOAD_STEP));
-  }, [turns.length]);
+    // 不能 clamp 到 turns.length：limit 版 executionTurns 下 turns.length 本身随 limit
+    // 增长（正反馈：limit↑ → turns↑ → clamp 值↑ → 下一轮还能涨），会无限扩张。
+    // 改成 clamp 到自身步进：turns 不足时 hiddenCount 自然归零、按钮消失，语义正确。
+    setRenderLimit((limit) => limit + LOAD_STEP);
+  }, []);
   useLayoutEffect(() => {
     // 补载在头部插入节点：把新增高度补进 scrollTop，视口锚定在原来那条消息上。
     const anchor = prependAnchorRef.current;

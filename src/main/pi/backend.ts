@@ -368,6 +368,9 @@ export class PiBackend {
         : client.closedLocally?.() ? 'Desktop 已主动断开该会话'
         : `pi 进程已退出${exit ? `（${exit}）` : ''}`;
       view.error = `${how}，请断开后重连。任务未自动重放。${suffix}`;
+      // 子代理计数一并清零：侧栏 busy 判定含「runningSubagents > 0」，不清零会让
+      // 已断开的错误态会话一直显示假忙（子代理进程随 pi 一起退出，快照也不会再更新）。
+      view.runningSubagents = 0;
       this.clearDialogs(run); this.emit({ type: 'run', run: { ...view } });
       // sidecarOf 随事件带出：active 已 delete，消费端事后查 runs() 会漏（时序盲区）。
       this.emit({ type: 'closed', key, generation, ...(run.input.sidecarOf !== undefined ? { sidecarOf: run.input.sidecarOf } : {}) });
@@ -1118,7 +1121,7 @@ export class PiBackend {
       // 造成同一会话两个压缩并发；保持忙碌直到 compaction_end 到达或后端自愈核实。
       // rpc-client 的超时文案是中文「…超时；…」（拼写见 request()），匹配需含中文「超时」。
       const settled = !/timed? ?out|超时/i.test(raw);
-      if (settled) this.settleAfterCompact(run);
+      if (settled) this.settleAfterCompact(key, run);
       if (/hit the token cap|summary is incomplete/i.test(raw)) {
         throw new Error(settled
           ? '压缩失败：摘要生成达到模型输出上限被截断。可重试并附加自定义指令要求更精简的摘要（如「300 字以内，只列关键决定」）；仍失败建议新开会话继续工作。'
@@ -1128,17 +1131,21 @@ export class PiBackend {
       throw error;
     }
     this.refreshContextUsage(run);
-    this.settleAfterCompact(run);
+    this.settleAfterCompact(key, run);
     return result;
   }
   /** 压缩结束（成功或失败）的统一状态收口：compaction_start 已把状态置为 running
    *  （TS 看不到事件改写，故宽化比较）；排队中的消息不动。失败路径同样必须收口，
    *  否则状态永久停留 running（假转圈），重试/发送/重载全被 guard 拒绝。 */
-  private settleAfterCompact(run: Running) {
+  private settleAfterCompact(key: string, run: Running) {
     const view = run.view;
     const statusAfter = view.status as string;
     if (statusAfter === 'running' && !view.pending && !view.queue?.length) {
       view.status = 'idle';
+      // 压缩路径明确不发 agent_settled，这是第 4 个「会话转空闲」的点。子代理计数
+      // 必须在这里也重算：否则「结算时后台子代理在跑（计数 N）→ 后台静默完成（无
+      // RPC 事件）→ 手动 /compact」会让侧栏菊花停在 N 直到下一次子代理事件。
+      this.refreshRunningSubagents(key);
       if (view.timing && view.timing.endedAt === undefined) view.timing = { ...view.timing, endedAt: Date.now() };
       this.emit({ type: 'run', run: { ...view } });
     }
