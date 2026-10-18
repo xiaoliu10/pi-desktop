@@ -117,6 +117,10 @@ function branchSavedMessages(branch: PiEntry[]): Set<string> {
 }
 
 
+// 历史分页大小（首屏与每页补拉的条数）。500 条约覆盖上百轮真实对话；超过即大会话，
+// 走「一屏 + 按需补拉」而不是一次传完（205MB 会话全量序列化实测 3.5s/次，主进程被吃满）。
+const HISTORY_PAGE = 500;
+
 // 会话预热在途表：selectSession 触发后台 connect，send 到达时若预热未完成则 await
 // 同一份 Promise，避免同一会话并发两次 connect 各自 spawn 一个 pi 进程。
 const prewarmInFlight = new Map<string, Promise<void>>();
@@ -862,6 +866,11 @@ export interface PiReplicaState {
 
   selectedKey: string | null;
   history?: PiHistory;
+  /** 分页补拉：history.branch 当前只载入了尾部 N 条（首屏 tail）。truncated.total 是
+   *  完整条数；loadingEarlier 防止并发补拉。用户 2026-10-18 要求「打开就有完整历史」的
+   *  同时保留大会话首屏速度——解法是首屏一屏 + 顶部按钮/触底无缝补拉，而不是回退全量。 */
+  earlierLoading: boolean;
+  loadEarlierHistory: () => Promise<void>;
   leaf?: string;
   titles: Record<string, string>;
   renames: Record<string, string>;
@@ -1133,7 +1142,10 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
       // 让 27219 条的会话只剩三段可见，是不可接受的回归。主进程 CPU 的治理改由
       // 「刷新节流 + 图片懒加载」承担（不在本提交回退范围内先恢复正确性）。
       // opts.tail/before 保留给按需补拉（ChatView 的「更早的消息」展开超已载入范围时）。
-      const value = await api.history(key, state.leaf);
+      // 首屏一屏（tail=HISTORY_PAGE）：大会话打开速度的关键（205MB 会话全量序列化
+      // 实测 3.5s/次）。「打开就有完整历史」由 loadEarlierHistory 的无缝补拉提供——
+      // 顶部按钮/触底触发，按钮显示真实剩余条数，不是把整个会话塞进首屏。
+      const value = await api.history(key, state.leaf, { tail: HISTORY_PAGE });
       if (seq !== loadSeq || get().selectedKey !== key || get().runs.find(r => r.key === key)?.generation !== generation) return false;
       settlePendingPrompt(value, key);
       if (historyReloadTimer) { clearTimeout(historyReloadTimer); historyReloadTimer = null; }
@@ -1148,6 +1160,26 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
       }
       return false;
     }
+  };
+  /** 补拉更早一页历史：主进程按 before 返回「更早 count 条 + 已有尾部」（无重叠），
+   *  直接替换 store 的 branch。流式期间同样可用——新消息在尾部，不受前缀替换影响。 */
+  const loadEarlierHistory = async (): Promise<void> => {
+    const api = typeof window !== 'undefined' ? window.localPi : undefined;
+    const s0 = get();
+    const key = s0.selectedKey;
+    const branch = s0.history?.branch ?? [];
+    if (!api || !key || s0.earlierLoading || branch.length === 0) return;
+    const oldest = branch[0]?.id;
+    if (!oldest || !s0.history?.truncated) return; // 未被截断：没有更早的页
+    set({ earlierLoading: true });
+    try {
+      const value = await api.history(key, s0.leaf, { before: oldest, count: HISTORY_PAGE });
+      if (get().selectedKey !== key || get().leaf !== s0.leaf) return;
+      // 只接受「真的更长了」的结果：竞态（补拉期间又刷了一次）可能拿到同一页。
+      if (value.branch.length <= branch.length) return;
+      set({ history: value });
+    } catch { /* 补拉失败保留当前页；下次触底再试 */ }
+    finally { if (get().selectedKey === key) set({ earlierLoading: false }); }
   };
   let historyReloadTimer: ReturnType<typeof setTimeout> | null = null;
   const scheduleHistoryReload = (key: string, attempt: number) => {
@@ -1520,10 +1552,10 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
     try {
       const entry = result.entry;
       if (entry.view === 'chat' && entry.key) {
-        setNow({ selectedKey: entry.key, leaf: undefined, history: undefined, review: undefined, view: 'chat', ...(switchComposerOwner(getNow, entry.key) ?? {}), recoveredSubagents: [], subagentDismissed: getNow().desktopPreferences?.subagentDismissed?.[entry.key] ?? [], navHistory: result.history });
+        setNow({ selectedKey: entry.key, leaf: undefined, history: undefined, earlierLoading: false, review: undefined, view: 'chat', ...(switchComposerOwner(getNow, entry.key) ?? {}), recoveredSubagents: [], subagentDismissed: getNow().desktopPreferences?.subagentDismissed?.[entry.key] ?? [], navHistory: result.history });
         refresh();
       } else if (entry.view === 'chat') {
-        setNow({ view: 'home', selectedKey: null, history: undefined, leaf: undefined, review: undefined, ...(switchComposerOwner(getNow, `home:${getNow().draftCwd ?? ''}`) ?? {}), navHistory: result.history });
+        setNow({ view: 'home', selectedKey: null, history: undefined, earlierLoading: false, leaf: undefined, review: undefined, ...(switchComposerOwner(getNow, `home:${getNow().draftCwd ?? ''}`) ?? {}), navHistory: result.history });
       } else if (entry.view === 'home') {
         const draft = switchComposerOwner(getNow, `home:${getNow().draftCwd ?? ''}`);
         setNow({ view: 'home', selectedKey: null, history: undefined, leaf: undefined, review: undefined, ...(draft ?? {}), navHistory: result.history });
@@ -1553,6 +1585,8 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
 
     selectedKey: null,
     history: undefined,
+    earlierLoading: false,
+    loadEarlierHistory,
     leaf: undefined,
     titles: {},
     renames: {},

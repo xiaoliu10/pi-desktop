@@ -1017,6 +1017,9 @@ export default function PiReplicaApp() {
                   <ChatView
                     messages={messages}
                     conversationKey={s.selectedKey}
+                    onLoadEarlier={() => void s.loadEarlierHistory()}
+                    earlierLoading={s.earlierLoading}
+                    earlierTotal={s.history?.truncated?.total}
                     runTiming={run?.timing}
                     running={Boolean(run && ['running', 'stopping'].includes(run.status))}
                     queued={run?.pending ?? 0}

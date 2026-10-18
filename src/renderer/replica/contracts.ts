@@ -436,6 +436,11 @@ export interface ChatViewProps {
   onJumpToMessage: (id: string) => void;
   /** 编辑并重发已发送的用户消息（fork 截断回该条目后重发）；缺省=仅复制不可编辑。 */
   onEditUserMessage?: (entryId: string, text: string) => void;
+  /** 补拉更早一页历史（首屏 tail + 分页的用户入口）。缺省/加载中时按钮禁用。 */
+  onLoadEarlier?: () => void;
+  earlierLoading?: boolean;
+  /** 完整历史条数（主进程 truncated.total）：按钮据此显示真实剩余量，不谎报。 */
+  earlierTotal?: number;
   /** 下载已发送的图片附件：dataUrl + 建议文件名；缺省=灯箱里不显示下载按钮。 */
   onDownloadImage?: (dataUrl: string, name: string) => void;
   /** pi 正在压缩上下文（compaction_start…end）：工作条显示「正在压缩上下文」。 */

@@ -937,19 +937,31 @@ export const ChatView = memo(function ChatView(props: ChatViewProps) {
     if (!list || hiddenCount === 0) return;
     const onScroll = () => {
       if (list.scrollTop < 240) loadEarlier();
+      // 已展开到已载入范围的顶部、而更早历史还在盘上（首屏分页）：自动补拉一页。
+      if (list.scrollTop < 240 && hiddenCount === 0 && props.earlierTotal !== undefined && props.earlierTotal > turns.length && !props.earlierLoading) props.onLoadEarlier?.();
     };
     list.addEventListener('scroll', onScroll, { passive: true });
     return () => list.removeEventListener('scroll', onScroll);
-  }, [hiddenCount, loadEarlier]);
+  }, [hiddenCount, loadEarlier, props.earlierTotal, props.earlierLoading, props.onLoadEarlier, turns.length]);
 
   return (
     <div className="pi-chat">
       <MessageNav turns={turns} listRef={listRef} onJump={jump} />
       <div className="pi-chat__scroll" ref={listRef}>
         <div className="pi-chat__inner">
+          {/* 补拉按钮（盘上还有更早的历史）：始终显示在窗口按钮之上——用户要的是「回到更早」，
+              不管当前已载入部分展开到哪。earlierTotal 是主进程上报的完整条数。 */}
+          {props.earlierTotal !== undefined && props.earlierTotal > turns.length && (
+            <button type="button" className="pi-chat__earlier" onClick={props.onLoadEarlier} disabled={props.earlierLoading}>
+              {props.earlierLoading
+                ? (props.labels.you === '你' ? '正在载入更早的消息…' : 'Loading earlier messages…')
+                : props.labels.you === '你' ? `更早的消息 · 还有 ${props.earlierTotal - turns.length} 轮` : `Earlier messages · ${props.earlierTotal - turns.length} more`}
+            </button>
+          )}
+          {/* 窗口按钮：展开已载入但未渲染的更早 turn */}
           {hiddenCount > 0 && (
-            <button type="button" className="pi-chat__earlier" onClick={loadEarlier}>
-              {props.labels.you === '你' ? `更早的消息 · 还有 ${hiddenCount} 轮` : `Earlier messages · ${hiddenCount} more`}
+            <button type="button" className="pi-chat__earlier" onClick={loadEarlier} disabled={props.earlierLoading}>
+              {props.labels.you === '你' ? `展开更早的消息 · 还有 ${hiddenCount} 轮` : `Expand earlier · ${hiddenCount} more`}
             </button>
           )}
           {visibleTurns.map((m) => (
