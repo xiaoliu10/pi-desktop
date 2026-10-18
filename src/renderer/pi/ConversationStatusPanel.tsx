@@ -27,7 +27,7 @@ const SUBAGENT_STATUS: Record<SubagentChild['status'], { label: string; icon: 'r
 
 const subagentPriority = (child: SubagentChild): number => child.status === 'running' ? 0 : child.status === 'queued' ? 1 : 2;
 
-export function ConversationStatusPanel({cwd,messages,running,stats,contextUsage,outputPerformance,onReview,onRequest,onOpenPlan,planAvailable,planTitle,subagents,onOpenSubagent,onDismissSubagent,onDismissFinishedSubagents,onOpenTerminal,terminalOpen}: {
+export function ConversationStatusPanel({cwd,messages,running,stats,contextUsage,outputPerformance,onReview,onRequest,onOpenPlan,planAvailable,planTitle,planFallback,subagents,onOpenSubagent,onDismissSubagent,onDismissFinishedSubagents,onOpenTerminal,terminalOpen}: {
   cwd?:string; messages:ChatMessage[]; running:boolean; stats?:PiSessionStats; onReview:()=>void; onRequest:(text:string)=>void;
   /** 上下文占用（与顶栏 ContextUsageChip 同源）：供会话统计的「上下文占用 %」列。 */
   contextUsage?:import('./ContextUsage').ContextUsage | null;
@@ -35,6 +35,9 @@ export function ConversationStatusPanel({cwd,messages,running,stats,contextUsage
   outputPerformance?:import('../../shared/pi').PiRun['outputPerformance'];
   /** 计划查看器入口（ZCode 状态面板 sessionPlans 区的同位复刻）。 */
   onOpenPlan?:()=>void; planAvailable?:boolean;
+  /** 跨窗口兜底：主进程全量扫描的最后一次清单（history.plan）。组件内部实时解析
+   *  只看渲染窗口，长任务早期建的清单掉出窗口后靠它显示（2026-10-18）。 */
+  planFallback?:import('../../shared/conversation-status').PlanItem[];
   /** 计划标题（首个 H1/首行）：「计划」区点击行在右侧打开计划全文。 */
   planTitle?:string;
   /** 子代理执行列表（ZCode 智能体区）：点击行在右侧打开对应执行面板。 */
@@ -48,7 +51,7 @@ export function ConversationStatusPanel({cwd,messages,running,stats,contextUsage
   const [error,setError]=useState('');
   const [revision,setRevision]=useState(0);
   const [collapsed,setCollapsed]=useState(()=>localStorage.getItem('pi-status-collapsed')==='true' || window.innerWidth<760);
-  const [menu,setMenu]=useState(false);  const plan=useMemo(()=>conversationPlan(messages),[messages]);
+  const [menu,setMenu]=useState(false);  const plan=useMemo(()=>{const live=conversationPlan(messages);return live.length?live:(planFallback??[]);},[messages,planFallback]);
   // 会话统计的三列口径：缓存命中率复用共享 cacheHitRateFromTotals（与上下文详情同源），
   // 上下文占用复用顶栏 ContextUsageChip 规则（tokens/contextWindow，缺失显示 —）。
   const cacheHitRate=useMemo(()=>cacheHitRateFromTotals(stats?.tokens),[stats]);
