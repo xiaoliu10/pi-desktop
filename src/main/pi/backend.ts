@@ -212,8 +212,14 @@ export class PiBackend {
   private refreshRunningSubagents(key: string): void {
     const run = this.active.get(key);
     if (!run) return;
+    // sweep（把陈旧 running 快照改写为终态）只在会话不处于 running 时做：
+    // 活跃会话里子代理可能正处在长模型生成期（数分钟无事件），快照静默 ≠ 进程死亡；
+    // 在这里 sweep 会把活快照改成 interrupted——工作流卡片进度清零（用户实测反馈）。
+    // 会话结束/空闲/停止路径（agent_settled、forceSettle、stop、压缩收口）时子代理
+    // 理应已收尾，此时仍 running 的快照才是真死。
+    const sweep = run.view.status !== 'running';
     let counts: Record<string, number>;
-    try { counts = runningSubagentCounts(this.env.agentDir, Date.now(), { sweep: true }); } catch { return; }
+    try { counts = runningSubagentCounts(this.env.agentDir, Date.now(), sweep ? { sweep: true } : {}); } catch { return; }
     const next = counts[key] ?? 0;
     if (run.view.runningSubagents !== next) {
       run.view.runningSubagents = next;

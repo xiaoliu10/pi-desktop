@@ -166,7 +166,8 @@ export const ToolCard = memo(function ToolCard({ part, labels, onOpenToolFile, l
           </span>
           <Icon name="chevron-right" size={12} className="pi-execution__chevron" />
         </summary>
-        {open && officialSubagentDetails(part)&&openSubagents&&<button type="button" className="pi-btn pi-btn--ghost" onClick={()=>openSubagents(part.callId||part.id)}>查看子代理任务与过程</button>}
+        {/* 子代理入口常显（不随折叠门控）：这是卡片上唯一的进度/详情入口，藏进折叠态等于切断进度可见性 */}
+        {officialSubagentDetails(part)&&openSubagents&&<button type="button" className="pi-btn pi-btn--ghost" onClick={()=>openSubagents(part.callId||part.id)}>查看子代理任务与过程</button>}
         {open && <div className="pi-tool__detail">
           {isCodeMode && code
             ? <><h4>{zh ? '脚本' : 'Script'}</h4><pre className="pi-tool__output">{code}</pre></>
