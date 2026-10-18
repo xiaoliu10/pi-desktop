@@ -40,6 +40,13 @@ export function pollSubagents(options: {
 }): () => void {
   let stopped = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
+  // 大会话（数百子代理）空闲时快照完全不变，却每 2s 重算 + IPC + setState →
+  // 整列表重渲染（实测 main 40% + renderer 25%：CppHeap GC 风暴 + 全列表
+  // reconcile 字体重排）。两道闸：①快照与上次相同 → 不 publish（renderer 零渲染）；
+  // ②无 running/queued 子代理 → 轮询退避 2s→10s（状态只能靠轮询发现，事件层
+  // 不覆盖 harness 派生的 async 子代理，所以不能完全停）。
+  let lastSignature = '';
+  let lastRecords: unknown[] = [];
   const tick = async () => {
     const leaf = options.leaf?.();
     try {
@@ -49,10 +56,20 @@ export function pollSubagents(options: {
       // drop it — the next tick reads the current branch. Only meaningful when
       // a branch was explicitly selected (undefined = trunk, always current).
       if (stopped || !options.isCurrent() || (leaf && options.leaf && options.leaf() !== leaf) || !Array.isArray(records)) return;
-      options.publish(records);
+      // 轻量签名：JSON.stringify 全量快照（含子转录）每拍几 MB 文本，本身就是
+      // 分配风暴。状态变化必经这些字段（snapshotAt 是主进程读 status.json 的
+      // mtime 戳，文件没变它不变——深层 details 也不会变）。
+      const sig = records.map(r => {
+        const d = (r as { details?: { snapshotAt?: number; runId?: string } }).details;
+        return `${(r as { callId?: string }).callId}|${(r as { status?: string }).status}|${(r as { error?: string }).error ?? ''}|${(r as { startedAt?: number }).startedAt ?? ''}|${d?.snapshotAt ?? ''}|${d?.runId ?? ''}`;
+      }).join('\n');
+      if (sig !== lastSignature) { lastSignature = sig; lastRecords = records; options.publish(records); }
     } catch { /* IPC transport failure is not a completion observation. Retry. */ }
     finally {
-      if (!stopped && options.isCurrent()) timer = setTimeout(() => { void tick(); }, options.interval ?? 2000);
+      if (!stopped && options.isCurrent()) {
+        const idle = lastSignature !== '' && !lastRecords.some(r => (r as { status?: string })?.status === 'running' || (r as { status?: string })?.status === 'queued');
+        timer = setTimeout(() => { void tick(); }, idle ? 10_000 : (options.interval ?? 2000));
+      }
     }
   };
   void tick();
