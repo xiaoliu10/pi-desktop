@@ -122,10 +122,10 @@ export class DingTalkStreamTransport implements ImTransport {
         })
         .catch((err) => { imLog(`消息处理异常：${String(err).slice(0, 200)}`); ws.send(ackFrame(msg.messageId, false)); });
     });
-    await new Promise<void>((resolve, reject) => {
-      ws.once('open', resolve);
-      ws.once('error', reject);
-    });
+    // open/error/close handler 必须先于 await 注册：握手失败（超时/代理吞升级
+    // 响应）时 error → start() 抛出，close 几乎同时发出——handler 若还在 await
+    // 之后就没注册上，close 重连错过 → 通道静默死亡（2026-10-18 实机：日志停在
+    // 「连接中」3 分钟零输出，TCP 半开经代理挂着）。
     ws.on('open', () => imLog('钉钉 Stream 已连接'));
     ws.on('error', (err) => { ctx.onStatus?.(`钉钉连接错误：${err.message}`); imLog(`钉钉连接错误：${err.message}`); });
     ws.on('close', () => {
@@ -134,6 +134,17 @@ export class DingTalkStreamTransport implements ImTransport {
       imLog('钉钉连接断开，5 秒后重连');
       setTimeout(() => void this.start(ctx).catch((err) => imLog(`重连失败：${String(err).slice(0, 200)}`)), 5000);
     });
+    try {
+      await new Promise<void>((resolve, reject) => {
+        ws.once('open', resolve);
+        ws.once('error', reject);
+      });
+    } catch (err) {
+      // 握手失败的可见性：此前只 reject 到主进程 stderr（Finder 启动不落盘），
+      // 日志停在「连接中」再无下文。恢复由上面已就位的 close handler 驱动。
+      imLog(`钉钉 WebSocket 握手失败：${String((err as Error)?.message ?? err).slice(0, 160)}，close 后 5 秒自动重连`);
+      throw err;
+    }
     // Keep-alive：钉钉 Stream 协议是「服务端发 ping、客户端回 pong」（上面 message 分支）。
     // 客户端主动发 ping 不是协议的一部分，违规帧可能导致网关断开——不发。
     this.pingTimer = null;
