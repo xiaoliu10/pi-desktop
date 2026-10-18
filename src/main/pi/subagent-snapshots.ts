@@ -17,6 +17,28 @@ export function subagentAsyncRoot(): string {
   return process.env.PI_SUBAGENTS_TEMP_ROOT?.trim() ? path.resolve(process.env.PI_SUBAGENTS_TEMP_ROOT.trim(), 'async-subagent-runs') : path.join(os.tmpdir(), `pi-subagents-${scope}`, 'async-subagent-runs');
 }
 
+/** mtime 结果缓存：轮询空闲档（10s）每拍对数百子代理逐个 read+parse status.json，
+ *  文件没变结果必然相同——实测这就是主进程周期 100% 尖峰的来源（238 项 ≈ 0.3-0.5s
+ *  的 IO+JSON+对象风暴，外加每项 ENOENT 的 PromiseReject 处理）。stat mtime（~5ms
+ *  全表）命中即复用上次解析结果。容量护栏：超限整体清空（快照集是有限集合，
+ *  清空只损失一轮缓存）。 */
+const snapMemo = new Map<string, { mtimeMs: number; data: any }>();
+
+export async function readSnapshotJsonCached(root: string, file: string, budget = { bytes: MAX_BYTES }): Promise<any> {
+  try {
+    const st = await fs.promises.stat(path.resolve(file));
+    const hit = snapMemo.get(file);
+    if (hit && hit.mtimeMs === st.mtimeMs) return hit.data;
+    const data = await readSnapshotJson(root, file, budget);
+    if (snapMemo.size > 4000) snapMemo.clear();
+    snapMemo.set(file, { mtimeMs: st.mtimeMs, data });
+    return data;
+  } catch (e) {
+    // stat 失败（ENOENT 等直接抛给调用方的既有语义）不缓存——出现/消失由下次 stat 决定
+    throw e;
+  }
+}
+
 /** Only exact, contained regular files. Never follow a symlink (including a directory).
  * Canonicalize the trusted OS temp anchor, not an untrusted pointer. Bounded reads also
  * hold when a file grows after fstat. A per-request byte budget bounds fanout work. */
@@ -121,7 +143,7 @@ async function resolveWorkflowPointer(pointer: SubagentSnapshot, history: PiHist
     try {
       const expectedDir = path.join(root, runId);
       if (typeof d.asyncDir !== 'string' || path.resolve(d.asyncDir) !== path.resolve(expectedDir) || (d.asyncId !== undefined && d.asyncId !== runId)) throw new Error('invalid async pointer');
-      const status = await readSnapshotJson(root, path.join(expectedDir, 'status.json'), budget);
+      const status = await readSnapshotJsonCached(root, path.join(expectedDir, 'status.json'), budget);
       const validTime = (s: any) => Number.isFinite(s.startedAt) && Number.isFinite(s.lastUpdate) && s.lastUpdate >= s.startedAt && s.lastUpdate <= now + 60_000 && (!pointer.startedAt || s.startedAt >= pointer.startedAt - 60_000);
       if (isSingle) {
         // Async single run: one child whose state lives in status.json (mode:'single').
@@ -146,7 +168,7 @@ async function resolveWorkflowPointer(pointer: SubagentSnapshot, history: PiHist
           const child: Record<string, any> = { childId: row.childId, runId: workflowId(row.runId) ? row.runId : undefined, agent: text(row.agent), label: text(row.label), sessionName: text(row.sessionName), state: workflowState(row.state), model: text(row.model) };
           if (child.runId) {
             try {
-              const s = await readSnapshotJson(root, path.join(root, child.runId, 'status.json'), budget);
+              const s = await readSnapshotJsonCached(root, path.join(root, child.runId, 'status.json'), budget);
               if (s.runId !== child.runId || s.sessionId !== history.session.path || !workflowId(s.toolCallId) || s.parentWorkflowRunId !== runId || s.workflowKey !== row.childId || !validTime(s) || s.startedAt < status.startedAt) throw new Error('child identity/time mismatch');
               const state = workflowState(s.state);
               child.state = ['running', 'queued'].includes(state) && now - s.lastUpdate > STALE_MS ? 'unknown' : state;
@@ -196,7 +218,7 @@ export async function childSessionPointer(history: PiHistory, persisted: Subagen
   try {
     const expectedDir = path.join(root, runId);
     if (typeof d.asyncDir !== 'string' || path.resolve(d.asyncDir) !== path.resolve(expectedDir) || (d.asyncId !== undefined && d.asyncId !== runId)) return undefined;
-    const status = await readSnapshotJson(root, path.join(expectedDir, 'status.json'));
+    const status = await readSnapshotJsonCached(root, path.join(expectedDir, 'status.json'));
     if (status.runId !== runId || status.sessionId !== history.session.path || !validTime(status)) return undefined;
     if (singleAsyncDetails(d, callId) || completionsDetails(d, callId)) {
       // completions 形态：指针由 completions[].results[].sessionFile 直接给出（run 已结束、
@@ -209,7 +231,7 @@ export async function childSessionPointer(history: PiHistory, persisted: Subagen
     if (status.mode !== 'workflow' || status.toolCallId !== callId || !workflowDetails(status, callId)) return undefined;
     const row = workflowRows(status).find(r => r.childId === childId);
     if (!row || !workflowId(row.runId)) return undefined;
-    const s = await readSnapshotJson(root, path.join(root, row.runId, 'status.json'));
+    const s = await readSnapshotJsonCached(root, path.join(root, row.runId, 'status.json'));
     if (s.runId !== row.runId || s.sessionId !== history.session.path || !workflowId(s.toolCallId) || s.parentWorkflowRunId !== runId || s.workflowKey !== childId || !validTime(s) || s.startedAt < status.startedAt) return undefined;
     // pi-subagents child runs may omit sessionFile from their own status.json.
     // Fall back to the parent workflow's steps[].sessionFile (set at launch time).
