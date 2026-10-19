@@ -56,9 +56,12 @@ describe('renderer CSP', () => {
     const sources = tokens('connect-src');
     expect(sources).toContain('blob:');
     expect(sources).toContain("'self'");
-    // 只允许渲染进程自建的内存 blob 与自身，不得出现任意网络出口。
+    // 只允许渲染进程自建的内存 blob 与自身，不得出现任意网络/数据出口。
     expect(sources).not.toContain('http:');
     expect(sources).not.toContain('https:');
+    expect(sources).not.toContain('ws:');
+    expect(sources).not.toContain('wss:');
+    expect(sources).not.toContain('data:');
     expect(sources).not.toContain('*');
   });
 });

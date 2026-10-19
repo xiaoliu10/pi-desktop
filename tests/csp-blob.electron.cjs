@@ -18,10 +18,15 @@ const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'csp-blob-'));
 app.setPath('userData', scratch);
 let win;
 let settled = false;
+// 全局看门狗：loadFile/executeJavaScript 在 CI 里可能挂起（GPU 初始化等），
+// 不能让 smoke 无限悬挂——参照 tests/settings-native-smoke.cjs 的先例。
+const watchdog = setTimeout(() => fail('global watchdog: probe did not finish within 60s'), 60_000);
+watchdog.unref?.();
 const fail = (message) => { console.error('FAIL:', message); finish(1); };
 const finish = (code) => {
   if (settled) return;
   settled = true;
+  clearTimeout(watchdog);
   win?.destroy();
   fs.rmSync(scratch, { recursive: true, force: true });
   // app.exit 立即以指定码退出；app.quit 会抢在 process.exitCode 生效前以 0 收场，
