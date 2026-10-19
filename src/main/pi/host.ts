@@ -37,13 +37,28 @@ export class PiHost {
     this.sidecar = new SidecarService(this.backend, this.index, this.dataDir, emit);
     this.index.start(() => emit({ type: 'sessions-changed' }));
     let stamp = '';
+    // 30s + 异步 stat：旧版 2.5s 周期、每个 run 的 .pi 做 6 次同步 statSync
+    // ——大会话打字卡顿「CPU 不高」的实证来源（fs_usage 不可用时，main-perf.log
+    // 每 5s 一段 400ms-1.6s event-loop 阻塞与它逐拍对齐；同步 IO 不烧 CPU 只
+    // 堵线程）。resources-changed 只服务「用户在外部改了扩展/技能」的提示，
+    // 30s 粒度足够（用户改完文件不会秒级就要看到提示）。
+    // 无活跃 run 时只查 agentDir 一个目录；stat 全部异步，不再阻塞 event loop。
+    let inFlight = false;
     this.resourcesTimer = setInterval(() => {
+      if (inFlight) return; // 上一拍没完成（慢盘/大目录树）就跳过，绝不叠拍
+      inFlight = true;
       const dirs = [this.environment.agentDir, ...this.backend.runs().map(r => path.join(r.cwd, '.pi'))];
-      const next = dirs.map(dir => {
-        try { return [dir, fs.statSync(dir).mtimeMs, ...['settings.json', 'extensions', 'skills', 'prompts', 'themes'].map(p => { try { return fs.statSync(path.join(dir, p)).mtimeMs; } catch { return 0; } })].join(':'); } catch { return dir; }
-      }).join('|');
-      if (stamp && stamp !== next) emit({ type: 'resources-changed' }); stamp = next;
-    }, 2500); this.resourcesTimer.unref();
+      Promise.all(dirs.map(async dir => {
+        try {
+          const stampOf = async (p: string) => { try { return (await fs.promises.stat(p)).mtimeMs; } catch { return 0; } };
+          return [dir, await stampOf(dir), ...await Promise.all(['settings.json', 'extensions', 'skills', 'prompts', 'themes'].map(p => stampOf(path.join(dir, p))))].join(':');
+        } catch { return dir; }
+      })).then(next => {
+        const joined = next.join('|');
+        if (stamp && stamp !== joined) emit({ type: 'resources-changed' });
+        stamp = joined;
+      }).catch(() => undefined).finally(() => { inFlight = false; });
+    }, 30_000); this.resourcesTimer.unref();
   }
   configure(input: PiPreferences) {
     if (this.backend.runs().length) throw new Error('请先断开所有桌面会话再修改连接配置。');
