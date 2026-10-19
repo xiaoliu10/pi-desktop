@@ -5,6 +5,7 @@ import { Spinner, TurnArticle } from '../replica/chat/ChatView';
 import { replicaLabels } from '../replica/i18n';
 import { usePiStore } from './adapter';
 import { Icon } from '../replica/Icons';
+import { transcriptErrorMessage } from './subagent-transcript-error';
 import './subagents.css';
 
 /** 转录缓存键版本号：模块级单调递增，同毫秒重复拉取/时钟回拨都不会碰撞。 */
@@ -47,7 +48,7 @@ export function SubagentPanel({ children, initialCall, onClose, onStop, parentRu
 
   // 插件不报消息的 workflow/异步子任务：按需拉子会话转录（主进程已验证身份链 +
   // containment）。单请求在途，完成后再排下轮（慢请求不饿死、也不会乱序覆盖）。
-  const [fetched, setFetched] = useState<Record<string, { messages: Record<string, unknown>[]; truncated: boolean; state: 'loading' | 'ok' | 'error'; epoch: number }>>({});
+  const [fetched, setFetched] = useState<Record<string, { messages: Record<string, unknown>[]; truncated: boolean; state: 'loading' | 'ok' | 'error'; error?: string; epoch: number }>>({});
   const activeId = active?.id, activeChildKey = active?.childKey, activeCallId = active?.callId, activeStatus = active?.status;
   const pluginMessages = Boolean(active?.messages.length);
   useEffect(() => {
@@ -61,9 +62,11 @@ export function SubagentPanel({ children, initialCall, onClose, onStop, parentRu
       try {
         const res = await window.localPi?.subagentChildTranscript(s.selectedKey!, activeCallId, activeChildKey);
         if (stopped) return;
-        setFetched(prev => ({ ...prev, [activeId]: 'error' in res ? { messages: [], truncated: false, state: 'error', epoch: 0 } : { messages: res.messages, truncated: res.truncated, state: 'ok', epoch: nextTranscriptEpoch() } }));
+        setFetched(prev => ({ ...prev, [activeId]: !res || 'error' in res
+          ? { messages: prev[activeId]?.messages ?? [], truncated: prev[activeId]?.truncated ?? false, state: 'error', error: res?.error ?? 'request-failed', epoch: prev[activeId]?.epoch ?? 0 }
+          : { messages: res.messages, truncated: res.truncated, state: 'ok', epoch: nextTranscriptEpoch() } }));
       } catch {
-        if (!stopped) setFetched(prev => ({ ...prev, [activeId]: { messages: [], truncated: false, state: 'error', epoch: 0 } }));
+        if (!stopped) setFetched(prev => ({ ...prev, [activeId]: { messages: prev[activeId]?.messages ?? [], truncated: prev[activeId]?.truncated ?? false, state: 'error', error: 'request-failed', epoch: prev[activeId]?.epoch ?? 0 } }));
       } finally {
         inFlight = false;
         if (!stopped && ['running', 'queued'].includes(activeStatus || '')) timer = setTimeout(() => { void load(); }, 3000);
@@ -109,7 +112,7 @@ export function SubagentPanel({ children, initialCall, onClose, onStop, parentRu
         {active.error && <p className="pi-subagents__error" role="alert">{active.error}</p>}
         <Transcript messages={shown} turnKey={active.id} epoch={fetchedState?.epoch} live={['running', 'queued'].includes(active.status)} />
         {!shown.length && (active.childKey
-          ? <p className="pi-subagents__empty">{fetchedState?.state === 'error' ? (zh ? '子会话转录不可用（快照已清理或尚未产生）。' : 'Child transcript unavailable (snapshot cleaned or not produced yet).') : fetchedState?.state === 'ok' ? (zh ? '子会话暂无消息。' : 'No messages in this child session.') : (zh ? '正在读取子会话转录…' : 'Loading child transcript…')}</p>
+          ? <p className="pi-subagents__empty">{fetchedState?.state === 'error' ? transcriptErrorMessage(fetchedState.error, zh) : fetchedState?.state === 'ok' ? (zh ? '子会话暂无消息。' : 'No messages in this child session.') : (zh ? '正在读取子会话转录…' : 'Loading child transcript…')}</p>
           : <p className="pi-subagents__empty">{zh ? '插件尚未报告消息。' : 'No messages reported yet.'}</p>)}
         {fetchedState?.truncated && shown.length > 0 && <p className="pi-subagents__empty">{zh ? '仅显示最近消息，更早内容已省略。' : 'Showing recent messages only; older content omitted.'}</p>}
         {/* Activity is owned by child state, never by transcript presence or parent activity. */}

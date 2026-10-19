@@ -41,7 +41,7 @@
 - 第三形态（completions 结果）同样识别并读子会话，不因形态切换而卡片永久转圈。
 
 **状态**：部分满足。
-- single/workflow 转录：满足。
+- single/workflow 转录：部分满足。2026-10-19 现场确认 async single 运行中转录路径发布在 `steps[0].sessionFile`，顶层 `sessionFile` 常在结束后才出现；Desktop 原来只读顶层，造成“有 tokens/轮次但看不到过程”。修复分支按通过身份校验的唯一 step 回读，保留 containment/时间/调用身份约束；运行中、追加消息和完成态待发版验收。回归 `tests/subagent-snapshots.test.ts` 与 `tests/subagent-live-transcript.browser.cjs`。
 - completions 形态卡片恢复：满足（v0.1.24 #121）。
 - **子会话 `sessionFile` 读取**：待上游。上游 `pi-subagents@0.78.0` async 路径不写子运行 `status.sessionFile`（`sessionFilesByFlatIndex` 全包无生产者，`async-execution.js:1079` 读空值）。Desktop 用父 workflow `steps[].sessionFile` 回退（v0.1.24 #122），治标。上游 main 今日（2026-10-16）在修同簇问题（#2915–#2920）但未发版。
 

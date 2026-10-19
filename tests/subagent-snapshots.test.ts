@@ -348,6 +348,59 @@ describe('childSessionPointer + subagentChildTranscript', () => {
     expect(await childSessionPointer(history, [], callId, 'single', root)).toBe(childSessionFile);
     expect(await childSessionPointer(history, [], callId, 'other', root)).toBeUndefined();
   });
+  it('reads a running single transcript from its only step and sees appended messages', async () => {
+    const { callId, childRunId, childSessionFile, history } = transcriptFixture('single');
+    const now = Date.now();
+    writeStatus(childRunId, { runId: childRunId, toolCallId: callId, sessionId: parentPath(),
+      mode: 'single', state: 'running', startedAt: now - 9000, lastUpdate: now,
+      steps: [{ agent: 'code-reviewer', status: 'running', sessionFile: childSessionFile }] });
+    const index = { subagentHistory: () => history } as any;
+    expect(await childSessionPointer(history, [], callId, 'single', root)).toBe(childSessionFile);
+    const first = await subagentChildTranscript(agentDir, 'a'.repeat(64), index, callId, 'single');
+    expect('messages' in first).toBe(true);
+    expect(JSON.stringify(first)).toContain('first finding');
+    fs.appendFileSync(childSessionFile, JSON.stringify({ type: 'message', message: {
+      role: 'toolResult', toolCallId: 'live-tool', toolName: 'bash', content: [{ type: 'text', text: 'live progress appended' }],
+    } }) + '\n');
+    const next = await subagentChildTranscript(agentDir, 'a'.repeat(64), index, callId, 'single');
+    expect(JSON.stringify(next)).toContain('live progress appended');
+    // Completing the run must not be required to read it.
+    expect(JSON.parse(fs.readFileSync(path.join(root, childRunId, 'status.json'), 'utf8')).state).toBe('running');
+  });
+  it('does not guess a step for ambiguous singles or bypass parent/call identity checks', async () => {
+    const { callId, childRunId, childSessionFile, history } = transcriptFixture('single');
+    const base = { runId: childRunId, toolCallId: callId, sessionId: parentPath(), mode: 'single',
+      state: 'running', startedAt: Date.now() - 9000, lastUpdate: Date.now(),
+      steps: [{ sessionFile: childSessionFile }] };
+    for (const patch of [
+      { steps: [{ sessionFile: childSessionFile }, { sessionFile: '/other.jsonl' }] },
+      { sessionId: '/other-parent.jsonl' }, { toolCallId: 'different-call' }, { runId: 'other-run' },
+    ]) {
+      writeStatus(childRunId, { ...base, ...patch });
+      expect(await childSessionPointer(history, [], callId, 'single', root)).toBeUndefined();
+    }
+    writeStatus(childRunId, base);
+    expect(await childSessionPointer(history, [], callId, 'wrong-child', root)).toBeUndefined();
+  });
+  it('keeps the top-level pointer authoritative and containment applies to the fallback too', async () => {
+    const { callId, childRunId, childSessionFile, history } = transcriptFixture('single');
+    const base = { runId: childRunId, toolCallId: callId, sessionId: parentPath(), mode: 'single',
+      state: 'running', startedAt: Date.now() - 9000, lastUpdate: Date.now() };
+    writeStatus(childRunId, { ...base, sessionFile: childSessionFile, steps: [{ sessionFile: '/etc/hosts' }] });
+    expect(await childSessionPointer(history, [], callId, 'single', root)).toBe(childSessionFile);
+    writeStatus(childRunId, { ...base, steps: [{ sessionFile: '/etc/hosts' }] });
+    const index = { subagentHistory: () => history } as any;
+    expect(await subagentChildTranscript(agentDir, 'a'.repeat(64), index, callId, 'single')).toEqual({ error: 'outside-sessions-root' });
+  });
+  it('reads workflow child single-step sessions after validating the child ownership chain', async () => {
+    const { callId, childRunId, childSessionFile, history } = transcriptFixture('workflow');
+    writeStatus(childRunId, { runId: childRunId, toolCallId: 'ct1', sessionId: parentPath(), mode: 'single',
+      state: 'running', startedAt: Date.now() - 9000, lastUpdate: Date.now(),
+      parentWorkflowRunId: 'dddddddd-1111-4111-8111-000000000001', workflowKey: 'review',
+      steps: [{ sessionFile: childSessionFile }] });
+    expect(await childSessionPointer(history, [], callId, 'review', root)).toBe(childSessionFile);
+  });
+
   it('subagentChildTranscript returns a bounded, sanitized tail', async () => {
     const { callId, history } = transcriptFixture('workflow');
     const index = { subagentHistory: () => history } as any;
