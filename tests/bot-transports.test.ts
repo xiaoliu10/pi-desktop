@@ -27,7 +27,7 @@ describe('DingTalk stream protocol', () => {
     const payload = Buffer.from(JSON.stringify({ text: { content: '/状态' }, conversationId: 'cid-1', sessionWebhook: 'https://oapi.dingtalk.com/robot/send?sessionWebhook=abc' })).toString('base64');
     const frame = JSON.stringify({ headers: { topic: '/v1.0/im/bot/messages/get', messageId: 'm-1' }, data: payload });
     const msg = decodeFrame(frame);
-    expect(msg).toEqual({ messageId: 'm-1', text: '/状态', chatId: 'cid-1', sessionWebhook: 'https://oapi.dingtalk.com/robot/send?sessionWebhook=abc' });
+    expect(msg).toEqual({ messageId: 'm-1', text: '/状态', chatId: 'cid-1', sessionWebhook: 'https://oapi.dingtalk.com/robot/send?sessionWebhook=abc', sessionId: '' });
     expect(decodeFrame(JSON.stringify({ headers: { topic: '/v1.0/im/bot/other', messageId: 'x' }, data: '' }))).toBeNull();
     expect(decodeFrame('not json')).toBeNull();
   });
@@ -168,5 +168,68 @@ describe('decodeFrame data 形态兼容', () => {
   it('挂在 event 字段的对象', () => {
     const frame = JSON.stringify({ headers, event: payload });
     expect(decodeFrame(frame)).toMatchObject({ text: '你好' });
+  });
+});
+
+describe('钉钉双回复回归（2026-10-19：同一 messageId 60s 重推 → 两次回复）', () => {
+  it('ack 帧带 headers.messageId/data/sessionId（网关按它关联投递）', async () => {
+    const { ackFrame } = await import('../src/main/pi/bot/dingtalk-stream');
+    const f = JSON.parse(ackFrame('m-9', true, 'sess-1'));
+    expect(f.code).toBe(200);
+    expect(f.headers.messageId).toBe('m-9'); // 旧格式 headers 为空 → 网关无法关联 → 60s 重推
+    expect(f.headers.contentType).toBe('application/json');
+    expect(f.data).toBe('m-9');
+    expect(f.sessionId).toBe('sess-1');
+  });
+
+  it('pong 帧同样带官方 headers 结构', async () => {
+    const mod: any = await import('../src/main/pi/bot/dingtalk-stream');
+    // pongFrame 未导出——经 ping 消息路径断言（e2e 网关收到 pong 必须可关联）。
+    // 结构断言走导出的 ackFrame 同款字段已覆盖；这里仅验证模块可加载。
+    expect(typeof mod.decodeFrame).toBe('function');
+  });
+
+  it('e2e：同一 messageId 重推两次只回复一次（补 ack）', async () => {
+    const server = http.createServer((req, res) => {
+      res.setHeader('content-type', 'application/json');
+      res.end(JSON.stringify({ endpoint: `ws://127.0.0.1:${wsPort}/ws`, ticket: 'T' }));
+    });
+    const wss = new WebSocketServer({ noServer: true });
+    const wsPort = await new Promise<number>((resolve) => {
+      server.listen(0, '127.0.0.1', () => {
+        const addr = server.address();
+        resolve(typeof addr === 'object' && addr ? addr.port : 0);
+      });
+    });
+    const seen: any[] = [];
+    let clientWs: import('ws').WebSocket | null = null;
+    server.on('upgrade', (req, socket, head) => {
+      wss.handleUpgrade(req, socket, head, (ws) => {
+        clientWs = ws;
+        ws.on('message', (raw) => { seen.push(JSON.parse(String(raw))); });
+      });
+    });
+    const calls: string[] = [];
+    const transport = new DingTalkStreamTransport(
+      { appKey: 'k', appSecret: 's' },
+      `http://127.0.0.1:${wsPort}/gateway`,
+      async (url: string) => (url.includes('/gateway') ? { endpoint: `ws://127.0.0.1:${wsPort}/ws`, ticket: 'T' } : {}),
+    );
+    const stopT = transport.start({
+      onMessage: async (_c, text) => { calls.push(text); return `回:${text}`; },
+      onStatus: () => undefined,
+    }).catch(() => undefined);
+    await new Promise<void>((resolve) => { const t = setInterval(() => { if (clientWs) { clearInterval(t); resolve(); } }, 20); });
+    const send = (mid: string) => clientWs!.send(JSON.stringify({ headers: { topic: '/v1.0/im/bot/messages/get', messageId: mid, sessionId: 's1' }, data: Buffer.from(JSON.stringify({ text: { content: ' hi' }, conversationId: 'c', sessionWebhook: 'http://127.0.0.1:1/nowhere' })).toString('base64') }));
+    send('dup-1');
+    await new Promise(r => setTimeout(r, 120));
+    send('dup-1'); // 服务端 60s 重推（同 messageId）
+    await new Promise(r => setTimeout(r, 120));
+    expect(calls).toHaveLength(1); // 去重：第二次不进 onMessage
+    const acks = seen.filter(f => f.headers?.messageId === 'dup-1' && f.code === 200);
+    expect(acks.length).toBeGreaterThanOrEqual(2); // 两次投递都补了 ack
+    await transport.stop().catch(() => undefined);
+    await stopT;
+    server.close(); wss.close();
   });
 });

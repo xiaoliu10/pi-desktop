@@ -37,7 +37,7 @@ export async function openConnection(
 }
 
 /** Decode an incoming stream frame into a bot message, or null for control frames. */
-export function decodeFrame(raw: string): { messageId: string; text: string; chatId: string; sessionWebhook: string } | null {
+export function decodeFrame(raw: string): { messageId: string; text: string; chatId: string; sessionWebhook: string; sessionId: string } | null {
   let frame: any;
   try {
     frame = JSON.parse(raw);
@@ -66,12 +66,33 @@ export function decodeFrame(raw: string): { messageId: string; text: string; cha
   const chatId = String(payload?.conversationId ?? payload?.senderStaffId ?? payload?.senderNick ?? 'unknown');
   const sessionWebhook = String(payload?.sessionWebhook ?? '');
   if (!text && !sessionWebhook) return null;
-  return { messageId, text, chatId, sessionWebhook };
+  return { messageId, text, chatId, sessionWebhook, sessionId: String(frame?.headers?.sessionId ?? '') };
 }
 
-/** The per-message ack the stream gateway expects. */
-export function ackFrame(messageId: string, ok: boolean): string {
-  return JSON.stringify({ code: ok ? 200 : 500, headers: {}, body: '{}', message: ok ? 'OK' : 'rejected' });
+/** The per-message ack the stream gateway expects.
+ *  格式对齐官方 SDK（dingtalk-stream-sdk-node sendEventAck）：网关按 headers.messageId
+ *  关联投递——旧格式 headers 为空对象，网关无法关联 ⇒ 视为未 ack ⇒ 同一 messageId
+ *  60s 后重推 ⇒ 用户收到两条相同回复（2026-10-19 im-bot.log 实锤：2105b5c8_e91_1a14b
+ *  隔 60s 两次「已处理」）。data 与 sessionId 同为官方字段，一并补齐。 */
+export function ackFrame(messageId: string, ok: boolean, sessionId = ''): string {
+  return JSON.stringify({ code: ok ? 200 : 500, headers: { contentType: 'application/json', messageId }, message: ok ? 'OK' : 'rejected', data: messageId, ...(sessionId ? { sessionId } : {}) });
+}
+
+/** 官方 SDK 同款 pong：与 ack 一样需要 headers 结构（旧 pong 的空 headers 同样
+ *  存在被网关判无效的风险——服务端 ping 计的是这个回执）。 */
+function pongFrame(): string {
+  return JSON.stringify({ code: 200, headers: { contentType: 'application/json' }, message: 'pong' });
+}
+
+/** 重推去重（至少一次投递的最后防线）：同一 messageId 10 分钟内只回复一次。 */
+const repliedMessageIds = new Map<string, number>();
+function alreadyReplied(messageId: string): boolean {
+  const now = Date.now();
+  for (const [id, at] of repliedMessageIds) if (now - at > 10 * 60 * 1000) repliedMessageIds.delete(id);
+  if (repliedMessageIds.has(messageId)) return true;
+  repliedMessageIds.set(messageId, now);
+  if (repliedMessageIds.size > 256) repliedMessageIds.delete(repliedMessageIds.keys().next().value as string);
+  return false;
 }
 
 export class DingTalkStreamTransport implements ImTransport {
@@ -89,7 +110,14 @@ export class DingTalkStreamTransport implements ImTransport {
     private readonly postJson: (url: string, body: unknown) => Promise<any> = defaultPostJson,
   ) {}
 
+  private starting = false;
   async start(ctx: TransportContext): Promise<void> {
+    // 并发互斥：失活 terminate 会触发 close handler 的定时 start，两个 start 交错
+    // 执行（各自 await openConnection 时对方又 stop/reopen）会留下并发双连接——
+    // 日志实测同一毫秒两条「连接断开，5 秒后重连」（2026-10-19 im-bot.log）。
+    if (this.starting) return;
+    this.starting = true;
+    try {
     // 幂等保护：重连路径（close → 定时 start）先清掉旧连接/旧定时器，连续断线时
     // 不会堆积多个并发 ws（旧连接可能把消息收走后 ack 失败——消息静默丢失）。
     await this.stop();
@@ -116,7 +144,7 @@ export class DingTalkStreamTransport implements ImTransport {
       this.lastFrameAt = Date.now(); // 任何入站帧（含服务端 ping）都是链路存活证据
       const text = String(raw);
       if (text.includes('"ping"')) {
-        ws.send(JSON.stringify({ code: 200, headers: {}, body: '{}', message: 'pong' }));
+        ws.send(pongFrame());
         return;
       }
       if (!text.includes('"ping"')) {
@@ -139,6 +167,10 @@ export class DingTalkStreamTransport implements ImTransport {
       }
       const msg = decodeFrame(text);
       if (!msg) { imLog(`事件帧未解码为机器人消息（topic 不符或结构异常），忽略`); return; }
+      // 至少一次投递：ack 修复前服务端会 60s 重推同一 messageId；即使 ack 正确，
+      // 跨重连的 ack 也可能丢。已回复过的 messageId 直接补 ack 不再回复（否则
+      // 用户同一条问题收到两条相同答案）。
+      if (alreadyReplied(msg.messageId)) { imLog(`重复投递（messageId=${msg.messageId.slice(0, 18)}），补 ack 不再回复`); ws.send(ackFrame(msg.messageId, true, msg.sessionId)); return; }
       void ctx
         .onMessage({ chatId: msg.chatId, text: msg.text } satisfies IncomingMessage)
         .then(async (reply) => {
@@ -154,7 +186,7 @@ export class DingTalkStreamTransport implements ImTransport {
               payloadShape = JSON.stringify({ dataKeys: inner && typeof inner === 'object' ? Object.keys(inner) : typeof inner, dataPreview: JSON.stringify(inner)?.slice(0, 400) });
             } catch { /* 观测失败不影响主流程 */ }
             imLog(`回复无法送达：帧内无 sessionWebhook。payload=${payloadShape}`);
-            ws.send(ackFrame(msg.messageId, true));
+            ws.send(ackFrame(msg.messageId, true, msg.sessionId));
             return;
           }
           if (msg.sessionWebhook) {
@@ -166,11 +198,11 @@ const res = await this.postJson(msg.sessionWebhook, { msgtype: 'text', text: { c
               // HTTP 200 ≠ 钉钉接收：sessionWebhook 业务失败（过期/限流/非法消息体）也是 200+errcode≠0
               const errcode = (res as { errcode?: number })?.errcode;
               if (errcode !== undefined && errcode !== 0) imLog(`回复被钉钉拒绝：errcode=${errcode}，errmsg=${String((res as { errmsg?: string })?.errmsg ?? '').slice(0, 120)}`);
-            } catch (err) { imLog(`回复发送失败：${String(err).slice(0, 200)}`); ws.send(ackFrame(msg.messageId, false)); return; }
+            } catch (err) { imLog(`回复发送失败：${String(err).slice(0, 200)}`); ws.send(ackFrame(msg.messageId, false, msg.sessionId)); return; }
           }
-          ws.send(ackFrame(msg.messageId, true));
+          ws.send(ackFrame(msg.messageId, true, msg.sessionId));
         })
-        .catch((err) => { imLog(`消息处理异常：${String(err).slice(0, 200)}`); ws.send(ackFrame(msg.messageId, false)); });
+        .catch((err) => { imLog(`消息处理异常：${String(err).slice(0, 200)}`); ws.send(ackFrame(msg.messageId, false, msg.sessionId)); });
     });
     // open/error/close handler 必须先于 await 注册：握手失败（超时/代理吞升级
     // 响应）时 error → start() 抛出，close 几乎同时发出——handler 若还在 await
@@ -180,9 +212,12 @@ const res = await this.postJson(msg.sessionWebhook, { msgtype: 'text', text: { c
     ws.on('error', (err) => { ctx.onStatus?.(`钉钉连接错误：${err.message}`); imLog(`钉钉连接错误：${err.message}`); });
     ws.on('close', () => {
       if (this.closedByUs) return;
+      // 单飞重连：失活检测 terminate 后 close 到达，此时 frameWatch 路径可能已排了
+      // 重连——两条定时器 = 5s 后双 start（并发连接的温床）。
+      if (this.retryTimer) { imLog('连接断开（重连已排队，跳过重复调度）'); return; }
       ctx.onStatus?.('钉钉连接断开，5 秒后重连');
       imLog('钉钉连接断开，5 秒后重连');
-      setTimeout(() => void this.start(ctx).catch((err) => imLog(`重连失败：${String(err).slice(0, 200)}`)), 5000);
+      this.retryTimer = setTimeout(() => { this.retryTimer = null; void this.start(ctx).catch((err) => imLog(`重连失败：${String(err).slice(0, 200)}`)); }, 5000);
     });
     try {
       await new Promise<void>((resolve, reject) => {
@@ -206,12 +241,16 @@ const res = await this.postJson(msg.sessionWebhook, { msgtype: 'text', text: { c
       const silent = Date.now() - this.lastFrameAt;
       if (silent > 180_000) {
         imLog(`超过 ${Math.round(silent / 1000)}s 未收到钉钉任何帧，链路疑似失活，主动重连`);
-        try { this.ws.terminate(); } catch { /* close handler 驱动重连 */ }
+        // 先占位重连定时器再 terminate：close 事件到达时 retryTimer 已存在，
+        // close handler 的单飞检查跳过——不会排出第二个 start。
+        if (!this.retryTimer) this.retryTimer = setTimeout(() => { this.retryTimer = null; void this.start(ctx).catch((err) => imLog(`失活重连失败：${String(err).slice(0, 200)}`)); }, 5_000);
+        try { this.ws.terminate(); } catch { /* 上面已排重连 */ }
       }
     }, 15_000);
     // Keep-alive：钉钉 Stream 协议是「服务端发 ping、客户端回 pong」（上面 message 分支）。
     // 客户端主动发 ping 不是协议的一部分，违规帧可能导致网关断开——不发。
     this.pingTimer = null;
+    } finally { this.starting = false; }
   }
 
   async stop(): Promise<void> {
