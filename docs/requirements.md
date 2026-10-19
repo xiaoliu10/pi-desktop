@@ -39,6 +39,7 @@
 - single 与 workflow 两种模式、running/queued/completed/failed/interrupted 各状态，卡片都出现且状态正确刷新。
 - 完成态点详情能读转录尾部；路径与身份校验通过才读，不读则明确提示，不假报"不可用"而实为解析失败。
 - 第三形态（completions 结果）同样识别并读子会话，不因形态切换而卡片永久转圈。
+- **计时真实**：详情面板的「已工作 / 用时」只用消息的真实时间戳；IPC 取回的转录被脱敏后不带时间时，不显示计时，绝不把内部缓存版本号/当前时间当起始时间（曾出现「已工作 497889 小时」）。回归：`tests/subagent-transcript-timing.test.ts`。
 
 **状态**：部分满足。
 - single/workflow 转录：满足。
@@ -47,7 +48,7 @@
 
 **上游依赖**：`pi-subagents`（repo `nicobailon/pi-subagents`）。已提 issue #2921（2026-10-16，带 `sessionFilesByFlatIndex` 无生产者的代码证据）。相关 issue：#1441（fleet 转录读不到，信任根问题，CLOSED 2026-08-24，另一根因）、#2916（更新后 bg_wait 失效，CLOSED 2026-10-16，不覆盖本根因）、#1124（承诺的 output 日志从不写，CLOSED，同形态）。
 
-**回归触发**：pi-subagents 升级（重点：async 路径是否开始写 sessionFile）；改 `subagent-snapshots.ts`（childSessionPointer）。
+**回归触发**：pi-subagents 升级（重点：async 路径是否开始写 sessionFile）；改 `subagent-snapshots.ts`（childSessionPointer）、`src/renderer/pi/subagents.ts` 的 `subagentTranscriptTurns`（entry 时间戳只能取消息真实时间，缓存 epoch 只允许进 id）。
 
 ### R-subagent-03　断开会话必须确认；切换会话不拦
 
