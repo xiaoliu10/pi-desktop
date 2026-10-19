@@ -10,6 +10,11 @@
 > （窗口/UI/文件对话框）或依赖 Desktop 私有 IPC 协议的才留在 `extensions/`
 > 内置；半通用的拆成 npm 包 + Desktop 用 env/props 注入宿主差异。
 
+**范围边界（2026-10-19 用户修正）**：只拆**质量相关**能力（agent 产出质量：
+任务纪律、验证门、审查）。Desktop 宿主便利功能（模型热刷新、网络诊断增强、
+重试续跑握手）即使结构上可拆也**不拆**——CLI 没有这些需求，泛化握手令牌是
+纯开销，违反「聚焦质量基础设施」的初衷。
+
 ## 加载形态（现状，backend.ts:277-320）
 
 ```
@@ -39,45 +44,37 @@
 | `index.mjs` | 119 | 无 | modeFile 控制文件 + 系统提示文案 | `on('tool_call')` + `ui.select`（RPC 通道） | **Desktop 绑定**（审批 UI 走 Desktop RPC） |
 | （`diagnostic-text.d.mts`） | 3 | — | — | — | 类型声明，随行 |
 
-## 拆分清单（三档）
+## 拆分清单（收窄后：只做质量相关）
 
-### A 档：拆 npm 包（纯通用，CLI 立即受益，零风险）
+### A 档：拆 npm 包
 
-| 新包 | 来源 | CLI 收益 | 说明 |
-|---|---|---|---|
-| `@wengine-ai/pi-plan-tool` | `plan.mjs` + `policy.mjs` 的 checklist 引导语 | 终端会话也有结构化任务清单；替代 CLI 里手工维护 | 13 行主体 + 引导语常量；`policy.mjs` 的 classify/resolveTarget 一并带入（自带权限决策，可独立于 Desktop 的 modeFile 工作） |
-| `@wengine-ai/pi-mcp-imports` | `mcp-imports.cjs` + `mcp-client.cjs` | CLI 直接解析 claude-code/cursor/codex/opencode/claude-desktop 的 MCP 配置 | 已被主进程 settings 页 import（`src/main/pi/...`），拆包后两端共用同一实现；记忆里「MCP imports 加载」修复的正确沉淀位置 |
-
-**迁移方式**：`extensions/desktop-policy/` 里保留 `import { registerDesktopPlan } from '@wengine-ai/pi-plan-tool'` 薄封装（或 backend 的 `-e` 换成 settings.json 的 `packages` 声明），Desktop 行为零变化。
-
-### B 档：半通用——拆包 + Desktop env 注入（收益大但要适配）
-
-| 模块 | 拆分形态 | 关键适配点 |
+| 新包 | 来源 | 为什么拆（质量收益） |
 |---|---|---|
-| `network-diagnostics.mjs` + `diagnostic-text` | `@wengine-ai/pi-net-diag` | 去掉 `PI_DESKTOP_PERMISSION` 门控，改为参数 `install(pi, { enabled })`；CLI 可用 `PI_NET_DIAG=1` 开启 |
-| `model-refresh.mjs` | `@wengine-ai/pi-model-refresh` | `PI_DESKTOP_GENERATION` → 通用 `PI_MODEL_REFRESH_TOKEN`（宿主注入任意握手令牌）；命令名由令牌派生，避免多宿主冲突 |
-| `retry-continuation.mjs` | `@wengine-ai/pi-retry-continuation` | 同上（握手令牌泛化）；`waitForIdle` 是 pi 公共 API，CLI 可用 |
-| `mcp-bridge.mjs` | `@wengine-ai/pi-mcp-bridge` | pi≥0.99 有原生 MCP，此包对 CLI 价值有限；建议**不拆**，随 desktop-policy 寿终（见 D 档） |
+| `@wengine-ai/pi-plan-tool` | `plan.mjs` + checklist 引导语 | **任务纪律是质量基础设施的核心**：多步任务强制建清单、一步一更、完成即验证。CLI 会话（日常干活的形态）现在完全没有这个约束，是最直接的收益 |
 
-### C 档：留 Desktop 内置（不要拆）
+### 留 Desktop 内置（不拆）
 
 | 模块 | 理由 |
 |---|---|
 | `index.mjs`（tool_call 权限链 + 系统提示 + 审批 UI） | 审批走 `ctx.ui.select` 的 Desktop RPC 通道（ZCode 五选项），modeFile 控制文件由主进程写；CLI 没有等价宿主。拆出去只会得到一个「人人都用不了的半个权限系统」 |
+| `model-refresh.mjs` | **宿主便利功能，非质量问题**：运行中热刷新模型是 Desktop 特有需求（改设置不用重启会话），CLI 改模型本来就是重启。`PI_DESKTOP_GENERATION` 握手留着即可 |
+| `retry-continuation.mjs` | 同上：重试续跑是 Desktop 的重试组机制配套，CLI 无此概念 |
+| `network-diagnostics.mjs` | 诊断增强纯属 Desktop 排障便利（代理网络环境），与产出质量无关 |
+| `mcp-bridge.mjs` + `mcp-client.cjs` | pi≥0.99 原生 MCP 已覆盖（`hasNativeMcp()` 就是自停开关）。随 desktop-policy 寿终，见 D 档 |
 
-### D 档：寿终/合并（减少面）
+### 附带记录（非质量，仅结构问题，可选）
 
-| 对象 | 处置 |
+| 对象 | 现状问题 |
 |---|---|
-| `mcp-bridge.mjs` + `mcp-client.cjs` | pi≥0.99 原生 MCP 已覆盖（`hasNativeMcp()` 就是自停开关）。当内置 runtime 升到 ≥0.99 且不再支持旧版时删；`mcp-imports.cjs` 先拆 A 档（settings 页还要用） |
-| `diagnostic-text.d.mts` | 随 A/B 档搬迁，或直接内联（3 行声明） |
+| `mcp-imports.cjs` | 主进程 settings 页直接 `import` 扩展目录内的 `.cjs`（`src/main/pi/...`），跨层引用别扭。拆 `pi-mcp-imports` 是结构修正，但**不带来质量收益**——CLI 用户自己配 MCP 不需要这层兼容。列为可选，不做默认动作 |
 
-## 收益量化
+## 收益量化（收窄后）
 
-- **CLI 立即可得**：任务清单（我现在 CLI 会话里手工维护计划的方式被替代）、MCP imports 解析
-- **Desktop 瘦身**：`desktop-policy` 从 12 文件 644 行 → 4 文件（index + policy 引导 + bridge + 过渡封装）
-- **可维护性**：通用能力进 npm 后有独立版本/CHANGELOG/测试（对齐 pi-quality-gates 模式）
-- **生态**：A 档两个包对社区直接有用（plan 工具 + MCP imports 是通用刚需）
+- **CLI 立即可得**：任务清单纪律——多步任务强制建计划、一步一 in_progress、
+  完成即验证、不标记未验证项。这是整套质量基础设施里**唯一 CLI 完全没有**的
+  一环（quality-gates / quality-prompt / code-review skill 都已在 agentDir）
+- **Desktop 零变化**：薄封装或 packages 声明，行为不变
+- **维护**：plan 工具进 npm 后有独立版本/CHANGELOG/测试（对齐 pi-quality-gates 模式）
 
 ## 风险与对策
 
@@ -90,11 +87,13 @@
 
 ## 建议执行顺序
 
-1. **A 档先行**（低风险高收益）：`pi-mcp-imports` → `pi-plan-tool`，各带测试 + 发版
-2. **B 档跟进**：`pi-net-diag` → `pi-retry-continuation` → `pi-model-refresh`
-3. **D 档收尾**：runtime 升 ≥0.99 后删 mcp-bridge，desktop-policy 只留 index.mjs + policy 引导
+1. `pi-plan-tool`：13 行主体 + 引导语常量，带测试，发版后 settings.json 声明
+   `npm:@wengine-ai/pi-plan-tool`，Desktop 的 `-e` 改薄封装
+2. （可选，非质量）`pi-mcp-imports` 修主进程跨层 import 的结构问题
+3. D 档：runtime 升 ≥0.99 后删 mcp-bridge，desktop-policy 只留 index.mjs
+   + 引导语
 
 ## 待拍板
 
-- A 档两个包的 scope/命名是否认可（`@wengine-ai/pi-plan-tool` / `@wengine-ai/pi-mcp-imports`）？
-- plan 工具是否保持 `desktop_update_plan` 名（兼容旧会话）还是借拆分机会改名（会丢历史渲染）？
+- plan 工具是否保持 `desktop_update_plan` 名（兼容旧会话）还是借拆分机会改名
+  （会丢历史渲染）？
