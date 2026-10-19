@@ -174,12 +174,13 @@
 
 **验收**：
 - `src/renderer/index.html` 的 `img-src` 含 `blob:`（同时保留 `'self'` / `data:` / `https:`，不能为了修一个丢其他）。
+- `connect-src` 必须显式含 `blob:` 与 `'self'`：灯箱下载用 `fetch(blob:)` 读回内存字节，CSP 的 fetch 走 `connect-src` 而非 `img-src`；缺省时回退 `default-src 'self'` 会被拒（真实 Electron 实测 `Failed to fetch`）。不得顺带放开 `http:`/`https:`/`*` 出口。
 - `script-src` 保持 `'self'` 单值（不得引入 `unsafe-inline` / `unsafe-eval` 兜底）。
 - 附件图片缩略图与灯箱大图、生图结果网格都能正常显示（不出现 CSP 裂图）。
 - **灯箱「下载原图」端到端可用**：附件图片的 blob: URL 必须先归一化成 `image-file.ts` 的 `imageDataUrl` 认的 data URL 再过 IPC（主进程无法解析 blob: 协议）。
-- 回归测试：`tests/renderer-csp.test.ts` 断言真实源文件的 `img-src` 允许 `blob:` 且其余来源未丢；`tests/image-download.test.ts` 断言归一化输出能通过主进程同一套校验（不是「看起来像 data URL」）。
+- 回归测试：`tests/renderer-csp.test.ts` 断言真实源文件的 `img-src` 允许 `blob:` 且其余来源未丢、`connect-src` 含 `blob:` 但无网络出口；`tests/image-download.test.ts` 断言归一化输出能通过主进程同一套校验（不是「看起来像 data URL」）；`tests/csp-blob.electron.cjs`（`npm run smoke:csp-blob`）在真实 Electron 里钉住图片显示 + `fetch(blob:)` + XHR 三者同时可用且 0 CSP 违规。
 
-**状态**：待发版验收（本分支修复两个同根因缺陷，均自 0.1.28 `fe11050` 引入 blob URL 起存在：① `img-src` 不含 `blob:`，Console 刷 "Refused to load the image 'blob:file:///...'"，附件图片全部裂图而 UI 侧无异常——最难自查的一类静默失败；② 下载把 blob: URL 直接传给只认 data URL 的主进程，用户只看到通用「图片保存失败」，保存对话框都不弹）。
+**状态**：待发版验收（本分支修复同根因三处缺陷，均自 0.1.28 `fe11050` 引入 blob URL 起存在：① `img-src` 不含 `blob:`，Console 刷 "Refused to load the image 'blob:file:///...'"，附件图片全部裂图而 UI 侧无异常；② 下载把 blob: URL 直接传给只认 data URL 的主进程；③ 归一化改用 `fetch(blob:)` 后，`connect-src` 未放行 blob:，真实 Electron 下 fetch/XHR 均被 CSP 拒——②③任一不修，保存对话框都不弹，用户只看到通用「图片保存失败」。2026-10-19 Electron 33 探针实测：仅 `img-src blob:` 时 img=ok、fetch/xhr=error；补 `connect-src 'self' blob:` 后三者全 ok 且无新增网络出口）。
 
 **回归触发**：改 `src/renderer/index.html`（CSP）、`image-url.ts`（若换回 data URL 或改用自定义协议）、`shared/image-download.ts`（下载归一化）、`main/pi/image-file.ts`（下载校验）、Electron 升级（webSecurity / CSP 处理变化）。
 

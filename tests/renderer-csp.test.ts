@@ -47,4 +47,18 @@ describe('renderer CSP', () => {
     expect(sources).not.toContain("'unsafe-eval'");
     expect(sources).not.toContain("'wasm-unsafe-eval'");
   });
+
+  // 灯箱下载走 fetch(blob:) 把内存 blob 读回字节再转 data URL（见
+  // src/shared/image-download.ts）。blob: 只放行 img-src 不够：fetch 受 connect-src
+  // 约束，缺省回退 default-src 'self' 会被拒（真实 Electron 实测 Failed to fetch，
+  // 下载原图静默失败）。必须显式 connect-src 放行 blob:，但不能放开 http/https 出口。
+  it('connect-src allows blob: for download fetch without opening network egress', () => {
+    const sources = tokens('connect-src');
+    expect(sources).toContain('blob:');
+    expect(sources).toContain("'self'");
+    // 只允许渲染进程自建的内存 blob 与自身，不得出现任意网络出口。
+    expect(sources).not.toContain('http:');
+    expect(sources).not.toContain('https:');
+    expect(sources).not.toContain('*');
+  });
 });

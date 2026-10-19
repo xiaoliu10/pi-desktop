@@ -3,6 +3,11 @@
 所有重要变更记录在本文件。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 README 只保留最近版本摘要；本文件为完整记录。
 
+## [Unreleased]
+
+### 修复
+- **聊天图片裂图与灯箱「下载原图」失效**：图片为省内存改用 blob: URL 后，CSP 只放行显示未放行读取——图片能显示，但下载时 `fetch(blob:)` 被 `connect-src` 回退拦截（真实 Electron 实测 Failed to fetch，保存框都不弹）。现在 `connect-src` 显式放行 `blob:`（只限渲染进程自建的内存 blob，不开放网络出口），配合下载前归一化为 data URL，灯箱下载恢复；新增 Electron 探针 `smoke:csp-blob` 钉住「显示 + fetch + XHR」三者同时可用。
+
 ## [0.1.30] - 2026-10-19
 
 ### 修复
