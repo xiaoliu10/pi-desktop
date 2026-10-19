@@ -246,6 +246,8 @@ export function historyToMessages(branch: PiEntry[], compactionAfter?: Compactio
         return;
       }
       if (role === 'toolResult') {
+        // Desktop history IPC omits top-level image.data here (omittedBase64Chars).
+        // Future tool-image previews must add on-demand retrieval, not assume inline bytes.
         push(entry, id, () => {
           const text = contentText(content);
           const firstLine = clean(text).split('\n')[0] ?? '';

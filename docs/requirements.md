@@ -162,6 +162,8 @@
 **验收**：
 - 流式期间主进程单次同步阻塞 < 50ms（实测修复前：history() 每次 scan() 热 173ms/冷 3.5s，103.7MB 会话 dirty 全量重解析 421ms）。
 - 渲染层 memo 子组件不被每次 render 新建的对象击穿。
+- Desktop 历史 IPC 不重复传输界面未消费的 toolResult 顶层图片 base64；只做传输投影，内部历史、fork/续接、用户图片和工具 details 必须无损。回归：`tests/renderer-history.test.ts`；真实 Electron 对照：`tests/renderer-history-ipc.electron.cjs`。
+- 2026-10-19 仍有输入 p90=520ms/max=2909ms 的现场报告：响应瘦身不等于端到端卡顿解决。主进程冷扫描/解析的 worker 隔离待实现，方案与证据边界见 `docs/design/input-lag-multicore.md`。
 - 大会话历史读取不全量重读：落盘会话走增量 tail 解析（session-index），运行中会话的 `get_entries(since=leafId)` 增量契约待接入（切片 2c）。
 
 **状态**：大部分满足。切片 1（labelsFor 缓存，v0.1.24 #120）已修 memo 击穿；切片 2a/2b（history() 去全扫 + 增量 tail 解析，实测 421ms → 平均 6.3ms）已修（PR #128）；**渲染侧热路径（Phase 2，实测 sentConversationMessages 热路径 259ms/拍 → 流式 tick 10-12ms，22×）：anchorOf/indexById O(1) 化 + 排序锚值预计算 + segment 整段缓存（branch 数组身份隔离，live/tools 内容签名穿透）+ ChatView queue/scrollRequest props 稳定化**；剩余：运行中会话改走 RPC get_entries（切片 2c）、可选虚拟化（切片 3）、活动段/历史段 useMemo 拆分（A1，若剩余 10ms/拍仍感知卡再做）。

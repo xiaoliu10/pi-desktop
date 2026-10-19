@@ -31,6 +31,7 @@
     "dist": "pnpm runtime:prepare && pnpm build && electron-builder && node scripts/sync-release.mjs && node scripts/prune-dist.mjs",
     "runtime:prepare": "node scripts/prepare-runtime.mjs",
     "smoke:rpc": "npx tsx tests/rpc-runtime-smoke.mjs",
+    "smoke:history-ipc": "tsc -p tsconfig.main.json && electron tests/renderer-history-ipc.electron.cjs",
     "smoke:rpc-full": "npx tsx tests/rpc-full-args-smoke.mjs",
     "check:package": "node scripts/check-package-json.mjs",
     "pretypecheck": "node scripts/check-package-json.mjs",
