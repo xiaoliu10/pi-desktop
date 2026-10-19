@@ -19,6 +19,25 @@ export function gitStatusCached(cwd: string): Promise<GitStatus> {
 export const gitStatus = gitStatusImpl;
 
 async function gitStatusImpl(cwd: string): Promise<GitStatus> {
+  const __t0 = Date.now();
+  try {
+    return await gitStatusInner(cwd);
+  } finally {
+    const cost = Date.now() - __t0;
+    if (cost > 1000) {
+      // 慢仓库观测：ipc 层计时不含 cwd 无法归因哪个仓库慢——带 root 落 main-perf.log。
+      try {
+        const { appendFileSync } = require('node:fs') as typeof import('node:fs');
+        const { join } = require('node:path') as typeof import('node:path');
+        const { homedir } = require('node:os') as typeof import('node:os');
+        appendFileSync(join(homedir(), 'Library', 'Logs', 'PI Desktop', 'main-perf.log'), `${new Date().toISOString()} gitStatus-slow root=${cwd} ${cost}ms
+`);
+      } catch { /* 观测不影响主流程 */ }
+    }
+  }
+}
+
+async function gitStatusInner(cwd: string): Promise<GitStatus> {
   const result: GitStatus = {root: cwd, repository:false, branch:'', branches:[], added:0,removed:0,changed:0,untracked:0,binary:0,ahead:0,behind:0};
   const run = async (args: string[]) => (await exec('git', ['-c','core.fsmonitor=false', ...args], {cwd, timeout:10000, maxBuffer:4*1024*1024, env:{...process.env,GIT_OPTIONAL_LOCKS:'0'}})).stdout;
   try { result.root = (await run(['rev-parse','--show-toplevel'])).trim(); }
@@ -28,7 +47,10 @@ async function gitStatusImpl(cwd: string): Promise<GitStatus> {
     let base = 'HEAD';
     try { await run(['rev-parse','--verify','HEAD']); } catch { base='4b825dc642cb6eb9a060e54bf8d69288fbee4904'; }
     const [status, stats, branches] = await Promise.all([
-      run(['status','--porcelain=v2','--branch','-z','--','.']),
+      // --untracked-files=no：untracked 计数牺牲（面板恒 0），换掉全树扫描——
+      // untracked 巨多的仓库（构建产物/未 ignore 全的 node_modules）单次 status
+      // 实测 6s+（2026-10-19 main-perf.log ipc gitStatus 6149ms），正确性>全面性。
+      run(['status','--porcelain=v2','--branch','-z','--untracked-files=no','--','.']),
       run(['diff','--no-ext-diff','--no-textconv','--numstat','-z',base,'--','.']),
       run(['for-each-ref','--format=%(refname:short)','refs/heads/']),
     ]);
