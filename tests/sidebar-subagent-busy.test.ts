@@ -64,6 +64,12 @@ describe('runningSubagentCounts', () => {
     expect(runningSubagentCounts(root)).toEqual({});
   });
 
+  it('async observations override frozen running tool snapshots, including a completed async run', () => {
+    const agentDir = setupAgentDir(), now = Date.now();
+    fs.writeFileSync(path.join(agentDir, 'subagents', sessionA + '_call-one.json'), JSON.stringify({ callId: 'call-one', status: 'running', updatedAt: now }));
+    expect(runningSubagentCounts(agentDir, now, { observedCalls: new Set([sessionA + ':call-one']) })).toEqual({});
+  });
+
   it('reflects persistSubagentEvent lifecycle (running → completed drops the count)', () => {
     const agentDir = setupAgentDir();
     persistSubagentEvent(agentDir, sessionA, 'call_x', { type: 'tool_execution_start', toolName: 'subagent' });

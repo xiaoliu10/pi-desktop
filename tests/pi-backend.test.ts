@@ -5,10 +5,57 @@ vi.mock('node:child_process', async importOriginal => {
  return { ...actual, spawn: vi.fn(actual.spawn) };
 });
 import fs from 'node:fs';import os from 'node:os';import path from 'node:path';
-import { PiBackend } from '../src/main/pi/backend';import { SessionIndex } from '../src/main/pi/session-index';import type { PiEvent } from '../src/shared/pi';
+import { PiBackend } from '../src/main/pi/backend';import { SessionIndex } from '../src/main/pi/session-index';import type { PiEvent, PiRun } from '../src/shared/pi';
 const roots:string[]=[],backends:PiBackend[]=[];
 afterEach(()=>{backends.splice(0).forEach(b=>b.dispose());roots.splice(0).forEach(p=>fs.rmSync(p,{recursive:true,force:true}));});
 function setup(){const root=fs.mkdtempSync(path.join(os.tmpdir(),'pi-backend-'));roots.push(root);const owned=path.join(root,'desktop');fs.mkdirSync(owned,{recursive:true});const index=new SessionIndex([root,owned],owned);const events:PiEvent[]=[];const backend=new PiBackend({executable:path.resolve('tests/fixtures/fake-pi.mjs'),version:'0.85.1',supported:true,agentDir:root,sessionDirs:[root],diagnostics:[]},index,owned,path.resolve('extensions/desktop-policy/index.mjs'),e=>events.push(structuredClone(e)));backends.push(backend);return{root,owned,index,events,backend};}
+it('keeps sidebar activity live after async launch returns and updates without parent RPC events', async () => {
+ const {root,backend,events}=setup();
+ const asyncParent=path.join(root,'async'); vi.stubEnv('PI_SUBAGENTS_TEMP_ROOT',asyncParent);
+ try {
+  const view=await backend.connect({cwd:root,trustProject:false,permission:'ask'});
+  const dir=path.join(asyncParent,'async-subagent-runs','detached'); fs.mkdirSync(dir,{recursive:true});
+  const write=(state:string)=>fs.writeFileSync(path.join(dir,'status.json'),JSON.stringify({mode:'single',runId:'detached',toolCallId:'detached-call',sessionId:view.file,state,startedAt:Date.now()-1000,lastUpdate:Date.now()}));
+  write('running');
+  await vi.waitFor(()=>expect(backend.runs()[0].runningSubagents).toBe(1),{timeout:7000,interval:100});
+  expect(backend.runs()[0].status).toBe('idle');
+  const before=events.length; write('complete');
+  await vi.waitFor(()=>expect(backend.runs()[0].runningSubagents).toBe(0),{timeout:7000,interval:100});
+  expect(events.slice(before).some(e=>e.type==='run'&&e.run.runningSubagents===0)).toBe(true);
+ } finally { vi.unstubAllEnvs(); }
+},20000);
+
+it('shares one activity scan and drops late results after disconnect/dispose', async () => {
+ const {root,backend,events}=setup(); const view=await backend.connect({cwd:root,trustProject:false,permission:'ask'});
+ const internals=backend as any;
+ await vi.waitFor(()=>expect(internals.subagentScanInFlight).toBe(false));
+ let resolve!: (value:unknown)=>void;
+ const scan=vi.spyOn(internals.subagentActivity,'scan').mockImplementation(()=>new Promise(r=>{resolve=r;}));
+ const first=internals.refreshAsyncSubagents(); await internals.refreshAsyncSubagents();
+ expect(scan).toHaveBeenCalledTimes(1);
+ backend.close(view.key); const before=events.length; backend.dispose();
+ resolve({counts:{[view.key]:2},legacyCounts:{},observedCalls:new Set()}); await first;
+ expect(events.slice(before).filter((e:PiEvent)=>e.type==='run')).toEqual([]);
+ expect(internals.subagentTimer).toBeUndefined();
+});
+
+it('reactivates async activity after window-all-closed dispose and reconnect', async () => {
+ const {root,backend}=setup();
+ const first=await backend.connect({cwd:root,trustProject:false,permission:'ask'});
+ const internals=backend as any;
+ backend.dispose(first.key);
+ expect(internals.subagentGeneration).toBe(1);
+ const scan=vi.spyOn(internals.subagentActivity,'scan').mockImplementation(async (_root:unknown, sessions:Array<{key:string}>) => ({counts:{[sessions[0].key]:1},legacyCounts:{},observedCalls:new Set()}));
+ const reopened=await backend.connect({cwd:root,trustProject:false,permission:'ask'});
+ expect(internals.subagentTimer).toBeDefined();
+ expect(internals.subagentGeneration).toBe(1);
+ await vi.waitFor(()=>expect(backend.runs().find((r:PiRun)=>r.key===reopened.key)?.runningSubagents).toBe(1));
+ expect(scan).toHaveBeenCalledTimes(1);
+ await internals.refreshAsyncSubagents(0);
+ expect(scan).toHaveBeenCalledTimes(1);
+ scan.mockRestore();
+});
+
 it('launch injects the session project cwd and memory directory into the child environment', async () => {
  const { root, backend } = setup();
  backend.memoryOptions = () => ({ enabled: true, dir: path.join(root, 'memory') });
