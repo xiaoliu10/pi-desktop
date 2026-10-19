@@ -284,7 +284,7 @@ export function cleanupSubagents(agentDir: string, sessionKey: string) {
  *  completed 清理被特意跳过（recoverSubagents 要读它做详情恢复），于是「跑到一半
  *  进程死了」的快照会永远留在 running 态——用户侧栏因此显示幽灵运行中
  *  （真实 bug：4 天前的快照让侧栏常驻 5 个「正在运行」）。 */
-export function runningSubagentCounts(agentDir: string, now = Date.now(), opts: { sweep?: boolean } = {}): Record<string, number> {
+export function runningSubagentCounts(agentDir: string, now = Date.now(), opts: { sweep?: boolean; observedCalls?: ReadonlySet<string> } = {}): Record<string, number> {
   const dir = path.join(agentDir, 'subagents');
   const counts: Record<string, number> = {};
   let entries: string[];
@@ -299,7 +299,9 @@ export function runningSubagentCounts(agentDir: string, now = Date.now(), opts: 
     if (!/^[a-f0-9]{64}$/.test(sessionKey)) continue;
     try {
       const snap = JSON.parse(fs.readFileSync(path.join(dir, name), 'utf8'));
-      if (snap?.status !== 'running') continue;
+      // Async status is newer than the frozen launch-tool result (including completion).
+      if (opts.observedCalls?.has(sessionKey + ':' + snap?.callId)) continue;
+      if (snap?.status !== 'running' && snap?.status !== 'queued') continue;
       const updatedAt = Number(snap.updatedAt) || 0;
       if (!updatedAt || now - updatedAt > STALE_MS) {
         // stale 的 running 快照：进程早死了，事件不会再更新它。**改写为终态而不是删除**——

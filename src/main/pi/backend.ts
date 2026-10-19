@@ -16,6 +16,8 @@ import { ensureBuiltinPackages, builtinPackagesSeeded, markBuiltinPackagesSeeded
 import { repairCodemode } from './repair-codemode';
 import { RetryGroups } from './retry-groups';
 import { OutputPerformanceTracker } from './output-performance';
+import { AsyncSubagentActivity, type SubagentActivity } from './async-subagent-activity';
+import { subagentAsyncRoot } from './subagent-snapshots';
 import { loadContinuations, recordContinuation, resolveContinuation, saveContinuations } from './session-continuations';
 /** prompt 出栈前登记的图片 sidecar：pi 的 queue_update 只回文本，权威队列到达后
  *  按 文本+behavior+出现次序 把图接回。at 用于过期清理（暂存一直未被任何 queue_update
@@ -45,6 +47,14 @@ interface Running { modelRefreshReady?: boolean; modelRefreshRevision?: number; 
 export class PiBackend {
   private active = new Map<string, Running>();
   private watchdog: ReturnType<typeof setInterval> | undefined;
+  private subagentTimer?: ReturnType<typeof setInterval>;
+  private subagentActivity = new AsyncSubagentActivity();
+  private asyncActivity: SubagentActivity = { counts: {}, legacyCounts: {}, observedCalls: new Set() };
+  private subagentScanInFlight = false;
+  /** `window-all-closed` 只停定时器/连接，Dock 激活会复用同一 backend；
+   * 这是“当前生命周期”而非对象永久死亡。代际让 dispose 前发出的慢扫描无法
+   * 在重新打开后写状态，同时新窗口的首次连接必须能重新启动扫描。 */
+  private subagentGeneration = 0;
   /** 记忆衔接：main 在 SettingsService 就绪后注入；每次 launch 现取最新开关与目录。 */
   memoryOptions: (() => { enabled: boolean; dir: string }) | undefined;
   /** main 在 AutomationService 就绪后注入；desktop_schedule 工具经 automation-bridge 读写定时任务。 */
@@ -219,12 +229,36 @@ export class PiBackend {
     // 理应已收尾，此时仍 running 的快照才是真死。
     const sweep = run.view.status !== 'running';
     let counts: Record<string, number>;
-    try { counts = runningSubagentCounts(this.env.agentDir, Date.now(), sweep ? { sweep: true } : {}); } catch { return; }
-    const next = counts[key] ?? 0;
+    try { counts = runningSubagentCounts(this.env.agentDir, Date.now(), { sweep, observedCalls: this.asyncActivity.observedCalls }); } catch { return; }
+    const next = (counts[key] ?? 0) + (this.asyncActivity.counts[key] ?? 0);
     if (run.view.runningSubagents !== next) {
       run.view.runningSubagents = next;
       this.emit({ type: 'run', run: { ...run.view } });
     }
+  }
+
+  /** Detached children keep running after the launch tool / parent turn returns.
+   * A single-flight async status scan serves every connected session, even when hidden.
+   * No full-history recovery, extra renderer polling or per-session directory scans. */
+  private async refreshAsyncSubagents(generation = this.subagentGeneration): Promise<void> {
+    if (generation !== this.subagentGeneration || this.subagentScanInFlight || !this.active.size) return;
+    this.subagentScanInFlight = true;
+    const sessions = [...this.active.values()].map(run => ({ key: run.view.key, file: run.input.file, run }));
+    try {
+      const activity = await this.subagentActivity.scan(subagentAsyncRoot(), sessions, Date.now(), this.env.agentDir);
+      // dispose 后的慢结果必须丢弃；重新打开窗口会 bump 代际并开始新扫描。
+      if (generation !== this.subagentGeneration) return;
+      this.asyncActivity = activity;
+      for (const { key, run } of sessions) {
+        // A scan from an old generation must not update a reconnected or closed session.
+        if (this.active.get(key) !== run) continue;
+        const count = (activity.legacyCounts[key] ?? 0) + (activity.counts[key] ?? 0);
+        if (run.view.runningSubagents === count) continue;
+        run.view.runningSubagents = count;
+        this.emit({ type: 'run', run: { ...run.view } });
+      }
+    } catch { /* Transient IO is not proof of completion; retry on the next tick. */ }
+    finally { if (generation === this.subagentGeneration) this.subagentScanInFlight = false; }
   }
 
   /** 内置默认包：装缺失的、检测同名冲突（用户优先，不擅自替换）。结果广播给渲染层提示。 */
@@ -1430,11 +1464,19 @@ export class PiBackend {
       return Math.min(300_000, 60_000 + (mb - 10) * 5_000);
     } catch { return 60_000; }
   }
+  /** 重新打开窗口/连接后的扫描生命周期：清掉 dispose 前的 in-flight 状态并启动定时器。 */
+  private ensureSubagentTimer() {
+    if (this.subagentTimer) return;
+    this.subagentTimer = setInterval(() => { void this.refreshAsyncSubagents(); }, 3000);
+    this.subagentTimer.unref?.();
+    void this.refreshAsyncSubagents();
+  }
   /** 周期哨兵：只在有活动 run 时启动一次，进程级共享，无 run 时空转成本可忽略。 */
   private ensureWatchdog() {
     if (this.watchdog) return;
     this.watchdog = setInterval(() => this.stuckScan(), STUCK_WATCHDOG_INTERVAL_MS);
     this.watchdog.unref?.();
+    this.ensureSubagentTimer();
   }
   /** 扫描当前活动 run：只有长时间无任何 pi 事件的 running 才值得向 pi 本体核实。
    *  重试链持有期（holding：等待续接/已进入续接）正常由 agent_settled 收口，但结算事件
@@ -1452,5 +1494,12 @@ export class PiBackend {
       void this.verifyStuckRun(run);
     }
   }
-  dispose() { for (const key of this.active.keys()) this.close(key); if (this.watchdog) { clearInterval(this.watchdog); this.watchdog = undefined; } }
+  dispose() {
+    this.subagentGeneration += 1;
+    this.subagentScanInFlight = false;
+    this.asyncActivity = { counts: {}, legacyCounts: {}, observedCalls: new Set() };
+    if (this.subagentTimer) { clearInterval(this.subagentTimer); this.subagentTimer = undefined; }
+    for (const key of this.active.keys()) this.close(key);
+    if (this.watchdog) { clearInterval(this.watchdog); this.watchdog = undefined; }
+  }
 }

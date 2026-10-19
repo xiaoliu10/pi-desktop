@@ -308,7 +308,7 @@ function ProjectRow(props: {
         aria-expanded={p.expanded}
         title={props.labels.collapseSessions ? (p.expanded ? props.labels.collapseSessions : (props.labels.showAllSessions ?? '')) : undefined}
       >
-        <Icon name="folder" size={15} />
+        {p.sessions.some(session => session.busy) ? <Spinner label={props.labels.projects === '项目' ? '项目有任务运行中' : 'Project has running tasks'} /> : <Icon name="folder" size={15} />}
         <span className="pi-sidebar__rowtitle">{p.name}</span>
         {p.pinned && <Icon name="pin" size={12}/>}
         {props.menu}
