@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ChatMarkdown } from '../replica/chat/ChatView';
 import { Icon } from '../replica/Icons';
 import type { PlanItem } from '../../shared/conversation-status';
@@ -28,7 +28,7 @@ function CopyPlanButton({ markdown, zh }: { markdown: string; zh: boolean }) {
   }}><Icon name={copied ? 'check' : 'copy'} size={14} /></button>;
 }
 
-export function PlanViewer({ doc, checklist, lang, running, planMode, synthesized, onClose, onExecute }: {
+export function PlanViewer({ doc, checklist, lang, running, planMode, synthesized, focusIndex, onClose, onExecute }: {
   doc: PlanDocument | null;
   checklist: PlanItem[];
   lang: 'zh' | 'en';
@@ -36,11 +36,24 @@ export function PlanViewer({ doc, checklist, lang, running, planMode, synthesize
   planMode: boolean;
   /** doc 是由任务清单合成的（会话未走计划模式）：清单已并入文档表格，不再重复渲染。 */
   synthesized?: boolean;
+  /** 从状态面板点某一行进来：打开后滚动定位到该步骤并高亮（-1/undefined = 无定位）。 */
+  focusIndex?: number;
   onClose: () => void;
   onExecute?: () => void;
 }) {
   const zh = lang === 'zh';
   const done = checklist.filter((item) => item.status === 'completed').length;
+  // 定位：状态面板点某一行 → 打开即滚到该项并短暂高亮（用户要「点进来就能看
+  // 明细」，不是给几个标题）。highlight 2.2s 后自消，避免长期染色干扰阅读。
+  const listRef = useRef<HTMLOListElement | null>(null);
+  // 高亮 class 由 render 决定（不用 state）：focusIndex 打开期间恒真，关闭由父组件
+  // 传 undefined 清除（PiReplicaApp onClose 时清空）。scrollIntoView 是副作用，放
+  // effect 里只做滚动（无 DOM 环境如 SSR 测试时静默跳过）。
+  useEffect(() => {
+    if (focusIndex === undefined || focusIndex < 0) return;
+    const node = listRef.current?.children[focusIndex] as HTMLElement | undefined;
+    if (node?.scrollIntoView) node.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  }, [focusIndex]);
   const footer = doc
     ? synthesized
       ? zh ? '本会话未走计划模式，计划全文由任务清单合成。' : 'This session never entered plan mode; the plan is synthesized from the task checklist.'
@@ -63,8 +76,8 @@ export function PlanViewer({ doc, checklist, lang, running, planMode, synthesize
       {doc ? <ChatMarkdown text={doc.markdown} /> : <p className="pi-status-hint">{zh ? '暂无计划文档。' : 'No plan document yet.'}</p>}
       {!synthesized && checklist.length > 0 && <section className="pi-plan-viewer__todo" aria-label={zh ? '任务清单' : 'Checklist'}>
         <div className="pi-plan-viewer__todo-head"><span>{zh ? '任务清单' : 'Checklist'}</span><b>{done}/{checklist.length}</b></div>
-        <ol>
-          {checklist.map((item, index) => <li key={index} className={`is-${item.status}`}>
+        <ol ref={listRef}>
+          {checklist.map((item, index) => <li key={index} className={`is-${item.status}${focusIndex === index ? ' is-highlight' : ''}`}>
             <Icon name={statusIcon[item.status]} size={13} />
             <span>{item.step}</span>
             <small>{statusLabel[item.status][lang]}</small>

@@ -27,7 +27,7 @@ const SUBAGENT_STATUS: Record<SubagentChild['status'], { label: string; icon: 'r
 
 const subagentPriority = (child: SubagentChild): number => child.status === 'running' ? 0 : child.status === 'queued' ? 1 : 2;
 
-export function ConversationStatusPanel({cwd,messages,running,stats,contextUsage,outputPerformance,onReview,onRequest,onOpenPlan,planAvailable,planTitle,planFallback,subagents,onOpenSubagent,onDismissSubagent,onDismissFinishedSubagents,onOpenTerminal,terminalOpen}: {
+export function ConversationStatusPanel({cwd,messages,running,stats,contextUsage,outputPerformance,onReview,onRequest,onOpenPlan,planAvailable,onOpenPlanStep,planTitle,planFallback,subagents,onOpenSubagent,onDismissSubagent,onDismissFinishedSubagents,onOpenTerminal,terminalOpen}: {
   cwd?:string; messages:ChatMessage[]; running:boolean; stats?:PiSessionStats; onReview:()=>void; onRequest:(text:string)=>void;
   /** 上下文占用（与顶栏 ContextUsageChip 同源）：供会话统计的「上下文占用 %」列。 */
   contextUsage?:import('./ContextUsage').ContextUsage | null;
@@ -35,6 +35,9 @@ export function ConversationStatusPanel({cwd,messages,running,stats,contextUsage
   outputPerformance?:import('../../shared/pi').PiRun['outputPerformance'];
   /** 计划查看器入口（ZCode 状态面板 sessionPlans 区的同位复刻）。 */
   onOpenPlan?:()=>void; planAvailable?:boolean;
+  /** 打开计划查看器并定位到指定步骤（点击「进程」区的某一行）：明细即点即看，
+   *  不必先找到「查看计划」按钮（用户 2026-10-19：点击进来却只给几个标题）。 */
+  onOpenPlanStep?:(index:number)=>void;
   /** 跨窗口兜底：主进程全量扫描的最后一次清单（history.plan）。组件内部实时解析
    *  只看渲染窗口，长任务早期建的清单掉出窗口后靠它显示（2026-10-18）。 */
   planFallback?:import('../../shared/conversation-status').PlanItem[];
@@ -165,7 +168,7 @@ export function ConversationStatusPanel({cwd,messages,running,stats,contextUsage
         <div className="pi-status-plan">
           <div className="pi-status-plan-head"><span className="pi-status-heading">进程</span><b>{plan.filter(item=>item.status==='completed').length}/{plan.length}</b></div>
           {!plan.length&&<p className="pi-status-hint">Agent 创建任务清单后，进度会显示在这里。</p>}
-          <ol>{plan.map((item,index)=><li key={index} className={`is-${item.status}`}><Icon name={item.status==='completed'?'check-circle':item.status==='in_progress'?'refresh':'circle'} size={13}/><span>{item.step}</span><span className="pi-status-sr">{item.status==='completed'?'已完成':item.status==='in_progress'?'进行中':'待处理'}</span></li>)}</ol>
+          <ol>{plan.map((item,index)=><li key={index} className={`is-${item.status}${onOpenPlanStep?' is-clickable':''}`} onClick={onOpenPlanStep?()=>onOpenPlanStep(index):undefined} title={onOpenPlanStep?'点击查看该步骤的完整明细':undefined}><Icon name={item.status==='completed'?'check-circle':item.status==='in_progress'?'refresh':'circle'} size={13}/><span>{item.step}</span><span className="pi-status-sr">{item.status==='completed'?'已完成':item.status==='in_progress'?'进行中':'待处理'}</span></li>)}</ol>
         </div>
       </>
     </section>}

@@ -405,7 +405,7 @@
 .pi-plan-viewer__todo-head { display: flex; justify-content: space-between; align-items: center; color: var(--pi-text-secondary); font-size: 12px; }
 .pi-plan-viewer__todo-head b { font-size: 11px; font-weight: 400; color: #008b35; }
 .pi-plan-viewer__todo ol { margin: 10px 0 0; padding: 0; list-style: none; display: grid; gap: 8px; }
-.pi-plan-viewer__todo li { display: flex; align-items: baseline; gap: 8px; font-size: 13px; }
+.pi-plan-viewer__todo li { display: flex; align-items: baseline; gap: 8px; font-size: 13px; }.pi-plan-viewer__todo li.is-highlight{background:color-mix(in srgb,var(--pi-accent,#008b35) 14%,transparent);box-shadow:inset 2px 0 0 var(--pi-accent,#008b35);border-radius:6px;padding:4px 6px;margin-left:-6px;transition:background .3s}
 .pi-plan-viewer__todo li > svg { flex-shrink: 0; transform: translateY(2px); }
 .pi-plan-viewer__todo li small { margin-left: auto; flex-shrink: 0; color: var(--pi-muted); font-size: 11px; }
 .pi-plan-viewer__todo li.is-completed { color: var(--pi-text-secondary); }

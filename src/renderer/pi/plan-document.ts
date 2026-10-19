@@ -50,17 +50,22 @@ export function planDocumentFromChecklist(checklist: PlanItem[], lang: 'zh' | 'e
     in_progress: zh ? '🔄 进行中' : '🔄 in progress',
     pending: zh ? '⬜ 待处理' : '⬜ pending',
   };
-  const cell = (step: string) => step.replace(/\\/g, '\\\\').replace(/\|/g, '\\|').replace(/\r?\n/g, ' ');
+  // 表格单元格里保留换行结构（<br>）：step 可能是带描述的长文本，压成一行会丢
+  // 明细——用户要的正是「点进来看到完整内容，不是几个标题」。
   const title = zh ? '任务计划' : 'Task plan';
+  // 每个 step 一个二级小节：markdown 表格单元格塞不进多行内容（react-markdown 默认
+  // 不渲染原始 HTML，<br> 会变字面文本），而 step 常带括号描述/多行细节——压成一行
+  // 正是「点进来只给几个标题」的抱怨源。小节形态保留完整内容与代码/列表格式。
+  const sections = checklist.map((item, index) => [
+    `## ${index + 1}. ${statusCell[item.status]} ${item.step}`,
+  ].join('\n'));
   const markdown = [
     `# ${title}`,
     '',
     zh ? `进度：${done}/${checklist.length} 已完成` : `Progress: ${done}/${checklist.length} completed`,
     '',
-    zh ? '| 状态 | 计划项 |' : '| Status | Plan item |',
-    '| --- | --- |',
-    ...checklist.map((item) => `| ${statusCell[item.status]} | ${cell(item.step)} |`),
-  ].join('\n');
+    ...sections,
+  ].join('\n\n');
   return { title, markdown };
 }
 
