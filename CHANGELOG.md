@@ -3,6 +3,11 @@
 所有重要变更记录在本文件。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 README 只保留最近版本摘要；本文件为完整记录。
 
+## [Unreleased]
+
+### 修复
+- **打包后不再残留「幽灵双份」应用**：`dist/mac-arm64/` 此前只有 `pnpm dist` 链路里的 sync-release 会删，直接调 electron-builder 打发布包时会残留一份同名 .app，被 LaunchServices 按路径各注册一份，启动台/聚焦出现两个「PI Desktop」。prune-dist 现在兜底清理该目录（`--dry-run` 不动）。新增 `tests/prune-dist-mac-arm64.test.ts` 回归。
+
 ## [0.1.30] - 2026-10-19
 
 ### 修复
