@@ -431,7 +431,16 @@ export class SessionIndex {
       return this.historyInner(key, leaf, opts);
     } finally {
       const __cost = Date.now() - __t0;
-      if (__cost > 100) console.error(`[perf] history(key=${key.slice(0, 8)}..., tail=${opts?.tail ?? '-'}) ${__cost}ms`);
+      if (__cost > 100) {
+        // console.error 在 Finder 启动的 Electron 主进程不可见（im-log 教训）——落
+        // main-perf.log，与 ipc 计时同文件，尖峰归因时直接对表。
+        try {
+          const { appendFileSync } = require('node:fs') as typeof import('node:fs');
+          const { join } = require('node:path') as typeof import('node:path');
+          const { homedir } = require('node:os') as typeof import('node:os');
+          appendFileSync(join(homedir(), 'Library', 'Logs', 'PI Desktop', 'main-perf.log'), `${new Date().toISOString()} history key=${key.slice(0, 8)} tail=${opts?.tail ?? '-'} leaf=${leaf ? 'y' : 'n'} ${__cost}ms\n`);
+        } catch { /* 观测不可用不影响主流程 */ }
+      }
     }
   }
 

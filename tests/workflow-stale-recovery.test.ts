@@ -84,3 +84,43 @@ describe('stale workflow recovery past the MAX_CALLS window', () => {
     expect(out.filter(s => s.callId === 'call-0').length).toBe(1);
   });
 });
+
+describe('recoverSubagents 输入签名短路（打字卡顿主凶手：30s 空闲档全量重算）', () => {
+  it('同输入两次调用 → 第二次 unchanged（跳过 workflowSnapshots 全量计算）', async () => {
+    const { root, history } = makeHistory(2);
+    const idx = { subagentHistory: (k: string) => (k === 'a'.repeat(64) ? history : (() => { throw new Error('x'); })()) } as any;
+    const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pq-agentdir-'));
+    const key = 'a'.repeat(64);
+    const r1 = await recoverSubagents(agentDir, key, idx, undefined, undefined, 'sig-1');
+    expect(Array.isArray(r1)).toBe(true);
+    const r2 = await recoverSubagents(agentDir, key, idx, undefined, undefined, 'sig-2');
+    expect(r2).toEqual({ unchanged: true });
+  });
+
+  it('recoverInputSignature：status.json mtime 变化 → 签名变化（短路失效重算）', async () => {
+    const { recoverInputSignature } = await import('../src/main/pi/official-subagent');
+    const { root } = makeHistory(2);
+    const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pq-agentdir-'));
+    const key = 'b'.repeat(64);
+    const sig1 = await recoverInputSignature(agentDir, key, undefined, undefined, root);
+    const runDir = fs.readdirSync(root).filter(n => n.startsWith('run-'))[0];
+    const file = path.join(root, runDir, 'status.json');
+    const data = JSON.parse(fs.readFileSync(file, 'utf8'));
+    data.lastUpdate = Date.now();
+    await new Promise(r => setTimeout(r, 5)); // mtime 粒度
+    fs.writeFileSync(file, JSON.stringify(data));
+    const sig2 = await recoverInputSignature(agentDir, key, undefined, undefined, root);
+    expect(sig1).not.toBe(sig2);
+  });
+
+  it('不同会话 key 互不踢（多视图轮询各自缓存）', async () => {
+    const { history } = makeHistory(2);
+    const idx = { subagentHistory: () => history } as any;
+    const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pq-agentdir-'));
+    await recoverSubagents(agentDir, 'c'.repeat(64), idx, undefined, undefined, 's');
+    await recoverSubagents(agentDir, 'd'.repeat(64), idx, undefined, undefined, 's');
+    // 回到第一个会话：仍是它的签名 → unchanged（单值缓存会把这里踢掉）
+    const r = await recoverSubagents(agentDir, 'c'.repeat(64), idx, undefined, undefined, 's');
+    expect(r).toEqual({ unchanged: true });
+  });
+});

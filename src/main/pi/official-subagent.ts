@@ -4,6 +4,40 @@ import type { SessionIndex } from './session-index';
 import { childSessionPointer, readSnapshotJson, STALE_MS, subagentAsyncRoot, workflowSnapshots, type SubagentSnapshot } from './subagent-snapshots';
 import { singleAsyncDetails, workflowDetails, workflowId, workflowState } from '../../shared/subagent-workflow';
 
+/** recoverSubagents 的输入签名：会话身份 + 分支尖端 + pinned + async/persisted 目录
+ *  的 (名字, mtime) 清单 + 30s 量化的时钟。输入不变 → 输出不变（STALE/幽灵降级等
+ *  时间性判定按 30s 粒度进签名，最多晚一档变化）。已知 knownSignature 只省了 IPC
+ *  序列化——主进程每 30s 仍全量重算 workflowSnapshots（大会话 900ms+，event-loop
+ *  阻塞与打字卡顿的直接来源）；这里把「计算本身」也短路掉。
+ *  成本：2 次 readdir + ≤(256+64) 次 stat（元数据 IO，实测 ~10ms 级）。 */
+export async function recoverInputSignature(agentDir: string, sessionKey: string, leaf: string | undefined, pinned: string[] | undefined, root: string): Promise<string> {
+  const parts = [sessionKey, leaf ?? '', (pinned ?? []).join(','), Math.floor(Date.now() / 30_000)];
+  try {
+    const dirents = await fs.promises.readdir(root, { withFileTypes: true });
+    const names = dirents.filter(d => d.isDirectory()).map(d => d.name).sort();
+    parts.push('async:' + names.length);
+    for (const n of names.slice(0, 256)) {
+      // stat 的是 status.json 而非 run 目录：目录 mtime 只在增删时变，run 进展
+      // （running→completed）更新的是 status.json 的 mtime——目录级签名会吞掉
+      // 运行中状态更新（行为测试抓到的真缺陷）。
+      try { parts.push(n + ':' + (await fs.promises.stat(path.join(root, n, 'status.json'))).mtimeMs); } catch { parts.push(n + ':gone'); }
+    }
+  } catch { parts.push('async:none'); }
+  try {
+    const pdir = path.join(agentDir, 'subagents');
+    const dirents = await fs.promises.readdir(pdir, { withFileTypes: true });
+    const mine = dirents.filter(d => d.isFile() && d.name.startsWith(sessionKey + '_')).map(d => d.name).sort();
+    parts.push('persisted:' + mine.length);
+    for (const n of mine.slice(0, 64)) {
+      try { parts.push(n + ':' + (await fs.promises.stat(path.join(pdir, n))).mtimeMs); } catch { /* gone */ }
+    }
+  } catch { /* 无持久化目录 = 空清单 */ }
+  return parts.join('|');
+}
+
+const lastRecoverSigs = new Map<string, string>(); // key → 输入签名（多视图轮询互不踢；cap 防泄漏）
+
+
 
 /** 只读能力状态（替代已删的 officialSubagentStatus/enableOfficialSubagent）：
  *  不写盘、不注册任何东西——内置 subagent 已删，只报告第三方供给情况。 */
@@ -63,6 +97,14 @@ export function migrateOldSubagentExtension(agentDir: string): boolean {
 /** Recover only the selected, trusted session/branch. No renderer-supplied paths. */
 export async function recoverSubagents(agentDir: string, sessionKey: string, index: Pick<SessionIndex, 'subagentHistory'>, leaf?: string, pinned?: string[], knownSignature?: string): Promise<SubagentSnapshot[] | { unchanged: true }> {
   if (!/^[a-f0-9]{64}$/.test(sessionKey) || (leaf !== undefined && typeof leaf !== 'string')) return [];
+  // 输入签名短路：单会话视角（同一时刻只有一个选中会话在轮询）。输入没变时连
+  // workflowSnapshots 都不跑——已知输出必然与上次相同，直接回 unchanged（几十字节）。
+  if (knownSignature !== undefined) {
+    const sig = await recoverInputSignature(agentDir, sessionKey, leaf, pinned, subagentAsyncRoot());
+    if (sig === lastRecoverSigs.get(sessionKey)) return { unchanged: true };
+    if (lastRecoverSigs.size > 4) lastRecoverSigs.clear();
+    lastRecoverSigs.set(sessionKey, sig);
+  }
   let history;
   try { history = index.subagentHistory(sessionKey, leaf); } catch { return []; }
   const persisted = await readPersistedSnapshots(agentDir, sessionKey);
