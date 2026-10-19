@@ -446,11 +446,15 @@ describe('orphan async runs（P2-2 harness 派生 async 子代理可见性）', 
   beforeEach(() => { root = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-orphan-')); });
   afterEach(() => { try { fs.rmSync(root, { recursive: true, force: true }); } catch {} });
 
+  // 显式固定时钟：vitest 全量跑时其他文件的 fake timers 可能泄漏 Date.now
+  // （单跑/组合跑不复现、全量稳定复现的 orphan 测试失败即此因）——now 由调用方
+  // 传入并与 workflowSnapshots 的 now 参数同源，Date.now 全程不参与。
+  const NOW = 1_700_000_000_000;
   const writeRun = (runId: string, sessionId: string, over: Record<string, unknown> = {}) => {
     fs.mkdirSync(path.join(root, runId), { recursive: true });
     fs.writeFileSync(path.join(root, runId, 'status.json'), JSON.stringify({
       mode: 'single', runId, sessionId, toolCallId: undefined,
-      state: 'running', startedAt: Date.now() - 60_000, lastUpdate: Date.now() - 1_000,
+      state: 'running', startedAt: NOW - 60_000, lastUpdate: NOW - 1_000,
       steps: [{ agent: 'researcher', label: 'single', sessionName: 'researcher: 调研上游', status: 'running', model: 'm1' }],
       ...over,
     }));
@@ -459,7 +463,7 @@ describe('orphan async runs（P2-2 harness 派生 async 子代理可见性）', 
   it('无历史指针的活跃 run → 投影成合成快照（callId=runId）', async () => {
     writeRun('run-aaaa', '/sessions/s1.jsonl');
     const history = makeHistory('/sessions/s1.jsonl', []);
-    const snapshots = await workflowSnapshots(history, [], root, Date.now());
+    const snapshots = await workflowSnapshots(history, [], root, NOW);
     const orphan = snapshots.find(s => s.callId === 'run-aaaa');
     expect(orphan).toBeDefined();
     const d = orphan!.details as Record<string, any>;
@@ -472,27 +476,27 @@ describe('orphan async runs（P2-2 harness 派生 async 子代理可见性）', 
   it('runId 已被历史指针覆盖 → 不重复投影', async () => {
     writeRun('run-bbbb', '/sessions/s1.jsonl');
     const history = makePointerHistory('call-1', 'run-bbbb', '/sessions/s1.jsonl', root);
-    const snapshots = await workflowSnapshots(history, [], root, Date.now());
+    const snapshots = await workflowSnapshots(history, [], root, NOW);
     expect(snapshots.filter(s => (s.details as any)?.runId === 'run-bbbb')).toHaveLength(1);
     expect(snapshots[0].callId).toBe('call-1'); // 指针版本胜出（有真实 toolCall 锚）
   });
 
   it('别的会话派生的 run → 不投影到当前会话', async () => {
     writeRun('run-cccc', '/sessions/other.jsonl');
-    const snapshots = await workflowSnapshots(makeHistory('/sessions/s1.jsonl', []), [], root, Date.now());
+    const snapshots = await workflowSnapshots(makeHistory('/sessions/s1.jsonl', []), [], root, NOW);
     expect(snapshots.find(s => s.callId === 'run-cccc')).toBeUndefined();
   });
 
   it('终态超 10 分钟 → 不投影（retention 清盘前的老 run）', async () => {
-    const old = Date.now() - 30 * 60 * 1000;
+    const old = NOW - 30 * 60 * 1000;
     writeRun('run-dddd', '/sessions/s1.jsonl', { state: 'complete', lastUpdate: old });
-    const snapshots = await workflowSnapshots(makeHistory('/sessions/s1.jsonl', []), [], root, Date.now());
+    const snapshots = await workflowSnapshots(makeHistory('/sessions/s1.jsonl', []), [], root, NOW);
     expect(snapshots.find(s => s.callId === 'run-dddd')).toBeUndefined();
   });
 
   it('终态 10 分钟内 → 投影（让用户看到完成态再消失）', async () => {
-    writeRun('run-eeee', '/sessions/s1.jsonl', { state: 'complete', lastUpdate: Date.now() - 60_000 });
-    const snapshots = await workflowSnapshots(makeHistory('/sessions/s1.jsonl', []), [], root, Date.now());
+    writeRun('run-eeee', '/sessions/s1.jsonl', { state: 'complete', lastUpdate: NOW - 60_000 });
+    const snapshots = await workflowSnapshots(makeHistory('/sessions/s1.jsonl', []), [], root, NOW);
     const orphan = snapshots.find(s => s.callId === 'run-eeee');
     expect(orphan).toBeDefined();
     expect(((orphan!.details as any).workflowChildren.children[0]).state).toBe('completed');
@@ -502,7 +506,7 @@ describe('orphan async runs（P2-2 harness 派生 async 子代理可见性）', 
     fs.mkdirSync(path.join(root, 'not a run id!'));
     fs.mkdirSync(path.join(root, 'run-ffff'));
     fs.writeFileSync(path.join(root, 'run-ffff', 'status.json'), 'not json');
-    const snapshots = await workflowSnapshots(makeHistory('/sessions/s1.jsonl', []), [], root, Date.now());
+    const snapshots = await workflowSnapshots(makeHistory('/sessions/s1.jsonl', []), [], root, NOW);
     expect(snapshots).toHaveLength(0);
   });
 });
@@ -512,27 +516,28 @@ describe('orphan 边界（code-review 探针钉回）', () => {
   beforeEach(() => { root = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-orphan2-')); });
   afterEach(() => { try { fs.rmSync(root, { recursive: true, force: true }); } catch {} });
 
+  const NOW = 1_700_000_000_000;
   const writeRun = (runId: string, over: Record<string, unknown> = {}) => {
     fs.mkdirSync(path.join(root, runId), { recursive: true });
     fs.writeFileSync(path.join(root, runId, 'status.json'), JSON.stringify({
       mode: 'single', runId, sessionId: '/sessions/s1.jsonl', state: 'running',
-      startedAt: Date.now() - 60_000, lastUpdate: Date.now() - 1_000,
+      startedAt: NOW - 120_000, lastUpdate: NOW - 1_000,
       steps: [{ agent: 'a', label: 'single', sessionName: 'a: t', status: 'running' }], ...over,
     }));
   };
 
   it('幽灵 running 超 10min（降级 unknown 后）不再永驻', async () => {
-    const old = Date.now() - 4 * 60 * 60 * 1000;
-    writeRun('run-ghost', { startedAt: old, lastUpdate: Date.now() - 11 * 60 * 1000 });
-    const snapshots = await workflowSnapshots(makeHistory('/sessions/s1.jsonl', []), [], root, Date.now());
+    const old = NOW - 4 * 60 * 60 * 1000;
+    writeRun('run-ghost', { startedAt: old, lastUpdate: NOW - 11 * 60 * 1000 });
+    const snapshots = await workflowSnapshots(makeHistory('/sessions/s1.jsonl', []), [], root, NOW);
     expect(snapshots.find(s => s.callId === 'run-ghost')).toBeUndefined();
   });
 
   it('>8 个孤儿按新近度截断（最新保留，不是 readdir 序）', async () => {
     // startedAt 必须早于所有 lastUpdate（真实不变式 lastUpdate>=startedAt；倒挂
     // fixture 会被时间校验拒绝——本测试首轮就栽在这里，险些误判成产品 bug）。
-    for (let i = 0; i < 10; i++) writeRun(`run-${String(i).padStart(2, '0')}`, { startedAt: Date.now() - 30 * 60_000, lastUpdate: Date.now() - (10 - i) * 60_000 });
-    const snapshots = await workflowSnapshots(makeHistory('/sessions/s1.jsonl', []), [], root, Date.now());
+    for (let i = 0; i < 10; i++) writeRun(`run-${String(i).padStart(2, '0')}`, { startedAt: NOW - 30 * 60_000, lastUpdate: NOW - (10 - i) * 60_000 });
+    const snapshots = await workflowSnapshots(makeHistory('/sessions/s1.jsonl', []), [], root, NOW);
     const ids = snapshots.map(s => s.callId);
     expect(ids).toHaveLength(8);
     expect(ids).toContain('run-09'); // 最新
@@ -547,7 +552,7 @@ describe('orphan 边界（code-review 探针钉回）', () => {
         { childId: 'c2', runId: 'child-2', agent: 'r2', state: 'queued' },
       ] },
     });
-    const snapshots = await workflowSnapshots(makeHistory('/sessions/s1.jsonl', []), [], root, Date.now());
+    const snapshots = await workflowSnapshots(makeHistory('/sessions/s1.jsonl', []), [], root, NOW);
     const kids = (snapshots[0]?.details as any)?.workflowChildren?.children;
     expect(kids).toHaveLength(2);
     expect(kids[1].childId).toBe('c2');
