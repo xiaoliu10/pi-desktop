@@ -84,11 +84,20 @@ export async function readSnapshotJson(root: string, file: string, budget = { by
  *  sessions hit 30+; the tail window silently dropped older workflow cards, so
  *  on-demand transcript fetches for them returned no-snapshot). Pinning keeps the
  *  bounded scan for list rendering while making per-card reads always resolvable. */
-function pointers(history: PiHistory, persisted: SubagentSnapshot[], pinned?: string) {
+function pointers(history: PiHistory, persisted: SubagentSnapshot[], pinned?: string): { window: SubagentSnapshot[]; coverage: Set<string> } {
   const calls = new Map<string, { at: number; management: boolean }>();
   const found = new Map<string, SubagentSnapshot>();
+  // coverage：本分支历史上出现过的全部 runId（不止尾窗 32 条）。orphan 投影用它
+  // 排除「有指针但落在窗口外」的老 run——窗口外是渲染层的刻意有界，不能被 orphan
+  // 再捞回来（MAX_CALLS 契约）。
+  const coverage = new Set<string>();
+  const noteRun = (details: unknown, callId: string) => {
+    const d = obj(details);
+    for (const r of [d?.runId, d?.asyncId]) if (typeof r === 'string' && workflowId(r)) coverage.add(r);
+  };
   const collect = (details: unknown, callId: string, at?: number) => {
     if (workflowDetails(details, callId) || singleAsyncDetails(details, callId) || completionsDetails(details, callId)) found.set(callId, { callId, status: 'unknown', details, startedAt: at });
+    noteRun(details, callId);
   };
   for (const e of history.branch) {
     const m = e.message;
@@ -103,6 +112,9 @@ function pointers(history: PiHistory, persisted: SubagentSnapshot[], pinned?: st
     // Events can precede the history append, but remain scoped to this session's
     // hash-owned persistence file. They are not a license to use arbitrary dirs.
     if (!found.has(rec.callId) && (workflowDetails(rec.details, rec.callId) || singleAsyncDetails(rec.details, rec.callId) || completionsDetails(rec.details, rec.callId))) found.set(rec.callId, rec);
+    // coverage 同样要覆盖 persisted-only 指针的 runId：readPersistedSnapshots 的
+    // 32 cap 或排序变化时，persisted 指针可能落在窗口外被 orphan 重复投影。
+    noteRun(rec.details, rec.callId);
   }
   const all = [...found.values()];
   const window = all.slice(-MAX_CALLS);
@@ -112,7 +124,7 @@ function pointers(history: PiHistory, persisted: SubagentSnapshot[], pinned?: st
     // bounded; the pinned card is what the user is looking at right now.
     if (hit) { window.shift(); window.push(hit); }
   }
-  return window;
+  return { window, coverage };
 }
 
 /** Main-process-only adapter. No scans, no session/transcript/prompt reads and no
@@ -127,9 +139,13 @@ export async function workflowSnapshots(history: PiHistory, persisted: SubagentS
   // 的会话里 16 个假活）。与渲染侧 pointers 的 pinned 修复（PR #132）同思路。
   // pinned 逐个取「该 callId 的指针」——注意 pointers() 返回的是整个尾窗（pinned 只保证
   // 它在里面），所以这里过滤到目标那一条，否则每个 pinned 都会把 32 条尾窗再吐一遍。
+  // 无 pin 视图缓存：尾窗循环与 orphan coverage 共用（pinned 查找必须带 pin 参数——
+  // 每个 pinned callId 会把不同指针换进窗口，不能吃无 pin 缓存）。
+  let pointerView: { window: SubagentSnapshot[]; coverage: Set<string> } | undefined;
+  const allPointers = () => (pointerView ??= pointers(history, persisted));
   for (const callId of pinned ?? []) {
     if (!workflowId(callId) || output.some(o => o.callId === callId)) continue;
-    const pointer = pointers(history, persisted, callId).find(p => p.callId === callId);
+    const pointer = pointers(history, persisted, callId).window.find(p => p.callId === callId);
     if (pointer) output.push(await resolveWorkflowPointer(pointer, history, root, now, budget));
   }
 /** Resolve one workflow pointer into a display snapshot (asyncDir/status.json 校正)。
@@ -197,10 +213,87 @@ async function resolveWorkflowPointer(pointer: SubagentSnapshot, history: PiHist
   return { callId: pointer.callId, status: detail.state, details: detail, updatedAt };
 }
 
-  for (const pointer of pointers(history, persisted)) {
+  for (const pointer of allPointers().window) {
     output.push(await resolveWorkflowPointer(pointer, history, root, now, budget));
   }
+  // Harness 派生的 async 子代理（codemode runs.run、detached children）在父会话
+  // 历史里没有 subagent toolCall 指针——身份只存在于 async-subagent-runs/<runId>/
+  // status.json。上面的 pointers() 永远发现不了它们（R-* 需求：运行中子代理持续
+  // 可见 + 关闭拦截）。按 sessionId 归属把当前会话的活跃 run 投影成同构快照；
+  // renderer projectSubagents 的无锚 recovered 分支会渲染成卡片，零渲染层改动。
+  // covered 含两层：父 runId + workflowRows 里每个 child 的 runId——workflow 的
+  // 子 run 目录同样位于 async root 下（resolveWorkflowPointer 已按 child.runId
+  // 读它们做终态校正），不纳入 covered 会把已被指针覆盖的子 run 再投影一遍。
+  // covered 三层：全量历史 runId（防窗口外老 run 被 orphan 捞回）+ 窗口内快照的
+  // 父/子 runId（resolveWorkflowPointer 已按 child.runId 读盘校正，不重复投影）。
+  const covered = allPointers().coverage;
+  for (const o of output) {
+    const d = obj(o.details);
+    if (typeof d?.runId === 'string' && workflowId(d.runId)) covered.add(d.runId);
+    for (const row of workflowRows(d ?? {})) if (workflowId(row.runId)) covered.add(row.runId);
+  }
+  output.push(...await orphanAsyncRuns(history, root, now, budget, covered));
   return output;
+}
+
+/** Orphan async runs: active (or recently finished) runs owned by THIS session's
+ *  path that no history pointer covers. Bounded scan + mtime-cached reads; the
+ *  fresh window for terminal states keeps completed cards visible long enough to
+ *  be seen, then lets async retention reclaim the directory. */
+const MAX_ORPHANS = 8;
+const MAX_ORPHAN_SCAN = 64;
+const ORPHAN_TAIL_MS = 10 * 60 * 1000;
+async function orphanAsyncRuns(history: PiHistory, root: string, now: number, budget: { bytes: number }, covered: Set<string>): Promise<SubagentSnapshot[]> {
+  const runs: SubagentSnapshot[] = [];
+  let entries: import('node:fs').Dirent[];
+  try { entries = await fs.promises.readdir(root, { withFileTypes: true }); } catch { return runs; }
+  let scanned = 0;
+  for (const entry of entries) {
+    if (++scanned > MAX_ORPHAN_SCAN) break; // 扫描上限独立于截断：先全量收集再按新近度选
+    if (!entry.isDirectory() || !workflowId(entry.name) || covered.has(entry.name)) continue;
+    let status: Record<string, any>;
+    try { status = await readSnapshotJsonCached(root, path.join(root, entry.name, 'status.json'), budget); } catch { continue; }
+    if (!obj(status) || status.runId !== entry.name) continue;
+    // 身份锚：只有 status.sessionId（父会话文件路径）与当前会话一致才归属这里。
+    if (status.sessionId !== history.session.path) continue;
+    // workflow 子 run：归属由父工作流卡片承担（parentWorkflowRunId 已知即跳过），
+    // 单独投影会与父卡片的 children 重复。
+    if (typeof status.parentWorkflowRunId === 'string' && status.parentWorkflowRunId) continue;
+    const startedAt = Number(status.startedAt), lastUpdate = Number(status.lastUpdate);
+    if (!Number.isFinite(startedAt) || !Number.isFinite(lastUpdate) || lastUpdate < startedAt || lastUpdate > now + 60_000) continue;
+    // 新鲜窗口（10min）是硬约束：终态超窗不投影（等 retention 清盘），running/queued
+    // 幽灵降级 unknown 后同样受它约束——pi-subagents 正常运行时 lastUpdate 持续推进，
+    // 超 10min 没动静的 unknown 就是死 run（进程没了/目录残留），永驻只会污染列表
+    // （code-review 探针 D2：4h 前幽灵永驻）。
+    if (now - lastUpdate > ORPHAN_TAIL_MS) continue;
+    let state = workflowState(singleRunRow(status).state);
+    if (['running', 'queued'].includes(state) && now - (Number(status.lastUpdate) || 0) > STALE_MS) state = 'unknown';
+    // workflow 孤儿按 status 自带 children 投多子卡（singleRunRow 只读 steps[0]，
+    // 多子任务会丢——code-review 探针 B）；single 退回单行。
+    const rows = status.mode === 'workflow' ? workflowRows(status).slice(0, MAX_CHILDREN) : [];
+    const children: Record<string, any>[] = rows.length ? rows.map(row => {
+      const c: Record<string, any> = { childId: row.childId, runId: workflowId(row.runId) ? row.runId : undefined, agent: text(row.agent), label: text(row.label), sessionName: text(row.sessionName), state: workflowState(row.state), model: text(row.model) };
+      if (typeof row.tokens === 'number') c.tokens = row.tokens;
+      if (typeof row.turns === 'number') c.turns = row.turns;
+      c.snapshotAt = row.snapshotAt || lastUpdate;
+      return c;
+    }) : [(() => {
+      const row = singleRunRow(status);
+      const c: Record<string, any> = { childId: row.childId, runId: workflowId(row.runId) ? row.runId : undefined, agent: text(row.agent), label: text(row.label), sessionName: text(row.sessionName), state, model: text(row.model) };
+      if (typeof row.tokens === 'number') c.tokens = row.tokens;
+      if (typeof row.turns === 'number') c.turns = row.turns;
+      c.snapshotAt = row.snapshotAt || lastUpdate;
+      return c;
+    })()];
+    // detail 与 resolveWorkflowPointer 同构：callId=runId 过 workflowId 校验；
+    // toolCallId 同 runId 让 workflowDetails(rec.details, rec.callId) 命中。
+    const detail = { mode: 'workflow', runId: entry.name, toolCallId: entry.name, state, snapshotAt: lastUpdate, workflowChildren: { version: 1, parentToolCallId: entry.name, workflowRunId: entry.name, inventoryComplete: true, workflowState: state, children } };
+    runs.push({ callId: entry.name, status: 'unknown', details: detail, startedAt, updatedAt: lastUpdate });
+  }
+  // MAX_ORPHANS 按新近度截断（readdir 目录序不稳定——code-review 探针 C：累积 >8 个
+  // 目录时正在运行的最新 run 被丢，可见性需求恰好失败）。
+  runs.sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
+  return runs.slice(0, MAX_ORPHANS);
 }
 
 /** Resolve a child run's session file through the SAME validated pointer chain as
@@ -209,7 +302,7 @@ async function resolveWorkflowPointer(pointer: SubagentSnapshot, history: PiHist
  *  sessions root before reading. Never returns filesystem pointers to the renderer. */
 export async function childSessionPointer(history: PiHistory, persisted: SubagentSnapshot[], callId: string, childId: string, root = subagentAsyncRoot(), now = Date.now()): Promise<string | undefined> {
   if (!workflowId(callId) || !workflowId(childId)) return undefined;
-  const pointer = pointers(history, persisted, callId).find(p => p.callId === callId);
+  const pointer = pointers(history, persisted, callId).window.find(p => p.callId === callId);
   if (!pointer) return undefined;
   const d = obj(pointer.details)!;
   const runId = d.runId;
