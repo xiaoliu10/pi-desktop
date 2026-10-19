@@ -11,6 +11,7 @@ import type { PiHost } from '../host';
 import type { SettingsService } from '../settings-service';
 import type { PiRun } from '../../../shared/pi';
 import type { BotActions } from './engine';
+import { canonical } from '../session-index';
 
 const THINKING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
 const MODE_LABELS: Record<string, string> = { followUp: '排队追问', steer: '调整当前任务' };
@@ -29,14 +30,25 @@ export function createBotActions(host: PiHost, settings: SettingsService): BotAc
   const latestRun = (cwd?: string): PiRun | undefined =>
     runsFor(cwd).slice().sort((a, b) => (b.timing?.startedAt ?? 0) - (a.timing?.startedAt ?? 0))[0];
 
-  // 只列桌面端当前打开的工作区（有活跃 run，sidecar 除外）：历史会话的目录
-  // 大多已关闭——列出来会让 /bind 绑到半天前的项目（用户 2026-10-18 反馈
-  // 「列出项目把已经关闭的项目也列出来了」）。prompt 对无 run 的 cwd 仍可
-  // 自动新建会话，但列表与 /bind 的默认目标都应该是活的。
+  // 工作区口径 = 桌面侧栏可见项目（与 remote-visibility 同一套）：会话索引里
+  // 还有会话的工作区，排除已移除项目（hiddenProjects，canonical 归一化防符号
+  // 链接别名）、副驾与 subagent 内部会话。两个历史教训钉在这里：
+  // ① 只扫全会话历史 → 已关闭项目混进来（2026-10-18 反馈）；
+  // ② 只列活跃 run → 开着但空闲的工作区被滤掉，/项目 只剩一个（同日二次反馈）。
+  // 「开着」的真值是索引会话存在且未被隐藏，不是「有 pi 进程在跑」。
   const projects = (): string[] => {
-    const byStarted = new Map<string, number>();
-    for (const r of runsFor()) byStarted.set(r.cwd, Math.max(byStarted.get(r.cwd) ?? 0, r.timing?.startedAt ?? 0));
-    return [...byStarted.entries()].sort((a, b) => b[1] - a[1]).map(([cwd]) => cwd);
+    const byActive = new Map<string, number>();
+    for (const r of runsFor()) byActive.set(r.cwd, Math.max(byActive.get(r.cwd) ?? 0, r.timing?.startedAt ?? 0));
+    let sessions: Array<{ cwd: string; updatedAt?: number; parentSession?: string; sidecarOf?: string }> = [];
+    try { sessions = host.index.scan(); } catch { /* 索引不可用 → 退回活跃 run 口径 */ }
+    const hidden = new Set<string>();
+    try { for (const p of settings.preferences().hiddenProjects ?? []) hidden.add(canonical(p)); } catch { /* 偏好不可读 = 无隐藏 */ }
+    for (const sess of sessions) {
+      if (sess.sidecarOf !== undefined || sess.parentSession !== undefined) continue;
+      if (hidden.has(canonical(sess.cwd))) continue;
+      byActive.set(sess.cwd, Math.max(byActive.get(sess.cwd) ?? 0, sess.updatedAt ?? 0));
+    }
+    return [...byActive.entries()].sort((a, b) => b[1] - a[1]).map(([cwd]) => cwd);
   };
 
   return {
