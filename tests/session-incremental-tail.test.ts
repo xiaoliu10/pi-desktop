@@ -133,6 +133,45 @@ describe('history.plan extraction (desktop_update_plan)', () => {
     expect(h.plan).toEqual([{ step: '新任务A', status: 'completed' }, { step: '新任务B', status: 'in_progress' }]);
   });
 
+  it('全 completed 的计划跨轮（其后有新 user 消息）不再残留显示', () => {
+    const root = temp(), file = path.join(root, 's.jsonl');
+    const planResult = (id: string, parentId: string, plan: unknown[]) => ({
+      type: 'message', id, parentId,
+      message: { role: 'toolResult', toolCallId: `call_${id}`, toolName: 'desktop_update_plan', content: [{ type: 'text', text: JSON.stringify({ plan }) }] },
+    });
+    write(file, [
+      header,
+      { type: 'message', id: 'u0', parentId: null, message: { role: 'user', content: '第一个任务' } },
+      { type: 'message', id: 'c1', parentId: 'u0', message: { role: 'assistant', content: 'ok' } },
+      planResult('p1', 'c1', [{ step: 'A', status: 'completed' }, { step: 'B', status: 'completed' }]),
+      // 新一轮开始：上面那份全 completed 的计划不该再挂着
+      { type: 'message', id: 'u1', parentId: 'p1', message: { role: 'user', content: '第二个任务（没建计划）' } },
+      { type: 'message', id: 'c2', parentId: 'u1', message: { role: 'assistant', content: 'done' } },
+    ]);
+    const index = new SessionIndex([root], root);
+    const key = index.scan()[0].key;
+    expect(index.history(key).plan).toBeUndefined();
+  });
+
+  it('未完成（in_progress/pending）的计划跨轮保留——多轮长任务的清单不能丢', () => {
+    const root = temp(), file = path.join(root, 's.jsonl');
+    const planResult = (id: string, parentId: string, plan: unknown[]) => ({
+      type: 'message', id, parentId,
+      message: { role: 'toolResult', toolCallId: `call_${id}`, toolName: 'desktop_update_plan', content: [{ type: 'text', text: JSON.stringify({ plan }) }] },
+    });
+    write(file, [
+      header,
+      { type: 'message', id: 'u0', parentId: null, message: { role: 'user', content: '长任务' } },
+      { type: 'message', id: 'c1', parentId: 'u0', message: { role: 'assistant', content: 'ok' } },
+      planResult('p1', 'c1', [{ step: 'A', status: 'in_progress' }, { step: 'B', status: 'pending' }]),
+      { type: 'message', id: 'u1', parentId: 'p1', message: { role: 'user', content: '继续' } },
+      { type: 'message', id: 'c2', parentId: 'u1', message: { role: 'assistant', content: 'continue' } },
+    ]);
+    const index = new SessionIndex([root], root);
+    const key = index.scan()[0].key;
+    expect(index.history(key).plan).toEqual([{ step: 'A', status: 'in_progress' }, { step: 'B', status: 'pending' }]);
+  });
+
   it('ignores malformed plan payloads and keeps scanning', () => {
     const root = temp(), file = path.join(root, 's.jsonl');
     write(file, [

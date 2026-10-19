@@ -104,7 +104,11 @@ export class SessionIndex {
   private pendingDirsScan = false;
   private lastShallowScan = 0;
   private lastStatSweep = 0;
-  private planMemo: { entries: PiEntry[]; plan: import('../../shared/conversation-status').PlanItem[] | undefined } | null = null;
+  // per-key per-leaf：单槽版本在多会话/多 leaf 交替读（尾窗 + 补拉 + 搜索定位 + 切
+  // 会话）时互相污染——增量前缀校验只比长度与引用，不同会话的 entries 数组长度相近
+  // 时误判「前缀成立」，直接吃别处的 plan 或 undefined（用户 2026-10-19 反馈
+  // 「计划有时有有时没有」的真根因）。leaf 数有界，引用变化天然失效。
+  private planMemos = new Map<string, Map<PiEntry[], { entries: PiEntry[]; plan: import('../../shared/conversation-status').PlanItem[] | undefined; doneWithNewTurn?: boolean }>>();
   /** 会话文件 → 所属 root real path 的表：增量 check 用它免掉全量 walk。
    *  （scan() 全量时重建。） */
   private fileDirs = new Map<string, string>();
@@ -478,34 +482,53 @@ export class SessionIndex {
    *  零消费（只用 branch/leaves/leafId/session，grep 2026-10-18 核实），分页模式下
    *  用 branch 顶替（类型合规），IPC 体积砍 ~97%。需要全量 entries 的调用方走
    *  主进程内部（cache 直读），不走 IPC 分页契约。 */
-  private wireLite(full: PiHistory): PiHistory {
+  private wireLite(key: string, full: PiHistory): PiHistory {
     // plan 扫全量 entries（branch 是分页裁切，可能只是尾部 500 条——若按 branch
     // 扫就会漏掉任务早期建的清单）。memo 键 = full.entries 引用：parseFile 增量
     // 解析换新数组才重算，静止/流式期间（每拍 refreshHistory）命中即零成本。
     // 注意：wireLite 的调用方传的是分页*之前*的 full，裁切只影响返回值。
-    return { ...full, entries: full.branch, plan: this.lastPlan(full.entries) };
+    const plan = this.lastPlan(key, full.entries);
+    // 对象身份契约：renderer 按 history 引用判断「有没有新内容」换 branch（流式
+    // 每拍 IPC）。无 tail 且 plan 未变时必须原样返回 cached 引用，不能每次新建
+    // 对象——那会让静止会话每拍都触发一次 renderer 冷重建（增量解析测试钉住）。
+    if (!full.truncated && plan === full.plan && (full as any).plan !== undefined) return full;
+    if (!full.truncated && plan === undefined && (full as any).plan === undefined) return full;
+    return { ...full, entries: full.branch, plan };
   }
 
   /** 会话最后一次成功的 desktop_update_plan 清单：renderer 实时解析只看渲染窗口
    *  （tail 500），长任务把清单调用裁出窗口后「进程」区块就空了。主进程有全量
    *  branch，扫最后一次成功结果随 history 下发。O(n) 按 entries 引用 memo。 */
-  private lastPlan(entries: PiEntry[]): import('../../shared/conversation-status').PlanItem[] | undefined {
-    const memo = this.planMemo;
+  private lastPlan(key: string, entries: PiEntry[]): import('../../shared/conversation-status').PlanItem[] | undefined {
+    // 分槽：per-key 的 entries-引用 memo（key 内 per-leaf 由引用天然区分——不同 leaf
+    // 的 branch 是不同的 entries 数组）。parseFile 增量换数组即失效，不按长度猜。
+    let slots = this.planMemos.get(key);
+    if (!slots) { slots = new Map(); this.planMemos.set(key, slots); }
+    if (slots.size > 4) slots.clear();
+    const memo = slots.get(entries);
     // 增量：新数组若是旧数组的超集（parseAppends 的形态），只扫新增尾部——
     // 否则静止会话每拍全扫 17609 条 entries（流式期间每 delta 一次），正是
     // 主进程 V8 反复重编译（deopt 风暴）的燃料。全量重算只在换分支/缓存
     // 重建（非前缀关系）时发生。
     let plan = memo?.plan;
     let scanFrom = 0;
+    let planDoneWithNewTurn = false;
     if (memo && entries.length > memo.entries.length && entries.length - memo.entries.length <= memo.entries.length + 64) {
       // 前缀对齐校验：旧 entries 全部仍是新数组的前缀才敢增量
       let prefixOk = true;
       for (let i = 0; i < memo.entries.length; i += 1) {
         if (entries[i] !== memo.entries[i]) { prefixOk = false; break; }
       }
-      if (prefixOk) { plan = memo.plan; scanFrom = memo.entries.length; }
+      if (prefixOk) { plan = memo.plan; scanFrom = memo.entries.length; planDoneWithNewTurn = memo.doneWithNewTurn ?? false; }
     }
     if (scanFrom === 0) plan = undefined;
+    // 轮次边界：最后一次 user 消息之后才是「当前轮」。全 completed 且其后有新
+    // user 消息 = 上一轮的已完成计划 → undefined（不残留）；未完成 → 保留。
+    let lastUserAt = -1;
+    for (let j = entries.length - 1; j >= 0; j -= 1) {
+      const rm = (entries[j] as any)?.message;
+      if (rm?.role === 'user') { lastUserAt = j; break; }
+    }
     for (let index = scanFrom; index < entries.length; index += 1) {
       const entry = entries[index];
       // pi 的 toolResult 是独立 entry：message.role='toolResult'，toolName 在
@@ -518,11 +541,14 @@ export class SessionIndex {
         const blocks = Array.isArray(m.content) ? m.content : [];
         const text = blocks.map((b: any) => b?.text ?? '').join('');
         const value = JSON.parse(text)?.plan;
-        if (Array.isArray(value) && value.length <= 30 && value.every((p: any) => p && typeof p.step === 'string' && ['pending', 'in_progress', 'completed'].includes(p.status))) plan = value;
+        if (Array.isArray(value) && value.length <= 30 && value.every((p: any) => p && typeof p.step === 'string' && ['pending', 'in_progress', 'completed'].includes(p.status))) {
+          plan = value;
+          planDoneWithNewTurn = index < lastUserAt && value.every((p: any) => p.status === 'completed');
+        }
       } catch { /* 半截流式结果不替换上一份有效清单 */ }
     }
-    this.planMemo = { entries, plan };
-    return plan;
+    slots.set(entries, { entries, plan, doneWithNewTurn: planDoneWithNewTurn });
+    return planDoneWithNewTurn ? undefined : plan;
   }
 
   /** memo 化的 branchEntries：同 key 同 leaf 且 entries 未被增量解析替换时直接复用。
@@ -576,15 +602,17 @@ export class SessionIndex {
       if (at > 0) {
         const count = Math.max(1, Math.min(opts?.count ?? 500, at));
         const page = full.branch.slice(Math.max(0, at - count), at);
-        return this.wireLite({ ...full, branch: [...page, ...full.branch.slice(at)], truncated: { total: full.branch.length, returned: page.length + (full.branch.length - at) } });
+        return this.wireLite(key, { ...full, branch: [...page, ...full.branch.slice(at)], truncated: { total: full.branch.length, returned: page.length + (full.branch.length - at) } });
       }
       return full;
     }
     if (typeof tail === 'number' && tail > 0 && full.branch.length > tail) {
       const branch = full.branch.slice(full.branch.length - tail);
-      return this.wireLite({ ...full, branch, truncated: { total: full.branch.length, returned: tail } });
+      return this.wireLite(key, { ...full, branch, truncated: { total: full.branch.length, returned: tail } });
     }
-    return opts?.tail ? this.wireLite(full) : full;
+    // plan 与分页无关：任何 IPC history() 调用都要带（renderer planFallback 消费
+    // 它；无 tail 时此前整条链路不带 plan——面板跨窗口兜底从未生效）。
+    return this.wireLite(key, full);
   }
   start(changed: () => void) {
     this.close();
