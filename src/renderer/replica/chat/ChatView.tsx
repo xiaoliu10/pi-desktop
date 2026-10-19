@@ -261,10 +261,12 @@ function MessageImage({ part, labels, onDownload }: { part: Extract<MessagePart,
   // blob URL 按挂载周期持有/释放：base64 只在首次编码时拼一次（195MB 大会话里这是
   // GB 级垃圾与 RSS 3.5G 的根因），卸载即释放，不会每拍重拼。
   // 同 HeldImage：引用计数只在 effect 里增减（StrictMode 双挂载会泄漏计数器）。
-  const [dataUrl, setDataUrl] = useState<string | undefined>(undefined);
+  // 变量名叫 url 不叫 dataUrl：它装的是 blob: URL，而主进程 downloadImage 只认
+  // data:——PiReplicaApp 的 onDownloadImage 负责转换（见那边的注释）。
+  const [url, setUrl] = useState<string | undefined>(undefined);
   useEffect(() => {
-    const url = acquireImageUrl(part);
-    setDataUrl(url);
+    const acquired = acquireImageUrl(part);
+    setUrl(acquired);
     return () => releaseImageUrl(part);
   }, [part]);
   useEffect(() => {
@@ -279,15 +281,15 @@ function MessageImage({ part, labels, onDownload }: { part: Extract<MessagePart,
   const name = `pi-image-${new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '')}.${ext}`;
   return <>
     <button type="button" className="pi-msg__imagebtn" title={labels.viewImage} aria-label={labels.viewImage} onClick={() => setOpen(true)}>
-      <img className="pi-msg__image" src={dataUrl} alt="附件图片" />
+      <img className="pi-msg__image" src={url} alt="附件图片" />
     </button>
     {open && createPortal(
       <div className="pi-lightbox" role="dialog" aria-modal="true" aria-label={labels.viewImage} onClick={() => setOpen(false)}>
         <div className="pi-lightbox__bar" onClick={e => e.stopPropagation()}>
-          {onDownload && <button type="button" className="pi-lightbox__btn" title={labels.downloadImage} aria-label={labels.downloadImage} onClick={() => dataUrl && onDownload(dataUrl, name)}><Icon name="download-cloud" size={22} /></button>}
+          {onDownload && <button type="button" className="pi-lightbox__btn" title={labels.downloadImage} aria-label={labels.downloadImage} onClick={() => url && void onDownload(url, name)}><Icon name="download-cloud" size={22} /></button>}
           <button type="button" className="pi-lightbox__btn" title={labels.close} aria-label={labels.close} onClick={() => setOpen(false)}><Icon name="x" size={22} /></button>
         </div>
-        <img className="pi-lightbox__img" src={dataUrl} alt="附件图片" onClick={e => e.stopPropagation()} />
+        <img className="pi-lightbox__img" src={url} alt="附件图片" onClick={e => e.stopPropagation()} />
       </div>,
       document.body,
     )}
@@ -323,7 +325,7 @@ function ImageGenCardView({ card, labels, onDownload }: { card: ImageGenCardData
       {openIdx !== null && createPortal(
         <div className="pi-lightbox" role="dialog" aria-modal="true" aria-label={zh ? '生成的图像' : 'Generated image'} onClick={close}>
           <div className="pi-lightbox__bar" onClick={e => e.stopPropagation()}>
-            {onDownload && <button type="button" className="pi-lightbox__btn" title={labels.downloadImage} aria-label={labels.downloadImage} onClick={() => onDownload(dataUrl(openIdx), fileName(openIdx))}><Icon name="download-cloud" size={22} /></button>}
+            {onDownload && <button type="button" className="pi-lightbox__btn" title={labels.downloadImage} aria-label={labels.downloadImage} onClick={() => void onDownload(dataUrl(openIdx), fileName(openIdx))}><Icon name="download-cloud" size={22} /></button>}
             <button type="button" className="pi-lightbox__btn" title={labels.close} aria-label={labels.close} onClick={close}><Icon name="x" size={22} /></button>
           </div>
           <img className="pi-lightbox__img" src={dataUrl(openIdx)} alt={caption} onClick={e => e.stopPropagation()} />

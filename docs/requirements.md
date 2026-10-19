@@ -168,6 +168,21 @@
 
 **回归触发**：改 `session-index.ts`（增量偏移/快路径）/`adapter.ts`（sentConversationMessages 及其 segment 缓存）/`PiReplicaApp.tsx`（ChatView props 稳定性）；pi RPC `get_entries` 增量契约变化。缓存正确性由 `tests/sent-conversation-cache.test.ts` 钉住（同 id live 内容增长/历史身份恒定/late progress 穿透/refresh 追加）。
 
+### R-render-02　聊天图片可显示、可下载（blob URL 与 CSP/主进程契约一致）
+
+**需求**：会话里的图片（用户附件、生图结果）必须能显示、也能从灯箱下载原图。图片 URL 由 `image-url.ts` 用 `URL.createObjectURL` 生成 blob: URL（为压 base64 常驻内存，见该文件注释里的 195MB 大会话实测），因此上下游两处契约必须同时成立：CSP 的 `img-src` 放行 `blob:`，下载链路把 blob: 归一化成主进程认的 data URL。
+
+**验收**：
+- `src/renderer/index.html` 的 `img-src` 含 `blob:`（同时保留 `'self'` / `data:` / `https:`，不能为了修一个丢其他）。
+- `script-src` 保持 `'self'` 单值（不得引入 `unsafe-inline` / `unsafe-eval` 兜底）。
+- 附件图片缩略图与灯箱大图、生图结果网格都能正常显示（不出现 CSP 裂图）。
+- **灯箱「下载原图」端到端可用**：附件图片的 blob: URL 必须先归一化成 `image-file.ts` 的 `imageDataUrl` 认的 data URL 再过 IPC（主进程无法解析 blob: 协议）。
+- 回归测试：`tests/renderer-csp.test.ts` 断言真实源文件的 `img-src` 允许 `blob:` 且其余来源未丢；`tests/image-download.test.ts` 断言归一化输出能通过主进程同一套校验（不是「看起来像 data URL」）。
+
+**状态**：待发版验收（本分支修复两个同根因缺陷，均自 0.1.28 `fe11050` 引入 blob URL 起存在：① `img-src` 不含 `blob:`，Console 刷 "Refused to load the image 'blob:file:///...'"，附件图片全部裂图而 UI 侧无异常——最难自查的一类静默失败；② 下载把 blob: URL 直接传给只认 data URL 的主进程，用户只看到通用「图片保存失败」，保存对话框都不弹）。
+
+**回归触发**：改 `src/renderer/index.html`（CSP）、`image-url.ts`（若换回 data URL 或改用自定义协议）、`shared/image-download.ts`（下载归一化）、`main/pi/image-file.ts`（下载校验）、Electron 升级（webSecurity / CSP 处理变化）。
+
 ---
 
 ## 升级回归总表
@@ -181,5 +196,6 @@
 | pi 内核 | R-model-01, R-model-03, R-render-01, R-subagent-02 | refresh/setModel 契约、get_entries 增量、subagent 事件。**必跑 `pnpm smoke:rpc`** |
 | CCR | R-model-02, R-model-03 | provider 生命周期、思考等级字段 |
 | Electron | 全部渲染/IO 需求 | 进程模型、IPC 行为 |
+| Electron / 改 CSP | R-render-02, R-render-01 | webSecurity 与 img-src 处理变化（blob URL 图片会静默裂图） |
 
 **升级前必做**：读本文 → 对照"上游依赖"列出的 issue 状态 → 若上游已发新版，先在本机隔离测相关需求 → 通过才合并到 Desktop。
