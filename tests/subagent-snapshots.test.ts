@@ -558,3 +558,91 @@ describe('orphan 边界（code-review 探针钉回）', () => {
     expect(kids[1].childId).toBe('c2');
   });
 });
+
+describe('pinned 解析性能（打字卡顿回归）', () => {
+  let root: string;
+  beforeEach(() => { root = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-snap-perf-')); });
+  afterEach(() => { try { fs.rmSync(root, { recursive: true, force: true }); } catch {} });
+
+  const NOW = 1_700_000_000_000;
+
+  // 真因：workflowSnapshots 曾对每个 pinned callId 重跑一次 pointers()——整条 branch
+  // 的 toolCall/toolResult 扫描。32k 条的真实会话 × 200 pinned = 287ms 主线程 CPU，
+  // recover 每 2-10s 一跳，就是「CPU 尖峰 + 打字卡」的实证来源。修复后只扫一次、
+  // pinned 走 Map 查找。这里用「调用次数」钉住不变式：一次 tick 的扫描必须是 O(1) 次。
+  it('pinned 数量再多也只扫描 branch 一次（不随 pinned 线性放大）', async () => {
+    // 40 个 subagent 调用（超过 MAX_CALLS=32，pinned 里既有窗内也有窗外）
+    const branch: any[] = [];
+    const pinnedIds: string[] = [];
+    for (let i = 0; i < 40; i += 1) {
+      const callId = `call-${String(i).padStart(2, '0')}`;
+      const runId = `run-${String(i).padStart(2, '0')}`;
+      pinnedIds.push(callId);
+      branch.push({ type: 'message', id: `a${i}`, parentId: i === 0 ? null : `r${i - 1}`, timestamp: new Date(NOW).toISOString(),
+        message: { role: 'assistant', content: [{ type: 'toolCall', id: callId, name: 'subagent', arguments: { agent: 'dev' } }] } });
+      branch.push({ type: 'message', id: `r${i}`, parentId: `a${i}`, timestamp: new Date(NOW).toISOString(),
+        message: { role: 'toolResult', toolCallId: callId, toolName: 'subagent', content: [], details: { mode: 'workflow', runId, toolCallId: callId, asyncDir: `${root}/${runId}`, results: [], workflowChildren: { version: 1, parentToolCallId: callId, workflowRunId: runId, inventoryComplete: false, workflowState: 'running', children: [] } } } });
+    }
+    // 给每个 run 写 status.json（时间合法），否则全部落到 unknown 分支也仍能验证扫描次数
+    for (let i = 0; i < 40; i += 1) {
+      const runId = `run-${String(i).padStart(2, '0')}`;
+      fs.mkdirSync(path.join(root, runId), { recursive: true });
+      fs.writeFileSync(path.join(root, runId, 'status.json'), JSON.stringify({ mode: 'workflow', runId, sessionId: '/sessions/s1.jsonl', toolCallId: `call-${String(i).padStart(2, '0')}`, state: 'completed', startedAt: NOW - 120_000, lastUpdate: NOW - 1_000 }));
+    }
+    const history = makeHistory('/sessions/s1.jsonl', branch);
+
+    // 用「创建迭代器的次数」计数：每次完整遍历 branch（for-of）都会取一次
+    // Symbol.iterator。pointers/collectPointers 每跑一次 = 一次完整扫描。
+    let scans = 0;
+    const counted = branch.slice();
+    const spyHistory: PiHistory = { ...history, branch: new Proxy(counted, {
+      get(target, prop, receiver) {
+        if (prop === Symbol.iterator) { scans += 1; return Reflect.get(target, prop, receiver); }
+        return Reflect.get(target, prop, receiver);
+      },
+    }) as any };
+
+    const snapshots = await workflowSnapshots(spyHistory, [], root, NOW, pinnedIds);
+    // 行为不变：pinned 全部解析出来（窗内 + 窗外穿透）。用集合比对——尾窗内的
+    // callId 会既出现在 pinned 段又出现在窗口段（原有语义：pinned 先输出，窗口段
+    // 去重由 output.some 保证，这里只验证「每个 pinned 都至少出现一次」）。
+    const ids = snapshots.map(s => s.callId);
+    for (const p of pinnedIds) expect(ids).toContain(p);
+    // 不变式：扫描次数与 pinned 数量无关。40 pinned 若每个都重扫就是 41 次遍历；
+    // 修复后 collectPointers 一次 + pointersWindow 一次 = 2 次。
+    expect(scans).toBeLessThanOrEqual(2);
+  });
+
+  // code-review nit-2：上面的性能断言抓不到「尾窗循环误传 pinned」这类回归
+  // （pointersWindow(all, pinned?.[0]) 会把 pinned 换进无 pin 列表视图，window 内容
+  // 与顺序都变，而 pinned 段输出不变）。这条把无 pin 列表视图的形状钉住。
+  it('无 pin 时列表视图严格是最近 MAX_CALLS 条（pinned 不得渗进尾窗）', async () => {
+    const branch: any[] = [];
+    for (let i = 0; i < 40; i += 1) {
+      const callId = `call-${String(i).padStart(2, '0')}`;
+      const runId = `run-${String(i).padStart(2, '0')}`;
+      branch.push({ type: 'message', id: `a${i}`, parentId: i === 0 ? null : `r${i - 1}`, timestamp: new Date(NOW).toISOString(),
+        message: { role: 'assistant', content: [{ type: 'toolCall', id: callId, name: 'subagent', arguments: { agent: 'dev' } }] } });
+      branch.push({ type: 'message', id: `r${i}`, parentId: `a${i}`, timestamp: new Date(NOW).toISOString(),
+        message: { role: 'toolResult', toolCallId: callId, toolName: 'subagent', content: [], details: { mode: 'workflow', runId, toolCallId: callId, asyncDir: `${root}/${runId}`, results: [], workflowChildren: { version: 1, parentToolCallId: callId, workflowRunId: runId, inventoryComplete: false, workflowState: 'running', children: [] } } } });
+    }
+    for (let i = 0; i < 40; i += 1) {
+      const runId = `run-${String(i).padStart(2, '0')}`;
+      fs.mkdirSync(path.join(root, runId), { recursive: true });
+      fs.writeFileSync(path.join(root, runId, 'status.json'), JSON.stringify({ mode: 'workflow', runId, sessionId: '/sessions/s1.jsonl', toolCallId: `call-${String(i).padStart(2, '0')}`, state: 'completed', startedAt: NOW - 120_000, lastUpdate: NOW - 1_000 }));
+    }
+    // 不传 pinned：输出应恰好是尾窗 32 条，按时间正序，且不含被裁掉的老 call。
+    const snapshots = await workflowSnapshots(makeHistory('/sessions/s1.jsonl', branch), [], root, NOW);
+    const ids = snapshots.map(s => s.callId);
+    expect(ids).toHaveLength(32);
+    expect(ids[0]).toBe('call-08');
+    expect(ids.at(-1)).toBe('call-39');
+    expect(ids).not.toContain('call-00');
+    expect(ids).not.toContain('call-07');
+    // 传一个窗外 pinned：pinned 段先输出它，尾窗段仍保持原样（不因 pinned 换出老条目）。
+    const withPin = await workflowSnapshots(makeHistory('/sessions/s1.jsonl', branch), [], root, NOW, ['call-00']);
+    const pinIds = withPin.map(s => s.callId);
+    expect(pinIds[0]).toBe('call-00');
+    expect(pinIds.slice(1)).toEqual(ids);
+  });
+});

@@ -83,8 +83,11 @@ export async function readSnapshotJson(root: string, file: string, budget = { by
  *  window even when a session has more subagent calls than the window holds (real
  *  sessions hit 30+; the tail window silently dropped older workflow cards, so
  *  on-demand transcript fetches for them returned no-snapshot). Pinning keeps the
- *  bounded scan for list rendering while making per-card reads always resolvable. */
-function pointers(history: PiHistory, persisted: SubagentSnapshot[], pinned?: string): { window: SubagentSnapshot[]; coverage: Set<string> } {
+ *  bounded scan for list rendering while making per-card reads always resolvable.
+ *  Pure scan: no window math, so a 200-strong pinned list can reuse one pass
+ *  instead of re-scanning the whole branch per callId (real 32k-entry sessions
+ *  measured 287ms of main-thread CPU per recover tick that way). */
+function collectPointers(history: PiHistory, persisted: SubagentSnapshot[]): { all: SubagentSnapshot[]; byCallId: Map<string, SubagentSnapshot>; coverage: Set<string> } {
   const calls = new Map<string, { at: number; management: boolean }>();
   const found = new Map<string, SubagentSnapshot>();
   // coverage：本分支历史上出现过的全部 runId（不止尾窗 32 条）。orphan 投影用它
@@ -116,7 +119,12 @@ function pointers(history: PiHistory, persisted: SubagentSnapshot[], pinned?: st
     // 32 cap 或排序变化时，persisted 指针可能落在窗口外被 orphan 重复投影。
     noteRun(rec.details, rec.callId);
   }
-  const all = [...found.values()];
+  return { all: [...found.values()], byCallId: found, coverage };
+}
+
+/** 尾窗（最近 MAX_CALLS 条）+ 单个 pinned 穿透。窗口数学与扫描分离：pinned 只需要
+ *  它自己那一条（窗口内原样、窗口外把最老的换出），不需要为每个 callId 重算整窗。 */
+function pointersWindow(all: SubagentSnapshot[], pinned?: string): SubagentSnapshot[] {
   const window = all.slice(-MAX_CALLS);
   if (pinned && workflowId(pinned) && !window.some(p => p.callId === pinned)) {
     const hit = all.find(p => p.callId === pinned);
@@ -124,7 +132,18 @@ function pointers(history: PiHistory, persisted: SubagentSnapshot[], pinned?: st
     // bounded; the pinned card is what the user is looking at right now.
     if (hit) { window.shift(); window.push(hit); }
   }
-  return { window, coverage };
+  return window;
+}
+
+/** Collect subagent call pointers from the branch (+ persisted event snapshots).
+ *  `pinned` = a callId the caller will definitely consume: it survives the MAX_CALLS
+ *  window even when a session has more subagent calls than the window holds (real
+ *  sessions hit 30+; the tail window silently dropped older workflow cards, so
+ *  on-demand transcript fetches for them returned no-snapshot). Pinning keeps the
+ *  bounded scan for list rendering while making per-card reads always resolvable. */
+function pointers(history: PiHistory, persisted: SubagentSnapshot[], pinned?: string): { window: SubagentSnapshot[]; coverage: Set<string> } {
+  const collected = collectPointers(history, persisted);
+  return { window: pointersWindow(collected.all, pinned), coverage: collected.coverage };
 }
 
 /** Main-process-only adapter. No scans, no session/transcript/prompt reads and no
@@ -137,15 +156,17 @@ export async function workflowSnapshots(history: PiHistory, persisted: SubagentS
   // 冻结的 workflowChildren.workflowState 永远是 'running'），于是「已结束的工作流」
   // 在面板里显示为「等待工作流报告子任务 · 运行中」（用户 2026-10-18 实测，238 对调用
   // 的会话里 16 个假活）。与渲染侧 pointers 的 pinned 修复（PR #132）同思路。
-  // pinned 逐个取「该 callId 的指针」——注意 pointers() 返回的是整个尾窗（pinned 只保证
-  // 它在里面），所以这里过滤到目标那一条，否则每个 pinned 都会把 32 条尾窗再吐一遍。
-  // 无 pin 视图缓存：尾窗循环与 orphan coverage 共用（pinned 查找必须带 pin 参数——
-  // 每个 pinned callId 会把不同指针换进窗口，不能吃无 pin 缓存）。
-  let pointerView: { window: SubagentSnapshot[]; coverage: Set<string> } | undefined;
-  const allPointers = () => (pointerView ??= pointers(history, persisted));
+  // pinned 逐个取「该 callId 的指针」——它只需要自己那一条（窗内原样，窗外那条由
+  // byCallId 直取、不经窗口），所以扫描只做一次：原来每个 pinned 都重跑一次 pointers()
+  // （整条 branch 的 toolCall/toolResult 扫描），32k 条的真实会话上 200 个 pinned = 287ms
+  // 主线程 CPU，recover 每 2-10s 一跳，正是大会话低 CPU 卡顿/尖峰的实证根因。修复后
+  // 实测 4ms（287ms → 4ms，一次扫描 + O(1) 查找）。尾窗数学只管无 pin 的列表视图有界。
+  // collected 同时供下面的尾窗循环与 orphan coverage 复用（同一份扫描结果）。
+  let collected: { all: SubagentSnapshot[]; byCallId: Map<string, SubagentSnapshot>; coverage: Set<string> } | undefined;
+  const allPointers = () => (collected ??= collectPointers(history, persisted));
   for (const callId of pinned ?? []) {
     if (!workflowId(callId) || output.some(o => o.callId === callId)) continue;
-    const pointer = pointers(history, persisted, callId).window.find(p => p.callId === callId);
+    const pointer = allPointers().byCallId.get(callId);
     if (pointer) output.push(await resolveWorkflowPointer(pointer, history, root, now, budget));
   }
 /** Resolve one workflow pointer into a display snapshot (asyncDir/status.json 校正)。
@@ -213,7 +234,7 @@ async function resolveWorkflowPointer(pointer: SubagentSnapshot, history: PiHist
   return { callId: pointer.callId, status: detail.state, details: detail, updatedAt };
 }
 
-  for (const pointer of allPointers().window) {
+  for (const pointer of pointersWindow(allPointers().all)) {
     output.push(await resolveWorkflowPointer(pointer, history, root, now, budget));
   }
   // Harness 派生的 async 子代理（codemode runs.run、detached children）在父会话
@@ -302,6 +323,7 @@ async function orphanAsyncRuns(history: PiHistory, root: string, now: number, bu
  *  sessions root before reading. Never returns filesystem pointers to the renderer. */
 export async function childSessionPointer(history: PiHistory, persisted: SubagentSnapshot[], callId: string, childId: string, root = subagentAsyncRoot(), now = Date.now()): Promise<string | undefined> {
   if (!workflowId(callId) || !workflowId(childId)) return undefined;
+  // 单次调用（详情面板按需），成本无所谓；语义保持「pinned 穿透尾窗」。
   const pointer = pointers(history, persisted, callId).window.find(p => p.callId === callId);
   if (!pointer) return undefined;
   const d = obj(pointer.details)!;
