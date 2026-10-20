@@ -166,10 +166,11 @@
 - Desktop 历史 IPC 不重复传输界面未消费的 toolResult 顶层图片 base64；只做传输投影，内部历史、fork/续接、用户图片和工具 details 必须无损。回归：`tests/renderer-history.test.ts`；真实 Electron 对照：`tests/renderer-history-ipc.electron.cjs`。
 - 2026-10-19 仍有输入 p90=520ms/max=2909ms 的现场报告：响应瘦身不等于端到端卡顿解决。主进程冷扫描/解析的 worker 隔离待实现，方案与证据边界见 `docs/design/input-lag-multicore.md`。
 - 大会话历史读取不全量重读：落盘会话走增量 tail 解析（session-index），运行中会话的 `get_entries(since=leafId)` 增量契约待接入（切片 2c）。
+- 非 pi `.jsonl` 已成功读取但没有有效会话头时，按真实路径及 `ino/size/mtime/ctime` 缓存拒绝结果；全扫、watch 与轮询不重复读取/解析未变内容。追加补齐（包括未完整 header）、同尺寸改写、替换、截断后重新识别，删除后清理；瞬态读取错误可重试，旧 history/dirty/branch/plan/outline 不残留。保留原兜底扫描频率、嵌套可见性及 sidecar 语义。回归：`tests/session-rejected-files.test.ts`。该优化只消除已拒绝文件的重复解析，不代表冷扫描或多秒端到端输入卡顿已根治。
 
 **状态**：大部分满足。切片 1（labelsFor 缓存，v0.1.24 #120）已修 memo 击穿；切片 2a/2b（history() 去全扫 + 增量 tail 解析，实测 421ms → 平均 6.3ms）已修（PR #128）；**渲染侧热路径（Phase 2，实测 sentConversationMessages 热路径 259ms/拍 → 流式 tick 10-12ms，22×）：anchorOf/indexById O(1) 化 + 排序锚值预计算 + segment 整段缓存（branch 数组身份隔离，live/tools 内容签名穿透）+ ChatView queue/scrollRequest props 稳定化**；剩余：运行中会话改走 RPC get_entries（切片 2c）、可选虚拟化（切片 3）、活动段/历史段 useMemo 拆分（A1，若剩余 10ms/拍仍感知卡再做）。
 
-**回归触发**：改 `session-index.ts`（增量偏移/快路径）/`adapter.ts`（sentConversationMessages 及其 segment 缓存）/`PiReplicaApp.tsx`（ChatView props 稳定性）；pi RPC `get_entries` 增量契约变化。缓存正确性由 `tests/sent-conversation-cache.test.ts` 钉住（同 id live 内容增长/历史身份恒定/late progress 穿透/refresh 追加）。
+**回归触发**：改 `session-index.ts`（增量偏移/快路径、拒绝 stamp 缓存及 scan/watch/poll 失效一致性）/`adapter.ts`（sentConversationMessages 及其 segment 缓存）/`PiReplicaApp.tsx`（ChatView props 稳定性）；pi RPC `get_entries` 增量契约变化。缓存正确性由 `tests/sent-conversation-cache.test.ts` 钉住（同 id live 内容增长/历史身份恒定/late progress 穿透/refresh 追加）。
 
 ### R-render-02　聊天图片可显示、可下载（blob URL 与 CSP/主进程契约一致）
 

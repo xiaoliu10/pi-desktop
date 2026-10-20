@@ -86,6 +86,9 @@ export class SessionIndex {
    *  ~500ms）。entries 引用 + leaf 不变则复用——流式期间每拍都调 history()，这是
    *  主进程阻塞的第一根因（埋点报告 history-ipc 33 次共 17.6s）。 */
   private branchMemo = new Map<string, Map<string, { entries: PiEntry[]; branch: PiEntry[] }>>();
+  /** 已成功读取、但没有有效 pi header 的内容（含未成行 header）。仅记当前文件 stamp，
+   *  不记 I/O 错误；任何追加/改写/替换均重新识别，避免每次兜底扫描重读非 pi jsonl。 */
+  private rejected = new Map<string, string>();
   /** 嵌套子会话（pi-subagents async 布局）文件 → 推断的主会话路径。 */
   private nestedParents = new Map<string, string>();
   /** 已有缓存但文件又增长了的会话：等写入平息后再全量重解析。 */
@@ -122,10 +125,25 @@ export class SessionIndex {
       return { stat, stamp: `${stat.ino}:${stat.size}:${stat.mtimeMs}:${stat.ctimeMs}` };
     } catch { return undefined; }
   }
+  /** 内容失效/删除时所有派生缓存一起清理，尤其不能留下 dirty 旧历史或计划。 */
+  private forgetSession(key: string): void {
+    this.cache.delete(key);
+    this.branchMemo.delete(key);
+    this.planMemos.delete(key);
+    this.outlines?.delete(key);
+    this.dirty.delete(key);
+  }
+  private forgetFile(file: string): void {
+    this.forgetSession(fileKey(file));
+    this.rejected.delete(file);
+    this.fileDirs.delete(file);
+  }
   private parseFile(file: string, key: string, incremental = false): void {
     const stamped = this.stampOf(file);
     if (!stamped) return;
     const { stat, stamp } = stamped;
+    if (this.rejected.get(file) === stamp) return;
+    this.rejected.delete(file);
     if (stat.size > MAX_SESSION) throw new OversizedSessionError(file, stat.size);
     const cached = this.cache.get(key);
     // 增量门：仅在「同一 inode 且 size ≥ 已读偏移」时安全。文件替换（rename-replace，
@@ -153,7 +171,11 @@ export class SessionIndex {
       catch { warnings.push(`第 ${i + 1} 行损坏，已跳过`); }
     }
     const header = parsed[0];
-    if (header?.type !== 'session' || typeof header.id !== 'string' || typeof header.cwd !== 'string') { this.cache.delete(key); this.branchMemo.delete(key); this.outlines?.delete(key); return; }
+    if (header?.type !== 'session' || typeof header.id !== 'string' || typeof header.cwd !== 'string') {
+      this.forgetSession(key);
+      this.rejected.set(file, stamp);
+      return;
+    }
     const entries = parsed.slice(1), branch = branchEntries(entries);
     const first = entries.find(e => e.type === 'message' && e.message?.role === 'user')?.message?.content;
     const title = typeof first === 'string' ? first : Array.isArray(first) ? first.filter(b => b.type === 'text').map(b => b.text).join(' ') : '';
@@ -286,48 +308,15 @@ export class SessionIndex {
       const file = history.session.path;
       // Parent creation/removal changes visibility even when the child file itself is unchanged.
       if (!files.has(file) || previousParents.get(file) !== this.nestedParents.get(file)) {
-        this.cache.delete(key); this.branchMemo.delete(key); this.outlines?.delete(key);
-        this.dirty.delete(key);
+        this.forgetSession(key);
       }
     }
-    for (const file of files.keys()) {
-      const key = fileKey(file);
-      try {
-        const stamped = this.stampOf(file);
-        if (!stamped) continue;
-        const { stat, stamp } = stamped;
-        const cached = this.cache.get(key);
-        if (cached?.stamp === stamp) continue;
-        if (cached && stat.size > DEFER_PARSE_BYTES) {
-          // 大文件增长：只更新廉价元数据（列表显示用），全量解析延后到平息。
-          cached.history.session.size = stat.size;
-          cached.history.session.updatedAt = stat.mtimeMs;
-          this.dirty.set(key, file);
-          continue;
-        }
-        this.parseFile(file, key);
-      } catch (err) {
-        if ((err as NodeJS.ErrnoException).code === 'ENOENT') { this.cache.delete(key); this.branchMemo.delete(key); this.outlines?.delete(key); continue; }
-        if (err instanceof OversizedSessionError) {
-          // 超限会话降级为「元数据可见」：列表/侧栏照常显示（此前整个会话从侧栏消失，
-          // 用户看到「该项目还没有会话」——96MB ashare 主会话 2026-10-09 的真实事故）。
-          const stub = sessionStub(file);
-          const stamped = this.stampOf(file); // 包裹 ENOENT：文件被并发删除时安全跳过（P2）
-          if (!stub || !stamped) continue;
-          const { stat, stamp } = stamped;
-          const degraded = {
-            session: { key, id: String(stub.header.id ?? key), path: file, cwd: String(stub.header.cwd ?? path.dirname(file)), name: String(stub.firstUserText || '未命名 pi 会话').slice(0, 180), updatedAt: stat.mtimeMs, size: stat.size, warnings: [err.message], owned: file.startsWith(canonical(this.ownedRoot) + path.sep), parentSession: typeof stub.header.parentSession === 'string' ? stub.header.parentSession : this.nestedParents.get(file), sidecarOf: path.basename(file).startsWith('sidecar_') ? '' : undefined },
-            entries: [], branch: [], leaves: [], leafId: null, syncedAt: Date.now(),
-          };
-          this.oversized.add(degraded);
-          // parsedBytes/pendingTail 对超限降级缓存无意义（永不增量解析），置 0/空满足类型。
-          this.cache.set(key, { stamp, history: degraded, parsedBytes: 0, pendingTail: Buffer.alloc(0), parsedIno: stat.ino });
-          continue;
-        }
-        const old = this.cache.get(key);
-        if (old) old.history.session.warnings = [(err as Error).message];
-      }
+    for (const file of this.fileDirs.keys()) {
+      if (!files.has(file)) this.forgetFile(file);
     }
+    // 全扫与 watch/check 共享同一 stamp/拒绝/错误处理，保留原全量发现与嵌套推断。
+    this.fileDirs = files;
+    for (const [file, dir] of files) this.refreshOne(file, dir);
     return [...this.cache.values()].map(x => x.history.session).filter(s => includeSidecars || s.sidecarOf === undefined).sort((a, b) => b.updatedAt - a.updatedAt);
   }
   /** 会话列表视图：直接从 cache 构建（check 的增量维护保证新鲜）。IPC sessions
@@ -388,8 +377,8 @@ export class SessionIndex {
     // 少了这一步，文件增长后 sessionOutline 会拿着 scan() 时的旧 entries 聚合——
     // 既是过期数据（正确性），也让持久化缓存永远命中旧 stamp（用户看到的大纲不更新）。
     // history() 已按 (entries 引用, leaf) memo，热路径 0.42ms，不会成为新瓶颈。
-    let cached = this.cache.get(key)?.history;
-    try { this.history(key); cached = this.cache.get(key)?.history ?? cached; } catch { /* 超限/读取失败：退回旧缓存聚合 */ }
+    try { this.history(key); } catch { /* 超限/暂时读取失败保留的缓存仍可聚合；无效/删除的不复活。 */ }
+    const cached = this.cache.get(key)?.history;
     if (!cached) return { turns: [], total: 0 };
     const file = cached.session.path;
     const stamped = this.stampOf(file);
@@ -637,11 +626,12 @@ export class SessionIndex {
         // 周期 100% 尖峰（实测 uv_fs_* 风暴）。定向路径（watch 报告的文件）不受影响。
         if (statSweepNow - this.lastStatSweep >= 30_000) {
           this.lastStatSweep = statSweepNow;
-          for (const [key, entry] of [...this.cache.entries()]) {
-            const file = entry.history.session.path;
+          // 包含拒绝文件及暂时读取失败的文件：stamp 变化要重试，未变则不读内容。
+          for (const file of [...this.fileDirs.keys()]) {
+            const key = fileKey(file);
             const stamped = this.stampOf(file);
             if (!stamped) { this.refreshOne(file, this.fileDirs.get(file) ?? ''); sawChange = true; continue; }
-            if (this.cache.get(key)?.stamp === stamped.stamp) continue;
+            if ((this.cache.get(key)?.stamp ?? this.rejected.get(file)) === stamped.stamp) continue;
             this.refreshOne(file, this.fileDirs.get(file) ?? '');
             sawChange = true;
           }
@@ -762,9 +752,7 @@ export class SessionIndex {
       }
       if (!st) {
         // 路径消失：可能是文件或目录。按文件清；目录级清理交给全量兜底。
-        for (const [key, entry] of [...this.cache.entries()]) {
-          if (entry.history.session.path === target) { this.cache.delete(key); this.branchMemo.delete(key); this.outlines?.delete(key); this.fileDirs.delete(target); }
-        }
+        this.forgetFile(target);
       }
     }
     return rescan;
@@ -776,10 +764,11 @@ export class SessionIndex {
     const key = fileKey(file);
     try {
       const stamped = this.stampOf(file);
-      if (!stamped) { this.cache.delete(key); this.branchMemo.delete(key); this.outlines?.delete(key); this.dirty.delete(key); this.fileDirs.delete(file); return; }
+      if (!stamped) { this.forgetFile(file); return; }
       const { stat, stamp } = stamped;
+      this.fileDirs.set(file, root || this.fileDirs.get(file) || '');
       const cached = this.cache.get(key);
-      if (cached?.stamp === stamp) { this.fileDirs.set(file, root || this.fileDirs.get(file) || ''); return; }
+      if ((cached?.stamp ?? this.rejected.get(file)) === stamp) return;
       if (cached && stat.size > DEFER_PARSE_BYTES) {
         cached.history.session.size = stat.size;
         cached.history.session.updatedAt = stat.mtimeMs;
@@ -789,7 +778,7 @@ export class SessionIndex {
       this.parseFile(file, key);
       if (root) this.fileDirs.set(file, root);
     } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === 'ENOENT') { this.cache.delete(key); this.branchMemo.delete(key); this.outlines?.delete(key); this.dirty.delete(key); this.fileDirs.delete(file); return; }
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') { this.forgetFile(file); return; }
       if (err instanceof OversizedSessionError) {
         try {
           const stub = sessionStub(file);
