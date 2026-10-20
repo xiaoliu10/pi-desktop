@@ -1,4 +1,4 @@
-import { describe, expect, it, beforeEach, afterEach } from 'vitest';
+import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -99,6 +99,21 @@ const mkSession = (key: string, extra: Partial<PiSession> = {}): PiSession => ({
 });
 const mkEntry = (id: string, parentId?: string): PiEntry => ({ type: 'message', id, ...(parentId ? { parentId } : {}), timestamp: '2026-01-01T00:00:00.000Z', message: { role: 'user', content: id } } as PiEntry);
 
+/** 重启用例共用：subscribe 先推一个带代际标记的尾窗再应答（避免 client 进入轮询等待），
+ *  这样每个 transport 世代推的 tail 可区分，能证明重启后镜像来自新 worker。 */
+let subscribeGeneration = 0;
+function wireSubscribe(t: ScriptedTransport): void {
+  t.onRequest = req => {
+    if (req.op === 'subscribe') {
+      const gen = subscribeGeneration++;
+      t.emit({ ev: 'tail', key: req.key, tail: [mkEntry('gen' + gen)], total: 1 });
+      queueMicrotask(() => t.emit({ id: req.id, ok: true, value: true }));
+    } else if (req.op === 'unsubscribe' || req.op === 'shutdown') {
+      queueMicrotask(() => t.emit({ id: req.id, ok: true, value: true }));
+    }
+  };
+}
+
 describe('IndexWorkerClient (scripted transport)', () => {
   let transport: ScriptedTransport;
   let client: IndexWorkerClient;
@@ -185,19 +200,106 @@ describe('IndexWorkerClient (scripted transport)', () => {
     expect(transport.sent.filter(r => r.op === 'search')).toHaveLength(2);
   });
 
-  it('rejects pending requests and resolves ready() when the worker exits', async () => {
+  it('意外退出：挂起请求被拒、分支镜像立刻失效（绝不返回冻结的旧分支）', async () => {
     const ready = client.ready();
-    transport.emit({ ev: 'sessions', sessions: [] });
+    transport.emit({ ev: 'sessions', sessions: [mkSession('k1')] });
+    transport.emit({ ev: 'tail', key: 'k1', tail: [mkEntry('a')], total: 1 });
     transport.emit({ ev: 'ready' });
     await ready;
+    expect(client.branchTail('k1', 1)).toHaveLength(1);
     const hanging = client.outlineAsync('k1'); // 永不应答
     await Promise.resolve();
     transport.exit(1, 'crashed');
     await expect(hanging).rejects.toThrow(/退出/);
-    // 退出后新请求直接拒绝，而不是永久挂起。
-    await expect(client.searchAsync('k1', 'x')).rejects.toThrow();
-    // 一个全新的 ready() 也不能永久挂起（fatal 已收口）。
-    await expect(client.ready()).resolves.toBeUndefined();
+    // 重启窗口内同步读必须 fail-closed：不能把崩溃前的分支当成现状继续用。
+    expect(() => client.branchTail('k1', 1)).toThrow(IndexUnavailableError);
+    // 元数据列表保留到新快照原子替换（侧栏不闪空），但不再是可信的分支来源。
+    expect(client.scan().map(s => s.key)).toEqual(['k1']);
+    client.close();
+  });
+
+  it('意外退出后有界重启：新 transport 拉起、订阅恢复、新 tail 生效、ready() 重新可用', async () => {
+    vi.useFakeTimers();
+    try {
+      subscribeGeneration = 0;
+      const spawned: ScriptedTransport[] = [];
+      const restartClient = new IndexWorkerClient(
+        { roots: [], ownedRoot: '/tmp/owned', agentDir: '/tmp/agent', outlineCachePath: '/tmp/oc.json' },
+        () => { const t = new ScriptedTransport(); wireSubscribe(t); spawned.push(t); return t; },
+      );
+      const boot = async (t: ScriptedTransport) => {
+        t.emit({ ev: 'sessions', sessions: [mkSession('k1')] });
+        t.emit({ ev: 'ready' });
+      };
+      const first = restartClient.ready();
+      await boot(spawned[0]!);
+      await first;
+      await restartClient.subscribe('k1');
+      expect(restartClient.branchTail('k1', 1).map(e => e.id)).toEqual(['gen0']);
+
+      spawned[0]!.exit(1, 'crashed');
+      expect(() => restartClient.branchTail('k1', 1)).toThrow(IndexUnavailableError);
+
+      // 200ms 退避后拉起第二个 transport
+      await vi.advanceTimersByTimeAsync(200);
+      expect(spawned).toHaveLength(2);
+      const secondReady = restartClient.ready();
+      await boot(spawned[1]!);
+      await secondReady;
+      // 重启后仍被订阅的 key 必须自动重新订阅，且新的尾窗可读
+      expect(spawned[1]!.sent.some(r => r.op === 'subscribe' && r.key === 'k1')).toBe(true);
+      expect(restartClient.branchTail('k1', 1).map(e => e.id)).toEqual(['gen1']);
+      // 重启成功后请求恢复正常
+      spawned[1]!.onRequest = req => { if (req.op === 'search') queueMicrotask(() => spawned[1]!.emit({ id: req.id, ok: true, value: { total: 7, hits: [] } })); };
+      await expect(restartClient.searchAsync('k1', 'x')).resolves.toMatchObject({ total: 7 });
+      restartClient.close();
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('重启次数耗尽后置 fatal：不再重启、后续请求明确拒绝、ready() 不永久挂起', async () => {
+    vi.useFakeTimers();
+    try {
+      const spawned: ScriptedTransport[] = [];
+      const restartClient = new IndexWorkerClient(
+        { roots: [], ownedRoot: '/tmp/owned', agentDir: '/tmp/agent', outlineCachePath: '/tmp/oc.json' },
+        () => { const t = new ScriptedTransport(); wireSubscribe(t); spawned.push(t); return t; },
+      );
+      const first = restartClient.ready();
+      spawned[0]!.emit({ ev: 'sessions', sessions: [] });
+      spawned[0]!.emit({ ev: 'ready' });
+      await first;
+      // 连续崩溃：200ms / 1s / 3s 三次退避重启，第四次退出即放弃
+      for (const delay of [200, 1_000, 3_000]) {
+        spawned[spawned.length - 1]!.exit(1, 'crashed');
+        await vi.advanceTimersByTimeAsync(delay);
+      }
+      expect(spawned).toHaveLength(4); // 首次 + 3 次重启
+      spawned[3]!.exit(1, 'crashed');
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(spawned).toHaveLength(4); // 不再重启
+      await expect(restartClient.searchAsync('k1', 'x')).rejects.toThrow(/停止重试|重启失败/);
+      await expect(restartClient.ready()).resolves.toBeUndefined();
+      restartClient.close();
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('主动 close() 不触发重启', async () => {
+    vi.useFakeTimers();
+    try {
+      const spawned: ScriptedTransport[] = [];
+      const restartClient = new IndexWorkerClient(
+        { roots: [], ownedRoot: '/tmp/owned', agentDir: '/tmp/agent', outlineCachePath: '/tmp/oc.json' },
+        () => { const t = new ScriptedTransport(); wireSubscribe(t); spawned.push(t); return t; },
+      );
+      const first = restartClient.ready();
+      spawned[0]!.emit({ ev: 'sessions', sessions: [] });
+      spawned[0]!.emit({ ev: 'ready' });
+      await first;
+      restartClient.close();
+      spawned[0]!.exit(0, 'shutdown');
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(spawned).toHaveLength(1);
+    } finally { vi.useRealTimers(); }
   });
 
   it('close() shuts the worker down, terminates transport and fails pending calls', async () => {

@@ -14,6 +14,11 @@ interface Pending {
  *  than leave the UI awaiting forever. */
 const REQUEST_TIMEOUT_MS = 120_000;
 
+/** 意外退出后的有界重启：200ms / 1s / 3s，最多 3 次。超过即置 fatal（不再静默
+ *  重试风暴），并在控制台与 main-perf.log 留明确错误。主动 close() 永不重启。 */
+const RESTART_DELAYS_MS = [200, 1_000, 3_000] as const;
+const MAX_RESTARTS = RESTART_DELAYS_MS.length;
+
 /** Main-process side of the session index.
  *
  *  The owner process holds the real cache, watcher and parser. This class keeps only
@@ -38,6 +43,8 @@ export class IndexWorkerClient implements IndexPort {
   private readyPromise: Promise<void> | undefined;
   private fatal: Error | undefined;
   private closing = false;
+  private restartAttempts = 0;
+  private restartTimer: ReturnType<typeof setTimeout> | undefined;
 
   constructor(private readonly config: WorkerConfig, private readonly spawn: (config: WorkerConfig) => IndexTransport) {}
 
@@ -50,16 +57,21 @@ export class IndexWorkerClient implements IndexPort {
   ready(): Promise<void> {
     if (this.readyPromise) return this.readyPromise;
     this.readyPromise = new Promise<void>(resolve => { this.readyResolve = resolve; });
+    this.boot();
+    return this.readyPromise;
+  }
+
+  /** 创建并接线一个 transport（首次启动与崩溃重启共用）。spawn 同步抛错按一次
+   *  失败尝试处理（计入退避重启），不直接置 fatal——偶发的拉起失败值得重试。 */
+  private boot(): void {
+    if (this.fatal || this.closing) return;
     try {
       this.transport = this.spawn(this.config);
       this.transport.onMessage(raw => this.onMessage(raw as WorkerEvent | WorkerReply));
       this.transport.onExit((code, reason) => this.onExit(code, reason));
     } catch (error) {
-      this.fatal = error instanceof Error ? error : new Error(String(error));
-      this.failAll(this.fatal);
-      this.readyResolve?.();
+      this.scheduleRestart(error instanceof Error ? error : new Error(String(error)), `spawn 失败：${error instanceof Error ? error.message : String(error)}`);
     }
-    return this.readyPromise;
   }
 
   scan(includeSidecars = false): PiSession[] {
@@ -143,6 +155,8 @@ export class IndexWorkerClient implements IndexPort {
   }
 
   close(): void {
+    this.closing = true;
+    clearTimeout(this.restartTimer);
     this.subscriptions.clear();
     this.tails.clear();
     this.total.clear();
@@ -201,8 +215,12 @@ export class IndexWorkerClient implements IndexPort {
         this.total.set(event.key, event.total);
         break;
       case 'changed': this.changed?.(); break;
-      case 'ready': this.readyResolve?.(); break;
+      case 'ready':
+        this.onWorkerReady();
+        break;
       case 'fatal':
+        // worker 配置无效等自检失败：重启也是同样结果，直接置 fatal，不重试。
+        clearTimeout(this.restartTimer);
         this.fatal = new Error(event.message);
         this.failAll(this.fatal);
         this.readyResolve?.();
@@ -211,12 +229,62 @@ export class IndexWorkerClient implements IndexPort {
   }
 
   private onExit(code: number | null, reason?: string): void {
-    if (this.fatal) return;
-    // close() 触发的有序退出不算崩溃：只收口，不把后续镜像读标成致命错误。
     if (this.closing) { this.readyResolve?.(); return; }
-    this.fatal = new Error(`会话索引进程已退出（code=${code ?? '?'}${reason ? `, ${reason}` : ''}）`);
-    this.failAll(this.fatal);
-    this.readyResolve?.();
+    if (this.fatal) return;
+    // 意外退出：先拒绝所有挂起请求，并清空分支尾窗镜像——重启完成前任何 branchTail
+    // 必须抛 IndexUnavailableError 走 fail-closed，绝不返回冻结的旧分支。元数据列表
+    // 保留到新 worker 的首个快照原子替换（避免侧栏闪空），随后的 ready 前不做写操作。
+    const detail = `code=${code ?? '?'}${reason ? `, ${reason}` : ''}`;
+    this.failAll(new Error(`会话索引进程意外退出（${detail}）`));
+    this.tails.clear();
+    this.total.clear();
+    this.scheduleRestart(new Error(`会话索引进程意外退出（${detail}）`), detail);
+  }
+
+  /** 有界退避重启。重启窗口期内 ready() 返回新的、未决的 promise；下一次 ready 事件
+   *  （含重新订阅完成）后才 resolve。超过上限才置 fatal。 */
+  private scheduleRestart(cause: Error, detail: string): void {
+    if (this.closing || this.fatal) return;
+    const attempt = ++this.restartAttempts;
+    // 让崩溃后的 ready() 调用等待下一次就绪，而不是拿到早已 resolve 的旧 promise。
+    this.readyPromise = new Promise<void>(resolve => { this.readyResolve = resolve; });
+    if (attempt > MAX_RESTARTS) {
+      this.fatal = new Error(`会话索引进程连续 ${MAX_RESTARTS} 次重启失败，已停止重试：${cause.message}`);
+      this.failAll(this.fatal);
+      this.readyResolve?.();
+      this.logRestart(`fatal：${detail}，放弃重启`);
+      console.error(this.fatal.message);
+      return;
+    }
+    const delay = RESTART_DELAYS_MS[attempt - 1] ?? RESTART_DELAYS_MS[RESTART_DELAYS_MS.length - 1];
+    console.warn(`[index-worker] 会话索引进程退出（${detail}），${delay}ms 后第 ${attempt}/${MAX_RESTARTS} 次重启`);
+    this.logRestart(`意外退出（${detail}），${delay}ms 后第 ${attempt}/${MAX_RESTARTS} 次重启`);
+    clearTimeout(this.restartTimer);
+    this.restartTimer = setTimeout(() => this.boot(), delay);
+    this.restartTimer.unref?.();
+  }
+
+  /** 新 worker 首个快照就绪：重置计数并恢复所有仍被订阅 key 的尾窗，全部到位后
+   *  才放开 ready()——保证 await ready() 返回后 branchTail 立即可读。 */
+  private onWorkerReady(): void {
+    this.restartAttempts = 0;
+    const keys = [...this.subscriptions.keys()];
+    if (!keys.length) { this.readyResolve?.(); return; }
+    Promise.all(keys.map(key => this.request({ op: 'subscribe', key }).catch(() => undefined)))
+      .then(() => this.readyResolve?.())
+      .catch(() => this.readyResolve?.());
+  }
+
+  private logRestart(line: string): void {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const { appendFileSync } = require('node:fs') as typeof import('node:fs');
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const { join } = require('node:path') as typeof import('node:path');
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const { homedir } = require('node:os') as typeof import('node:os');
+      appendFileSync(join(homedir(), 'Library', 'Logs', 'PI Desktop', 'main-perf.log'), `${new Date().toISOString()} index-worker ${line}\n`);
+    } catch { /* 观测不可用不影响重启 */ }
   }
 
   private failAll(error: Error): void {
