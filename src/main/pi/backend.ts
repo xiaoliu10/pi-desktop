@@ -85,6 +85,19 @@ export class PiBackend {
     return run ? { cwd: run.input.cwd, trustProject: run.input.trustProject } : undefined;
   }
   private get(key: string) { const run = this.active.get(key); if (!run) throw new Error('会话未由 Desktop 连接'); return run; }
+  /** Resolve the history target without launching a runtime or writing the external file. */
+  resolveSessionKey(key: string): string {
+    const source = this.index.sessionsView(true).find(s => s.key === key);
+    if (!source) throw new Error('会话不存在、不可读或不在选定目录中。');
+    const map = loadContinuations(this.dataDir);
+    const copy = !source.owned ? this.desktopCopyFor(source.path) : undefined;
+    return fileKey(resolveContinuation(map, copy?.path ?? source.path));
+  }
+  private desktopCopyFor(sourcePath: string) {
+    return this.index.sessionsView(true)
+      .filter(s => s.owned && s.parentSession === sourcePath && s.sidecarOf === undefined)
+      .sort((a, b) => b.updatedAt - a.updatedAt)[0];
+  }
   async connect(input: { sidecarOf?: string; sourceKey?: string; cwd?: string; trustProject: boolean; permission: AccessMode; executionMode?: Exclude<AccessMode, 'plan'>; systemPrompt?: string; tools?: string[]; model?: string }): Promise<PiRun> {
     if (input.executionMode !== undefined && (!isAccessMode(input.executionMode) || (input.executionMode as string) === 'plan')) throw new Error('无效执行模式');
     if (!isAccessMode(input.permission)) throw new Error('无效访问模式');
@@ -135,8 +148,8 @@ export class PiBackend {
         file = continuedPath === canonical(source.session.path) ? source.session.path : continuedPath;
       } else {
         // 外部原件已有 Desktop 副本时，继续最近的那个副本（副本自身被 fork 过则继续其链尾），不再重复 fork。
-        const child = this.index.scan().filter(s => s.owned && s.parentSession === source.session.path)
-          .sort((x, y) => y.updatedAt - x.updatedAt)[0];
+        this.index.scan();
+        const child = this.desktopCopyFor(source.session.path);
         if (child) {
           const childPath = canonical(resolveContinuation(loadContinuations(this.dataDir), child.path));
           const childKey = fileKey(childPath);

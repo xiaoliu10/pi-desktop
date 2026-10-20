@@ -135,6 +135,8 @@ export interface LocalPiApi extends importSettingsApi {
   setSessionArchived(key: string, archived: boolean): Promise<string[]>;
   /** 手动删除归档会话：会话文件移到系统废纸篓（可恢复），索引条目随之清除。 */
   deleteArchivedSession(key: string): Promise<string[]>;
+  /** Read-only routing: resolve an external session to its existing Desktop copy/continuation. */
+  resolveSession(key: string): Promise<string>;
   history(key: string, leafId?: string, opts?: { tail?: number; before?: string; count?: number }): Promise<PiHistory>;
   searchSession(key: string, query: string, opts?: { limit?: number }): Promise<PiSearchResult>;
   sessionOutline(key: string): Promise<PiOutline>;

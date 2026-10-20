@@ -1178,14 +1178,46 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
       set({ pendingSteer: rest });
     }
   };
+  // An external snapshot and its Desktop continuation are one logical conversation.
+  // Redirect reading without sending a message or adding a second navigation step.
+  const adoptHistoryTarget = (sourceKey: string, targetKey: string) => {
+    const current = get();
+    if (current.selectedKey !== sourceKey || current.view !== 'chat') return false;
+    composerFlush?.();
+    const sourceDraft = { text: readComposerLiveDraft(get().draftText), items: get().contextItems };
+    const targetDraft = switchComposerOwner(get, targetKey);
+    const carriesDraft = Boolean(sourceDraft.text || sourceDraft.items.length);
+    if (carriesDraft) composerDrafts.delete(sourceKey);
+    const entries = current.navHistory.entries.map((entry, i) => i === current.navHistory.cursor && entry.view === 'chat' && entry.key === sourceKey ? { ...entry, key: targetKey } : entry);
+    navPlayback = true;
+    try {
+      set({ selectedKey: targetKey, leaf: undefined, history: undefined, earlierLoading: false,
+        review: undefined, outline: [], outlineLoading: false, recoveredSubagents: [],
+        subagentDismissed: current.desktopPreferences?.subagentDismissed?.[targetKey] ?? [],
+        ...(carriesDraft ? { draftText: sourceDraft.text, contextItems: sourceDraft.items } : targetDraft ?? {}),
+        navHistory: { ...current.navHistory, entries } });
+    } finally { navPlayback = false; }
+    return true;
+  };
   const doRefreshHistory = async (attempt = 0): Promise<boolean> => {
     const state = get();
     const api = typeof window !== 'undefined' ? window.localPi : undefined;
-    const key = state.selectedKey;
+    let key = state.selectedKey;
     if (!api || !key) return false;
     const seq = ++loadSeq;
-    const generation = state.runs.find(r => r.key === key)?.generation;
     try {
+      // 幂等：重定向目标本身是 owned 会话，不会再次进入本分支；源快照若已有 run
+      // （预热/连接挂在源 key 上）也不重定向，让 run 的 key 作为这条会话的真相。
+      const source = state.sessions.find(s => s.key === key);
+      if (!state.leaf && source && !source.owned && !state.runs.some(r => r.key === key)) {
+        const targetKey = await api.resolveSession(key);
+        if (seq !== loadSeq || get().selectedKey !== key || get().view !== 'chat' || get().leaf !== state.leaf) return false;
+        if (targetKey !== key) {
+          if (!adoptHistoryTarget(key, targetKey)) return false;
+          key = targetKey;
+        }
+      }
+      const generation = get().runs.find(r => r.key === key)?.generation;
       // 全量历史：用户 2026-10-18 明确要求「打开就有完整对话历史」——tail=500 的首屏
       // 让 27219 条的会话只剩三段可见，是不可接受的回归。主进程 CPU 的治理改由
       // 「刷新节流 + 图片懒加载」承担（不在本提交回退范围内先恢复正确性）。
@@ -1605,6 +1637,7 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
     try {
       const entry = result.entry;
       if (entry.view === 'chat' && entry.key) {
+        ++loadSeq; // Invalidate in-flight reads even for an A -> B -> A round trip.
         setNow({ selectedKey: entry.key, leaf: undefined, history: undefined, earlierLoading: false, review: undefined, view: 'chat', outline: [], outlineLoading: false, ...(switchComposerOwner(getNow, entry.key) ?? {}), recoveredSubagents: [], subagentDismissed: getNow().desktopPreferences?.subagentDismissed?.[entry.key] ?? [], navHistory: result.history });
         refresh();
       } else if (entry.view === 'chat') {
@@ -1975,6 +2008,7 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
       // 切回就能看到；「看得见」由常驻提示条负责，不靠打断切换。真正不可逆的是
       // 断开（disconnectRun），确认只留在那条路径上。
       const draft = switchComposerOwner(get, key);
+      ++loadSeq;
       set((s) => ({ selectedKey: key, leaf: undefined, history: undefined, review: undefined, view: 'chat', ...(draft ?? {}), recoveredSubagents: [], subagentDismissed: s.desktopPreferences?.subagentDismissed?.[key] ?? [] }));
       void refreshHistory();
       get().prewarmSession(key);
@@ -1989,6 +2023,9 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
           const rememberedMode = get().desktopPreferences?.sessionAccessModes?.[key];
           const run = await window.localPi!.connect({ sourceKey: key, trustProject: false, permission: rememberedMode ?? get().desktopPreferences?.permission ?? 'ask' });
           set(st => st.runs.some(r => r.key === run.key) ? st : { runs: [...st.runs, run] });
+          // Prewarming may create/attach a Desktop copy after the first read resolved.
+          // Reconcile through the read-only resolver; never require a prompt to see it.
+          if ((get().selectedKey === key || get().selectedKey === run.key) && get().view === 'chat') void refreshHistory();
         } catch (e) {
           // 预热失败不再完全静默：错误恒挂到该会话 key（与本文件其他错误点同款），
           // 红条只在该会话被选中时显示——归属正确且不会跨会话渗漏。

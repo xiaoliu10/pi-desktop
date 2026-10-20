@@ -316,6 +316,7 @@ function registerIpc() {
   });
   handle('sidecarBinding', mainKey => host.sidecar.bindingOf(mainKey));
   const rendererHistory = new RendererHistory();
+  handle('resolveSession', key => host.backend.resolveSessionKey(key));
   handle('history', (key, leaf, opts) => rendererHistory.project(host.index.history(key, leaf, opts)));
   handle('searchSession', (key, query, opts) => host.index.searchSession(key, query, opts));
   handle('sessionOutline', key => host.index.sessionOutline(key));
