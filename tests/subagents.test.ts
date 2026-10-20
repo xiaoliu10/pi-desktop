@@ -55,3 +55,41 @@ it('does not duplicate subagents already in the session file', () => {
   expect(out).toHaveLength(1);
   expect(out[0].status).toBe('completed');
 });
+
+it('projects real startedAt onto live subagents so the panel elapsed timer renders', () => {
+  const startedAt = Date.parse('2026-10-20T09:00:00Z');
+  const updatedAt = Date.parse('2026-10-20T09:00:30Z');
+  const recovered = [{ callId: 'call-1', status: 'completed', startedAt, updatedAt, details: { runId: 'wf-live' } }];
+  const out = projectSubagents(messages(part('result', [result()])), false, recovered as any);
+  expect(out[0].startedAt).toBe(startedAt);
+  // live 路径终态以会话文件 adapter 状态为准（completed），结束时刻可取磁盘 lastUpdate。
+  expect(out[0].status).toBe('completed');
+  expect(out[0].endedAt).toBe(updatedAt);
+});
+
+it('does not let a stale running disk snapshot override a live completed state for endedAt', () => {
+  const startedAt = Date.parse('2026-10-20T09:00:00Z');
+  const updatedAt = Date.parse('2026-10-20T09:00:30Z');
+  const stale = [{ callId: 'call-1', status: 'running', startedAt, updatedAt, details: { runId: 'wf-live' } }];
+  const out = projectSubagents(messages(part('result', [result()])), false, stale as any);
+  expect(out[0].status).toBe('completed'); // adapter 权威
+  expect(out[0].endedAt).toBeUndefined();  // 磁盘仍 running → 不编造结束时刻
+  expect(out[0].startedAt).toBe(startedAt);
+});
+
+it('uses rec.status for recovered-only children and derives endedAt from lastUpdate', () => {
+  const startedAt = Date.parse('2026-10-20T09:00:00Z');
+  const updatedAt = Date.parse('2026-10-20T09:02:00Z');
+  const recovered = [{ callId: 'call-9', status: 'failed', startedAt, updatedAt, details: { mode: 'single', agentScope: 'user', projectAgentsDir: null, results: [result('scout', 1)] } }];
+  const out = projectSubagents(messages(), false, recovered as any);
+  expect(out).toHaveLength(1);
+  expect(out[0].startedAt).toBe(startedAt);
+  expect(out[0].endedAt).toBe(updatedAt);
+});
+
+it('omits timing when the snapshot has no usable startedAt (never fabricates)', () => {
+  const recovered = [{ callId: 'call-1', status: 'completed', details: { runId: 'wf-x' } }];
+  const out = projectSubagents(messages(part('result', [result()])), false, recovered as any);
+  expect(out[0].startedAt).toBeUndefined();
+  expect(out[0].endedAt).toBeUndefined();
+});
