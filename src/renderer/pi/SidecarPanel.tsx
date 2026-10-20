@@ -128,7 +128,9 @@ export function SidecarPanel({ mainKey, autoStart, onClose }: { mainKey: string;
       if (inFlight) { again = true; return; }
       inFlight = true;
       try {
-        const value = await window.localPi!.history(key);
+        // tail 500 与主对话同口径：不带 tail 的 history 会让 worker 回传全量 branch
+        // （大会话 MB 级跨进程克隆，流式期间每 180ms 一次）；窗口是硬约束不是建议。
+        const value = await window.localPi!.history(key, undefined, { tail: 500 });
         if (!cancelled) { setHistory(value); setHistoryError(undefined); }
       } catch (e) { if (!cancelled) setHistoryError(String((e as Error).message ?? e)); }
       finally { inFlight = false; if (again && !cancelled) { again = false; void load(); } }

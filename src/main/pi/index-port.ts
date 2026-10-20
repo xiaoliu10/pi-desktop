@@ -1,5 +1,6 @@
 import type { PiEntry, PiHistory, PiOutline, PiSearchResult, PiSession } from '../../shared/pi';
 import type { SubagentSnapshot } from './subagent-snapshots';
+import type { UsageStats } from './usage-stats';
 
 /** Transport-neutral surface the Desktop main process depends on for session data.
  *
@@ -28,6 +29,16 @@ export interface IndexPort {
   /** Last `n` entries of the cached branch tip. Throws `IndexUnavailableError` when the
    *  key is not mirrored locally — it never returns a silently truncated result. */
   branchTail(key: string, n: number): PiEntry[];
+  /** 事件时刻的分支窗口（异步 owner 读）：worker 内走 `history()` 的增量解析，读到刚
+   *  落盘的真值。同步镜像读只由 owner 的 `changed` 推送刷新（最坏滞后 = watch 120ms
+   *  debounce + IPC），而 pi 的 RPC 事件（compaction_end / agent_settled）在写完文件后
+   *  立刻经另一条通道到达——事件时刻镜像大概率落后至少一条，消费方必须用这个异步读，
+   *  不能读镜像。失败抛错走调用方既有 fail-closed 分支。 */
+  branchTailAsync(key: string, n: number): Promise<PiEntry[]>;
+  /** 用量统计：在 owner 内按需读取/聚合会话文件，只回聚合结果（几百字节）。主进程
+   *  不做任何会话文件 IO（旧实现在主线程 readFileSync 所有会话，1.1GB 数据集 ≈ 3-4s
+   *  主线程独占）。 */
+  usageStatsAsync(now?: Date): Promise<UsageStats>;
 
   /** Renderer-facing history. `tail`/`before`/`count` keep the payload bounded and the
    *  reply already carries the Desktop transport projection. */

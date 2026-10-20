@@ -24,7 +24,7 @@ export class PiHost {
   backend: PiBackend;
   sidecar: SidecarService;
   private resourcesTimer?: ReturnType<typeof setInterval>;
-  private usage = new UsageStatsService(() => this.index.scan());
+  private usage = new UsageStatsService(() => this.index.usageStatsAsync());
   constructor(dataDir: string, private policyPath: string, private emit: (e: PiEvent) => void, private sharedSkillsDir?: string, private appVersion?: string) {
     this.dataDir = dataDir;
     try { this.preferences = JSON.parse(fs.readFileSync(path.join(dataDir, 'pi-desktop.json'), 'utf8')); } catch { this.preferences = {}; }
@@ -32,7 +32,7 @@ export class PiHost {
     this.index = this.createIndex();
     this.backend = new PiBackend(this.environment, this.index, ownedRootOf(this.environment), policyPath, emit, this.dataDir);
     this.sidecar = new SidecarService(this.backend, this.index, this.dataDir, emit);
-    void this.index.start(() => emit({ type: 'sessions-changed' }));
+    void this.index.start(() => this.emit({ type: 'sessions-changed' }));
     let stamp = '';
     // 30s + 异步 stat：旧版 2.5s 周期、每个 run 的 .pi 做 6 次同步 statSync
     // ——大会话打字卡顿「CPU 不高」的实证来源（fs_usage 不可用时，main-perf.log
@@ -57,7 +57,7 @@ export class PiHost {
       }).catch(() => undefined).finally(() => { inFlight = false; });
     }, 30_000); this.resourcesTimer.unref();
   }
-  configure(input: PiPreferences) {
+  async configure(input: PiPreferences): Promise<PiEnvironment> {
     if (this.backend.runs().length) throw new Error('请先断开所有桌面会话再修改连接配置。');
     if (!input || typeof input !== 'object') throw new Error('配置无效');
     for (const key of ['executable', 'agentDir'] as const) if (input[key] !== undefined && typeof input[key] !== 'string') throw new Error('路径必须为字符串');
@@ -82,9 +82,16 @@ export class PiHost {
     this.accounts.dispose(); this.backend.dispose(); this.index.close();
     this.environment = this.withAppVersion(discoverPi(this.preferences));
     this.index = this.createIndex();
+    this.usage = new UsageStatsService(() => this.index.usageStatsAsync());
     this.backend = new PiBackend(this.environment, this.index, ownedRootOf(this.environment), this.policyPath, this.emit, this.dataDir);
     this.sidecar = new SidecarService(this.backend, this.index, this.dataDir, this.emit);
-    void this.index.start(() => this.emit({ type: 'sessions-changed' })); this.emit({ type: 'sessions-changed' });
+    void this.index.start(() => this.emit({ type: 'sessions-changed' }));
+    // P1-4：新 client 的镜像为空，渲染层 configure 返回后立即 reloadSessions——必须等
+    // 首个快照就绪再返回并广播，reloadSessions 拿到的才是真实列表，侧栏不清空。（client
+    // 在首个快照上也会经 changed 触发一次广播，这里再发一次是幂等的双保险；handle(
+    // 'configure') 经统一入口透传 Promise，调用方 await 不变。）
+    await this.index.ready();
+    this.emit({ type: 'sessions-changed' });
     return this.environment;
   }
   /** 会话索引住在 utility process（见 index-worker-entry）；roots/owned/agentDir 与
@@ -97,7 +104,7 @@ export class PiHost {
       cfg => utilityTransport(cfg, path.join(__dirname, 'index-worker-entry.js')),
     );
   }
-  /** 镜像元数据首次快照就绪：窗口创建/首个 sessions IPC 前 await，侧栏第一屏不为空。 */
+  /** 首个 sessions IPC 等镜像快照；窗口创建不等待此 Promise（冷扫期间显示加载态）。 */
   ready(): Promise<void> { return this.index.ready(); }
   /** Re-discover the pi runtime after an upgrade, without changing saved preferences. */
   refreshEnvironment(): PiEnvironment {

@@ -20,6 +20,10 @@ export class RendererHistory {
     return result;
   }
 
+  /** 分页投影入口（remotePage）：单页 branch 过同一套传输投影，手机端 viewer 不渲染
+   *  base64，几十 MB 的截图页没理由跨进程。 */
+  projectPage(branch: PiEntry[]): PiEntry[] { return this.projectEntries(branch); }
+
   private projectEntries(entries: PiEntry[]): PiEntry[] {
     const hit = this.arrays.get(entries);
     if (hit) return hit;

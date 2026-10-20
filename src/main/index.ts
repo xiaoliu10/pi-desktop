@@ -306,7 +306,10 @@ function registerIpc() {
     broadcast({ type: 'sessions-changed' });
     return result;
   });
-  handle('sessions', () => {
+  handle('sessions', async () => {
+    // 首屏保持 renderer 现有 loading（ready=false），窗口本身不等索引冷扫。
+    // waiter 在就绪/fatal/close 必 settle，首次快照同时广播 sessions-changed。
+    await host.ready();
     // cache 视图而非全量 scan：流式期间 signature 每 120ms 变化触发 renderer 重拉，
     // 每次 scan 全量 walk（244ms 同步）会把主进程打满（实测 text-input 排队 616ms）。
     const sessions = host.index.sessionsView();
@@ -682,9 +685,6 @@ void app.whenReady().then(async () => {
   if(!primaryInstance)return;
   const policy = app.isPackaged ? path.join(process.resourcesPath, 'desktop-policy/index.mjs') : path.join(app.getAppPath(), 'extensions/desktop-policy/index.mjs');
   host = new PiHost(app.getPath('userData'), policy, broadcast, process.env.PI_SMOKE_SETTINGS ? path.join(app.getPath('userData'), 'shared-skills') : undefined, app.getVersion());
-  // 等索引 worker 首个元数据快照再创建窗口/响应首个 sessions IPC：侧栏第一屏就是
-  // 真实列表而不是空列表闪一下（worker 已随 host 构造启动，冷扫期间这里是唯一等待点）。
-  await host.ready();
   // 内置资源：办公技能（pptx/docx/xlsx/pdf）+ 提示词模板（/周报、/报错定位等，
   // 同步进 <agentDir>/prompts 被 pi 转成斜杠命令）。打包取 extraResources，dev 取仓库 resources。
   // 必须在 PiHost 构造之后：environment（含 agentDir 偏好覆盖）在构造期急切解析。
@@ -714,6 +714,12 @@ void app.whenReady().then(async () => {
     if (renamed && !prefs.sessionRenames?.[toKey]) settings.savePreferences({ sessionRenames: { ...prefs.sessionRenames, [toKey]: renamed } });
   };
   registerIpc();
+  // P0-1/P1-5：窗口创建不再压在索引就绪之后。冷扫（真实数据集实测 6.7s/1.1GB）期间
+  // 渲染层用加载态承担首屏；更关键的是 worker 启动失败（打包丢 entry/冷扫期 OOM）时，
+  // 旧写法 await host.ready() 永久挂起 → 应用只有 dock 图标、永不建窗、无任何提示。
+  // ready() 现保证必 settle（P0-1 waiter 列表），这里只做「就绪后补广播」：镜像就绪后
+  // 已加载的侧栏拉到真实列表（客户端首个快照也经 changed → sessions-changed，这里幂等兜底）。
+  void host.ready().then(() => broadcast({ type: 'sessions-changed' })).catch(() => undefined);
   // 更新检查不跑 smoke：smoke 快速退出，无需网络请求。状态推送进 registerIpc 里注册的回调闭包。
   if (!process.env.PI_SMOKE) {
     updateChecker = startUpdateChecker({
@@ -740,6 +746,8 @@ void app.whenReady().then(async () => {
     if (!dockIcon.isEmpty()) app.dock.setIcon(dockIcon);
   }
   if (process.env.PI_SMOKE === '1') {
+    // smoke 日志断言会话数：保持旧行为等首个快照（P0-1 修复后 ready() 必 settle，不会永久挂起）。
+    await host.ready();
     console.log('[smoke] pi host booted; version:', host.environment.version, 'sessions:', host.index.scan().length);
     host.dispose(); app.exit(0); return;
   }

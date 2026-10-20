@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import type { PiEvent, PiRun, PiSession } from '../../shared/pi';
+import { OversizedSessionError } from './session-size';
 import type { PiBackend } from './backend';
 import type { IndexPort } from './index-port';
 import { sidecarSummaryPrompt } from './sidecar-summary';
@@ -123,6 +124,9 @@ export class SidecarService {
   private requireBoundSession(bound: string): PiSession {
     const session = this.index.sessionMeta(bound);
     if (!session) throw new Error('会话不存在、不可读或不在选定目录中。');
+    // 超限降级会话只有元数据：resume 后续读取必抛 OversizedSessionError，与旧 history()
+    // 的 fail-closed 同口径在此提前拦截（结构化字段判定，与 backend.requireSourceSession 一致）。
+    if (session.oversized) throw new OversizedSessionError(session.path, session.size);
     return session;
   }
 

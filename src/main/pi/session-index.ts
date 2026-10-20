@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto';
 import type { PiEntry, PiHistory, PiOutline, PiOutlineItem, PiSearchHit, PiSearchResult, PiSession } from '../../shared/pi';
 import { OutlineCache } from './outline-cache';
 import { MAX_SESSION, OversizedSessionError, sessionStub } from './session-size';
+import { computeUsageStats, type UsageStats } from './usage-stats';
 import { recoverSubagents, subagentChildTranscript } from './official-subagent';
 import { historyWindow } from './history-window';
 /** 大于该值的会话文件变更时只更新元数据、延后全量解析：流式期间活动会话每个 delta
@@ -348,6 +349,12 @@ export class SessionIndex {
     const branch = this.history(key).branch;
     return n >= branch.length ? [...branch] : branch.slice(branch.length - n);
   }
+  /** 事件时刻的 owner 读：与 branchTail 同口径（history() 快路径增量消费文件尾部），
+   *  只是异步签名——跨进程时由 worker op 承载（见 index-worker-protocol）。 */
+  async branchTailAsync(key: string, n: number): Promise<PiEntry[]> { return this.branchTail(key, n); }
+  /** 用量统计在 owner 内聚合（按需读取文件）：主进程只收聚合结果，不做任何会话文件 IO。
+   *  now 与 computeUsageStats 默认值一致（调用方可注入确定时钟）。 */
+  async usageStatsAsync(now?: Date): Promise<UsageStats> { return computeUsageStats(this.scan(), now); }
   branchLength(key: string): number {
     const cached = this.cache.get(key)?.history;
     if (!cached) throw new Error('Session unavailable');
@@ -861,7 +868,7 @@ export class SessionIndex {
           if (!stub || !stamped) return;
           const { stat, stamp } = stamped;
           const degraded = {
-            session: { key, id: String(stub.header.id ?? key), path: file, cwd: String(stub.header.cwd ?? path.dirname(file)), name: String(stub.firstUserText || '未命名 pi 会话').slice(0, 180), updatedAt: stat.mtimeMs, size: stat.size, warnings: [err.message], owned: file.startsWith(canonical(this.ownedRoot) + path.sep), parentSession: typeof stub.header.parentSession === 'string' ? stub.header.parentSession : this.nestedParents.get(file), sidecarOf: path.basename(file).startsWith('sidecar_') ? '' : undefined } as PiSession,
+            session: { key, id: String(stub.header.id ?? key), path: file, cwd: String(stub.header.cwd ?? path.dirname(file)), name: String(stub.firstUserText || '未命名 pi 会话').slice(0, 180), updatedAt: stat.mtimeMs, size: stat.size, warnings: [err.message], owned: file.startsWith(canonical(this.ownedRoot) + path.sep), parentSession: typeof stub.header.parentSession === 'string' ? stub.header.parentSession : this.nestedParents.get(file), sidecarOf: path.basename(file).startsWith('sidecar_') ? '' : undefined, oversized: true } as PiSession,
             entries: [], branch: [], leaves: [], leafId: null as string | null, syncedAt: Date.now(),
           };
           this.oversized.add(degraded);

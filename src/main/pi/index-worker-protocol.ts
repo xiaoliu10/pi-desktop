@@ -1,5 +1,6 @@
 import type { PiEntry, PiHistory, PiOutline, PiSearchResult, PiSession } from '../../shared/pi';
 import type { SubagentSnapshot } from './subagent-snapshots';
+import type { UsageStats } from './usage-stats';
 
 /** Wire protocol between the Electron main process and the session-data utility process.
  *
@@ -17,6 +18,8 @@ export interface WorkerConfig {
 
 export type WorkerRequest =
   | { id: number; op: 'history'; key: string; leaf?: string; tail?: number; before?: string; count?: number }
+  | { id: number; op: 'branchTail'; key: string; n: number }
+  | { id: number; op: 'usageStats'; now?: number }
   | { id: number; op: 'remotePage'; key: string; before: string | null; page: number }
   | { id: number; op: 'search'; key: string; query: string; limit?: number }
   | { id: number; op: 'outline'; key: string }
@@ -39,7 +42,7 @@ export type WorkerEvent =
   /** Full metadata snapshot (sidecars included; the client filters). Already sorted. */
   | { ev: 'sessions'; sessions: PiSession[] }
   /** Bounded recent-branch window for a subscribed key. */
-  | { ev: 'tail'; key: string; tail: PiEntry[]; total: number }
+  | { ev: 'tail'; key: string; tail: PiEntry[]; total: number; unavailable?: true }
   /** Metadata snapshot applied; wake the `start()` change callback. */
   | { ev: 'changed' }
   /** First scan finished; mirror reads are trustworthy from here on. */
@@ -51,6 +54,8 @@ export type ReplyValue =
   | PiOutline
   | PiSearchResult
   | SubagentSnapshot[]
+  | PiEntry[]
+  | UsageStats
   | { unchanged: true }
   | { messages: Record<string, unknown>[]; truncated: boolean }
   | { error: string }

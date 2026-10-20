@@ -91,7 +91,8 @@ export class PiBackend {
     const session = this.index.sessionMeta(key);
     if (!session) throw new Error('会话不存在、不可读或不在选定目录中。');
     // 超限降级会话只有元数据：history() 旧实现在此抛 OversizedSessionError，保持同口径。
-    if (session.warnings?.some(w => /超过 \d+ MiB 读取上限/.test(w))) throw new OversizedSessionError(session.path, session.size);
+    // 结构化字段（session-index 在降级时打标）；不得靠 warnings 文案正则猜——文案一改就静默失效。
+    if (session.oversized) throw new OversizedSessionError(session.path, session.size);
     return session;
   }
   private get(key: string) { const run = this.active.get(key); if (!run) throw new Error('会话未由 Desktop 连接'); return run; }
@@ -169,6 +170,8 @@ export class PiBackend {
     }
     return this.launch({ cwd, file, origin, sidecarOf: input.sidecarOf, trustProject: input.trustProject, permission: input.permission, executionMode: input.executionMode, systemPrompt: input.systemPrompt, tools: input.tools, model: input.model });
   }
+  private compactionStarts = new WeakMap<Running, number>();
+  private compactionAnchors = new WeakMap<Running, number>();
   private contextRequests = new WeakMap<Running, number>();
   /** 上次明细拉取时间：get_messages 会序列化全量消息（大会话 MB 级），pi 与主进程都会被阻塞，
    *  流式期间按调用频率拉会把事件流掐出空窗（表现为进度卡住后集中刷出）。 */
@@ -434,9 +437,10 @@ export class PiBackend {
       this.emit({ type: 'closed', key, generation, ...(run.input.sidecarOf !== undefined ? { sidecarOf: run.input.sidecarOf } : {}) });
     });
     let firstFrameScope = true; // get_state 阶段标记：超时 append 只贴在首帧阶段
-    // 镜像尾窗订阅：onEvent（compaction_end / agent_settled）与 forceSettle 都在
-    // 已连接会话的分支尖端同步读 1/8/64 条。放在所有 client 事件回调挂载之后、首帧
-    // 请求之前——既不漏事件，也赶在 pi 产出正文前就位。worker 内是内存查询，仅一次
+    // 镜像尾窗订阅：compaction_end / agent_settled / 重试定时器的事件时刻读取都走
+    // branchTailAsync（owner 内增量解析，读到刚落盘真值——事件时刻镜像必然落后，
+    // 见 backend 内各读点注释）。订阅放在所有 client 事件回调挂载之后、首帧请求之前
+    // ——既不漏事件，也赶在 pi 产出正文前就位。worker 内是内存查询，仅一次
     // IPC 往返；失败不阻塞会话启动，镜像读取处全部 try/catch fail-closed。
     await this.index.subscribe(key).catch(() => undefined);
     try {
@@ -511,15 +515,18 @@ export class PiBackend {
         run.lastEventAt = Date.now();
         return;
       }
-      this.forceSettle(run);
+      // forceSettle 内部走异步 owner 读（事件/哨兵时刻镜像必落后，见 forceSettle 注释）。
+      await this.forceSettle(run);
     } finally {
       run.verifying = false;
     }
   }
   /** 结算事件丢失时的就地收尾：与 agent_settled 的非中间态分支同语义（队列还原、计时收口、
    *  上下文刷新、挂起切换下发、续发派发），endedAt 尽量取转写末条真实时间而非纠正时刻，
-   *  计时条停在与真实完成一致的用时上。 */
-  private forceSettle(run: Running) {
+   *  计时条停在与真实完成一致的用时上。
+   *  读末条时间戳必须走异步 owner 读（branchTailAsync）：哨兵触发时镜像大概率落后一条
+   *  （落盘→镜像可见实测 ≥131ms），同步镜像读会拿到上一条时间戳，计时条静默少算。 */
+  private async forceSettle(run: Running): Promise<void> {
     const key = run.view.key;
     if (this.active.get(key) !== run || run.view.status !== 'running') return;
     run.outputPerformance.clear();
@@ -531,12 +538,18 @@ export class PiBackend {
       run.lastEventAt = Date.now();
       return;
     }
+    const epoch = run.stopEpoch;
+    const eventsAtRead = run.eventCount;
+    const generation = run.view.generation;
+    const current = () => this.active.get(key) === run && run.stopEpoch === epoch
+      && run.view.generation === generation && run.view.status === 'running' && run.eventCount === eventsAtRead;
     let endedAt = Date.now();
     try {
-      const last = this.index.branchTail(key, 1).at(-1);
+      const last = (await this.index.branchTailAsync(key, 1)).at(-1);
       const ts = last?.timestamp ? Date.parse(last.timestamp) : NaN;
       if (Number.isFinite(ts) && ts > (run.view.timing?.startedAt ?? 0) && ts <= endedAt) endedAt = ts;
-    } catch { /* 镜像尾窗不可用时退回当前时刻（fail closed，不伪造时间戳）。 */ }
+    } catch { /* owner 读不可用时退回当前时刻（fail closed，不伪造时间戳）。 */ }
+    if (!current()) return;
     if (run.view.timing && run.view.timing.endedAt === undefined) run.view.timing = { ...run.view.timing, endedAt };
     run.view.queue = [...run.deferredQueue]; run.view.pending = run.deferredQueue.length; run.queueImages = [];
     run.view.status = 'idle';
@@ -625,25 +638,45 @@ export class PiBackend {
       run.view.planReady = false;
     }
     // 压缩状态贯通到渲染层：过程列表据此显示「正在压缩上下文」。
-    if (event.type === 'compaction_start') run.view.compacting = true;
+    if (event.type === 'compaction_start') {
+      run.view.compacting = true;
+      this.compactionStarts.set(run, Date.now());
+    }
     if (event.type === 'compaction_end') {
       run.view.compacting = false;
       // 压缩后 tokens 直接取 result.estimatedTokensAfter（与 tokensBefore 同一投影估算口径；
       // 留痕时 getContextUsage 为 null，stats 轮询拿不到）。失败/中止压缩 result 为 undefined，
-      // 不发记录（desktop-policy 也没写留痕，无锚点可匹配）。at/contextWindow 取刚落盘的
-      // 留痕 entry（session_compact 扩展先于 compaction_end await 完成落盘）。
+      // 不发记录（desktop-policy 也没写留痕，无锚点可匹配）。
+      // 留痕条目刚随压缩落盘（session_compact 扩展先于 compaction_end await 完成落盘），
+      // 而镜像由 changed 推送刷新（落盘→可见实测 ≥131ms）——事件时刻同步镜像读必然
+      // 命中不到留痕或命中上一次压缩的旧留痕。必须走异步 owner 读（增量解析读真值）。
       if (event.result) {
-        try {
-          const entry = [...this.index.branchTail(key, 64)].reverse().find((e: any) => e.customType === 'desktop-compaction');
-          const tokensAfter = Number(event.result.estimatedTokensAfter);
-          if (!(tokensAfter > 0)) return; // 字段缺失/非法时 fail closed：留痕退化为「压缩前」口径
-          this.emit({
-            type: 'compaction-record', key, generation,
-            at: Number((entry as any)?.data?.at) || Date.now(),
-            tokensAfter,
-            contextWindow: Number((entry as any)?.data?.contextWindow) || 0,
-          });
-        } catch { /* 会话文件不可读时放弃回填，留痕退化为「压缩前」口径（fail closed） */ }
+        const compactionStartedAt = this.compactionStarts.get(run);
+        const tokensAfter = Number(event.result.estimatedTokensAfter);
+        if (!(tokensAfter > 0)) return; // 字段缺失/非法时 fail closed：留痕退化为「压缩前」口径
+        const epoch = run.stopEpoch;
+        void (async () => {
+          let entry: import('../../shared/pi').PiEntry | undefined;
+          try {
+            entry = [...await this.index.branchTailAsync(key, 64)].reverse().find((e: import('../../shared/pi').PiEntry) => e.customType === 'desktop-compaction');
+          } catch { return; } // owner 读不可用：放弃回填，留痕退化为「压缩前」口径（fail closed）
+          // 拿不到留痕条目就不发事件：伪造 at=Date.now()/contextWindow=0 是 AGENTS.md
+          // 禁止的兜底——渲染层本就有「不匹配则退化为压缩前口径」的分支，不发比发错更安全。
+          // 留痕发生在 compaction_end 前（同一次扩展调用），历史压缩留痕不可回填本次。
+          const data = entry?.data as Record<string, unknown> | undefined;
+          const at = Number(data?.at);
+          const contextWindow = Number(data?.contextWindow);
+          if (!(at > 0) || !(contextWindow > 0)) return;
+          // 精确的轮次边界（不是「多等一会/放宽窗口」）：留痕必须在本次 start 后，
+          // 且同一锚点不能再次冒充后一次 compaction_end。
+          if (compactionStartedAt !== undefined && at < compactionStartedAt) return;
+          if ((this.compactionAnchors.get(run) ?? 0) >= at) return;
+          // 异步往返期间的代际守卫（沿用文件里 generation/stopEpoch 的 current() 口径）：
+          // 会话已断开/重连/进入停止流程的结论一律丢弃。
+          if (this.active.get(key) !== run || run.stopEpoch !== epoch || run.view.generation !== generation) return;
+          this.compactionAnchors.set(run, at);
+          this.emit({ type: 'compaction-record', key, generation, at, tokensAfter, contextWindow });
+        })();
       }
     }
     if (event.type === 'agent_settled') {
@@ -654,10 +687,25 @@ export class PiBackend {
       if (intermediateSettlement) {
         run.view.status = 'running';
         if (!run.retryEntryId) {
-          try {
-            const entry = [...this.index.branchTail(key, 64)].reverse().find(e => e.type === 'message' || e.type === 'custom_message');
-            if (entry?.message?.role === 'assistant' && entry.message.stopReason === 'error') run.retryEntryId = entry.id;
-          } catch { /* The timer fails closed if no persisted failed entry is available. */ }
+          // 失败 assistant 条目是本轮最后一条，事件到达时镜像停在它之前（同 compaction_end：
+          // 落盘→镜像可见 ≥131ms），同步镜像读会拿到 stopReason≠error 的上一条，重试组以
+          // 「重试上下文已变化」误报收场。走异步 owner 读刚落盘的真值。
+          const epoch = run.stopEpoch;
+          const activity = run.activity;
+          const retryState = run.retry.state;
+          const current = () => this.active.get(key) === run && run.stopEpoch === epoch
+            && run.view.generation === generation && run.activity === activity && run.retry.state === retryState;
+          void (async () => {
+            let entry: import('../../shared/pi').PiEntry | undefined;
+            try {
+              entry = [...await this.index.branchTailAsync(key, 64)].reverse().find(e => e.type === 'message' || e.type === 'custom_message');
+            } catch { return; } /* owner 读不可用：定时器保持 fail-closed（无已持久化的失败条目不猜 id） */
+            if (!entry) return;
+            // 异步往返期间的代际守卫；retryEntryId 已被其它路径赋值时也不覆盖。
+            if (!current()) return;
+            if (run.retryEntryId) return;
+            if (entry.message?.role === 'assistant' && entry.message.stopReason === 'error') run.retryEntryId = entry.id;
+          })();
         }
       } else {
         if (run.view.timing) run.view.timing = { ...run.view.timing, endedAt: Date.now() };
@@ -793,7 +841,9 @@ export class PiBackend {
     if (!current()) return;
     if (!run.retryReady) throw new Error('Desktop 安全续接扩展未就绪，未自动重放任务。');
     // Read the persisted active branch tip, not the last UI message or abandoned leaves.
-    const entry = [...this.index.branchTail(key, 8)].reverse().find(e => e.type === 'message' || e.type === 'custom_message');
+    // 异步 owner 读：定时器触发时同样可能镜像落后（与 onEvent 同源），且本函数本就是 async。
+    const entry = [...await this.index.branchTailAsync(key, 8)].reverse().find(e => e.type === 'message' || e.type === 'custom_message');
+    if (!current()) return;
     if (!failedEntryId || entry?.id !== failedEntryId || entry.message?.role !== 'assistant' || entry.message.stopReason !== 'error') throw new Error('重试上下文已变化，未自动重放任务。');
     const state = await run.client.request('get_state', {}, 5_000);
     if (!current()) return;

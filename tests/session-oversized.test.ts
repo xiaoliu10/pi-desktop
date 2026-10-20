@@ -41,6 +41,7 @@ describe('超限会话不再从侧栏消失', () => {
     expect(found!.cwd).toBe(root);
     expect(found!.name).toContain('第一个问题');
     expect(found!.warnings.join(' ')).toMatch(/读取上限/);
+    expect(found!.oversized).toBe(true); // P2-4 结构化标记，消费方不解析 warnings 文案
     // 全量读取拒绝并给出可执行提示（列表可见 ≠ 可载入历史）
     expect(() => index.history(fileKey(file))).toThrow(/读取上限/);
   });

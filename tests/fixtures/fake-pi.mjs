@@ -78,6 +78,13 @@ function handle(r) {
   if(r.message === '/boundary') { send({type:'message_end',message:{role:'assistant',stopReason:'stop',content:[{type:'text',text:'step done'}]}}); return ok({}); }
   if(r.message === '/compact-start') { ok({}); streaming=true; send({type:'compaction_start'}); return; }
   if(r.message === '/compact-end') { streaming=false; send({type:'compaction_end'}); send({type:'agent_settled'}); return ok({}); }
+  if(r.message === '/compact-end-noentry') {
+   // 压缩有 result 但留痕条目缺失（桌面策略扩展写入失败/被裁剪的形状）：主进程必须
+   // fail-closed 不发记录，而不是伪造 at=now / contextWindow=0。
+   streaming=false;
+   send({type:'compaction_end',reason:'threshold',aborted:false,willRetry:false,result:{summary:'ok',firstKeptEntryId:'x',tokensBefore:615000,estimatedTokensAfter:35000}});
+   send({type:'agent_settled'}); return ok({});
+  }
   if(r.message === '/compact-end-result') {
     streaming=false;
     // 模拟 desktop-policy 扩展的留痕（session_compact 先于 compaction_end 落盘）。

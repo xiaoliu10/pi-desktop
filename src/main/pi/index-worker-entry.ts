@@ -5,12 +5,19 @@ import { RendererHistory } from './renderer-history';
 import type { PiEntry, PiSession } from '../../shared/pi';
 import type { WorkerConfig, WorkerEvent, WorkerReply, WorkerRequest } from './index-worker-protocol';
 
-/** Byte budget for the branch window mirrored into the main process. The three
- *  synchronous main-side lookups (settle timestamp, compaction record, retry entry)
- *  all read near the branch tip, so a bounded window is sufficient — and keeping it
- *  byte-capped stops base64 images in large sessions from being cloned on every append. */
+/** 镜像尾窗预算。主进程同步镜像读的消费方窗口：backend 四处 ≤ 64 条（settle 1 /
+ *  压缩留痕 64 / 重试条目 64/8），sidecar 摘要 256 条。条目数保底（64 条无条件镜像）
+ *  之后才受字节预算约束——字节裁剪掉的尾部窗口由 client 用 total fail-closed，不静默少回。 */
 const TAIL_ENTRIES = 256;
 const TAIL_BYTES = 4 * 1024 * 1024;
+const TAIL_FLOOR_ENTRIES = 64;
+/** 单条镜像条目的序列化上限：投影（裁 base64/超长文本）后仍超限的条目只镜像骨架
+ *  {type,id,parentId,timestamp,customType} + 长度标记——主进程三处同步查找只需要
+ *  身份与时间戳，12MB 的单条 toolResult 不能把整窗预算吃光（实测 p15 镜像=12MB）。 */
+const MIRROR_ENTRY_BYTES = 16 * 1024;
+/** 镜像内文本块的单块上限。镜像只用于：找条目身份、读时间戳、sidecar 摘要文本
+ *  （每条 ≤600 字），长文本过界纯属浪费；截断必须带标记，不得静默。 */
+const MIRROR_TEXT_CAP = 4_000;
 
 export interface IndexWorkerHandle {
   index: SessionIndex;
@@ -28,22 +35,35 @@ export interface IndexWorkerHandle {
  *  replies are one `HISTORY_PAGE_SIZE`-bounded page, search/outline/subagent results are
  *  bounded aggregates, and `forkCopySource` serialises the full entries straight to disk
  *  in here and returns only `{ path, entries }`. `emit` is the only way out; the main
- *  process keeps bounded mirrors (metadata + a byte-capped branch-tail window). */
+ *  process keeps bounded mirrors (metadata + an entry-floored, byte-capped branch-tail
+ *  window). */
 export function createIndexWorkerRuntime(config: WorkerConfig, emit: (event: WorkerEvent) => void): IndexWorkerHandle {
   const outlines = new OutlineCache(config.outlineCachePath);
   const index = new SessionIndex(config.roots, config.ownedRoot, outlines);
   const rendererHistory = new RendererHistory();
   const subscribed = new Set<string>();
+  const mirrorEntries = new WeakMap<PiEntry, PiEntry>();
 
   const pushTail = (key: string) => {
     let tail: PiEntry[];
     // 当前读不到（新会话文件尚未创建/尚未被扫描到）不是退订理由：保留订阅，
     // 下一次 changed → pushSessions 会再推；删掉会让懒创建文件的新会话永远收不到尾窗。
-    try { tail = index.branchTail(key, TAIL_ENTRIES); } catch { return; }
-    emit({ ev: 'tail', key, tail: trimBytes(tail), total: index.branchLength(key) });
+    try {
+      tail = index.branchTail(key, TAIL_ENTRIES);
+      emit({ ev: 'tail', key, tail: trimMirrorWindow(tail, mirrorEntries), total: index.branchLength(key) });
+    } catch {
+      // 删除/超限/不可读都明确使主进程镜像失效。空尾窗带 unavailable 标记，
+      // client 删除镜像后同步读抛 IndexUnavailableError；不把失败当成「有效空会话」。
+      // 保留订阅，文件落地/恢复后下次 changed 会重新填充。
+      emit({ ev: 'tail', key, tail: [], total: 0, unavailable: true });
+      return;
+    }
   };
-  const pushSessions = () => {
-    const sessions: PiSession[] = index.scan(true);
+  // 元数据快照：check 的增量维护保证 cache 新鲜，sessionsView 即够。全量 walk 只在
+  // forkCopySource 之后（新副本文件要立刻被发现）做——changed 每 120ms 一拍，每拍全量
+  // walk 实测吃掉 worker 15-40% 一核（300 文件 warm scan 17.6-25ms/次）。
+  const pushSessions = (full = false) => {
+    const sessions: PiSession[] = full ? index.scan(true) : index.sessionsView(true);
     emit({ ev: 'sessions', sessions });
     for (const key of [...subscribed]) pushTail(key);
   };
@@ -60,18 +80,38 @@ export function createIndexWorkerRuntime(config: WorkerConfig, emit: (event: Wor
     index,
     handle(req: WorkerRequest): unknown {
       switch (req.op) {
-        case 'history':
-          return rendererHistory.project(index.history(req.key, req.leaf, { tail: req.tail, before: req.before, count: req.count }));
+        case 'history': {
+          // 不变量在 worker 侧强制：出线 entries 一律收敛到 branch（渲染层对 entries 零
+          // 消费）。全量无损 entries 绝不跨进程回主进程——包括调用方忘了传 tail 的时候；
+          // 需要全量的内部消费方走专用 op（forkCopySource 已是该模式）。
+          const full = index.history(req.key, req.leaf, { tail: req.before === undefined ? (req.tail ?? 500) : req.tail, before: req.before, count: req.count });
+          return rendererHistory.project(full.entries === full.branch ? full : { ...full, entries: full.branch });
+        }
+        case 'branchTail': {
+          // 事件时刻的 owner 读先增量解析，再投影（真值身份/时间戳不变，base64 不过界）。
+          const branch = index.branchTail(req.key, req.n);
+          const projected = trimMirrorWindow(branch, mirrorEntries);
+          if (projected.length !== branch.length) throw new Error('Owner branch window exceeds transport budget');
+          return projected;
+        }
+        case 'usageStats':
+          // 聚合在 worker 内完成（按需读文件），只回聚合结果：主进程不做任何会话文件 IO。
+          return index.usageStatsAsync(req.now === undefined ? undefined : new Date(req.now));
         case 'remotePage':
           // 与 SessionIndex.remotePage 同一实现：history() 抛错（超限/不可读）时回 null，
-          // HTTP 层据此回 404，不把异常当成空页。
-          return index.remotePage(req.key, req.before, req.page).catch(() => null);
+          // HTTP 层据此回 404，不把异常当成空页。分页 branch 过同一套传输投影
+          // （手机端 viewer 不渲染 base64，24MB 的截图页没理由过界）。
+          return index.remotePage(req.key, req.before, req.page).then(page => {
+            if (!page) return null;
+            return { ...page, branch: rendererHistory.projectPage(page.branch) };
+          }).catch(() => null);
         case 'forkCopySource': {
           // 全量无损 entries 不出 worker：直接在 worker 内把副本写到 targetPath。
           const copied = index.forkCopySource(req.key, req.targetPath, req.header);
           // 副本是新会话文件：应答前先推 sessions/tail 镜像（消息保序），主进程
           // await 返回后立即 sessionMeta/scan 就能看到它（与旧 history() 按需扫描等价）。
-          pushSessions();
+          // 新副本要立刻被发现，这里用一次全量 walk（见 pushSessions 注释）。
+          pushSessions(true);
           return copied;
         }
         case 'search':
@@ -101,20 +141,83 @@ export function createIndexWorkerRuntime(config: WorkerConfig, emit: (event: Wor
   };
 }
 
-/** Keep the newest entries whose serialized size fits the budget. JSON length is a
- *  cheap proxy dominated by the text/base64 payloads that actually drive the cost. */
-function trimBytes(entries: PiEntry[]): PiEntry[] {
+/** 镜像尾窗裁剪：条目数保底 + 字节预算 + 传输投影。
+ *
+ *  1) 投影先行：图片 base64 按 RendererHistory 同款裁掉（记录 omittedBase64Chars），
+ *     超长文本块截断并标记 mirrorTruncatedChars——镜像只被用来找条目身份、读时间戳、
+ *     sidecar 摘要（每条 ≤600 字），base64/长文本过界纯属浪费（真实会话 195MB base64，
+ *     2-3 条大图就能把整个字节预算吃光，让所有窗口退化成「最新 1-3 条」）。
+ *  2) 条目数保底：最新的 TAIL_FLOOR_ENTRIES 条无条件保留（消费方最大窗口 64 条），
+ *     超出部分才受 TAIL_BYTES 约束。
+ *  3) 单条超预算：投影后仍超 MIRROR_ENTRY_BYTES 的条目只镜像骨架（身份 + 时间戳 +
+ *     长度标记），不拖垮整窗。窗口仍不够时由 client 用 total fail-closed，不静默少回。 */
+function trimMirrorWindow(entries: PiEntry[], memo: WeakMap<PiEntry, PiEntry>): PiEntry[] {
   let used = 0;
   const out: PiEntry[] = [];
   for (let i = entries.length - 1; i >= 0; i -= 1) {
     const entry = entries[i]!;
+    const cached = memo.get(entry);
+    const originalSize = cached ? 0 : Buffer.byteLength(JSON.stringify(entry), 'utf8');
+    const projected = cached ?? projectForMirror(entry);
     let size = 0;
-    try { size = JSON.stringify(entry)?.length ?? 0; } catch { size = 0; }
-    if (out.length && used + size > TAIL_BYTES) break;
+    try { size = Buffer.byteLength(JSON.stringify(projected), 'utf8'); } catch { size = 0; }
+    let keep = projected;
+    if (size > MIRROR_ENTRY_BYTES || originalSize > TAIL_BYTES) {
+      keep = {
+        type: projected.type, id: projected.id, parentId: projected.parentId,
+        timestamp: projected.timestamp, customType: projected.customType,
+        mirrorSkeletonChars: originalSize,
+      } as PiEntry;
+      try { size = Buffer.byteLength(JSON.stringify(keep), 'utf8'); } catch { size = 0; }
+    }
+    // 畸形超长身份字段连骨架也装不下时不可裁身份（会返回伪造 id）：使整个窗口不可用。
+    if (size > MIRROR_ENTRY_BYTES) throw new Error('Mirror identity exceeds transport budget');
+    memo.set(entry, keep);
+    if (out.length >= TAIL_FLOOR_ENTRIES && used + size + out.length + 2 > TAIL_BYTES) break;
     used += size;
-    out.push(entry);
+    out.push(keep);
   }
   return out.reverse();
+}
+
+/** 镜像投影（与 RendererHistory 的传输投影同口径）：toolResult 图片裁 base64，
+ *  文本块超长截断。截断/裁剪一律带标记，镜像不是无损数据源，不得静默。 */
+function projectForMirror(entry: PiEntry): PiEntry {
+  const message = entry.message as { role?: unknown; content?: unknown } | undefined;
+  const content = message?.content;
+  if (!message) return entry;
+  let changed = false;
+  const capString = (text: string): string => {
+    if (text.length <= MIRROR_TEXT_CAP) return text;
+    changed = true;
+    return text.slice(0, MIRROR_TEXT_CAP);
+  };
+  let nextContent: unknown = content;
+  if (typeof content === 'string') {
+    nextContent = capString(content);
+  } else if (Array.isArray(content)) {
+    const blocks = (content as unknown[]).map(block => {
+      if (typeof block === 'string') return capString(block);
+      if (!block || typeof block !== 'object') return block;
+      const b = block as Record<string, unknown>;
+      if (b.type === 'image' && typeof b.data === 'string') {
+        changed = true;
+        const { data, ...metadata } = b;
+        return { ...metadata, omittedBase64Chars: data.length };
+      }
+      if (typeof b.text === 'string' && b.text.length > MIRROR_TEXT_CAP) {
+        changed = true;
+        return { ...b, text: b.text.slice(0, MIRROR_TEXT_CAP), mirrorTruncatedChars: b.text.length - MIRROR_TEXT_CAP };
+      }
+      return block;
+    });
+    nextContent = changed ? blocks : content;
+  }
+  return changed ? {
+    ...entry,
+    message: { ...message, content: nextContent,
+      ...(typeof content === 'string' && content.length > MIRROR_TEXT_CAP ? { mirrorTruncatedChars: content.length - MIRROR_TEXT_CAP } : {}) },
+  } : entry;
 }
 
 function errorPayload(error: unknown): { message: string; code?: string } {

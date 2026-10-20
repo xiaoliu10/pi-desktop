@@ -9,6 +9,24 @@ import { PiBackend } from '../src/main/pi/backend';import { SessionIndex } from 
 const roots:string[]=[],backends:PiBackend[]=[];
 afterEach(()=>{backends.splice(0).forEach(b=>b.dispose());roots.splice(0).forEach(p=>fs.rmSync(p,{recursive:true,force:true}));});
 function setup(){const root=fs.mkdtempSync(path.join(os.tmpdir(),'pi-backend-'));roots.push(root);const owned=path.join(root,'desktop');fs.mkdirSync(owned,{recursive:true});const index=new SessionIndex([root,owned],owned);const events:PiEvent[]=[];const backend=new PiBackend({executable:path.resolve('tests/fixtures/fake-pi.mjs'),version:'0.85.1',supported:true,agentDir:root,sessionDirs:[root],diagnostics:[]},index,owned,path.resolve('extensions/desktop-policy/index.mjs'),e=>events.push(structuredClone(e)));backends.push(backend);return{root,owned,index,events,backend};}
+/** 包一层代理统计 branchTail/branchTailAsync 的调用：事件时刻的消费方必须走异步 owner 读。 */
+function setupWithReadCounting(){
+ const root=fs.mkdtempSync(path.join(os.tmpdir(),'pi-backend-'));roots.push(root);
+ const owned=path.join(root,'desktop');fs.mkdirSync(owned,{recursive:true});
+ const index=new SessionIndex([root,owned],owned);
+ const calls={syncMirror:0,ownerAsync:0};
+ const counting=new Proxy(index,{
+  get(target,prop,receiver){
+   if(prop==='branchTail')return(...args:unknown[])=>{calls.syncMirror+=1;return(target.branchTail as unknown as (...a:unknown[])=>unknown)(...args);};
+   if(prop==='branchTailAsync')return(...args:unknown[])=>{calls.ownerAsync+=1;return(target.branchTailAsync as unknown as (...a:unknown[])=>unknown)(...args);};
+   return Reflect.get(target,prop,receiver);
+  },
+ });
+ const events:PiEvent[]=[];
+ const backend=new PiBackend({executable:path.resolve('tests/fixtures/fake-pi.mjs'),version:'0.85.1',supported:true,agentDir:root,sessionDirs:[root],diagnostics:[]},counting,owned,path.resolve('extensions/desktop-policy/index.mjs'),e=>events.push(structuredClone(e)));
+ backends.push(backend);
+ return{root,owned,index,calls,events,backend};
+}
 it('keeps sidebar activity live after async launch returns and updates without parent RPC events', async () => {
  const {root,backend,events}=setup();
  const asyncParent=path.join(root,'async'); vi.stubEnv('PI_SUBAGENTS_TEMP_ROOT',asyncParent);
@@ -414,4 +432,38 @@ it('compaction_end without result (aborted) does NOT emit compaction-record',asy
  await vi.waitFor(()=>expect(backend.runs()[0]?.compacting).toBe(false));
  await new Promise(r=>setTimeout(r,300));
  expect(events.some(e=>e.type==='compaction-record')).toBe(false);
+});
+
+it('P0-2 压缩留痕在事件时刻走异步 owner 读（branchTailAsync），不读同步镜像',async()=>{
+ const {backend,events,calls}=setupWithReadCounting();
+ const run=await backend.connect({cwd:process.cwd(),trustProject:false,permission:'ask'});
+ await backend.prompt(run.key,'/compact-end-result','followUp');
+ await vi.waitFor(()=>expect(events.some(e=>e.type==='compaction-record')).toBe(true),{timeout:7000});
+ // 事件时刻（compaction_end / agent_settled）的镜像必然落后一条：同步镜像读在压缩
+ // 路径上要么找不到留痕要么命中上一次的旧留痕。必须全部走 branchTailAsync。
+ expect(calls.syncMirror).toBe(0);
+ expect(calls.ownerAsync).toBeGreaterThan(0);
+});
+
+it('P0-2 上一轮留痕不能冒充本次缺失留痕',async()=>{
+ const {backend,events}=setup();
+ const run=await backend.connect({cwd:process.cwd(),trustProject:false,permission:'ask'});
+ await backend.prompt(run.key,'/compact-end-result','followUp');
+ await vi.waitFor(()=>expect(events.some(e=>e.type==='compaction-record')).toBe(true));
+ events.length=0;
+ await new Promise(r=>setTimeout(r,10));
+ await backend.prompt(run.key,'/compact-end-noentry','followUp');
+ await new Promise(r=>setTimeout(r,100));
+ expect(events.some(e=>e.type==='compaction-record')).toBe(false);
+});
+
+it('P0-2 拿不到留痕条目就不发 compaction-record（不伪造 at/contextWindow）',async()=>{
+ const {backend,events}=setup();
+ const run=await backend.connect({cwd:process.cwd(),trustProject:false,permission:'ask'});
+ await backend.prompt(run.key,'/compact-end-noentry','followUp');
+ await vi.waitFor(()=>expect(backend.runs()[0]?.compacting).toBe(false));
+ await new Promise(r=>setTimeout(r,400));
+ // 旧代码 fallback at=Date.now()/contextWindow=0：渲染层 ±15s 匹配失败或匹配到旧值。
+ expect(events.some(e=>e.type==='compaction-record')).toBe(false);
+ void run;
 });
