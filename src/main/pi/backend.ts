@@ -91,6 +91,13 @@ export class PiBackend {
     if (!source) throw new Error('会话不存在、不可读或不在选定目录中。');
     return fileKey(this.historyTargetFor(source));
   }
+  /** 归一查询 key：fork 后子代理指针只存在于链尾文件，而 renderer 只持稳定 runtime
+   *  key。按延续链只读解析到真实文件 key（同一逻辑会话，不跨会话）；链不可知时
+   *  原样返回（recover/transcript 自身仍做 hash 校验与身份锚定，身份校验不放松）。
+   *  （PR148 复审 F-2） */
+  resolveHistoryKey(key: string): string {
+    try { return this.resolveSessionKey(key); } catch { return key; }
+  }
   private historyTargetFor(source: { path: string; owned: boolean }): string {
     const copy = !source.owned ? this.desktopCopyFor(source.path) : undefined;
     return canonical(resolveContinuation(loadContinuations(this.dataDir), copy?.path ?? source.path));

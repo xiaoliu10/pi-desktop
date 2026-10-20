@@ -1,7 +1,7 @@
 import { subagentCapabilityStatus, recoverSubagents, cleanupSubagents, subagentChildTranscript } from './pi/official-subagent';
 import { startDingTalkRegistration, pollDingTalkRegistration } from './pi/dingtalk-registration';
 import { syncBuiltinSkills, syncBuiltinPrompts } from './pi/builtin-skills';
-import { applyContinuations, loadContinuations } from './pi/session-continuations';
+import { applyContinuations, continuationChainKeys, loadContinuations } from './pi/session-continuations';
 import { listMemoryFiles, migrateLegacyMemoryFile, moveMemoryFileToProject, memoryAssistStatus, readMemoryFileContent, detectMemoryPlugin, builtinMemoryDir, DEFAULT_MEMORY_SOURCE } from './pi/memory-bridge';
 import { TerminalService } from './pi/terminal-service';
 import { filePreview } from './pi/file-preview';
@@ -285,7 +285,15 @@ function registerIpc() {
   handle('setSessionArchived', (key, archived) => {
     const run = host.backend.runs().find(r=>r.key===key);
     if(archived && !host.index.scan().some(s=>s.key===key) && !run) throw new Error('会话不存在，请刷新列表。');
-    const result = archive.set(key, archived, !!run && (run.status!=='idle' || run.pending>0 || host.backend.hasPendingDialogs(key)));
+    // F-3（PR148 复审）：fork 链把一条逻辑会话拆成 runtime key + 链尾文件，侧栏合并成
+    // 一行；归档/恢复按链整体生效，否则链尾仍以独立行出现（或恢复后缺半截）。
+    // 只沿延续链取端点，且仅收索引里真实存在的文件——不碰项目级或无关会话。
+    const self = host.index.sessionsView(true).find(s=>s.key===key)?.path;
+    const chain = self ? continuationChainKeys(self, loadContinuations(host.dataDir)).filter(p => host.index.sessionsView(true).some(s=>s.path===p)).map(fileKey) : [];
+    const keys = [...new Set([key, ...chain])];
+    const busy = !!run && (run.status!=='idle' || run.pending>0 || host.backend.hasPendingDialogs(key));
+    if (archived && busy) throw new Error('任务仍在运行或等待确认，请先停止任务再归档。');
+    const result = archive.setMany(keys, archived);
     broadcast({type:'sessions-changed'});
     return result;
   });
@@ -359,8 +367,11 @@ function registerIpc() {
   // 只读状态：内置 subagent 已删（2026-10-18），这里只报告第三方包的供给情况，
   // 供设置页展示「当前哪个扩展在提供子代理能力」。无写入入口。
   handle('subagentCapabilityStatus', () => subagentCapabilityStatus(host.environment.agentDir));
-  handle('recoverSubagents', (key: string, leaf?: string, pinned?: string[], knownSignature?: string) => recoverSubagents(host.environment.agentDir, key, host.index, leaf, pinned, knownSignature));
-  handle('subagentChildTranscript', (key: string, callId: string, childId: string) => subagentChildTranscript(host.environment.agentDir, key, host.index, callId, childId));
+  // F-2（PR148 复审）：fork 后子代理指针只存在于链尾文件；renderer 只持稳定 runtime
+  // key。查询前按延续链只读归一到真实文件 key——identity 锚定（status.sessionId ===
+  // history.session.path）与 containment 校验都在归一后的链尾上原样执行，不放松。
+  handle('recoverSubagents', (key: string, leaf?: string, pinned?: string[], knownSignature?: string) => recoverSubagents(host.environment.agentDir, host.backend.resolveHistoryKey(key), host.index, leaf, pinned, knownSignature));
+  handle('subagentChildTranscript', (key: string, callId: string, childId: string) => subagentChildTranscript(host.environment.agentDir, host.backend.resolveHistoryKey(key), host.index, callId, childId));
   handle('cleanupSubagents', (key: string) => cleanupSubagents(host.environment.agentDir, key));
   // 记忆衔接层：探测 CLI 记忆插件（如 pi-memory），未启用时回退 Desktop 内置桥
   const memoryProject = (cwd: unknown) => cwd === undefined || cwd === '' ? undefined : authorizeProjectCwd(cwd,

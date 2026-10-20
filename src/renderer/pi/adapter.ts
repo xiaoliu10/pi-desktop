@@ -123,6 +123,7 @@ function branchSavedMessages(branch: PiEntry[]): Set<string> {
 const HISTORY_PAGE = 500;
 /** 会话内搜索 IPC 的竞态序号：连打只接受最后一次结果（typing 时会有多个在途）。 */
 let entrySearchSeq = 0;
+let outlineSeq = 0;
 let lastSessionsReload = 0;
 let lastHistoryOnChanged = 0;
 
@@ -1065,6 +1066,12 @@ export interface ComposerDraft { text: string; items: ContextItem[] }
 /** 每个会话（新任务按 cwd）一份未发送草稿：切换会话/导航回放/开新任务都不丢，
  *  回来即还原。内存态，重启不保留；按体积预算（约 40MB base64）LRU 淘汰。 */
 const composerDrafts = new Map<string, ComposerDraft>();
+/** 会话级最近解析目标（runtime key → 真实链尾文件 key）。fork 链的 historyKey 别名挂在
+ *  run 上，run 关闭后别名随 run 消失；closed/补拉等无 run 读路径用这份轻量缓存找回
+ *  当前 selected 的真实文件，避免按旧文件 key 读回倒退的历史（PR148 复审 F-1）。
+ *  写入点：alive 期间每次 historyKey 别名读取（doRefreshHistory）。刻意不走
+ *  api.resolveSession 兜底——owned 会话不得再次进入解析分支（R-session-01 幂等）。 */
+const resolvedHistoryKeys = new Map<string, string>();
 const COMPOSER_DRAFTS_BUDGET = 40 * 1024 * 1024;
 const draftSize = (d: ComposerDraft) => d.text.length + d.items.reduce((n, i) => n + i.text.length + (i.image?.data.length ?? 0), 0);
 function composerKeyOf(state: { selectedKey: string | null; draftCwd?: string }): string | null {
@@ -1229,7 +1236,17 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
       }
       const run = get().runs.find(r => r.key === key);
       const generation = run?.generation;
-      const historyKey = run?.historyKey ?? key;
+      let historyKey = run?.historyKey ?? key;
+      if (run?.historyKey && run.historyKey !== key) resolvedHistoryKeys.set(key, run.historyKey);
+      if (!run && !state.leaf) {
+        // F-1（PR148 复审）：closed 先删 run 再触发刷新，historyKey 别名已随 run 消失，
+        // 只按 key 读会退回 fork 前的旧文件。用本会话最近一次解析缓存（alive 期间每次
+        // historyKey 别名读取都会写入）找回真实链尾文件。刻意不走 api.resolveSession：
+        // owned 会话不得再次进入解析分支（R-session-01 幂等，session-history-target 钉住
+        // 调用次数），且fork 必经 run 事件 → 刷新 → 缓存写入，缓存已覆盖关闭场景。
+        const cached = resolvedHistoryKeys.get(key);
+        if (cached && cached !== key) historyKey = cached;
+      }
       // 全量历史：用户 2026-10-18 明确要求「打开就有完整对话历史」——tail=500 的首屏
       // 让 27219 条的会话只剩三段可见，是不可接受的回归。主进程 CPU 的治理改由
       // 「刷新节流 + 图片懒加载」承担（不在本提交回退范围内先恢复正确性）。
@@ -1240,7 +1257,10 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
       startPhase('history-ipc');
       let value: PiHistory;
       try { value = await api.history(historyKey, state.leaf, { tail: HISTORY_PAGE }); } finally { endPhase('history-ipc'); }
-      if (seq !== loadSeq || get().selectedKey !== key || get().runs.find(r => r.key === key)?.generation !== generation || ((get().runs.find(r => r.key === key)?.historyKey ?? key) !== historyKey)) return false;
+      // 代际守卫（含 F-1 的无 run 读路径）：run 存在时校验 generation/historyKey 未变；
+      // 读取期间 run 出现或消失都视为过期，交还给下一次由事件触发的刷新。
+      const runNow = get().runs.find(r => r.key === key);
+      if (seq !== loadSeq || get().selectedKey !== key || (runNow ? runNow.generation !== generation || (runNow.historyKey ?? key) !== historyKey : generation !== undefined)) return false;
       settlePendingPrompt(value, key);
       if (historyReloadTimer) { clearTimeout(historyReloadTimer); historyReloadTimer = null; }
       return true;
@@ -1263,7 +1283,9 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
     const key = s0.selectedKey;
     const branch = s0.history?.branch ?? [];
     if (!api || !key || s0.earlierLoading || branch.length === 0) return;
-    const historyKey = s0.runs.find(r => r.key === key)?.historyKey ?? key;
+    // 无 run（closed 后补拉）时与 doRefreshHistory 同源：优先缓存的真实链尾文件。
+    const historyKeyOf = (k: string) => s0.runs.find(r => r.key === k)?.historyKey ?? resolvedHistoryKeys.get(k) ?? k;
+    const historyKey = historyKeyOf(key);
     const oldest = branch[0]?.id;
     if (!oldest || !s0.history?.truncated) return; // 未被截断：没有更早的页
     set({ earlierLoading: true });
@@ -1271,7 +1293,7 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
       startPhase('history-earlier-ipc');
       let value: PiHistory;
       try { value = await api.history(historyKey, s0.leaf, { before: oldest, count: HISTORY_PAGE }); } finally { endPhase('history-earlier-ipc'); }
-      if (get().selectedKey !== key || get().leaf !== s0.leaf || ((get().runs.find(r => r.key === key)?.historyKey ?? key) !== historyKey)) return;
+      if (get().selectedKey !== key || get().leaf !== s0.leaf || historyKeyOf(key) !== historyKey) return;
       // 只接受「真的更长了」的结果：竞态（补拉期间又刷了一次）可能拿到同一页。
       if (value.branch.length <= branch.length) return;
       set({ history: value });
@@ -2036,7 +2058,9 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
         try {
           const rememberedMode = get().desktopPreferences?.sessionAccessModes?.[key];
           const run = await window.localPi!.connect({ sourceKey: key, trustProject: false, permission: rememberedMode ?? get().desktopPreferences?.permission ?? 'ask' });
-          set(st => ({ runs: [...st.runs.filter(r => r.key !== run.key), run] }));
+          // 幂等 upsert：同 key 已有 run（事件先于慢 connect 到达，generation 更新或
+          // 带队列/状态）时绝不用 connect 快照整体替换（PR148 复审 F-4 LATE_PREWARM）。
+          set(st => st.runs.some(r => r.key === run.key) ? st : { runs: [...st.runs, run] });
           // Prewarming may create/attach a Desktop copy after the first read resolved.
           // Reconcile through the read-only resolver; never require a prompt to see it.
           if ((get().selectedKey === key || get().selectedKey === run.key || get().selectedKey === run.historyKey) && get().view === 'chat') void refreshHistory();
@@ -2379,7 +2403,14 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
     renameSession: (key, name) => {
       const trimmed = name.trim();
       if (!trimmed || trimmed.length > 200) return;
+      // F-3（PR148 复审）：侧栏合并行 id=runtime key，而标题按链尾文件 key 读
+      // （applyContinuations/buildPiSidebar）。rename 双写同一逻辑会话的两个身份，
+      // 聊天头（renames[run.key]）与侧栏（renames[链尾]）、关闭后重进才一致；
+      // 只随 run 绑定扩展，不碰项目级或无关会话。
+      const run = get().runs.find(r => r.key === key || r.historyKey === key);
       const renames = { ...get().renames, [key]: trimmed };
+      if (run?.historyKey && run.historyKey !== key) renames[run.historyKey] = trimmed;
+      if (run && run.key !== key) renames[run.key] = trimmed;
       set({ renames });
       void window.localPi!.saveDesktopSettings({ sessionRenames: renames }).catch(() => undefined);
     },
@@ -2515,9 +2546,14 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
       const api = typeof window !== 'undefined' ? window.localPi : undefined;
       if (!key || !api) return;
       set({ outlineLoading: true });
-      void api.sessionOutline(currentRun(get())?.historyKey ?? key)
-        .then(o => { if (get().selectedKey === key) set({ outline: o.turns, outlineLoading: false }); })
-        .catch(() => set({ outlineLoading: false }));
+      // 发起时的真实文件 key 闭包在手，回调必须核对它仍然成立：fork 换 historyKey
+      // 不换 key/seq，旧链尾的大纲/命中不得盖掉新代际（PR148 复审 F-4）。
+      const historyKey = currentRun(get())?.historyKey ?? resolvedHistoryKeys.get(key) ?? key;
+      const seq = ++outlineSeq;
+      const stillCurrent = () => seq === outlineSeq && get().selectedKey === key && (currentRun(get())?.historyKey ?? resolvedHistoryKeys.get(key) ?? key) === historyKey;
+      void api.sessionOutline(historyKey)
+        .then(o => { if (stillCurrent()) set({ outline: o.turns, outlineLoading: false }); else if (seq === outlineSeq && get().outlineLoading) set({ outlineLoading: false }); })
+        .catch(() => { if (seq === outlineSeq && get().outlineLoading) set({ outlineLoading: false }); });
     },
     clearPendingJump: () => set({ pendingJump: null }),
     setSearchQuery: (searchQuery) => {
@@ -2529,9 +2565,12 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
       if (!needle) { set({ entryHits: [], entryTotal: 0, entrySearching: false }); return; }
       const seq = ++entrySearchSeq;
       set({ entrySearching: true });
-      void api.searchSession(currentRun(get())?.historyKey ?? key, needle, { limit: 50 })
-        .then(res => { if (seq === entrySearchSeq) { set({ entryHits: res.hits, entryTotal: res.total, entrySearching: false }); } })
-        .catch(() => { if (seq === entrySearchSeq) set({ entryHits: [], entryTotal: 0, entrySearching: false }); });
+      // 同 setSessionMapOpen：闭包核对发起时的文件 key，fork 后旧响应作废（F-4）。
+      const historyKey = currentRun(get())?.historyKey ?? resolvedHistoryKeys.get(key) ?? key;
+      const stillCurrent = () => seq === entrySearchSeq && (currentRun(get())?.historyKey ?? resolvedHistoryKeys.get(key) ?? key) === historyKey;
+      void api.searchSession(historyKey, needle, { limit: 50 })
+        .then(res => { if (stillCurrent()) { set({ entryHits: res.hits, entryTotal: res.total, entrySearching: false }); } else if (seq === entrySearchSeq && get().entrySearching) set({ entrySearching: false }); })
+        .catch(() => { if (seq === entrySearchSeq && get().entrySearching) set({ entryHits: [], entryTotal: 0, entrySearching: false }); });
     },
     toggleNotifications: () => set({ notificationsOpen: !get().notificationsOpen }),
     markAllRead: () => set({ notifications: get().notifications.map((n) => ({ ...n, read: true })) }),
@@ -2743,7 +2782,8 @@ export function currentRunOf(state: PiReplicaStore): PiRun | undefined {
 }
 
 export function currentSessionOf(state: PiReplicaStore): PiSession | undefined {
-  return state.sessions.find((s) => s.key === (currentRun(state)?.historyKey ?? state.selectedKey));
+  // run 关闭后 historyKey 别名消失，用最近解析缓存找回真实链尾文件（标题/cwd 归属，F-1）。
+  return state.sessions.find((s) => s.key === (currentRun(state)?.historyKey ?? resolvedHistoryKeys.get(state.selectedKey ?? '') ?? state.selectedKey));
 }
 
 export function sessionTitleOf(state: PiReplicaStore): string {
