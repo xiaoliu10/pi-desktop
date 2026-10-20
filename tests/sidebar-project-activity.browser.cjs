@@ -1,4 +1,6 @@
-// Run with the worktree Vite server on :5187; no user sessions or files are loaded.
+// 侧栏运行指示的回归（用户 2026-10-19）：会话级菊花 + 项目行只做目录标识。
+// 折叠项目后项目行绝不能出现第二种进度指示（运行状态是会话级，不是项目级）。
+// Vite at :5187; playwright-cli run-code --filename tests/sidebar-project-activity.browser.cjs
 async (page) => {
   const assert = (condition, message) => { if (!condition) throw new Error(message); };
   await page.route('http://127.0.0.1:5187/sidebar-activity', route => route.fulfill({ contentType: 'text/html', body: '<div id="root"></div><script type="module">import R from "/@react-refresh";R.injectIntoGlobalHook(window);window.$RefreshReg$=()=>{};window.$RefreshSig$=()=>t=>t;window.__vite_plugin_react_preamble_installed__=true;</script>' }));
@@ -20,15 +22,18 @@ async (page) => {
     }));
     window.__renderActivity(true, true);
   });
-  await page.getByLabel('项目有任务运行中', { exact: true }).waitFor({ state: 'visible' });
+  // 展开：会话行有菊花，项目行没有
   await page.getByLabel('任务运行中', { exact: true }).waitFor({ state: 'visible' });
-  const running = await page.getByLabel('项目有任务运行中', { exact: true }).boundingBox();
-  assert(running && running.width > 0 && running.height > 0, 'Project spinner must have visible size');
+  assert(await page.getByLabel('项目有任务运行中', { exact: true }).count() === 0, '项目行不得有项目级进度指示');
+  assert(await page.locator('.pi-spinner').count() === 1, '只应有会话行一个菊花');
+  // 折叠：项目行仍无菊花（运行状态是会话级，折叠不等于项目在转）
   await page.evaluate(() => window.__renderActivity(true, false));
-  await page.getByLabel('项目有任务运行中', { exact: true }).waitFor({ state: 'visible' });
-  assert(await page.getByLabel('任务运行中', { exact: true }).count() === 0, 'Collapsed session is hidden, project remains busy');
+  await page.waitForTimeout(80);
+  assert(await page.getByLabel('任务运行中', { exact: true }).count() === 0, '折叠后会话行隐藏');
+  assert(await page.locator('.pi-spinner').count() === 0, '折叠后不得出现任何菊花');
+  // 完成后全部消失
   await page.evaluate(() => window.__renderActivity(false, true));
-  await page.getByLabel('项目有任务运行中', { exact: true }).waitFor({ state: 'detached' });
-  assert(await page.locator('.pi-spinner').count() === 0, 'All spinners must settle on completion');
-  console.log('SIDEBAR ASYNC ACTIVITY OK: expanded, collapsed, completed');
+  await page.waitForTimeout(80);
+  assert(await page.locator('.pi-spinner').count() === 0, '完成后不得有菊花');
+  console.log('SIDEBAR ACTIVITY OK: session-level only, project row stays a folder');
 }
