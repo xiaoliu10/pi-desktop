@@ -42,6 +42,78 @@ it('keeps different subagents isolated even at the same epoch/index', () => {
   expect(b[1]?.answer[0]).toMatchObject({ text: 'B result' });
 });
 
+// #147 修掉「49 万小时」时把 timestamp 整个留空，副作用是子代理详情的计时条消失
+// （ElapsedTime 在 startedAt === undefined 时返回 null）。这里用主进程快照里的真实
+// startedAt 兜底：有起点才能计时，且仍然不是编造的值。
+it('falls back to the subagent real startedAt so elapsed time is visible again', () => {
+  const startedAt = Date.parse('2026-10-20T09:00:00Z');
+  const turns = subagentTranscriptTurns([user(), assistant('working')], 'elapsed-a', 7, startedAt);
+  const assistantTurn = turns.find(t => t.role === 'assistant');
+  // executionTurns 的计时起点体现在 assistant 执行轮（取该轮 user 边界时间）。
+  expect(assistantTurn?.startedAt).toBe(startedAt);
+  expect(assistantTurn?.endedAt).toBeUndefined(); // 未结束：不编造结束时刻
+});
+
+it('keeps real message timestamps authoritative and does not override them with the snapshot fallback', () => {
+  // 消息自带真实时间时（#147 要保留的路径），快照 startedAt/endedAt 只在缺失时兜底，
+  // 不覆盖消息时间。
+  const fallback = Date.parse('2026-10-20T09:00:00Z');
+  const t0 = Date.parse('2026-10-20T09:00:03Z');
+  const t1 = Date.parse('2026-10-20T09:00:10Z');
+  const turns = subagentTranscriptTurns([user({ timestamp: t0 }), assistant('x', { timestamp: t1 })], 'elapsed-b', 1, fallback, fallback + 999999);
+  const assistantTurn = turns.find(t => t.role === 'assistant');
+  expect(assistantTurn?.startedAt).toBe(t0);
+  expect(assistantTurn?.endedAt).toBe(t1);
+});
+
+it('does not fabricate a start when the fallback itself is invalid', () => {
+  for (const bogus of [NaN, Infinity, -1, 'nope' as unknown as number, undefined]) {
+    const turns = subagentTranscriptTurns([user(), assistant('x')], 'elapsed-c-' + String(bogus), 1, bogus as number | undefined);
+    expect(turns.find(t => t.role === 'assistant')?.startedAt).toBeUndefined();
+  }
+});
+
+it('anchors timing on the last assistant turn, not the first message (truncated tail window)', () => {
+  // 面板可能只传截断后的尾窗；多轮子代理的真实起点不能挂在窗口首条消息上。
+  const startedAt = Date.parse('2026-10-20T09:00:00Z');
+  const messages = [assistant('tail-a'), user(), assistant('tail-b')];
+  const turns = subagentTranscriptTurns(messages, 'elapsed-g', 1, startedAt);
+  const assistants = turns.filter(t => t.role === 'assistant');
+  const last = assistants[assistants.length - 1];
+  expect(last?.startedAt).toBe(startedAt);
+  // 更早的 assistant 轮不被錨定，不会凭空多出计时。
+  expect(assistants[0]?.startedAt).toBeUndefined();
+});
+
+it('shows 用时 for a finished subagent via the real endedAt fallback on the last message', () => {
+  const startedAt = Date.parse('2026-10-20T09:00:00Z');
+  const endedAt = Date.parse('2026-10-20T09:02:00Z');
+  const turns = subagentTranscriptTurns([user(), assistant('done')], 'elapsed-e', 2, startedAt, endedAt);
+  const assistantTurn = turns.find(t => t.role === 'assistant');
+  expect(assistantTurn?.startedAt).toBe(startedAt);
+  expect(assistantTurn?.endedAt).toBe(endedAt);
+});
+
+it('ignores an endedAt earlier than startedAt instead of fabricating a negative duration', () => {
+  const startedAt = Date.parse('2026-10-20T09:02:00Z');
+  const endedAt = Date.parse('2026-10-20T09:00:00Z');
+  const turns = subagentTranscriptTurns([user(), assistant('x')], 'elapsed-f', 1, startedAt, endedAt);
+  const assistantTurn = turns.find(t => t.role === 'assistant');
+  expect(assistantTurn?.startedAt).toBe(startedAt);
+  expect(assistantTurn?.endedAt).toBeUndefined();
+});
+
+it('drops an inverted message-derived endedAt instead of leaking it through the object spread (INVALID_END)', () => {
+  // 逆序消息（user@t、assistant@t-100）：assistant 轮 startedAt 取 user 边界 t，
+  // endedAt 是消息自己的 t-100。局部防御曾把 ended 置 undefined，但展开旧对象时
+  // 旧 endedAt 属性又被带回来——endedAt < startedAt 的非法计时原样渲染。
+  const t = Date.parse('2026-10-20T09:00:00Z');
+  const turns = subagentTranscriptTurns([user({ timestamp: t }), assistant('a', { timestamp: t - 100 })], 'invalid-end-a', 1, t);
+  const assistantTurn = turns.find(turn => turn.role === 'assistant')!;
+  expect(assistantTurn.startedAt).toBe(t);
+  expect(assistantTurn.endedAt === undefined || assistantTurn.endedAt >= (assistantTurn.startedAt as number)).toBe(true);
+});
+
 it('ignores non-finite bogus timestamps instead of fabricating elapsed time', () => {
   const turns = subagentTranscriptTurns(
     [user({ timestamp: 'not-a-date' }), assistant('x', { timestamp: NaN })],

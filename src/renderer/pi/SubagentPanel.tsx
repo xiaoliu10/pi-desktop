@@ -29,8 +29,8 @@ function StatusIcon({ status }: { status: ChildState }) {
 }
 
 /** 转录直接复用主对话的轮次 UI（ToolCard 工具行 / ExecutionNote 思考行 / 执行过程折叠）。 */
-export function Transcript({ messages, turnKey, live, epoch }: { messages: SubagentChild['messages']; turnKey: string; live: boolean; epoch?: number }) {
-  const turns = useMemo(() => subagentTranscriptTurns(messages, turnKey, epoch), [messages, turnKey, epoch]);
+export function Transcript({ messages, turnKey, live, epoch, startedAt, endedAt }: { messages: SubagentChild['messages']; turnKey: string; live: boolean; epoch?: number; startedAt?: number; endedAt?: number }) {
+  const turns = useMemo(() => subagentTranscriptTurns(messages, turnKey, epoch, startedAt, endedAt), [messages, turnKey, epoch, startedAt, endedAt]);
   const chatLabels = usePiStore(s => replicaLabels(s.lang).chat);
   return <>{turns.map((turn, i) => <TurnArticle key={turn.id} m={turn} liveTurn={live && i === turns.length - 1} labels={chatLabels} />)}</>;
 }
@@ -110,7 +110,7 @@ export function SubagentPanel({ children, initialCall, onClose, onStop, parentRu
       </div>
       <div className="pi-subagents__transcript" ref={transcript} onScroll={e => { const el = e.currentTarget; follow.current = el.scrollHeight - el.clientHeight - el.scrollTop < 48; }}>
         {active.error && <p className="pi-subagents__error" role="alert">{active.error}</p>}
-        <Transcript messages={shown} turnKey={active.id} epoch={fetchedState?.epoch} live={['running', 'queued'].includes(active.status)} />
+        <Transcript messages={shown} turnKey={active.id} epoch={fetchedState?.epoch} startedAt={active.startedAt} endedAt={active.endedAt} live={['running', 'queued'].includes(active.status)} />
         {!shown.length && (active.childKey
           ? <p className="pi-subagents__empty">{fetchedState?.state === 'error' ? transcriptErrorMessage(fetchedState.error, zh) : fetchedState?.state === 'ok' ? (zh ? '子会话暂无消息。' : 'No messages in this child session.') : (zh ? '正在读取子会话转录…' : 'Loading child transcript…')}</p>
           : <p className="pi-subagents__empty">{zh ? '插件尚未报告消息。' : 'No messages reported yet.'}</p>)}

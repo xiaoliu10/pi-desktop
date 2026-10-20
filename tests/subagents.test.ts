@@ -55,3 +55,73 @@ it('does not duplicate subagents already in the session file', () => {
   expect(out).toHaveLength(1);
   expect(out[0].status).toBe('completed');
 });
+
+it('projects real startedAt onto live subagents so the panel elapsed timer renders', () => {
+  const startedAt = Date.parse('2026-10-20T09:00:00Z');
+  const updatedAt = Date.parse('2026-10-20T09:00:30Z');
+  const recovered = [{ callId: 'call-1', status: 'completed', startedAt, updatedAt, details: { runId: 'wf-live' } }];
+  const out = projectSubagents(messages(part('result', [result()])), false, recovered as any);
+  expect(out[0].startedAt).toBe(startedAt);
+  // live 路径终态以会话文件 adapter 状态为准（completed），结束时刻可取磁盘 lastUpdate。
+  expect(out[0].status).toBe('completed');
+  expect(out[0].endedAt).toBe(updatedAt);
+});
+
+it('does not let a stale running disk snapshot override a live completed state for endedAt', () => {
+  const startedAt = Date.parse('2026-10-20T09:00:00Z');
+  const updatedAt = Date.parse('2026-10-20T09:00:30Z');
+  const stale = [{ callId: 'call-1', status: 'running', startedAt, updatedAt, details: { runId: 'wf-live' } }];
+  const out = projectSubagents(messages(part('result', [result()])), false, stale as any);
+  expect(out[0].status).toBe('completed'); // adapter 权威
+  expect(out[0].endedAt).toBeUndefined();  // 磁盘仍 running → 不编造结束时刻
+  expect(out[0].startedAt).toBe(startedAt);
+});
+
+it('uses rec.status for recovered-only children and derives endedAt from lastUpdate', () => {
+  const startedAt = Date.parse('2026-10-20T09:00:00Z');
+  const updatedAt = Date.parse('2026-10-20T09:02:00Z');
+  const recovered = [{ callId: 'call-9', status: 'failed', startedAt, updatedAt, details: { mode: 'single', agentScope: 'user', projectAgentsDir: null, results: [result('scout', 1)] } }];
+  const out = projectSubagents(messages(), false, recovered as any);
+  expect(out).toHaveLength(1);
+  expect(out[0].startedAt).toBe(startedAt);
+  expect(out[0].endedAt).toBe(updatedAt);
+});
+
+it('omits timing when the snapshot has no usable startedAt (never fabricates)', () => {
+  const recovered = [{ callId: 'call-1', status: 'completed', details: { runId: 'wf-x' } }];
+  const out = projectSubagents(messages(part('result', [result()])), false, recovered as any);
+  expect(out[0].startedAt).toBeUndefined();
+  expect(out[0].endedAt).toBeUndefined();
+});
+
+it('workflow child rows keep their own verified clock; the record clock stays with the workflow (149-3)', () => {
+  // 父 workflow 90s 前开始 ≠ child 80s 前开始：record 级时钟属于 workflow 本身，
+  // 不能投影给带 childKey 的子卡；child 只用生产者校验过的自己 status.json 的时钟。
+  const T = Date.parse('2026-10-20T09:00:00Z');
+  const recovered = [{
+    callId: 'call-wf', status: 'completed', startedAt: T, updatedAt: T + 90000,
+    details: { mode: 'workflow', runId: 'wf-1', toolCallId: 'call-wf', state: 'completed',
+      workflowChildren: { version: 1, parentToolCallId: 'call-wf', workflowRunId: 'wf-1', inventoryComplete: true, workflowState: 'completed',
+        children: [
+          { childId: 'a', runId: 'ra', agent: 'alpha', state: 'completed', startedAt: T + 10000, endedAt: T + 20000 },
+          { childId: 'b', runId: 'rb', agent: 'beta', state: 'running', startedAt: T + 70000 },
+        ] } },
+  }];
+  const out = projectSubagents([], false, recovered as any);
+  const a = out.find(c => c.childKey === 'a')!;
+  const b = out.find(c => c.childKey === 'b')!;
+  expect(a.startedAt).toBe(T + 10000);   // 不是 record 的 T
+  expect(a.endedAt).toBe(T + 20000);     // 不是 record 的 T+90000
+  expect(b.startedAt).toBe(T + 70000);
+  expect(b.endedAt).toBeUndefined();     // 运行中：轮询时刻不是结束时刻
+});
+
+it('workflow placeholder (no children yet) keeps the workflow own record clock', () => {
+  const T = Date.parse('2026-10-20T09:00:00Z');
+  const recovered = [{ callId: 'call-wf2', status: 'running', startedAt: T, updatedAt: T + 5000, details: { mode: 'workflow', runId: 'wf-2', toolCallId: 'call-wf2', state: 'running', workflowChildren: { version: 1, parentToolCallId: 'call-wf2', workflowRunId: 'wf-2', inventoryComplete: false, workflowState: 'running', children: [] } } }];
+  const out = projectSubagents([], false, recovered as any);
+  expect(out).toHaveLength(1);
+  expect(out[0].childKey).toBeUndefined();
+  expect(out[0].startedAt).toBe(T);      // 占位卡就是 workflow 本身：用 record 时钟
+  expect(out[0].endedAt).toBeUndefined(); // running → 无结束时刻
+});

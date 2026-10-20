@@ -11,6 +11,13 @@ const MAX_CALLS = 32;
 const MAX_CHILDREN = 64;
 export const STALE_MS = 5 * 60 * 1000;
 
+/** Real end time for a verified observation: terminal states only. A running/queued/
+ *  unknown snapshot's lastUpdate is just the most recent poll, never an end time.
+ *  (PR#149 review: lastUpdate ≠ end moment unless the state itself is terminal.) */
+const TERMINAL_STATES: ReadonlySet<string> = new Set(['completed', 'failed', 'interrupted']);
+const terminalEnd = (state: string, startedAt: number, lastUpdate: number): number | undefined =>
+  TERMINAL_STATES.has(state) && Number.isFinite(startedAt) && Number.isFinite(lastUpdate) && lastUpdate >= startedAt ? lastUpdate : undefined;
+
 export function subagentAsyncRoot(): string {
   const sanitize = (s: string) => s.trim().replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || 'unknown';
   const scope = typeof process.getuid === 'function' ? `uid-${process.getuid()}` : `user-${sanitize(process.env.USERNAME || process.env.USER || os.userInfo().username)}`;
@@ -177,6 +184,9 @@ async function resolveWorkflowPointer(pointer: SubagentSnapshot, history: PiHist
     const isSingle = !!singleAsyncDetails(d, pointer.callId);
     let detail: Record<string, any> = { mode: 'workflow', runId, toolCallId: pointer.callId, state: 'unknown', steps: [] };
     let updatedAt = 0;
+    // Only set after identity/time validation succeeds (PR#149 149-1): a failed
+    // verification must not expose any clock, verified or guessed.
+    let startedAt: number | undefined;
     try {
       const expectedDir = path.join(root, runId);
       if (typeof d.asyncDir !== 'string' || path.resolve(d.asyncDir) !== path.resolve(expectedDir) || (d.asyncId !== undefined && d.asyncId !== runId)) throw new Error('invalid async pointer');
@@ -193,6 +203,12 @@ async function resolveWorkflowPointer(pointer: SubagentSnapshot, history: PiHist
         if (typeof row.tokens === 'number') child.tokens = row.tokens;
         if (typeof row.turns === 'number') child.turns = row.turns;
         child.snapshotAt = row.snapshotAt;
+        // Verified run clock crossing IPC for the panel timer (PR#149 149-1): the
+        // record and its only child row carry the run's own validated start; endedAt
+        // only for terminal states. Never the toolCall time or Date.now().
+        startedAt = status.startedAt;
+        child.startedAt = status.startedAt;
+        child.endedAt = terminalEnd(state, status.startedAt, status.lastUpdate);
         detail = { mode: 'workflow', runId, toolCallId: pointer.callId, state, snapshotAt: status.lastUpdate, workflowChildren: { version: 1, parentToolCallId: pointer.callId, workflowRunId: runId, inventoryComplete: true, workflowState: state, children: [child] } };
         updatedAt = Math.max(status.lastUpdate, child.snapshotAt || 0);
       } else {
@@ -214,6 +230,11 @@ async function resolveWorkflowPointer(pointer: SubagentSnapshot, history: PiHist
               child.tokens = typeof s.totalTokens?.total === 'number' && Number.isFinite(s.totalTokens.total) ? s.totalTokens.total : undefined;
               child.turns = typeof s.turnCount === 'number' && Number.isFinite(s.turnCount) ? s.turnCount : undefined;
               child.snapshotAt = s.lastUpdate;
+              // Child's OWN verified clock (PR#149 149-3): identity/time validated
+              // above against the child's status.json. The workflow started earlier
+              // than this child launched — never project the parent's clock here.
+              child.startedAt = s.startedAt;
+              child.endedAt = terminalEnd(child.state, s.startedAt, s.lastUpdate);
             } catch { child.state = 'unknown'; }
           } else if (child.state !== 'queued') child.state = 'unknown';
           children.push(child);
@@ -223,6 +244,7 @@ async function resolveWorkflowPointer(pointer: SubagentSnapshot, history: PiHist
         let state = workflowState(status.state ?? status.workflowChildren?.workflowState);
         if (!children.length && ['running', 'queued'].includes(state) && now - status.lastUpdate > STALE_MS) state = 'unknown';
         detail = { ...detail, state, snapshotAt: status.lastUpdate, workflowChildren: { version: 1, parentToolCallId: pointer.callId, workflowRunId: runId, inventoryComplete: status.workflowChildren?.inventoryComplete === true, workflowState: state, children } };
+        startedAt = status.startedAt;
         updatedAt = Math.max(status.lastUpdate, ...children.map(c => c.snapshotAt || 0));
       }
     } catch {
@@ -231,7 +253,7 @@ async function resolveWorkflowPointer(pointer: SubagentSnapshot, history: PiHist
       if (isSingle) detail.steps = [{ childId: 'single', runId, agent: text(d.agent), state: 'unknown' }];
       else detail.steps = workflowRows(d).map(row => ({ childId: row.childId, runId: row.runId, agent: text(row.agent), state: 'unknown' }));
     }
-  return { callId: pointer.callId, status: detail.state, details: detail, updatedAt };
+  return { callId: pointer.callId, status: detail.state, details: detail, ...(startedAt === undefined ? {} : { startedAt }), updatedAt };
 }
 
   for (const pointer of pointersWindow(allPointers().all)) {
@@ -291,25 +313,48 @@ async function orphanAsyncRuns(history: PiHistory, root: string, now: number, bu
     if (['running', 'queued'].includes(state) && now - (Number(status.lastUpdate) || 0) > STALE_MS) state = 'unknown';
     // workflow 孤儿按 status 自带 children 投多子卡（singleRunRow 只读 steps[0]，
     // 多子任务会丢——code-review 探针 B）；single 退回单行。
+    // child 行的时钟从各 child 自己的 status.json 读取（PR#149 149-3），身份/时间
+    // 校验与指针路径同款；用专用小预算，child 读失败/超支只损失时间显示，绝不影响
+    // 后续孤儿的父 status.json 扫描（可见性优先）。
     const rows = status.mode === 'workflow' ? workflowRows(status).slice(0, MAX_CHILDREN) : [];
-    const children: Record<string, any>[] = rows.length ? rows.map(row => {
+    const childBudget = { bytes: 128 * 1024 };
+    const childValidTime = (s: any) => Number.isFinite(s.startedAt) && Number.isFinite(s.lastUpdate) && s.lastUpdate >= s.startedAt && s.lastUpdate <= now + 60_000 && s.startedAt >= startedAt;
+    const childClock = async (c: Record<string, any>, row: Record<string, any>): Promise<void> => {
+      if (!workflowId(c.runId)) return;
+      try {
+        const s = await readSnapshotJsonCached(root, path.join(root, c.runId, 'status.json'), childBudget);
+        if (s.runId !== c.runId || s.sessionId !== history.session.path || !workflowId(s.toolCallId) || s.parentWorkflowRunId !== entry.name || s.workflowKey !== row.childId || !childValidTime(s)) throw new Error('child identity/time mismatch');
+        c.snapshotAt = s.lastUpdate;
+        c.startedAt = s.startedAt;
+        c.endedAt = terminalEnd(workflowState(s.state), s.startedAt, s.lastUpdate);
+      } catch { /* No verified child clock: the row keeps its state, timing stays hidden. */ }
+    };
+    const children: Record<string, any>[] = [];
+    for (const row of rows) {
       const c: Record<string, any> = { childId: row.childId, runId: workflowId(row.runId) ? row.runId : undefined, agent: text(row.agent), label: text(row.label), sessionName: text(row.sessionName), state: workflowState(row.state), model: text(row.model) };
       if (typeof row.tokens === 'number') c.tokens = row.tokens;
       if (typeof row.turns === 'number') c.turns = row.turns;
       c.snapshotAt = row.snapshotAt || lastUpdate;
-      return c;
-    }) : [(() => {
+      await childClock(c, row);
+      children.push(c);
+    }
+    if (!rows.length) {
       const row = singleRunRow(status);
       const c: Record<string, any> = { childId: row.childId, runId: workflowId(row.runId) ? row.runId : undefined, agent: text(row.agent), label: text(row.label), sessionName: text(row.sessionName), state, model: text(row.model) };
       if (typeof row.tokens === 'number') c.tokens = row.tokens;
       if (typeof row.turns === 'number') c.turns = row.turns;
       c.snapshotAt = row.snapshotAt || lastUpdate;
-      return c;
-    })()];
+      // The run's own clock was validated above; endedAt only for a terminal state.
+      c.startedAt = startedAt;
+      c.endedAt = terminalEnd(state, startedAt, lastUpdate);
+      children.push(c);
+    }
     // detail 与 resolveWorkflowPointer 同构：callId=runId 过 workflowId 校验；
     // toolCallId 同 runId 让 workflowDetails(rec.details, rec.callId) 命中。
+    // 顶层 status 与指针路径同口径（PR#149 149-2）：已验证的规范化状态，不再恒
+    // unknown——只有终态才让渲染层把 updatedAt 当真实结束时刻，幽灵降级仍是不确定。
     const detail = { mode: 'workflow', runId: entry.name, toolCallId: entry.name, state, snapshotAt: lastUpdate, workflowChildren: { version: 1, parentToolCallId: entry.name, workflowRunId: entry.name, inventoryComplete: true, workflowState: state, children } };
-    runs.push({ callId: entry.name, status: 'unknown', details: detail, startedAt, updatedAt: lastUpdate });
+    runs.push({ callId: entry.name, status: state, details: detail, startedAt, updatedAt: lastUpdate });
   }
   // MAX_ORPHANS 按新近度截断（readdir 目录序不稳定——code-review 探针 C：累积 >8 个
   // 目录时正在运行的最新 run 被丢，可见性需求恰好失败）。

@@ -167,6 +167,12 @@ export function createWorkflowAdapter(): SubagentAdapter {
         // its own snapshot. Only queued is safe (no run started yet).
         const rawState = workflowState(row.state);
         const status: ChildState = !row.runId && rawState !== 'queued' ? 'unknown' : rawState;
+        // Per-child real clock (PR#149): the main process attaches row times only after
+        // the child's own status.json passed identity/time validation. Missing stays
+        // missing — the parent workflow's clock must never be shown as a child's.
+        const startedAt = typeof row.startedAt === 'number' && Number.isFinite(row.startedAt) && row.startedAt > 0 ? row.startedAt : undefined;
+        const rawEnd = typeof row.endedAt === 'number' && Number.isFinite(row.endedAt) && row.endedAt > 0 ? row.endedAt : undefined;
+        const endedAt = rawEnd !== undefined && (startedAt === undefined || rawEnd >= startedAt) ? rawEnd : undefined;
         return {
           id: `${callId}:workflow:${d.runId}:${row.childId}`, callId, childKey: row.childId, mode: 'workflow',
           agent: bounded(row.agent) || '子代理',
@@ -179,6 +185,7 @@ export function createWorkflowAdapter(): SubagentAdapter {
           model: bounded(row.model) || undefined, messages: [],
           tokens: typeof row.tokens === 'number' ? row.tokens : undefined,
           turns: typeof row.turns === 'number' ? row.turns : undefined,
+          startedAt, endedAt,
         };
       });
     },
