@@ -6,6 +6,7 @@ README 只保留最近版本摘要；本文件为完整记录。
 ## [Unreleased]
 
 ### 修复
+- **子代理运行中有轮次却看不到执行过程**：兼容单子代理把实时转录路径发布在唯一 step 的形态，不必等任务结束才显示工具过程；读取失败保留已显示记录，并区分定位失败与安全校验失败。
 - **聊天图片裂图与灯箱「下载原图」失效**：图片为省内存改用 blob: URL 后，CSP 只放行显示未放行读取——图片能显示，但下载时 `fetch(blob:)` 被 `connect-src` 回退拦截（真实 Electron 实测 Failed to fetch，保存框都不弹）。现在 `connect-src` 显式放行 `blob:`（只限渲染进程自建的内存 blob，不开放网络出口），配合下载前归一化为 data URL，灯箱下载恢复；新增 Electron 探针 `smoke:csp-blob` 钉住「显示 + fetch + XHR」三者同时可用。
 - **打包后不再残留「幽灵双份」应用**：`dist/mac-arm64/` 此前只有 `pnpm dist` 链路里的 sync-release 会删，直接调 electron-builder 打发布包时会残留一份同名 .app，被 LaunchServices 按路径各注册一份，启动台/聚焦出现两个「PI Desktop」。prune-dist 现在兜底清理该目录（`--dry-run` 不动）。新增 `tests/prune-dist-mac-arm64.test.ts` 回归。
 - **侧栏运行标识回归会话级**：v0.1.30 曾把子代理运行状态聚合到项目行（折叠项目时项目行显示菊花），但运行状态本质是会话级属性。已回退：项目行只保留文件夹图标，菊花只出现在运行中的会话行。
