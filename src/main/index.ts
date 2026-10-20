@@ -15,6 +15,7 @@ import { createProjectWorktree } from './pi/project-worktree';
 import { openMemoryFile } from './pi/memory-open';
 import { authorizeProjectCwd, listExternalApps, openWithApp } from './pi/open-with';
 import { canonical, fileKey } from './pi/session-index';
+import { RendererHistory } from './pi/renderer-history';
 import { bundleIcon } from './pi/app-icon';
 import { createDockBadge } from './pi/dock-badge';
 import { SessionArchive } from './pi/session-archive';
@@ -314,7 +315,8 @@ function registerIpc() {
     return { key: run.key, run };
   });
   handle('sidecarBinding', mainKey => host.sidecar.bindingOf(mainKey));
-  handle('history', (key, leaf, opts) => host.index.history(key, leaf, opts));
+  const rendererHistory = new RendererHistory();
+  handle('history', (key, leaf, opts) => rendererHistory.project(host.index.history(key, leaf, opts)));
   handle('searchSession', (key, query, opts) => host.index.searchSession(key, query, opts));
   handle('sessionOutline', key => host.index.sessionOutline(key));
   handle('resources', cwd => host.resources(cwd));

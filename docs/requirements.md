@@ -25,9 +25,9 @@
 - 面板与状态统计只计 running/queued，不含 completed/failed。
 - **切换会话不拦截**（用户 2026-10-16 明确）：切换不杀进程、切回即见，可见性由对话内卡片负责。
 - 全部子代理进入终态后，卡片状态随之收敛。
-- **侧栏会话行的运行中标识覆盖子代理**（用户 2026-10-17 补充）：主 run 已结束但该会话仍有运行中子代理时，侧栏菊花不停——否则用户会误以为任务已结束。数据源为主进程异步运行目录 `async-subagent-runs/<runId>/status.json`（按 sessionId 归属，running/queued 计入，终态与 stale 排除）；旧 `agentDir/subagents/<sessionKey>_<callId>.json` 只补充无 async 记录的调用，不能覆盖 async 终态。主 run 空闲、切到别的会话后仍需持续更新；折叠项目时项目行也显示运行标识。
+- **侧栏会话行的运行中标识覆盖子代理**（用户 2026-10-17 补充）：主 run 已结束但该会话仍有运行中子代理时，侧栏菊花不停——否则用户会误以为任务已结束。数据源为主进程异步运行目录 `async-subagent-runs/<runId>/status.json`（按 sessionId 归属，running/queued 计入，终态与 stale 排除）；旧 `agentDir/subagents/<sessionKey>_<callId>.json` 只补充无 async 记录的调用，不能覆盖 async 终态。主 run 空闲、切到别的会话后仍需持续更新。**运行状态是会话级属性，不聚合到项目行**（用户 2026-10-19 明确）：折叠项目时项目行保持文件夹图标，不显示任何菊花/进度指示——折叠项目 ≠ 项目在跑。
 
-**状态**：部分满足（v0.1.24 #124 首版；v0.1.25+ 去弹窗、去横幅、换 bot 图标。2026-10-19 实测侧栏仍使用冻结的工具事件快照，异步子代理运行中漏标识；修复分支已接入有界异步 status 扫描、项目行运行标识及回归测试，待审查/发版后验收）。
+**状态**：部分满足（v0.1.24 #124 首版；v0.1.25+ 去弹窗、去横幅、换 bot 图标。异步子代理侧栏漏报已于 v0.1.30 修复（#141：有界异步 status 扫描 + dispose/reconnect 代际）；v0.1.30 曾把运行标识错误地聚合到项目行，已按用户反馈回退为会话级，待 PR 合并后验收）。
 
 **回归触发**：改 `ChatView.tsx`（toolRowIcon/ToolCard 的 bot 图标与卡片渲染）、`adapter.ts`（selectSession/disconnectRun/liveSubagentCount/buildPiSidebar 的 busy 口径）、`subagents.ts`、主进程 `persistSubagentEvent`/`async-subagent-activity.ts` 快照扫描、backend 定时刷新生命周期；pi-subagents 升级（status 形态可能变）。
 
@@ -42,7 +42,7 @@
 - **计时真实**：详情面板的「已工作 / 用时」只用消息的真实时间戳；IPC 取回的转录被脱敏后不带时间时，不显示计时，绝不把内部缓存版本号/当前时间当起始时间（曾出现「已工作 497889 小时」）。回归：`tests/subagent-transcript-timing.test.ts`。
 
 **状态**：部分满足。
-- single/workflow 转录：满足。
+- single/workflow 转录：部分满足。2026-10-19 现场确认 async single 运行中转录路径发布在 `steps[0].sessionFile`，顶层 `sessionFile` 常在结束后才出现；Desktop 原来只读顶层，造成“有 tokens/轮次但看不到过程”。修复分支按通过身份校验的唯一 step 回读，保留 containment/时间/调用身份约束；运行中、追加消息和完成态待发版验收。回归 `tests/subagent-snapshots.test.ts` 与 `tests/subagent-live-transcript.browser.cjs`。
 - completions 形态卡片恢复：满足（v0.1.24 #121）。
 - **子会话 `sessionFile` 读取**：待上游。上游 `pi-subagents@0.78.0` async 路径不写子运行 `status.sessionFile`（`sessionFilesByFlatIndex` 全包无生产者，`async-execution.js:1079` 读空值）。Desktop 用父 workflow `steps[].sessionFile` 回退（v0.1.24 #122），治标。上游 main 今日（2026-10-16）在修同簇问题（#2915–#2920）但未发版。
 
@@ -163,11 +163,29 @@
 **验收**：
 - 流式期间主进程单次同步阻塞 < 50ms（实测修复前：history() 每次 scan() 热 173ms/冷 3.5s，103.7MB 会话 dirty 全量重解析 421ms）。
 - 渲染层 memo 子组件不被每次 render 新建的对象击穿。
+- Desktop 历史 IPC 不重复传输界面未消费的 toolResult 顶层图片 base64；只做传输投影，内部历史、fork/续接、用户图片和工具 details 必须无损。回归：`tests/renderer-history.test.ts`；真实 Electron 对照：`tests/renderer-history-ipc.electron.cjs`。
+- 2026-10-19 仍有输入 p90=520ms/max=2909ms 的现场报告：响应瘦身不等于端到端卡顿解决。主进程冷扫描/解析的 worker 隔离待实现，方案与证据边界见 `docs/design/input-lag-multicore.md`。
 - 大会话历史读取不全量重读：落盘会话走增量 tail 解析（session-index），运行中会话的 `get_entries(since=leafId)` 增量契约待接入（切片 2c）。
 
 **状态**：大部分满足。切片 1（labelsFor 缓存，v0.1.24 #120）已修 memo 击穿；切片 2a/2b（history() 去全扫 + 增量 tail 解析，实测 421ms → 平均 6.3ms）已修（PR #128）；**渲染侧热路径（Phase 2，实测 sentConversationMessages 热路径 259ms/拍 → 流式 tick 10-12ms，22×）：anchorOf/indexById O(1) 化 + 排序锚值预计算 + segment 整段缓存（branch 数组身份隔离，live/tools 内容签名穿透）+ ChatView queue/scrollRequest props 稳定化**；剩余：运行中会话改走 RPC get_entries（切片 2c）、可选虚拟化（切片 3）、活动段/历史段 useMemo 拆分（A1，若剩余 10ms/拍仍感知卡再做）。
 
 **回归触发**：改 `session-index.ts`（增量偏移/快路径）/`adapter.ts`（sentConversationMessages 及其 segment 缓存）/`PiReplicaApp.tsx`（ChatView props 稳定性）；pi RPC `get_entries` 增量契约变化。缓存正确性由 `tests/sent-conversation-cache.test.ts` 钉住（同 id live 内容增长/历史身份恒定/late progress 穿透/refresh 追加）。
+
+### R-render-02　聊天图片可显示、可下载（blob URL 与 CSP/主进程契约一致）
+
+**需求**：会话里的图片（用户附件、生图结果）必须能显示、也能从灯箱下载原图。图片 URL 由 `image-url.ts` 用 `URL.createObjectURL` 生成 blob: URL（为压 base64 常驻内存，见该文件注释里的 195MB 大会话实测），因此上下游两处契约必须同时成立：CSP 的 `img-src` 放行 `blob:`，下载链路把 blob: 归一化成主进程认的 data URL。
+
+**验收**：
+- `src/renderer/index.html` 的 `img-src` 含 `blob:`（同时保留 `'self'` / `data:` / `https:`，不能为了修一个丢其他）。
+- `connect-src` 必须显式含 `blob:` 与 `'self'`：灯箱下载用 `fetch(blob:)` 读回内存字节，CSP 的 fetch 走 `connect-src` 而非 `img-src`；缺省时回退 `default-src 'self'` 会被拒（真实 Electron 实测 `Failed to fetch`）。不得顺带放开 `http:`/`https:`/`*` 出口。
+- `script-src` 保持 `'self'` 单值（不得引入 `unsafe-inline` / `unsafe-eval` 兜底）。
+- 附件图片缩略图与灯箱大图、生图结果网格都能正常显示（不出现 CSP 裂图）。
+- **灯箱「下载原图」端到端可用**：附件图片的 blob: URL 必须先归一化成 `image-file.ts` 的 `imageDataUrl` 认的 data URL 再过 IPC（主进程无法解析 blob: 协议）。
+- 回归测试：`tests/renderer-csp.test.ts` 断言真实源文件的 `img-src` 允许 `blob:` 且其余来源未丢、`connect-src` 含 `blob:` 但无网络出口；`tests/image-download.test.ts` 断言归一化输出能通过主进程同一套校验（不是「看起来像 data URL」）；`tests/csp-blob.electron.cjs`（`npm run smoke:csp-blob`）在真实 Electron 里钉住图片显示 + `fetch(blob:)` + XHR 三者同时可用且 0 CSP 违规。
+
+**状态**：待发版验收（本分支修复同根因三处缺陷，均自 0.1.28 `fe11050` 引入 blob URL 起存在：① `img-src` 不含 `blob:`，Console 刷 "Refused to load the image 'blob:file:///...'"，附件图片全部裂图而 UI 侧无异常；② 下载把 blob: URL 直接传给只认 data URL 的主进程；③ 归一化改用 `fetch(blob:)` 后，`connect-src` 未放行 blob:，真实 Electron 下 fetch/XHR 均被 CSP 拒——②③任一不修，保存对话框都不弹，用户只看到通用「图片保存失败」。2026-10-19 Electron 33 探针实测：仅 `img-src blob:` 时 img=ok、fetch/xhr=error；补 `connect-src 'self' blob:` 后三者全 ok 且无新增网络出口）。
+
+**回归触发**：改 `src/renderer/index.html`（CSP）、`image-url.ts`（若换回 data URL 或改用自定义协议）、`shared/image-download.ts`（下载归一化）、`main/pi/image-file.ts`（下载校验）、Electron 升级（webSecurity / CSP 处理变化）。
 
 ---
 
@@ -182,5 +200,6 @@
 | pi 内核 | R-model-01, R-model-03, R-render-01, R-subagent-02 | refresh/setModel 契约、get_entries 增量、subagent 事件。**必跑 `pnpm smoke:rpc`** |
 | CCR | R-model-02, R-model-03 | provider 生命周期、思考等级字段 |
 | Electron | 全部渲染/IO 需求 | 进程模型、IPC 行为 |
+| Electron / 改 CSP | R-render-02, R-render-01 | webSecurity 与 img-src 处理变化（blob URL 图片会静默裂图） |
 
 **升级前必做**：读本文 → 对照"上游依赖"列出的 issue 状态 → 若上游已发新版，先在本机隔离测相关需求 → 通过才合并到 Desktop。
