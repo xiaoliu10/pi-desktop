@@ -699,3 +699,82 @@ describe('pinned 解析性能（打字卡顿回归）', () => {
     expect(pinIds.slice(1)).toEqual(ids);
   });
 });
+
+describe('计时透传（PR#149 审查：真实时间只经身份/时间校验路径传出）', () => {
+  let root: string;
+  beforeEach(() => { root = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-snap-elapsed-')); });
+  afterEach(() => { try { fs.rmSync(root, { recursive: true, force: true }); } catch {} });
+
+  const NOW = 1_700_000_000_000;
+  const writeRun = (runId: string, status: Record<string, unknown>) => {
+    fs.mkdirSync(path.join(root, runId), { recursive: true });
+    fs.writeFileSync(path.join(root, runId, 'status.json'), JSON.stringify(status));
+  };
+
+  it('149-1 指针 single：record 透传真实 startedAt，child 行带自己的起点/终点', async () => {
+    const callId = 'call-e1', runId = validRunId;
+    // toolCall 时间必须在快照起点之前（validTime：pointer.startedAt ≤ startedAt+60s），
+    // 固定时钟下不能用 makePointerHistory 的“当前时刻”时间戳。
+    const branch = [
+      { type: 'message', id: 'm1', timestamp: new Date(NOW - 10000).toISOString(), message: { role: 'assistant', content: [{ type: 'toolCall', id: callId, name: 'subagent', arguments: { agent: 'reviewer' } }] } },
+      { type: 'message', id: 'm2', message: { role: 'toolResult', toolCallId: callId, toolName: 'subagent', content: [], details: { mode: 'single', runId, asyncId: runId, asyncDir: `${root}/${runId}`, results: [] } } },
+    ];
+    for (const state of ['running', 'complete']) {
+      writeRun(runId, { mode: 'single', runId, sessionId: '/sessions/s1.jsonl', toolCallId: callId, state, startedAt: NOW - 9000, lastUpdate: NOW - 2000, steps: [{ agent: 'reviewer' }] });
+      const snapshots = await workflowSnapshots(makeHistory('/sessions/s1.jsonl', branch), [], root, NOW);
+      expect(snapshots).toHaveLength(1);
+      expect(snapshots[0]!.startedAt).toBe(NOW - 9000);
+      const row = (snapshots[0]!.details as any).workflowChildren.children[0];
+      expect(row.startedAt).toBe(NOW - 9000);
+      expect(row.endedAt).toBe(state === 'complete' ? NOW - 2000 : undefined);
+    }
+  });
+
+  it('149-3 指针 workflow：每个 child 用自己 status.json 的已验证时钟', async () => {
+    const callId = 'call-e2', runId = 'e6f11763-f8af-48f1-bcf4-858039b38d5e';
+    const childA = 'a926326f-6e89-4410-a940-e926e799cf65', childB = 'a926326f-6e89-4410-a940-e926e799cf66';
+    const branch = [
+      { type: 'message', id: 'm1', timestamp: new Date(NOW - 100000).toISOString(), message: { role: 'assistant', content: [{ type: 'toolCall', id: callId, name: 'subagent', arguments: { agent: 'lead' } }] } },
+      { type: 'message', id: 'm2', message: { role: 'toolResult', toolCallId: callId, toolName: 'subagent', content: [], details: { mode: 'workflow', runId, toolCallId: callId, asyncId: runId, asyncDir: `${root}/${runId}`, results: [], workflowChildren: { version: 1, parentToolCallId: callId, workflowRunId: runId, inventoryComplete: false, workflowState: 'running', children: [] } } } },
+    ];
+    writeRun(runId, { mode: 'workflow', runId, sessionId: '/sessions/s1.jsonl', toolCallId: callId, state: 'running', startedAt: NOW - 90000, lastUpdate: NOW - 1000,
+      workflowChildren: { version: 1, parentToolCallId: callId, workflowRunId: runId, inventoryComplete: true, workflowState: 'running', children: [
+        { childId: 's0', runId: childA, agent: 'alpha', state: 'completed' },
+        { childId: 's1', runId: childB, agent: 'beta', state: 'running' },
+      ] } });
+    writeRun(childA, { mode: 'single', runId: childA, sessionId: '/sessions/s1.jsonl', toolCallId: 'ct-a', parentWorkflowRunId: runId, workflowKey: 's0', state: 'complete', startedAt: NOW - 80000, lastUpdate: NOW - 70000 });
+    writeRun(childB, { mode: 'single', runId: childB, sessionId: '/sessions/s1.jsonl', toolCallId: 'ct-b', parentWorkflowRunId: runId, workflowKey: 's1', state: 'running', startedAt: NOW - 20000, lastUpdate: NOW - 1000 });
+    const snapshots = await workflowSnapshots(makeHistory('/sessions/s1.jsonl', branch), [], root, NOW);
+    expect(snapshots).toHaveLength(1);
+    expect(snapshots[0]!.startedAt).toBe(NOW - 90000); // workflow 自身时钟（给占位卡用）
+    const rows = (snapshots[0]!.details as any).workflowChildren.children;
+    expect(rows[0].startedAt).toBe(NOW - 80000);       // A 自己的起点，不是父的
+    expect(rows[0].endedAt).toBe(NOW - 70000);         // A 已验证终态的真实 lastUpdate
+    expect(rows[1].startedAt).toBe(NOW - 20000);
+    expect(rows[1].endedAt).toBeUndefined();           // 运行中：lastUpdate 不是结束时刻
+  });
+
+  it('149-1/3 校验失败的 child 不带时间（catch 降级路径保持无时钟）', async () => {
+    const callId = 'call-e3', runId = 'e6f11763-f8af-48f1-bcf4-858039b38d5f';
+    const branch = makePointerHistory(callId, runId, '/sessions/s1.jsonl', root).branch;
+    // 父 status.json 不可读 → 整卡落入 catch：steps 降级 unknown，无任何时间
+    const snapshots = await workflowSnapshots(makeHistory('/sessions/s1.jsonl', branch), [], root, NOW);
+    expect(snapshots[0]!.status).toBe('unknown');
+    expect(snapshots[0]!.startedAt).toBeUndefined();
+    const rows = (snapshots[0]!.details as any).workflowChildren?.children ?? (snapshots[0]!.details as any).steps;
+    for (const row of rows) { expect(row.startedAt).toBeUndefined(); expect(row.endedAt).toBeUndefined(); }
+  });
+
+  it('149-2 orphan 顶层 status 统一为已验证的规范化状态（不再恒 unknown）', async () => {
+    writeRun('run-o1', { mode: 'single', runId: 'run-o1', sessionId: '/sessions/s1.jsonl', state: 'complete', startedAt: NOW - 90000, lastUpdate: NOW - 80000, steps: [{ agent: 'a' }] });
+    writeRun('run-o2', { mode: 'single', runId: 'run-o2', sessionId: '/sessions/s1.jsonl', state: 'running', startedAt: NOW - 30000, lastUpdate: NOW - 1000, steps: [{ agent: 'b' }] });
+    const snapshots = await workflowSnapshots(makeHistory('/sessions/s1.jsonl', []), [], root, NOW);
+    const ok = snapshots.find(s => s.callId === 'run-o1')!;
+    const live = snapshots.find(s => s.callId === 'run-o2')!;
+    expect(ok.status).toBe('completed');
+    expect(ok.startedAt).toBe(NOW - 90000);
+    expect(ok.updatedAt).toBe(NOW - 80000);
+    expect(live.status).toBe('running'); // 幽灵降级才 unknown；真实 running 保持 running
+    expect(live.updatedAt).toBe(NOW - 1000); // 不是 endedAt，渲染层只在终态取它
+  });
+});

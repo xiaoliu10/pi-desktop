@@ -52,7 +52,9 @@ export function subagentTranscriptTurns(messages: SubagentChild['messages'], tur
   const started = anchored.startedAt ?? validStart;
   let ended = anchored.endedAt ?? validEnd;
   if (ended !== undefined && ended < started) ended = undefined;
-  next[anchor] = { ...anchored, startedAt: started, ...(ended === undefined ? {} : { endedAt: ended }) };
+  // 显式覆盖 endedAt（不能条件展开）：锚定轮自带的逆序 endedAt 必须被替换成
+  // undefined，展开旧对象会把它原样带回（INVALID_END 回归：endedAt < startedAt）。
+  next[anchor] = { ...anchored, startedAt: started, endedAt: ended };
   return next;
 }
 
@@ -104,9 +106,16 @@ export function projectSubagents(messages: ChatMessage[], parentRunning: boolean
   // 显示状态不在这里改写（recovered-only 恒为 recovered、live 以 adapter 为准）。
   // endedAt 只能在磁盘快照自身已终态时取其 lastUpdate：磁盘仍 running 时，
   // lastUpdate 只是最近一次轮询时刻，不是结束时刻，不能拿来当「用时」终点。
+  // orphan 顶层 status 已与指针路径同口径（149-2：生产者回规范化状态），FINISHED
+  // 判定对 orphan 终态同样成立；unknown（幽灵降级）永不算完成。
   const withTiming = (child: SubagentChild): SubagentChild => {
     const rec = recByCall.get(child.callId);
-    if (!rec) return child;
+    // 带 childKey 的子卡只用自己的已验证时钟（生产者在 child status.json 通过身份/
+    // 时间校验后附到行上，adapter 透传）：record 级时钟属于 workflow/单跑本身，投影
+    // 给每个 child 会把「启动前的等待」算进 child 用时（149-3）。无 child 时间就不
+    // 计时，绝不拿父时间兑底。无 childKey 的卡（official 适配器结果、workflow 占位
+    // 卡）才用 record 时钟——它们本来就是那个 record 的主体。
+    if (!rec || child.childKey !== undefined) return child;
     const startedAt = Number.isFinite(rec.startedAt) && (rec.startedAt as number) > 0 ? rec.startedAt : child.startedAt;
     const endedAt = FINISHED.has(rec.status || '') && Number.isFinite(rec.updatedAt) && (rec.updatedAt as number) >= (startedAt ?? 0)
       ? rec.updatedAt : child.endedAt;

@@ -103,6 +103,17 @@ it('ignores an endedAt earlier than startedAt instead of fabricating a negative 
   expect(assistantTurn?.endedAt).toBeUndefined();
 });
 
+it('drops an inverted message-derived endedAt instead of leaking it through the object spread (INVALID_END)', () => {
+  // 逆序消息（user@t、assistant@t-100）：assistant 轮 startedAt 取 user 边界 t，
+  // endedAt 是消息自己的 t-100。局部防御曾把 ended 置 undefined，但展开旧对象时
+  // 旧 endedAt 属性又被带回来——endedAt < startedAt 的非法计时原样渲染。
+  const t = Date.parse('2026-10-20T09:00:00Z');
+  const turns = subagentTranscriptTurns([user({ timestamp: t }), assistant('a', { timestamp: t - 100 })], 'invalid-end-a', 1, t);
+  const assistantTurn = turns.find(turn => turn.role === 'assistant')!;
+  expect(assistantTurn.startedAt).toBe(t);
+  expect(assistantTurn.endedAt === undefined || assistantTurn.endedAt >= (assistantTurn.startedAt as number)).toBe(true);
+});
+
 it('ignores non-finite bogus timestamps instead of fabricating elapsed time', () => {
   const turns = subagentTranscriptTurns(
     [user({ timestamp: 'not-a-date' }), assistant('x', { timestamp: NaN })],
