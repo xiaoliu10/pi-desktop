@@ -317,6 +317,15 @@ async function orphanAsyncRuns(history: PiHistory, root: string, now: number, bu
   return runs.slice(0, MAX_ORPHANS);
 }
 
+/** Single runs publish live sessionFile on their only step; the top-level field
+ *  may appear only when the run settles. Never guess among multiple steps. */
+function singleSessionFile(status: Record<string, any>): string | undefined {
+  if (typeof status.sessionFile === 'string' && status.sessionFile) return status.sessionFile;
+  if (status.mode !== 'single' || !Array.isArray(status.steps) || status.steps.length !== 1) return undefined;
+  const file = obj(status.steps[0])?.sessionFile;
+  return typeof file === 'string' && file ? file : undefined;
+}
+
 /** Resolve a child run's session file through the SAME validated pointer chain as
  *  workflowSnapshots (containment + identity + time). Returns undefined on any
  *  mismatch; the caller must still containment-check the path against the trusted
@@ -341,7 +350,7 @@ export async function childSessionPointer(history: PiHistory, persisted: Subagen
       const fromCompletions = completionsDetails(d, callId);
       if (fromCompletions) return fromCompletions.sessionFile;
       if (status.mode !== 'single' || (status.toolCallId !== undefined && status.toolCallId !== callId) || childId !== 'single') return undefined;
-      return typeof status.sessionFile === 'string' ? status.sessionFile : undefined;
+      return singleSessionFile(status);
     }
     if (status.mode !== 'workflow' || status.toolCallId !== callId || !workflowDetails(status, callId)) return undefined;
     const row = workflowRows(status).find(r => r.childId === childId);
@@ -350,7 +359,8 @@ export async function childSessionPointer(history: PiHistory, persisted: Subagen
     if (s.runId !== row.runId || s.sessionId !== history.session.path || !workflowId(s.toolCallId) || s.parentWorkflowRunId !== runId || s.workflowKey !== childId || !validTime(s) || s.startedAt < status.startedAt) return undefined;
     // pi-subagents child runs may omit sessionFile from their own status.json.
     // Fall back to the parent workflow's steps[].sessionFile (set at launch time).
-    if (typeof s.sessionFile === 'string') return s.sessionFile;
+    const sessionFile = singleSessionFile(s);
+    if (sessionFile) return sessionFile;
     const step = Array.isArray(status.steps) ? status.steps.find((st: any) => obj(st)?.workflowKey === childId) : undefined;
     const stepFile = obj(step)?.sessionFile;
     return typeof stepFile === 'string' ? stepFile : undefined;

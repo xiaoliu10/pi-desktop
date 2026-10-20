@@ -455,8 +455,8 @@ export interface ChatViewProps {
   earlierLoading?: boolean;
   /** 完整历史条数（主进程 truncated.total）：按钮据此显示真实剩余量，不谎报。 */
   earlierTotal?: number;
-  /** 下载已发送的图片附件：dataUrl + 建议文件名；缺省=灯箱里不显示下载按钮。 */
-  onDownloadImage?: (dataUrl: string, name: string) => void;
+  /** 下载已发送的图片附件：url（blob: 或 data:）+ 建议文件名；缺省=灯箱里不显示下载按钮。 */
+  onDownloadImage?: (url: string, name: string) => void | Promise<void>;
   /** pi 正在压缩上下文（compaction_start…end）：工作条显示「正在压缩上下文」。 */
   compacting?: boolean;
   /** 直连生图结果卡片：追加在时间线末尾（本地产物，不入会话历史）。 */
