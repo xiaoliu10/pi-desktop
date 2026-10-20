@@ -22,6 +22,7 @@ import { SessionArchive } from './pi/session-archive';
 import { autoArchiveKeys } from './pi/auto-archive';
 import { autoDeleteArchivedKeys, deleteArchivedSession } from './pi/auto-delete';
 import { projectFiles, projectContext, readContext, projectBranch, skillChoices } from './pi/composer-service';
+import { createIpcHandle, type IpcEntryEvent } from './ipc-entry';
 import { isAccessMode } from '../shared/access-mode';
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, shell } from 'electron';
 import path from 'node:path';
@@ -91,6 +92,16 @@ let updateChecker: UpdateChecker | undefined;
 let updateUrl: string | undefined;
 let updateInFlight = false;
 
+/**
+ * IPC 来源判定：只有主窗口的顶层文档能调用 `local-pi:*`。
+ * 三项缺一不可——窗口存在（启动中/已关闭时拒绝）、sender 是主窗口 webContents（挡其他窗口/
+ * 内置浏览器 guest）、senderFrame 是主 frame（挡子 frame）。判定式必须在业务执行前跑完，
+ * 见 ipc-entry.ts 顶部注释（旧实现把校验写在业务之后，同步双跑、异步直接绕过）。
+ */
+function assertMainWindowSender(event: IpcEntryEvent) {
+  if (!mainWindow || event.sender !== mainWindow.webContents || event.senderFrame !== mainWindow.webContents.mainFrame) throw new Error('非法 IPC 来源');
+}
+
 function broadcast(event: PiEvent) {
   const eventKey = event.type === 'run' ? event.run.key : 'key' in event ? event.key : undefined;
   // closed 优先读事件自带 sidecarOf（事发时 active 已删，runs() 事后快照查不到）；
@@ -130,19 +141,14 @@ function registerIpc() {
   terminals = new TerminalService(event => {
     if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(event.type === 'terminalData' ? 'local-pi:terminalData' : 'local-pi:terminalExit', event);
   });
-  // IPC 慢调用观测：>100ms 落盘到 main-perf.log（与 event-loop 监控互补——尖峰时
-  // 直接看到是哪条通道在阻塞主进程）。零开销路径：快调用只有一次 Date.now()。
+  // 统一 IPC 入口（唯一注册点）：授权先于业务、业务严格一次、同步/Promise/throw/rejection 语义原样透传。
+  // 慢调用观测：>100ms 落盘到 main-perf.log（与 event-loop 监控互补——尖峰时直接看到是哪条通道在阻塞
+  // 主进程）。计时每次调用恰记录一次（含失败路径）；记录失败被 ipc-entry 就地吞掉，不影响业务。
   const perfLog = (line: string) => { try { fsSync.appendFileSync(nodePath.join(nodeOs.homedir(), 'Library', 'Logs', 'PI Desktop', 'main-perf.log'), `${new Date().toISOString()} ${line}\n`); } catch { /* 不可见不影响主流程 */ } };
-  const handle = (name: string, fn: (...args: any[]) => unknown) => ipcMain.handle(`local-pi:${name}`, (event, ...args) => {
-    const __t0 = Date.now();
-    const __done = () => { const c = Date.now() - __t0; if (c > 100) perfLog(`ipc ${name} ${c}ms`); };
-    try {
-      const __r = fn(...args);
-      if (__r && typeof (__r as Promise<unknown>).then === 'function') { void (__r as Promise<unknown>).then(() => __done(), () => __done()); return __r; }
-      __done();
-    } catch (e) { __done(); throw e; }
-    if (!mainWindow || event.sender !== mainWindow.webContents || event.senderFrame !== mainWindow.webContents.mainFrame) throw new Error('非法 IPC 来源');
-    return fn(...args);
+  const handle = createIpcHandle({
+    register: (channel, listener) => ipcMain.handle(channel, listener),
+    authorize: assertMainWindowSender,
+    record: (name, ms) => { if (ms > 100) perfLog(`ipc ${name} ${ms}ms`); },
   });
   handle('automationSnapshot',()=>automations!.snapshot());
   handle('terminalCreate', input => terminals.create(input ?? {}));
