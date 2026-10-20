@@ -27,6 +27,7 @@ import { AccessModeMenu } from './AccessModeMenu';
 import { SettingsFeatures } from './SettingsFeatures';
 import { RemotePane } from './RemotePane';
 import { DEFAULT_SHORTCUTS, DEFAULT_AGENT_PRESETS, shortcutMatches, type ShortcutAction } from '../../shared/settings';
+import { toDataUrlForDownload } from '../../shared/image-download';
 /**
  * Production entry view (P08): the accepted replica UI driven by the real
  * local pi backend (window.localPi) through src/renderer/pi/adapter.ts.
@@ -552,9 +553,12 @@ export default function PiReplicaApp() {
     }
     void st.resendEdited(entryId, text);
   }, []);
-  // 图片灯箱下载：主进程弹保存对话框写盘。
-  const downloadImage = useCallback((dataUrl: string, name: string) => {
-    window.localPi!.downloadImage(name, dataUrl).catch(() => usePiStore.setState({ error: '图片保存失败' }));
+  // 图片灯箱下载：主进程弹保存对话框写盘。渲染侧图片是 blob: URL（image-url.ts 的
+  // createObjectURL），主进程无法解析 blob: 协议——先归一化成 base64 data URL
+  // 再走 IPC（downloadImage 只认 data URL）。转换在 shared/image-download.ts，
+  // 只在点下载时发生一次，不回到「每拍拼 base64」的老路。
+  const downloadImage = useCallback(async (url: string, name: string) => {
+    await window.localPi!.downloadImage(name, await toDataUrlForDownload(url));
   }, []);
   const reviewDiffs = useMemo(() => (s.review ? reviewDiffEntries(s.review) : []), [s.review]);
   const runModels = run?.models ?? [];
