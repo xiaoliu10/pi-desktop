@@ -308,7 +308,8 @@ function ProjectRow(props: {
         aria-expanded={p.expanded}
         title={props.labels.collapseSessions ? (p.expanded ? props.labels.collapseSessions : (props.labels.showAllSessions ?? '')) : undefined}
       >
-        {p.sessions.some(session => session.busy) ? <Spinner label={props.labels.projects === '项目' ? '项目有任务运行中' : 'Project has running tasks'} /> : <Icon name="folder" size={15} />}
+        {/* 运行状态是会话级属性：项目行只做目录标识，不加菊花/进度指示。 */}
+        <Icon name="folder" size={15} />
         <span className="pi-sidebar__rowtitle">{p.name}</span>
         {p.pinned && <Icon name="pin" size={12}/>}
         {props.menu}
