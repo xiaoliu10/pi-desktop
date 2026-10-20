@@ -89,9 +89,20 @@ export class PiBackend {
   resolveSessionKey(key: string): string {
     const source = this.index.sessionsView(true).find(s => s.key === key);
     if (!source) throw new Error('会话不存在、不可读或不在选定目录中。');
-    const map = loadContinuations(this.dataDir);
+    return fileKey(this.historyTargetFor(source));
+  }
+  private historyTargetFor(source: { path: string; owned: boolean }): string {
     const copy = !source.owned ? this.desktopCopyFor(source.path) : undefined;
-    return fileKey(resolveContinuation(map, copy?.path ?? source.path));
+    return canonical(resolveContinuation(loadContinuations(this.dataDir), copy?.path ?? source.path));
+  }
+  /** Runtime identity stays stable across fork (RPC events, approvals and mode file).
+   * historyKey explicitly aliases that runtime to the file it is now writing. */
+  private attachedTo(file: string): Running | undefined {
+    return [...this.active.values()].find(run => canonical(run.input.file) === file);
+  }
+  private attachedView(run: Running): PiRun {
+    run.view.historyKey = fileKey(run.input.file);
+    return { ...run.view };
   }
   private desktopCopyFor(sourcePath: string) {
     return this.index.sessionsView(true)
@@ -111,11 +122,10 @@ export class PiBackend {
       // 延续重定向：该会话被「编辑重发」fork 过时，后续对话在链尾文件里。
       // attach 与打开目标都按链尾匹配——fork 后活着的 run 挂在旧 key/origin 上，
       // 但它的实际文件已 rebind，直接再 launch 会产生同文件双 pi 进程。
-      const map = loadContinuations(this.dataDir);
-      const continued = canonical(resolveContinuation(map, source.session.path));
+      const continued = this.historyTargetFor(source.session);
       origin = fileKey(continued);
-      const attached = this.active.get(origin) ?? [...this.active.values()].find(r => canonical(resolveContinuation(map, r.input.file)) === continued);
-      if (attached) return attached.view;
+      const attached = this.attachedTo(continued);
+      if (attached) return this.attachedView(attached);
     }
     // 源目录校验先于驱逐：延续一个目录已失效的会话绝不能先 close 无辜会话（review P2-1）。
     if (input.sourceKey) {
@@ -141,27 +151,20 @@ export class PiBackend {
     this.ownedRoot = fs.realpathSync(this.ownedRoot);
     if (input.sourceKey) {
       const source = this.index.history(input.sourceKey);
-      const continuedPath = canonical(resolveContinuation(loadContinuations(this.dataDir), source.session.path));
-      if (source.session.owned) {
-        // Desktop 自建会话原地续聊；只有外部 CLI 会话才派生副本，
-        // 否则每次断开后继续都会 fork 出一条新会话。
-        file = continuedPath === canonical(source.session.path) ? source.session.path : continuedPath;
+      const target = this.historyTargetFor(source.session);
+      if (source.session.owned || target !== canonical(source.session.path)) {
+        // The same read-only rule as resolveSessionKey: owned file / external copy / tip.
+        const attached = this.attachedTo(target);
+        if (attached) return this.attachedView(attached);
+        file = target;
       } else {
-        // 外部原件已有 Desktop 副本时，继续最近的那个副本（副本自身被 fork 过则继续其链尾），不再重复 fork。
-        this.index.scan();
-        const child = this.desktopCopyFor(source.session.path);
-        if (child) {
-          const childPath = canonical(resolveContinuation(loadContinuations(this.dataDir), child.path));
-          const childKey = fileKey(childPath);
-          const activeChild = this.active.get(childKey) ?? this.active.get(child.key);
-          if (activeChild) return activeChild.view;
-          file = childPath;
-        } else {
-          // Never open an external CLI file for writing. Preserve all entries on a copy.
-          const id = randomUUID(); file = path.join(this.ownedRoot, `${Date.now()}_${id}.jsonl`);
-          const sourceHeader = JSON.parse(fs.readFileSync(source.session.path, 'utf8').split('\n')[0]);
-          fs.writeFileSync(file, [JSON.stringify({ ...sourceHeader, id, timestamp: new Date().toISOString(), parentSession: source.session.path }), ...source.entries.map(e => JSON.stringify(e)), ''].join('\n'), { flag: 'wx', mode: 0o600 });
-        }
+        // Never open an external CLI file for writing. Preserve all entries on a copy.
+        const id = randomUUID(); file = path.join(this.ownedRoot, `${Date.now()}_${id}.jsonl`);
+        const sourceHeader = JSON.parse(fs.readFileSync(source.session.path, 'utf8').split('\n')[0]);
+        fs.writeFileSync(file, [JSON.stringify({ ...sourceHeader, id, timestamp: new Date().toISOString(), parentSession: source.session.path }), ...source.entries.map(e => JSON.stringify(e)), ''].join('\n'), { flag: 'wx', mode: 0o600 });
+        // Publish the just-created copy to the shared read/connect selector before
+        // a second connect can look it up (the index watcher need not have fired).
+        this.index.history(fileKey(file));
       }
     } else {
       const id = randomUUID(); file = path.join(this.ownedRoot, `${input.sidecarOf !== undefined ? 'sidecar_' : ''}${Date.now()}_${id}.jsonl`);
@@ -530,7 +533,7 @@ export class PiBackend {
     }
     let endedAt = Date.now();
     try {
-      const last = this.index.history(key).branch.at(-1);
+      const last = this.index.history(fileKey(run.input.file)).branch.at(-1);
       const ts = last?.timestamp ? Date.parse(last.timestamp) : NaN;
       if (Number.isFinite(ts) && ts > (run.view.timing?.startedAt ?? 0) && ts <= endedAt) endedAt = ts;
     } catch { /* 历史不可读时退回当前时刻。 */ }
@@ -631,7 +634,7 @@ export class PiBackend {
       // 留痕 entry（session_compact 扩展先于 compaction_end await 完成落盘）。
       if (event.result) {
         try {
-          const entry = [...this.index.history(key).branch].reverse().find((e: any) => e.customType === 'desktop-compaction');
+          const entry = [...this.index.history(fileKey(run.input.file)).branch].reverse().find((e: any) => e.customType === 'desktop-compaction');
           const tokensAfter = Number(event.result.estimatedTokensAfter);
           if (!(tokensAfter > 0)) return; // 字段缺失/非法时 fail closed：留痕退化为「压缩前」口径
           this.emit({
@@ -652,7 +655,7 @@ export class PiBackend {
         run.view.status = 'running';
         if (!run.retryEntryId) {
           try {
-            const entry = [...this.index.history(key).branch].reverse().find(e => e.type === 'message' || e.type === 'custom_message');
+            const entry = [...this.index.history(fileKey(run.input.file)).branch].reverse().find(e => e.type === 'message' || e.type === 'custom_message');
             if (entry?.message?.role === 'assistant' && entry.message.stopReason === 'error') run.retryEntryId = entry.id;
           } catch { /* The timer fails closed if no persisted failed entry is available. */ }
         }
@@ -790,7 +793,7 @@ export class PiBackend {
     if (!current()) return;
     if (!run.retryReady) throw new Error('Desktop 安全续接扩展未就绪，未自动重放任务。');
     // Read the persisted active branch, not the last UI message or abandoned leaves.
-    const history = this.index.history(key);
+    const history = this.index.history(fileKey(run.input.file));
     const entry = [...history.branch].reverse().find(e => e.type === 'message' || e.type === 'custom_message');
     if (!failedEntryId || entry?.id !== failedEntryId || entry.message?.role !== 'assistant' || entry.message.stopReason !== 'error') throw new Error('重试上下文已变化，未自动重放任务。');
     const state = await run.client.request('get_state', {}, 5_000);
@@ -950,6 +953,7 @@ export class PiBackend {
         saveContinuations(this.dataDir, recordContinuation(loadContinuations(this.dataDir), run.input.file, next));
         // 二次编辑重发必须喂链尾（否则 record 会用过期链头产生断链映射）。
         run.input.file = canonical(next);
+        run.view.historyKey = fileKey(run.input.file);
         this.onContinuation?.(key, fileKey(run.input.file));
       }
     } catch { /* 记录失败不影响 fork 本身；下次编辑重发会再记 */ }

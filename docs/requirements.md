@@ -95,9 +95,10 @@
 - 预热被跳过时（已归档 / 连接数已满 / 环境不可用 / 连接失败）阅读路径同样拿到正确历史——不能把正确性寄托在预热成功上。
 - 没有副本的外部快照保持原样显示；Desktop 自有会话不受影响，不产生新副本。
 - 已明确选择某个分支 leaf 时不重定向（用户正在看历史分叉，不能偷偷换）。
-- 重定向后：导航历史里**替换当前条目**而不是多压一级（不产生多余的「后退」步）；未发送草稿搬到目标会话；迟到的旧响应不得覆盖目标会话内容或把用户从别的会话拽走。
+- 重定向后：导航历史里**替换当前条目**而不是多压一级（不产生多余的「后退」步）；未发送草稿搬到目标会话；双方已有草稿时按目标在前、源在后合并文本，附件按 id 去重保留双方；迟到的旧响应不得覆盖目标会话内容或把用户从别的会话拽走。
+- 已连接会话 fork 后保持原 runtime/event key，以显式 historyKey 别名读取真实链尾；打开源、打开链尾与继续发送均复用该 runtime，不靠断开或启动另一进程。
 - 目标 key 幂等：副本自身是 owned 会话，不会再次进入重定向分支。
-- 回归：`tests/session-history-target.test.ts`（store 层）、`tests/session-history-resolution.test.ts`（主进程只读解析）、`tests/session-history-target.browser.cjs`（真实侧栏点击 + 重开）。
+- 回归：`tests/session-history-target.test.ts`（store 层）、`tests/session-history-resolution.test.ts`（主进程只读解析）、`tests/session-history-active-fork.test.ts`（真实 backend/RPC fixture fork → store → 发送，非 Electron 端到端）、`tests/session-history-target.browser.cjs`（真实侧栏点击 + 重开）。
 
 **状态**：待发版验收（本分支修复）。
 

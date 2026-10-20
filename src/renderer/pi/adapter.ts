@@ -568,7 +568,7 @@ export function buildPiSidebar(
   const registered = new Map((preferences?.projects ?? []).map((p) => [p.path, p]));
   const order = new Map((preferences?.projects ?? []).map((p, index) => [p.path, index]));
   runs = runs.filter((r) => r.sidecarOf === undefined && !/[\\/]sidecar_[^\\/]+\.jsonl$/.test(r.file) && !archived.has(r.key));
-  const runByKey = new Map(runs.map((r) => [r.key, r]));
+  const runByKey = new Map(runs.flatMap(r => [[r.key, r] as const, ...(r.historyKey ? [[r.historyKey, r] as const] : [])]));
   const byCwd = new Map<string, PiSession[]>();
   for (const s of sessions) {
     // Subagent / fork 内部会话（parentSession 非空）不进用户会话列表：
@@ -592,7 +592,7 @@ export function buildPiSidebar(
       sessions: list
         .sort((a, b) => b.updatedAt - a.updatedAt)
         .map((s) => ({
-          id: s.key,
+          id: runByKey.get(s.key)?.key ?? s.key,
           title: renames[s.key] ?? s.name,
           updatedAt: s.updatedAt,
           source: s.owned ? ('desktop' as const) : ('pi-cli' as const),
@@ -614,7 +614,7 @@ export function buildPiSidebar(
     );
   // Desktop runs whose session file has not appeared yet.
   const orphanRuns: SessionNavItem[] = runs
-    .filter((r) => !hidden.has(r.cwd) && !sessions.some((s) => s.key === r.key))
+    .filter((r) => !hidden.has(r.cwd) && !sessions.some((s) => s.key === r.key || s.key === r.historyKey))
     .map((r) => ({
       id: r.key,
       title: '新桌面会话',
@@ -1186,15 +1186,18 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
     composerFlush?.();
     const sourceDraft = { text: readComposerLiveDraft(get().draftText), items: get().contextItems };
     const targetDraft = switchComposerOwner(get, targetKey);
-    const carriesDraft = Boolean(sourceDraft.text || sourceDraft.items.length);
-    if (carriesDraft) composerDrafts.delete(sourceKey);
+    // Both keys may own unsent work. Target first, source second; attachments use
+    // the same id identity as addContext. Never discard the restored target draft.
+    const draftText = [targetDraft?.draftText, sourceDraft.text].filter(text => text).join('\n\n---\n\n');
+    const contextItems = [...new Map([...(targetDraft?.contextItems ?? []), ...sourceDraft.items].map(item => [item.id, item])).values()];
+    composerDrafts.delete(sourceKey);
     const entries = current.navHistory.entries.map((entry, i) => i === current.navHistory.cursor && entry.view === 'chat' && entry.key === sourceKey ? { ...entry, key: targetKey } : entry);
     navPlayback = true;
     try {
       set({ selectedKey: targetKey, leaf: undefined, history: undefined, earlierLoading: false,
         review: undefined, outline: [], outlineLoading: false, recoveredSubagents: [],
         subagentDismissed: current.desktopPreferences?.subagentDismissed?.[targetKey] ?? [],
-        ...(carriesDraft ? { draftText: sourceDraft.text, contextItems: sourceDraft.items } : targetDraft ?? {}),
+        draftText, contextItems,
         navHistory: { ...current.navHistory, entries } });
     } finally { navPlayback = false; }
     return true;
@@ -1206,8 +1209,8 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
     if (!api || !key) return false;
     const seq = ++loadSeq;
     try {
-      // 幂等：重定向目标本身是 owned 会话，不会再次进入本分支；源快照若已有 run
-      // （预热/连接挂在源 key 上）也不重定向，让 run 的 key 作为这条会话的真相。
+      // Keep runtime/event identity stable, but read its explicit fork-file alias.
+      // An external source resolves read-only even when no runtime can prewarm it.
       const source = state.sessions.find(s => s.key === key);
       if (!state.leaf && source && !source.owned && !state.runs.some(r => r.key === key)) {
         const targetKey = await api.resolveSession(key);
@@ -1217,7 +1220,16 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
           key = targetKey;
         }
       }
-      const generation = get().runs.find(r => r.key === key)?.generation;
+      // A prewarm reply may arrive after the read-only resolver selected the tip.
+      // Adopt its stable runtime identity as well (still read historyKey below).
+      const alias = !state.leaf ? get().runs.find(run => run.historyKey === key && run.key !== key) : undefined;
+      if (alias) {
+        if (!adoptHistoryTarget(key, alias.key)) return false;
+        key = alias.key;
+      }
+      const run = get().runs.find(r => r.key === key);
+      const generation = run?.generation;
+      const historyKey = run?.historyKey ?? key;
       // 全量历史：用户 2026-10-18 明确要求「打开就有完整对话历史」——tail=500 的首屏
       // 让 27219 条的会话只剩三段可见，是不可接受的回归。主进程 CPU 的治理改由
       // 「刷新节流 + 图片懒加载」承担（不在本提交回退范围内先恢复正确性）。
@@ -1227,8 +1239,8 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
       // 顶部按钮/触底触发，按钮显示真实剩余条数，不是把整个会话塞进首屏。
       startPhase('history-ipc');
       let value: PiHistory;
-      try { value = await api.history(key, state.leaf, { tail: HISTORY_PAGE }); } finally { endPhase('history-ipc'); }
-      if (seq !== loadSeq || get().selectedKey !== key || get().runs.find(r => r.key === key)?.generation !== generation) return false;
+      try { value = await api.history(historyKey, state.leaf, { tail: HISTORY_PAGE }); } finally { endPhase('history-ipc'); }
+      if (seq !== loadSeq || get().selectedKey !== key || get().runs.find(r => r.key === key)?.generation !== generation || ((get().runs.find(r => r.key === key)?.historyKey ?? key) !== historyKey)) return false;
       settlePendingPrompt(value, key);
       if (historyReloadTimer) { clearTimeout(historyReloadTimer); historyReloadTimer = null; }
       return true;
@@ -1251,14 +1263,15 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
     const key = s0.selectedKey;
     const branch = s0.history?.branch ?? [];
     if (!api || !key || s0.earlierLoading || branch.length === 0) return;
+    const historyKey = s0.runs.find(r => r.key === key)?.historyKey ?? key;
     const oldest = branch[0]?.id;
     if (!oldest || !s0.history?.truncated) return; // 未被截断：没有更早的页
     set({ earlierLoading: true });
     try {
       startPhase('history-earlier-ipc');
       let value: PiHistory;
-      try { value = await api.history(key, s0.leaf, { before: oldest, count: HISTORY_PAGE }); } finally { endPhase('history-earlier-ipc'); }
-      if (get().selectedKey !== key || get().leaf !== s0.leaf) return;
+      try { value = await api.history(historyKey, s0.leaf, { before: oldest, count: HISTORY_PAGE }); } finally { endPhase('history-earlier-ipc'); }
+      if (get().selectedKey !== key || get().leaf !== s0.leaf || ((get().runs.find(r => r.key === key)?.historyKey ?? key) !== historyKey)) return;
       // 只接受「真的更长了」的结果：竞态（补拉期间又刷了一次）可能拿到同一页。
       if (value.branch.length <= branch.length) return;
       set({ history: value });
@@ -1837,6 +1850,7 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
               set({ sends: (state.sends ?? []).filter(s => s.key !== event.run.key || !s.received) });
             }
             set({ runs: [...state.runs.filter((r) => r.key !== event.run.key), mergedRun] });
+            if (sameGeneration && prevRun?.historyKey !== event.run.historyKey && state.selectedKey === event.run.key) void refreshHistory();
             if (state.retrying[event.run.key] && (prevRun?.generation !== event.run.generation || ['idle', 'stopping', 'error'].includes(event.run.status) || (event.run.retryGroup && event.run.retryGroup.phase !== 'running'))) {
               set({ retrying: { ...get().retrying, [event.run.key]: null } });
             }
@@ -2022,10 +2036,10 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
         try {
           const rememberedMode = get().desktopPreferences?.sessionAccessModes?.[key];
           const run = await window.localPi!.connect({ sourceKey: key, trustProject: false, permission: rememberedMode ?? get().desktopPreferences?.permission ?? 'ask' });
-          set(st => st.runs.some(r => r.key === run.key) ? st : { runs: [...st.runs, run] });
+          set(st => ({ runs: [...st.runs.filter(r => r.key !== run.key), run] }));
           // Prewarming may create/attach a Desktop copy after the first read resolved.
           // Reconcile through the read-only resolver; never require a prompt to see it.
-          if ((get().selectedKey === key || get().selectedKey === run.key) && get().view === 'chat') void refreshHistory();
+          if ((get().selectedKey === key || get().selectedKey === run.key || get().selectedKey === run.historyKey) && get().view === 'chat') void refreshHistory();
         } catch (e) {
           // 预热失败不再完全静默：错误恒挂到该会话 key（与本文件其他错误点同款），
           // 红条只在该会话被选中时显示——归属正确且不会跨会话渗漏。
@@ -2501,7 +2515,7 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
       const api = typeof window !== 'undefined' ? window.localPi : undefined;
       if (!key || !api) return;
       set({ outlineLoading: true });
-      void api.sessionOutline(key)
+      void api.sessionOutline(currentRun(get())?.historyKey ?? key)
         .then(o => { if (get().selectedKey === key) set({ outline: o.turns, outlineLoading: false }); })
         .catch(() => set({ outlineLoading: false }));
     },
@@ -2515,7 +2529,7 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
       if (!needle) { set({ entryHits: [], entryTotal: 0, entrySearching: false }); return; }
       const seq = ++entrySearchSeq;
       set({ entrySearching: true });
-      void api.searchSession(key, needle, { limit: 50 })
+      void api.searchSession(currentRun(get())?.historyKey ?? key, needle, { limit: 50 })
         .then(res => { if (seq === entrySearchSeq) { set({ entryHits: res.hits, entryTotal: res.total, entrySearching: false }); } })
         .catch(() => { if (seq === entrySearchSeq) set({ entryHits: [], entryTotal: 0, entrySearching: false }); });
     },
@@ -2729,7 +2743,7 @@ export function currentRunOf(state: PiReplicaStore): PiRun | undefined {
 }
 
 export function currentSessionOf(state: PiReplicaStore): PiSession | undefined {
-  return state.sessions.find((s) => s.key === state.selectedKey);
+  return state.sessions.find((s) => s.key === (currentRun(state)?.historyKey ?? state.selectedKey));
 }
 
 export function sessionTitleOf(state: PiReplicaStore): string {

@@ -115,6 +115,31 @@ describe('external conversation: reading must use the same target as sending', (
     expect(usePiStore.getState().draftText).toBe('unsent while opening');
     expect(usePiStore.getState().navHistory).toEqual({ entries: [{ view: 'home' }, { view: 'chat', key: copyKey }, { view: 'settings' }], cursor: 1 });
   });
+  it('merges both unsent drafts and attachments, preserves navigation and restores them on reopen', async () => {
+    usePiStore.setState({ env: { supported: false } as any });
+    const targetItem = { id: 'target-file', name: 'target', path: '/target', kind: 'file' as const, text: 'target attachment' };
+    const sourceItem = { id: 'source-file', name: 'source', path: '/source', kind: 'file' as const, text: 'source attachment' };
+    const shared = { id: 'shared-file', name: 'shared', path: '/shared', kind: 'file' as const, text: 'shared attachment' };
+    usePiStore.getState().selectSession(copyKey);
+    usePiStore.getState().setDraftText('TARGET_UNSENT');
+    usePiStore.getState().addContext([targetItem, shared]);
+    usePiStore.getState().selectSession('elsewhere');
+    usePiStore.getState().selectSession(sourceKey);
+    usePiStore.getState().setDraftText('SOURCE_UNSENT');
+    usePiStore.getState().addContext([sourceItem, shared]);
+    const beforeNav = usePiStore.getState().navHistory;
+    await vi.advanceTimersByTimeAsync(1000);
+    const merged = 'TARGET_UNSENT\n\n---\n\nSOURCE_UNSENT';
+    expect(usePiStore.getState().draftText).toBe(merged);
+    expect(usePiStore.getState().contextItems).toEqual([targetItem, shared, sourceItem]);
+    expect(usePiStore.getState().navHistory).toEqual({ ...beforeNav, entries: beforeNav.entries.map((e, i) => i === beforeNav.cursor ? { ...e, key: copyKey } : e) });
+    usePiStore.getState().selectSession('elsewhere');
+    usePiStore.getState().selectSession(copyKey);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(usePiStore.getState().draftText).toBe(merged);
+    expect(usePiStore.getState().contextItems).toEqual([targetItem, shared, sourceItem]);
+  });
+
   it('opening the external source must display its resumed Desktop history without a new message', async () => {
     usePiStore.getState().selectSession(sourceKey);
     await vi.advanceTimersByTimeAsync(1000);

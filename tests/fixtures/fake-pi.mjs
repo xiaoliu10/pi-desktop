@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import fs from 'node:fs';
-const file = process.argv[process.argv.indexOf('--session') + 1];
+let file = process.argv[process.argv.indexOf('--session') + 1];
 if (process.argv.includes('--session') && !fs.existsSync(file)) fs.writeFileSync(file, JSON.stringify({ type:'session',version:3,id:'fake',cwd:process.cwd(),timestamp:new Date().toISOString() })+'\n');
 const send = obj => process.stdout.write(JSON.stringify(obj)+'\n');
 let pendingUi, queue = {steering:[],followUp:[]};
@@ -32,7 +32,7 @@ process.stdin.on('data', chunk => { input += chunk; let i; while ((i = input.ind
 function handle(r) {
  const ok = data => send({type:'response',id:r.id,success:true,data});
  switch(r.type) {
- case 'get_state': if(!policySent){ policySent=true; send({type:'extension_ui_request',id:'policy',method:'setStatus',statusKey:'desktop-policy',statusText:'工具权限：逐次确认'}); } return ok({isStreaming:streaming,thinkingLevel:thinking,isCompacting:false,pendingMessageCount:0});
+ case 'get_state': if(!policySent){ policySent=true; send({type:'extension_ui_request',id:'policy',method:'setStatus',statusKey:'desktop-policy',statusText:'工具权限：逐次确认'}); } return ok({sessionFile:file,isStreaming:streaming,thinkingLevel:thinking,isCompacting:false,pendingMessageCount:0});
  case 'get_available_models': return ok({models:[{id:'fake-model',provider:'test',name:'Test model',apiKey:'DO NOT EXPOSE'}]});
  case 'get_commands': { // 第 2 次起返回更多命令：验证迟加载自愈（连接后复检 / refreshCommands）。
    commandFetches += 1;
@@ -64,6 +64,7 @@ function handle(r) {
   return ok({});
  case 'prompt':
   promptLog.push({message:r.message, behavior:r.streamingBehavior, images:r.images ?? null});
+  if(r.message === 'history-target-followup') fs.appendFileSync(file, JSON.stringify({type:'message',id:'sent-to-tip',message:{role:'user',content:r.message}})+'\n');
   if(r.message === '/failprompt') return send({type:'response',id:r.id,success:false,error:'injected prompt failure'});
   // disposition='handled'：扩展命令吞掉全部文字，无 run 无事件（pi /plan toggle 真实语义）
   if(r.message.startsWith('/swallow')) return ok({disposition:'handled'});
@@ -109,7 +110,15 @@ function handle(r) {
    return;
   }
   if(pendingUi) { send({type:'response',id:pendingUi.id,success:true}); pendingUi=null; } return;
- case 'fork': return ok({text:'forked text',cancelled:false});
+ case 'fork':
+  if(r.entryId === 'history-target-fork') {
+   const previous = file; file = file.replace(/\.jsonl$/, '-tip.jsonl');
+   const lines = fs.readFileSync(previous,'utf8').trimEnd().split('\n');
+   lines[0] = JSON.stringify({...JSON.parse(lines[0]),id:'continued',parentSession:previous});
+   lines.push(JSON.stringify({type:'message',id:'latest-tip',message:{role:'assistant',content:'latest-tip'}}));
+   fs.writeFileSync(file,lines.join('\n')+'\n');
+  }
+  return ok({text:'forked text',cancelled:false});
  case 'clear_queue': { const old=queue; queue={steering:[],followUp:[]}; ok(old); send({type:'queue_update', steering:[], followUp:[]}); return; }
  case 'abort': send({type:'agent_settled'}); return ok({});
  default: return send({type:'response',id:r.id,success:false,error:'unsupported'});
