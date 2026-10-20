@@ -83,6 +83,29 @@
 
 ---
 
+## 会话域（session）
+
+### R-session-01　打开会话读到的就是这条会话的最新内容
+
+**需求**：一个逻辑会话可能对应多个文件——外部 CLI 原始快照、Desktop 续聊副本、以及「编辑重发」fork 出的延续链尾。**打开/阅读与发送必须落在同一份文件上**，否则用户点进来看到的永远是断开时的旧内容。
+
+**验收**：
+- 打开外部快照时，若已存在更新的 Desktop 副本（或延续链尾），直接展示那份内容；不需要先发一条消息才刷出来。
+- 解析必须是**只读**的：不启动 pi、不发 prompt、不改写或新建会话文件（回归测试钉住启动模型运行数为 0）。
+- 预热被跳过时（已归档 / 连接数已满 / 环境不可用 / 连接失败）阅读路径同样拿到正确历史——不能把正确性寄托在预热成功上。
+- 没有副本的外部快照保持原样显示；Desktop 自有会话不受影响，不产生新副本。
+- 已明确选择某个分支 leaf 时不重定向（用户正在看历史分叉，不能偷偷换）。
+- 重定向后：导航历史里**替换当前条目**而不是多压一级（不产生多余的「后退」步）；未发送草稿搬到目标会话；双方已有草稿时按目标在前、源在后合并文本，附件按 id 去重保留双方；迟到的旧响应不得覆盖目标会话内容或把用户从别的会话拽走。
+- 已连接会话 fork 后保持原 runtime/event key，以显式 historyKey 别名读取真实链尾；打开源、打开链尾与继续发送均复用该 runtime，不靠断开或启动另一进程。
+- 目标 key 幂等：副本自身是 owned 会话，不会再次进入重定向分支。
+- 回归：`tests/session-history-target.test.ts`（store 层）、`tests/session-history-resolution.test.ts`（主进程只读解析）、`tests/session-history-active-fork.test.ts`（真实 backend/RPC fixture fork → store → 发送，非 Electron 端到端）、`tests/session-history-target.browser.cjs`（真实侧栏点击 + 重开）。
+
+**状态**：待发版验收（本分支修复）。
+
+**回归触发**：改 `backend.ts` 的 connect/副本选择逻辑、`session-continuations.ts` 的链解析、`adapter.ts` 的 selectSession/refreshHistory、`index.ts` 的 history handler。
+
+---
+
 ## 模型域（model）
 
 ### R-model-01　模型配置保存后运行中会话即时生效

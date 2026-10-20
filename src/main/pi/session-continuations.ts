@@ -54,6 +54,25 @@ export function resolveContinuation(map: ContinuationMap, path: string): string 
   return current;
 }
 
+/** key 所在延续链的端点（path 口径）：返回 {链头, 链尾} 中除自身外的另一端；
+ *  key 不在链上（无映射/断链/自身即独立会话）时返回空数组。侧栏把「runtime key
+ *  + 链尾文件」合并成一行，归档/恢复必须按链整体生效才不会「归档一半」
+ *  （PR148 复审 F-3）。只沿 Desktop 记录的 fork 延续链走，不跨逻辑会话。 */
+export function continuationChainKeys(path: string, map: ContinuationMap): string[] {
+  const start = canonical(path);
+  if (!map[start] && ![...new Set(Object.values(map).map(canonical))].includes(start)) return [];
+  const reverse = new Map(Object.entries(map).map(([k, v]) => [canonical(v), canonical(k)] as const));
+  let head = start;
+  for (let guard = 0; guard < 8; guard++) {
+    const prev = reverse.get(head);
+    if (!prev || prev === head) break;
+    head = prev;
+  }
+  const tip = canonical(resolveContinuation(map, head));
+  if (head === start) return tip === start ? [] : [tip];
+  return tip === start ? [head] : [head, tip];
+}
+
 export interface SessionLike { path: string; name: string; parentSession?: string }
 
 /**
