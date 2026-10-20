@@ -7,6 +7,7 @@ README 只保留最近版本摘要；本文件为完整记录。
 
 ### 修复
 - **打包后不再残留「幽灵双份」应用**：`dist/mac-arm64/` 此前只有 `pnpm dist` 链路里的 sync-release 会删，直接调 electron-builder 打发布包时会残留一份同名 .app，被 LaunchServices 按路径各注册一份，启动台/聚焦出现两个「PI Desktop」。prune-dist 现在兜底清理该目录（`--dry-run` 不动）。新增 `tests/prune-dist-mac-arm64.test.ts` 回归。
+- **侧栏运行标识回归会话级**：v0.1.30 曾把子代理运行状态聚合到项目行（折叠项目时项目行显示菊花），但运行状态本质是会话级属性。已回退：项目行只保留文件夹图标，菊花只出现在运行中的会话行。
 
 ## [0.1.30] - 2026-10-19
 

@@ -25,9 +25,9 @@
 - 面板与状态统计只计 running/queued，不含 completed/failed。
 - **切换会话不拦截**（用户 2026-10-16 明确）：切换不杀进程、切回即见，可见性由对话内卡片负责。
 - 全部子代理进入终态后，卡片状态随之收敛。
-- **侧栏会话行的运行中标识覆盖子代理**（用户 2026-10-17 补充）：主 run 已结束但该会话仍有运行中子代理时，侧栏菊花不停——否则用户会误以为任务已结束。数据源为主进程异步运行目录 `async-subagent-runs/<runId>/status.json`（按 sessionId 归属，running/queued 计入，终态与 stale 排除）；旧 `agentDir/subagents/<sessionKey>_<callId>.json` 只补充无 async 记录的调用，不能覆盖 async 终态。主 run 空闲、切到别的会话后仍需持续更新；折叠项目时项目行也显示运行标识。
+- **侧栏会话行的运行中标识覆盖子代理**（用户 2026-10-17 补充）：主 run 已结束但该会话仍有运行中子代理时，侧栏菊花不停——否则用户会误以为任务已结束。数据源为主进程异步运行目录 `async-subagent-runs/<runId>/status.json`（按 sessionId 归属，running/queued 计入，终态与 stale 排除）；旧 `agentDir/subagents/<sessionKey>_<callId>.json` 只补充无 async 记录的调用，不能覆盖 async 终态。主 run 空闲、切到别的会话后仍需持续更新。**运行状态是会话级属性，不聚合到项目行**（用户 2026-10-19 明确）：折叠项目时项目行保持文件夹图标，不显示任何菊花/进度指示——折叠项目 ≠ 项目在跑。
 
-**状态**：部分满足（v0.1.24 #124 首版；v0.1.25+ 去弹窗、去横幅、换 bot 图标。2026-10-19 实测侧栏仍使用冻结的工具事件快照，异步子代理运行中漏标识；修复分支已接入有界异步 status 扫描、项目行运行标识及回归测试，待审查/发版后验收）。
+**状态**：部分满足（v0.1.24 #124 首版；v0.1.25+ 去弹窗、去横幅、换 bot 图标。异步子代理侧栏漏报已于 v0.1.30 修复（#141：有界异步 status 扫描 + dispose/reconnect 代际）；v0.1.30 曾把运行标识错误地聚合到项目行，已按用户反馈回退为会话级，待 PR 合并后验收）。
 
 **回归触发**：改 `ChatView.tsx`（toolRowIcon/ToolCard 的 bot 图标与卡片渲染）、`adapter.ts`（selectSession/disconnectRun/liveSubagentCount/buildPiSidebar 的 busy 口径）、`subagents.ts`、主进程 `persistSubagentEvent`/`async-subagent-activity.ts` 快照扫描、backend 定时刷新生命周期；pi-subagents 升级（status 形态可能变）。
 
