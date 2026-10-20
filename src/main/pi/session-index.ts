@@ -4,6 +4,8 @@ import { createHash } from 'node:crypto';
 import type { PiEntry, PiHistory, PiOutline, PiOutlineItem, PiSearchHit, PiSearchResult, PiSession } from '../../shared/pi';
 import { OutlineCache } from './outline-cache';
 import { MAX_SESSION, OversizedSessionError, sessionStub } from './session-size';
+import { recoverSubagents, subagentChildTranscript } from './official-subagent';
+import { historyWindow } from './history-window';
 /** 大于该值的会话文件变更时只更新元数据、延后全量解析：流式期间活动会话每个 delta
  * 都在追加，若每次 watch/轮询都重读重解析整个 MB 级文件，主进程会被持续拖死。 */
 const DEFER_PARSE_BYTES = 256 * 1024;
@@ -338,6 +340,78 @@ export class SessionIndex {
   sessionsView(includeSidecars = false): PiSession[] {
     return [...this.cache.values()].map(x => x.history.session).filter(s => includeSidecars || s.sidecarOf === undefined);
   }
+  // ── IndexPort (see ./index-port) 的进程内实现 ────────────────────────────────
+  // 主进程改由 utility process 持有时，同一套接口由 IndexWorkerClient 满足；本类在
+  // 测试与非 Electron 调用方里直连文件系统，行为与历史实现逐字一致。
+  /** 元数据查询。owner 侧（进程内 SessionIndex / worker）cache 未命中时做一次全量
+   *  发现——与旧 history() 的慢路径逐字一致（新 fork 出的副本、watch 漏事件都靠它
+   *  收口）；主进程的 IndexWorkerClient 覆写为纯镜像读，绝不触盘。 */
+  sessionMeta(key: string): PiSession | undefined {
+    const hit = this.cache.get(key)?.history.session;
+    if (hit) return hit;
+    this.scan();
+    return this.cache.get(key)?.history.session;
+  }
+  /** 分支尾部 n 条：与旧 `history(key).branch.slice(-n)` 同口径——先增量消费文件尾部
+   *  （history 的快路径：stat + 增量解析，毫秒级）再读缓存；超限/不存在同样抛错，
+   *  调用方沿用原 try/catch fail-closed。owner 侧触盘，主进程只收到有界镜像。 */
+  branchTail(key: string, n: number): PiEntry[] {
+    const branch = this.history(key).branch;
+    return n >= branch.length ? [...branch] : branch.slice(branch.length - n);
+  }
+  branchLength(key: string): number {
+    const cached = this.cache.get(key)?.history;
+    if (!cached) throw new Error('Session unavailable');
+    return cached.branch.length;
+  }
+  async historyAsync(key: string, leaf?: string, opts?: { tail?: number; before?: string; count?: number }): Promise<PiHistory> { return this.history(key, leaf, opts); }
+  async searchAsync(key: string, query: string, opts?: { limit?: number }): Promise<PiSearchResult> { return this.searchSession(key, query, opts); }
+  async outlineAsync(key: string): Promise<PiOutline> { return this.sessionOutline(key); }
+  async remotePage(key: string, before: string | null, page: number): Promise<{ branch: PiEntry[]; hasMore: boolean; before: number } | null> {
+    // 与 worker remotePage op 同一实现（utility worker 之外的进程内 IndexPort 也要逐字
+    // 一致）：history() 抛错（超限/不可读/会话不存在）时回 null，由 HTTP 层回 404。
+    let history;
+    try { history = this.history(key); } catch { return null; }
+    const branch = history.branch ?? [];
+    const win = historyWindow(branch.length, before, page);
+    return { branch: branch.slice(win.start, win.end), hasMore: win.hasMore, before: win.start };
+  }
+  /** fork-to-continue 的无损副本：用缓存里已解析的全量 entries 按 backend 旧实现逐字
+   *  相同的逐行 JSON 规则写出 Desktop 副本。原子落盘（tmp+rename），失败不留半文件。
+   *  只在 worker 进程被调用——全量 entries 不得跨进程回主进程（见 index-worker-entry
+   *  职责边界注释）。 */
+  forkCopySource(key: string, targetPath: string, header: { id: string; timestamp: string; parentSession: string }): { path: string; entries: number } {
+    const cached = this.cache.get(key)?.history;
+    if (!cached) throw new Error('会话不存在、不可读或不在选定目录中。');
+    if (this.oversized.has(cached)) throw new OversizedSessionError(cached.session.path, cached.session.size);
+    // 与旧实现 fs.writeFileSync(targetPath, ..., { flag: 'wx' }) 语义一致：目标已存在
+    // 必须原样抛 EEXIST，绝不覆盖。
+    if (fs.existsSync(targetPath)) {
+      const err = new Error(`EEXIST: file already exists, open '${targetPath}'`) as NodeJS.ErrnoException;
+      err.code = 'EEXIST'; throw err;
+    }
+    // 原子落盘（tmp+rename）：写失败/进程被杀都不会留下半截目标文件；tmp 用 wx 防撞。
+    const tmp = `${targetPath}.copy-tmp-${process.pid}-${Date.now()}`;
+    const sourceHeader = JSON.parse(fs.readFileSync(cached.session.path, 'utf8').split('\n')[0] ?? '{}') as Record<string, unknown>;
+    const payload = [
+      JSON.stringify({ ...sourceHeader, id: header.id, timestamp: header.timestamp, parentSession: header.parentSession }),
+      ...cached.entries.map(e => JSON.stringify(e)),
+      '',
+    ].join('\n');
+    try {
+      fs.writeFileSync(tmp, payload, { flag: 'wx', mode: 0o600 });
+      fs.renameSync(tmp, targetPath);
+    } catch (err) {
+      try { fs.rmSync(tmp, { force: true }); } catch { /* 失败时尽力清理临时文件 */ }
+      throw err;
+    }
+    return { path: targetPath, entries: cached.entries.length };
+  }
+  async recoverSubagents(agentDir: string, key: string, leaf?: string, pinned?: string[], knownSignature?: string) { return recoverSubagents(agentDir, key, this, leaf, pinned, knownSignature); }
+  async subagentChildTranscript(agentDir: string, key: string, callId: string, childId: string) { return subagentChildTranscript(agentDir, key, this, callId, childId); }
+  async ready(): Promise<void> { /* 进程内：cache 在 start() 内同步就绪 */ }
+  async subscribe(_key: string): Promise<void> { /* 进程内：无需镜像 */ }
+  unsubscribe(_key: string): void { /* 进程内：无需镜像 */ }
 
   /** Polling must not trigger a filesystem scan/reparse of every session. The
    * normal index watcher/history path owns refresh; expose only an indexed key. */
@@ -614,7 +688,7 @@ export class SessionIndex {
     // 它；无 tail 时此前整条链路不带 plan——面板跨窗口兜底从未生效）。
     return this.wireLite(key, full);
   }
-  start(changed: () => void) {
+  start(changed: () => void): Promise<void> {
     this.close();
     const signature = (sessions: PiSession[]) => sessions.map(s => `${s.key}:${s.size}:${s.updatedAt}:${s.warnings?.length ?? 0}`).join('|');
     let last = signature(this.scan(true));
@@ -725,6 +799,7 @@ export class SessionIndex {
       } catch { /* Poll fallback includes new roots. */ }
     }
     this.timer = setInterval(check, 1200); this.timer.unref();
+    return Promise.resolve();
   }
 
   /** watch 报告的路径定向处理：文件走 refreshOne；目录只 walk 该目录；删除清缓存。

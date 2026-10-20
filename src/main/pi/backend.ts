@@ -5,7 +5,9 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { PiEnvironment, PiEvent, PiRun, PiUiRequest, PiModelRefresh } from '../../shared/pi';
 import { PiRpcClient, piLogDir } from './rpc-client';
-import { SessionIndex, canonical, fileKey } from './session-index';
+import { canonical, fileKey } from './session-index';
+import { OversizedSessionError } from './session-size';
+import type { IndexPort } from './index-port';
 import { runAutomationBridge, SCHEDULE_GUIDANCE } from './automation-bridge';
 import { cacheHitRateFromTotals, summarizeContext } from './context-details';
 import { migrateOldSubagentExtension, persistSubagentEvent, runningSubagentCounts } from './official-subagent';
@@ -63,7 +65,7 @@ export class PiBackend {
   onContinuation?: (fromKey: string, toKey: string) => void;
   /** 测试注入点：替换 PiRpcClient 构造（生产不设）。 */
   clientFactory?: (command: string, args: string[], cwd: string, env: NodeJS.ProcessEnv) => PiRpcClient;
-  constructor(private env: PiEnvironment, private index: SessionIndex, private ownedRoot: string, private policyPath: string, private emit: (e: PiEvent) => void, private dataDir?: string) {}
+  constructor(private env: PiEnvironment, private index: IndexPort, private ownedRoot: string, private policyPath: string, private emit: (e: PiEvent) => void, private dataDir?: string) {}
   hasPendingDialogs(key: string) { return (this.active.get(key)?.dialogs.size ?? 0) > 0; }
   /** 待处理的 UI 审批快照（远控页刷新后据此恢复审批卡片）。 */
   pendingDialogs(key: string): Array<{ generation: string; request: PiUiRequest }> {
@@ -84,6 +86,14 @@ export class PiBackend {
     const run = this.active.get(key) ?? [...this.active.values()].find(r => r.input.origin === key);
     return run ? { cwd: run.input.cwd, trustProject: run.input.trustProject } : undefined;
   }
+  /** 源会话元数据读取（不触碰全量条目）：缺失/超限按 history() 旧实现同口径 fail-closed。 */
+  private requireSourceSession(key: string): import('../../shared/pi').PiSession {
+    const session = this.index.sessionMeta(key);
+    if (!session) throw new Error('会话不存在、不可读或不在选定目录中。');
+    // 超限降级会话只有元数据：history() 旧实现在此抛 OversizedSessionError，保持同口径。
+    if (session.warnings?.some(w => /超过 \d+ MiB 读取上限/.test(w))) throw new OversizedSessionError(session.path, session.size);
+    return session;
+  }
   private get(key: string) { const run = this.active.get(key); if (!run) throw new Error('会话未由 Desktop 连接'); return run; }
   async connect(input: { sidecarOf?: string; sourceKey?: string; cwd?: string; trustProject: boolean; permission: AccessMode; executionMode?: Exclude<AccessMode, 'plan'>; systemPrompt?: string; tools?: string[]; model?: string }): Promise<PiRun> {
     if (input.executionMode !== undefined && (!isAccessMode(input.executionMode) || (input.executionMode as string) === 'plan')) throw new Error('无效执行模式');
@@ -92,14 +102,14 @@ export class PiBackend {
     let cwd = input.cwd, file: string;
     let origin = '';
     if (input.sourceKey) {
-      const source = this.index.history(input.sourceKey);
-      cwd = source.session.cwd;
+      const sourceSession = this.requireSourceSession(input.sourceKey);
+      cwd = sourceSession.cwd;
       if (!path.isAbsolute(cwd) || !fs.statSync(cwd).isDirectory()) throw new Error('源项目目录已失效；仍可只读查看历史。');
       // 延续重定向：该会话被「编辑重发」fork 过时，后续对话在链尾文件里。
       // attach 与打开目标都按链尾匹配——fork 后活着的 run 挂在旧 key/origin 上，
       // 但它的实际文件已 rebind，直接再 launch 会产生同文件双 pi 进程。
       const map = loadContinuations(this.dataDir);
-      const continued = canonical(resolveContinuation(map, source.session.path));
+      const continued = canonical(resolveContinuation(map, sourceSession.path));
       origin = fileKey(continued);
       const attached = this.active.get(origin) ?? [...this.active.values()].find(r => canonical(resolveContinuation(map, r.input.file)) === continued);
       if (attached) return attached.view;
@@ -127,15 +137,15 @@ export class PiBackend {
     fs.mkdirSync(this.ownedRoot, { recursive: true });
     this.ownedRoot = fs.realpathSync(this.ownedRoot);
     if (input.sourceKey) {
-      const source = this.index.history(input.sourceKey);
-      const continuedPath = canonical(resolveContinuation(loadContinuations(this.dataDir), source.session.path));
-      if (source.session.owned) {
+      const sourceSession = this.requireSourceSession(input.sourceKey);
+      const continuedPath = canonical(resolveContinuation(loadContinuations(this.dataDir), sourceSession.path));
+      if (sourceSession.owned) {
         // Desktop 自建会话原地续聊；只有外部 CLI 会话才派生副本，
         // 否则每次断开后继续都会 fork 出一条新会话。
-        file = continuedPath === canonical(source.session.path) ? source.session.path : continuedPath;
+        file = continuedPath === canonical(sourceSession.path) ? sourceSession.path : continuedPath;
       } else {
         // 外部原件已有 Desktop 副本时，继续最近的那个副本（副本自身被 fork 过则继续其链尾），不再重复 fork。
-        const child = this.index.scan().filter(s => s.owned && s.parentSession === source.session.path)
+        const child = this.index.scan().filter(s => s.owned && s.parentSession === sourceSession.path)
           .sort((x, y) => y.updatedAt - x.updatedAt)[0];
         if (child) {
           const childPath = canonical(resolveContinuation(loadContinuations(this.dataDir), child.path));
@@ -145,9 +155,10 @@ export class PiBackend {
           file = childPath;
         } else {
           // Never open an external CLI file for writing. Preserve all entries on a copy.
+          // 全量条目复制在索引 worker 内落盘（forkCopySource）：主进程绝不持有/接收
+          // 全量无损 entries（最大实测 200MB 级，结构化克隆回主线程就是新的卡顿源）。
           const id = randomUUID(); file = path.join(this.ownedRoot, `${Date.now()}_${id}.jsonl`);
-          const sourceHeader = JSON.parse(fs.readFileSync(source.session.path, 'utf8').split('\n')[0]);
-          fs.writeFileSync(file, [JSON.stringify({ ...sourceHeader, id, timestamp: new Date().toISOString(), parentSession: source.session.path }), ...source.entries.map(e => JSON.stringify(e)), ''].join('\n'), { flag: 'wx', mode: 0o600 });
+          await this.index.forkCopySource(input.sourceKey, file, { id, timestamp: new Date().toISOString(), parentSession: sourceSession.path });
         }
       }
     } else {
@@ -423,6 +434,11 @@ export class PiBackend {
       this.emit({ type: 'closed', key, generation, ...(run.input.sidecarOf !== undefined ? { sidecarOf: run.input.sidecarOf } : {}) });
     });
     let firstFrameScope = true; // get_state 阶段标记：超时 append 只贴在首帧阶段
+    // 镜像尾窗订阅：onEvent（compaction_end / agent_settled）与 forceSettle 都在
+    // 已连接会话的分支尖端同步读 1/8/64 条。放在所有 client 事件回调挂载之后、首帧
+    // 请求之前——既不漏事件，也赶在 pi 产出正文前就位。worker 内是内存查询，仅一次
+    // IPC 往返；失败不阻塞会话启动，镜像读取处全部 try/catch fail-closed。
+    await this.index.subscribe(key).catch(() => undefined);
     try {
       // 大会话的首帧加载（40MB/700 条含截图的会话实测 60s+）不能按固定 60s 判死——
       // 慢 ≠ 坏。预算按会话规模放宽，超时后重试一次，仍失败才带着规模信息报错。
@@ -517,10 +533,10 @@ export class PiBackend {
     }
     let endedAt = Date.now();
     try {
-      const last = this.index.history(key).branch.at(-1);
+      const last = this.index.branchTail(key, 1).at(-1);
       const ts = last?.timestamp ? Date.parse(last.timestamp) : NaN;
       if (Number.isFinite(ts) && ts > (run.view.timing?.startedAt ?? 0) && ts <= endedAt) endedAt = ts;
-    } catch { /* 历史不可读时退回当前时刻。 */ }
+    } catch { /* 镜像尾窗不可用时退回当前时刻（fail closed，不伪造时间戳）。 */ }
     if (run.view.timing && run.view.timing.endedAt === undefined) run.view.timing = { ...run.view.timing, endedAt };
     run.view.queue = [...run.deferredQueue]; run.view.pending = run.deferredQueue.length; run.queueImages = [];
     run.view.status = 'idle';
@@ -618,7 +634,7 @@ export class PiBackend {
       // 留痕 entry（session_compact 扩展先于 compaction_end await 完成落盘）。
       if (event.result) {
         try {
-          const entry = [...this.index.history(key).branch].reverse().find((e: any) => e.customType === 'desktop-compaction');
+          const entry = [...this.index.branchTail(key, 64)].reverse().find((e: any) => e.customType === 'desktop-compaction');
           const tokensAfter = Number(event.result.estimatedTokensAfter);
           if (!(tokensAfter > 0)) return; // 字段缺失/非法时 fail closed：留痕退化为「压缩前」口径
           this.emit({
@@ -639,7 +655,7 @@ export class PiBackend {
         run.view.status = 'running';
         if (!run.retryEntryId) {
           try {
-            const entry = [...this.index.history(key).branch].reverse().find(e => e.type === 'message' || e.type === 'custom_message');
+            const entry = [...this.index.branchTail(key, 64)].reverse().find(e => e.type === 'message' || e.type === 'custom_message');
             if (entry?.message?.role === 'assistant' && entry.message.stopReason === 'error') run.retryEntryId = entry.id;
           } catch { /* The timer fails closed if no persisted failed entry is available. */ }
         }
@@ -776,9 +792,8 @@ export class PiBackend {
     const current = () => this.active.get(key) === run && run.stopEpoch === epoch && run.view.status !== 'stopping';
     if (!current()) return;
     if (!run.retryReady) throw new Error('Desktop 安全续接扩展未就绪，未自动重放任务。');
-    // Read the persisted active branch, not the last UI message or abandoned leaves.
-    const history = this.index.history(key);
-    const entry = [...history.branch].reverse().find(e => e.type === 'message' || e.type === 'custom_message');
+    // Read the persisted active branch tip, not the last UI message or abandoned leaves.
+    const entry = [...this.index.branchTail(key, 8)].reverse().find(e => e.type === 'message' || e.type === 'custom_message');
     if (!failedEntryId || entry?.id !== failedEntryId || entry.message?.role !== 'assistant' || entry.message.stopReason !== 'error') throw new Error('重试上下文已变化，未自动重放任务。');
     const state = await run.client.request('get_state', {}, 5_000);
     if (!current()) return;
@@ -1450,7 +1465,7 @@ export class PiBackend {
     this.emit({ type: 'ui', key, generation, request: synthesized });
     return true;
   }
-  close(key: string) { const run = this.active.get(key); if (!run) return; this.active.delete(key); run.modelRefreshWork?.finish({ status: 'error', code: 'closed' }); ++run.stopEpoch; if (run.recheckTimer) { clearTimeout(run.recheckTimer); run.recheckTimer = undefined; } this.clearSettlement(run); run.retry.dispose(); run.deferredQueue = []; this.clearDialogs(run); run.client.close(); // 同步删 mode 文件：close 后立即 launch（/reload、资源页刷新）时异步 rm 会晚于重写到达，把新写的文件删掉
+  close(key: string) { const run = this.active.get(key); if (!run) return; this.active.delete(key); this.index.unsubscribe(key); run.modelRefreshWork?.finish({ status: 'error', code: 'closed' }); ++run.stopEpoch; if (run.recheckTimer) { clearTimeout(run.recheckTimer); run.recheckTimer = undefined; } this.clearSettlement(run); run.retry.dispose(); run.deferredQueue = []; this.clearDialogs(run); run.client.close(); // 同步删 mode 文件：close 后立即 launch（/reload、资源页刷新）时异步 rm 会晚于重写到达，把新写的文件删掉
   fs.rmSync(path.join(this.ownedRoot, `.mode-${key}`), { force: true }); this.emit({ type: 'closed', key, generation: run.view.generation, ...(run.input.sidecarOf !== undefined ? { sidecarOf: run.input.sidecarOf } : {}) }); }
   async refresh(key: string) { const run = this.get(key); this.assertModelsUnlocked(run); if (!this.modelsSafe(run) || run.view.pending || run.dialogs.size) throw new Error('会话仍在运行或等待交互，请完成或停止后刷新。'); const input = run.input; const executionMode = run.view.executionMode; const timing = run.view.timing; this.close(key); await this.launch(input); const active = this.get(key); active.view.executionMode = executionMode; active.view.timing = timing; this.emit({ type: 'run', run: { ...active.view } }); return { ...active.view }; }
   /** connect 首帧预算：会话文件越大加载越久（实测 40MB/700 条含截图会话 >60s）。

@@ -3,8 +3,8 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { Cron } from 'croner';
 import type { PiBackend } from './backend';
-import type { SessionIndex } from './session-index';
 import { canonical } from './session-index';
+import type { IndexPort } from './index-port';
 import type { PiEvent } from '../../shared/pi';
 import { isAccessMode } from '../../shared/access-mode';
 import { THINKING_LEVELS } from '../../shared/composer';
@@ -41,7 +41,7 @@ export class AutomationService {
  private stepGuard=new Map<string,{text:string;armed:boolean}>();
  /** launch 同步临界区防重入锁（persist→changed 可能同步回调）；运行期去重由 live-run guard 承担。 */
  private launching=new Set<string>();
- constructor(private file:string,private backend:()=>PiBackend,private index:()=>SessionIndex,private changed:()=>void=()=>{},private now=()=>Date.now()) {
+ constructor(private file:string,private backend:()=>PiBackend,private index:()=>IndexPort,private changed:()=>void=()=>{},private now=()=>Date.now()) {
   if(fs.existsSync(file)){const parsed=JSON.parse(fs.readFileSync(file,'utf8'));if(!Array.isArray(parsed.tasks)||!Array.isArray(parsed.workflows)||!Array.isArray(parsed.runs))throw Error('自动化数据格式损坏');this.data=parsed;}
   for(const r of this.data.runs)if(live(r)){r.status='interrupted';r.error='客户端已退出，未自动重放；可查看历史并重新运行。';r.endedAt=this.now();for(const step of r.steps)if(step.status==='running')step.status='stopped';}
   this.persist();

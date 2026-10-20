@@ -1,8 +1,10 @@
 import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest';
 import { RemoteServer, type RemoteDataProvider, historyWindow, viewerPage } from '../src/main/pi/remote-server';
-import type { PiHistory } from '../src/shared/pi';
 
-function makeProvider(): RemoteDataProvider {
+type TestEntry = { type: 'message'; id: string; message: { role: string; content: unknown } };
+type TestProvider = RemoteDataProvider & { branchFor(key: string): TestEntry[] | null };
+
+function makeProvider(): TestProvider {
   return {
     sessions: () => [
       { key: 'k1', id: '1', path: '/tmp/a.jsonl', cwd: '/tmp', name: '会话A', updatedAt: 20, size: 10, warnings: [], owned: false },
@@ -11,10 +13,16 @@ function makeProvider(): RemoteDataProvider {
     runs: () => [
       { key: 'k1', generation: 'g1', cwd: '/tmp', file: '/tmp/a.jsonl', status: 'running', models: [], pending: 1 },
     ],
-    history: (key) =>
+    branchFor: (key) =>
       key === 'k1'
-        ? ({ session: {}, entries: [], branch: [{ type: 'message', id: 'e1', message: { role: 'user', content: '你好' } }], leaves: [], leafId: null, syncedAt: 0 } as unknown as PiHistory)
+        ? [{ type: 'message', id: 'e1', message: { role: 'user', content: '你好' } }]
         : null,
+    historyPage: async function (this: TestProvider, key, before) {
+      const branch = this.branchFor(key);
+      if (!branch) return null;
+      const win = historyWindow(branch.length, before);
+      return { branch: branch.slice(win.start, win.end), hasMore: win.hasMore, before: win.start };
+    },
     version: () => '0.85.1-test',
     prompt: vi.fn(),
     editResend: vi.fn(),
@@ -28,7 +36,7 @@ function makeProvider(): RemoteDataProvider {
 
 describe('RemoteServer (LAN remote control)', () => {
   let server: RemoteServer;
-  let provider: RemoteDataProvider;
+  let provider: TestProvider;
 
   beforeEach(() => {
     provider = makeProvider();
@@ -256,7 +264,7 @@ describe('RemoteServer (LAN remote control)', () => {
 
 describe('RemoteServer visibility & image uploads', () => {
   let server: RemoteServer;
-  let provider: RemoteDataProvider;
+  let provider: TestProvider;
 
   beforeEach(() => {
     provider = makeProvider();
@@ -319,10 +327,10 @@ describe('RemoteServer visibility & image uploads', () => {
     (provider as unknown as { hiddenProjects: () => string[] }).hiddenProjects = () => ['/gone'];
     const withGone = [...provider.sessions(), { key: 'k-gone', id: '5', path: '/tmp/g.jsonl', cwd: '/gone', name: '已移除项目', updatedAt: 50, size: 1, warnings: [], owned: false }];
     provider.sessions = () => withGone;
-    const liteHistory = (key: string) => (key === 'k1' || key === 'k2'
-      ? { session: {}, entries: [], branch: [{ type: 'message', id: 'e1', message: { role: 'user', content: '你好' } }], leaves: [], leafId: null, syncedAt: 0 }
+    const liteBranches = (key: string): TestEntry[] | null => (key === 'k1' || key === 'k2'
+      ? [{ type: 'message', id: 'e1', message: { role: 'user', content: '你好' } }]
       : null);
-    provider.history = liteHistory;
+    provider.branchFor = liteBranches;
     expect(await grab('k1')).toBe(404); // 已归档：拿到 key 也不能读逐条历史
     expect(await grab('k-gone')).toBe(404); // 已移除项目
     expect(await grab('k2')).toBe(200);
@@ -501,7 +509,7 @@ describe('RemoteServer history lazy-load (tail paging)', () => {
   });
 
   let server: RemoteServer;
-  let provider: RemoteDataProvider;
+  let provider: TestProvider;
 
   beforeEach(() => {
     provider = makeProvider();
@@ -517,9 +525,7 @@ describe('RemoteServer history lazy-load (tail paging)', () => {
   const bigBranch = () => Array.from({ length: 120 }, (_, i) => ({
     type: 'message' as const, id: 'e' + i, message: { role: i % 2 ? 'assistant' : 'user', content: 'msg-' + i },
   }));
-  const bigHistory = (key: string) => (key === 'k1'
-    ? ({ session: {}, entries: [], branch: bigBranch(), leaves: [], leafId: null, syncedAt: 0 } as unknown as PiHistory)
-    : null);
+  const bigHistory = (key: string) => (key === 'k1' ? bigBranch() : null);
   const getHistory = async (base: string, token: string, query: string) =>
     (await (await fetch(`${base}/api/history?session=k1&${query}&token=${token}`)).json()) as {
       branch: Array<{ id: string; message: { role: string; content: string } }>;
@@ -529,7 +535,7 @@ describe('RemoteServer history lazy-load (tail paging)', () => {
 
   it('serves only the last 50 entries by default with hasMore + before cursor', async () => {
     const { status, base } = await start();
-    provider.history = bigHistory;
+    provider.branchFor = bigHistory;
     const h = await getHistory(base, status.token, '');
     expect(h.branch).toHaveLength(50);
     expect(h.branch[0].id).toBe('e70');
@@ -540,7 +546,7 @@ describe('RemoteServer history lazy-load (tail paging)', () => {
 
   it('pages older entries with ?before and reports the next cursor + hasMore boundary', async () => {
     const { status, base } = await start();
-    provider.history = bigHistory;
+    provider.branchFor = bigHistory;
     const h1 = await getHistory(base, status.token, 'before=70');
     expect(h1.branch).toHaveLength(50); // [20..69]
     expect(h1.branch[0].id).toBe('e20');
@@ -557,9 +563,7 @@ describe('RemoteServer history lazy-load (tail paging)', () => {
 
   it('returns hasMore=false for a short branch (<= page) and an empty page for before=0', async () => {
     const { status, base } = await start();
-    provider.history = (key) => (key === 'k1'
-      ? ({ session: {}, entries: [], branch: bigBranch().slice(0, 50), leaves: [], leafId: null, syncedAt: 0 } as unknown as PiHistory)
-      : null);
+    provider.branchFor = key => key === 'k1' ? bigBranch().slice(0, 50) : null;
     const h = await getHistory(base, status.token, '');
     expect(h.branch).toHaveLength(50);
     expect(h.hasMore).toBe(false);
@@ -573,7 +577,7 @@ describe('RemoteServer history lazy-load (tail paging)', () => {
 
   it('clamps out-of-range / non-numeric before the same as the pure helper', async () => {
     const { status, base } = await start();
-    provider.history = bigHistory;
+    provider.branchFor = bigHistory;
     // before=200 → 同默认 tail
     const over = await getHistory(base, status.token, 'before=200');
     expect(over.branch).toHaveLength(50);
@@ -591,7 +595,7 @@ describe('RemoteServer history lazy-load (tail paging)', () => {
 
   it('still guards visibility in tail mode: archived / hidden / unknown → 404; corrupt index degrades to readable', async () => {
     const { status, base } = await start();
-    provider.history = bigHistory;
+    provider.branchFor = bigHistory;
     const grab = async (key: string, query: string) =>
       (await fetch(`${base}/api/history?session=${key}&${query}&token=${status.token}`)).status;
     // 归档会话：即使带 before 游标也 404（同形，不泄露存在性）

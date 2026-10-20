@@ -1,4 +1,4 @@
-import { subagentCapabilityStatus, recoverSubagents, cleanupSubagents, subagentChildTranscript } from './pi/official-subagent';
+import { subagentCapabilityStatus, cleanupSubagents } from './pi/official-subagent';
 import { startDingTalkRegistration, pollDingTalkRegistration } from './pi/dingtalk-registration';
 import { syncBuiltinSkills, syncBuiltinPrompts } from './pi/builtin-skills';
 import { applyContinuations, loadContinuations } from './pi/session-continuations';
@@ -32,6 +32,7 @@ import { SettingsService } from './pi/settings-service';
 import { VoiceService } from './pi/voice-service';
 import { PiHost } from './pi/host';
 import { RemoteServer } from './pi/remote-server';
+import { HISTORY_PAGE_SIZE } from './pi/history-window';
 import { ImBot } from './pi/im-bot';
 import { createBotActions } from './pi/bot/actions';
 import { startUpdateChecker, downloadUpdateZip, type UpdateChecker, type UpdateStatus } from './update-check';
@@ -45,9 +46,9 @@ const remote = new RemoteServer({
   archivedSessions: () => archive.list(),
   hiddenProjects: () => settings.preferences().hiddenProjects ?? [],
   runs: () => host.backend.runs().filter(r => r.sidecarOf === undefined), // 副驾不出现在手机端会话列表（可被误 stop/误路由）
-  history: key => {
-    try { return host.index.history(key); } catch { return null; }
-  },
+  // 分页窗口在 worker 内算好（historyWindow）：主进程拿到的已是裁好的一页；不可读/
+  // 超限/会话不存在时 worker 返回 null，与旧 try/catch 回 null 同形（HTTP 404）。
+  historyPage: (key, before) => host.index.remotePage(key, before, HISTORY_PAGE_SIZE),
   version: () => host.environment.version,
   // Desktop 应用自身版本：手机端据它分辨连的是哪个版本的桌面（与 pi 内核版本分开显示）。
   desktopVersion: () => app.getVersion(),
@@ -316,9 +317,9 @@ function registerIpc() {
   });
   handle('sidecarBinding', mainKey => host.sidecar.bindingOf(mainKey));
   const rendererHistory = new RendererHistory();
-  handle('history', (key, leaf, opts) => rendererHistory.project(host.index.history(key, leaf, opts)));
-  handle('searchSession', (key, query, opts) => host.index.searchSession(key, query, opts));
-  handle('sessionOutline', key => host.index.sessionOutline(key));
+  handle('history', async (key, leaf, opts) => rendererHistory.project(await host.index.historyAsync(key, leaf, opts)));
+  handle('searchSession', (key, query, opts) => host.index.searchAsync(key, query, opts));
+  handle('sessionOutline', key => host.index.outlineAsync(key));
   handle('resources', cwd => host.resources(cwd));
   handle('connect', input => {
     if (!input || typeof input.trustProject !== 'boolean' || !isAccessMode(input.permission)) throw new Error('连接参数无效');
@@ -358,8 +359,8 @@ function registerIpc() {
   // 只读状态：内置 subagent 已删（2026-10-18），这里只报告第三方包的供给情况，
   // 供设置页展示「当前哪个扩展在提供子代理能力」。无写入入口。
   handle('subagentCapabilityStatus', () => subagentCapabilityStatus(host.environment.agentDir));
-  handle('recoverSubagents', (key: string, leaf?: string, pinned?: string[], knownSignature?: string) => recoverSubagents(host.environment.agentDir, key, host.index, leaf, pinned, knownSignature));
-  handle('subagentChildTranscript', (key: string, callId: string, childId: string) => subagentChildTranscript(host.environment.agentDir, key, host.index, callId, childId));
+  handle('recoverSubagents', (key: string, leaf?: string, pinned?: string[], knownSignature?: string) => host.index.recoverSubagents(host.environment.agentDir, key, leaf, pinned, knownSignature));
+  handle('subagentChildTranscript', (key: string, callId: string, childId: string) => host.index.subagentChildTranscript(host.environment.agentDir, key, callId, childId));
   handle('cleanupSubagents', (key: string) => cleanupSubagents(host.environment.agentDir, key));
   // 记忆衔接层：探测 CLI 记忆插件（如 pi-memory），未启用时回退 Desktop 内置桥
   const memoryProject = (cwd: unknown) => cwd === undefined || cwd === '' ? undefined : authorizeProjectCwd(cwd,
@@ -658,19 +659,26 @@ if (!primaryInstance) {
 app.on('second-instance',()=>{if(mainWindow&&!mainWindow.isDestroyed()){if(mainWindow.isMinimized())mainWindow.restore();mainWindow.show();mainWindow.focus();}else if(host)createWindow();});
 // 主进程 event-loop 阻塞监控：5s 窗口内 max>400ms 落盘（与 IPC 计时互补：
 // 非 IPC 的同步长任务（fs 同步/大计算）只有它能看见）。
+// 单位陷阱：monitorEventLoopDelay 的 max 是**纳秒**。旧写法拿它直接和 400 比，
+// 于是每个 5s 窗口都必然命中（哪怕只阻塞了几十 ms），日志既淹没有价值的尖峰，
+// 也让人误读成「每 5 秒卡一次」。阈值必须换算成纳秒再比。
+const EVENT_LOOP_BLOCK_NS = 400 * 1e6;
 const __eld = monitorEventLoopDelay({ resolution: 20 });
 __eld.enable();
 setInterval(() => {
-  if (__eld.max > 400) {
+  if (__eld.max > EVENT_LOOP_BLOCK_NS) {
     try { fsSync.appendFileSync(nodePath.join(nodeOs.homedir(), 'Library', 'Logs', 'PI Desktop', 'main-perf.log'), `${new Date().toISOString()} event-loop 阻塞 ${(__eld.max / 1e6).toFixed(0)}ms\n`); } catch { /* ignore */ }
   }
   __eld.reset();
 }, 5000).unref();
 
-void app.whenReady().then(() => {
+void app.whenReady().then(async () => {
   if(!primaryInstance)return;
   const policy = app.isPackaged ? path.join(process.resourcesPath, 'desktop-policy/index.mjs') : path.join(app.getAppPath(), 'extensions/desktop-policy/index.mjs');
   host = new PiHost(app.getPath('userData'), policy, broadcast, process.env.PI_SMOKE_SETTINGS ? path.join(app.getPath('userData'), 'shared-skills') : undefined, app.getVersion());
+  // 等索引 worker 首个元数据快照再创建窗口/响应首个 sessions IPC：侧栏第一屏就是
+  // 真实列表而不是空列表闪一下（worker 已随 host 构造启动，冷扫期间这里是唯一等待点）。
+  await host.ready();
   // 内置资源：办公技能（pptx/docx/xlsx/pdf）+ 提示词模板（/周报、/报错定位等，
   // 同步进 <agentDir>/prompts 被 pi 转成斜杠命令）。打包取 extraResources，dev 取仓库 resources。
   // 必须在 PiHost 构造之后：environment（含 agentDir 偏好覆盖）在构造期急切解析。

@@ -7,8 +7,9 @@ import { discoverPi, expand } from './environment';
 import { readModelCatalog, mergeModelCatalog, writeDefaultModel, writeModelProvider, removeModelProvider, writeProviderApiKey } from './model-catalog';
 import { mergeRuntimeProviders, packagesFromSettings, runtimeModelsFromRuns } from './provider-registry';
 import { UsageStatsService } from './usage-stats';
-import { SessionIndex } from './session-index';
-import { OutlineCache } from './outline-cache';
+import type { IndexPort } from './index-port';
+import { IndexWorkerClient } from './index-client';
+import { utilityTransport } from './index-transport';
 import { PiBackend } from './backend';
 import { SidecarService } from './sidecar-service';
 import { resourceCatalog } from './resource-catalog';
@@ -19,23 +20,19 @@ export class PiHost {
   environment;
   readonly dataDir: string;
   accounts = new PiAccounts(()=>this.environment.agentDir);
-  index: SessionIndex;
+  index: IndexPort;
   backend: PiBackend;
   sidecar: SidecarService;
   private resourcesTimer?: ReturnType<typeof setInterval>;
   private usage = new UsageStatsService(() => this.index.scan());
-  /** 会话大纲持久化缓存（userData/outline-cache.json）：点开大会话直接读，不重扫。 */
-  private outlines!: OutlineCache;
   constructor(dataDir: string, private policyPath: string, private emit: (e: PiEvent) => void, private sharedSkillsDir?: string, private appVersion?: string) {
     this.dataDir = dataDir;
     try { this.preferences = JSON.parse(fs.readFileSync(path.join(dataDir, 'pi-desktop.json'), 'utf8')); } catch { this.preferences = {}; }
     this.environment = this.withAppVersion(discoverPi(this.preferences));
-    const owned = path.join(this.environment.agentDir, 'sessions', 'desktop');
-    this.outlines = new OutlineCache(path.join(dataDir, 'outline-cache.json'));
-    this.index = new SessionIndex([...new Set([...this.environment.sessionDirs, owned])], owned, this.outlines);
-    this.backend = new PiBackend(this.environment, this.index, owned, policyPath, emit, this.dataDir);
+    this.index = this.createIndex();
+    this.backend = new PiBackend(this.environment, this.index, ownedRootOf(this.environment), policyPath, emit, this.dataDir);
     this.sidecar = new SidecarService(this.backend, this.index, this.dataDir, emit);
-    this.index.start(() => emit({ type: 'sessions-changed' }));
+    void this.index.start(() => emit({ type: 'sessions-changed' }));
     let stamp = '';
     // 30s + 异步 stat：旧版 2.5s 周期、每个 run 的 .pi 做 6 次同步 statSync
     // ——大会话打字卡顿「CPU 不高」的实证来源（fs_usage 不可用时，main-perf.log
@@ -84,13 +81,24 @@ export class PiHost {
     fs.writeFileSync(target + '.tmp', JSON.stringify({ ...persisted, ...this.preferences }, null, 2), { mode: 0o600 }); fs.renameSync(target + '.tmp', target);
     this.accounts.dispose(); this.backend.dispose(); this.index.close();
     this.environment = this.withAppVersion(discoverPi(this.preferences));
-    const owned = path.join(this.environment.agentDir, 'sessions', 'desktop');
-    this.index = new SessionIndex([...new Set([...this.environment.sessionDirs, owned])], owned, this.outlines);
-    this.backend = new PiBackend(this.environment, this.index, owned, this.policyPath, this.emit, this.dataDir);
+    this.index = this.createIndex();
+    this.backend = new PiBackend(this.environment, this.index, ownedRootOf(this.environment), this.policyPath, this.emit, this.dataDir);
     this.sidecar = new SidecarService(this.backend, this.index, this.dataDir, this.emit);
-    this.index.start(() => this.emit({ type: 'sessions-changed' })); this.emit({ type: 'sessions-changed' });
+    void this.index.start(() => this.emit({ type: 'sessions-changed' })); this.emit({ type: 'sessions-changed' });
     return this.environment;
   }
+  /** 会话索引住在 utility process（见 index-worker-entry）；roots/owned/agentDir 与
+   *  outline 缓存路径随环境一起下发。非 Electron 进程（vitest）里 utilityTransport
+   *  自动退到同一 runtime 的进程内承载，不是另一套实现。 */
+  private createIndex(): IndexPort {
+    const owned = path.join(this.environment.agentDir, 'sessions', 'desktop');
+    return new IndexWorkerClient(
+      { roots: [...new Set([...this.environment.sessionDirs, owned])], ownedRoot: owned, agentDir: this.environment.agentDir, outlineCachePath: path.join(this.dataDir, 'outline-cache.json') },
+      cfg => utilityTransport(cfg, path.join(__dirname, 'index-worker-entry.js')),
+    );
+  }
+  /** 镜像元数据首次快照就绪：窗口创建/首个 sessions IPC 前 await，侧栏第一屏不为空。 */
+  ready(): Promise<void> { return this.index.ready(); }
   /** Re-discover the pi runtime after an upgrade, without changing saved preferences. */
   refreshEnvironment(): PiEnvironment {
     this.environment = this.withAppVersion(discoverPi(this.preferences));
@@ -165,5 +173,10 @@ export class PiHost {
     if (!this.index.scan().some(s => s.cwd === cwd) && !this.backend.runs().some(r => r.cwd === cwd)) throw new Error('请先选择该项目的会话');
     return workspaceReview(cwd);
   }
-  dispose() { this.accounts.dispose(); clearInterval(this.resourcesTimer); this.outlines.flushNow(); this.index.close(); this.backend.dispose(); }
+  dispose() { this.accounts.dispose(); clearInterval(this.resourcesTimer); this.index.close(); this.backend.dispose(); }
+}
+
+function ownedRootOf(env: PiEnvironment): string {
+  // 保持与 createIndex() 相同的 owned 派生口径（backend 的 ownedRoot 必须与索引一致）。
+  return path.join(env.agentDir, 'sessions', 'desktop');
 }

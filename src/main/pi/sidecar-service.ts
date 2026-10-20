@@ -1,8 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import type { PiEvent, PiRun } from '../../shared/pi';
+import type { PiEvent, PiRun, PiSession } from '../../shared/pi';
 import type { PiBackend } from './backend';
-import type { SessionIndex } from './session-index';
+import type { IndexPort } from './index-port';
 import { sidecarSummaryPrompt } from './sidecar-summary';
 
 /** 主会话摘要注入开关/预算：桌面设置暂无入口，先走 env（与 verify-gate 的
@@ -23,7 +23,7 @@ export class SidecarService {
   private pending = new Map<string, Promise<PiRun>>();
   private readonly mapFile: string;
 
-  constructor(private backend: PiBackend, private index: SessionIndex, private dataDir: string, private onEvent: (e: PiEvent) => void) {
+  constructor(private backend: PiBackend, private index: IndexPort, private dataDir: string, private onEvent: (e: PiEvent) => void) {
     this.mapFile = path.join(dataDir, 'sidecar-map.json');
     try {
       const value: unknown = JSON.parse(fs.readFileSync(this.mapFile, 'utf8'));
@@ -73,23 +73,30 @@ export class SidecarService {
     const active = bound && this.backend.runs().find(r => r.key === bound);
     if (active) return active;
     const context = this.backend.sessionContext(mainKey);
-    const cwd = context?.cwd ?? this.index.history(mainKey).session.cwd;
+    const cwd = context?.cwd ?? this.requireMainSession(mainKey).cwd;
     // 主会话摘要（最近几轮，预算截断）注入 systemPrompt：副驾是独立会话，否则
-    // 用户「接着主对话的问题」追问时它无从知道指代对象。注入失败（索引坏/超限）
-    // 不阻塞副驾启动——退化为无背景（与旧行为一致）。
+    // 用户「接着主对话的问题」追问时它无从知道指代对象。摘要只需要分支尖端窗口：
+    // 订阅（refcount，已连接会话不产生额外 worker 订阅）→ 同步读 256 条尾窗 →
+    // 释放本路径的引用。注入失败（索引坏/超限/镜像不可用）不阻塞副驾启动——
+    // 退化为无背景（与旧行为一致）。
     let summary: string | undefined;
     try {
       const budget = summaryBudgetFrom();
       if (budget) {
-        const branch = this.index.history(mainKey).branch ?? [];
-        summary = sidecarSummaryPrompt(branch, budget) || undefined;
+        await this.index.subscribe(mainKey);
+        try {
+          const branch = this.index.branchTail(mainKey, 256) ?? [];
+          summary = sidecarSummaryPrompt(branch, budget) || undefined;
+        } finally {
+          this.index.unsubscribe(mainKey);
+        }
       }
     } catch { /* 摘要失败不阻塞副驾 */ }
     const input = { cwd, trustProject: context?.trustProject ?? false, permission: 'ask' as const, tools: ['read'], sidecarOf: mainKey, ...(summary ? { systemPrompt: summary } : {}) };
     let resume: string | undefined;
     if (bound) {
       // Fail closed on a stale/corrupt binding: never resume a main or external file.
-      const session = this.index.history(bound).session;
+      const session = this.requireBoundSession(bound);
       if (!session.owned || session.sidecarOf === undefined) throw new Error('辅助对话绑定无效，请检查 sidecar-map.json');
       resume = bound;
     }
@@ -105,6 +112,18 @@ export class SidecarService {
     this.bindings = next;
     this.onEvent({ type: 'sessions-changed' });
     return run;
+  }
+
+  /** 主会话元数据（镜像同步读）：缺失时与旧 history() 抛错同口径 fail-closed。 */
+  private requireMainSession(mainKey: string): PiSession {
+    const session = this.index.sessionMeta(mainKey);
+    if (!session) throw new Error('会话不存在、不可读或不在选定目录中。');
+    return session;
+  }
+  private requireBoundSession(bound: string): PiSession {
+    const session = this.index.sessionMeta(bound);
+    if (!session) throw new Error('会话不存在、不可读或不在选定目录中。');
+    return session;
   }
 
   /** 原子写绑定表：tmp 先删（'wx' 保证 mode 落在新建文件上，陈旧 .tmp 不残留）+ rename。 */
