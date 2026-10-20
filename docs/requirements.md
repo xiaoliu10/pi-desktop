@@ -167,10 +167,19 @@
 - 2026-10-19 仍有输入 p90=520ms/max=2909ms 的现场报告：响应瘦身不等于端到端卡顿解决。主进程冷扫描/解析的 worker 隔离待实现，方案与证据边界见 `docs/design/input-lag-multicore.md`。
 - 大会话历史读取不全量重读：落盘会话走增量 tail 解析（session-index），运行中会话的 `get_entries(since=leafId)` 增量契约待接入（切片 2c）。
 - 非 pi `.jsonl` 已成功读取但没有有效会话头时，按真实路径及 `ino/size/mtime/ctime` 缓存拒绝结果；全扫、watch 与轮询不重复读取/解析未变内容。追加补齐（包括未完整 header）、同尺寸改写、替换、截断后重新识别，删除后清理；瞬态读取错误可重试，旧 history/dirty/branch/plan/outline 不残留。保留原兜底扫描频率、嵌套可见性及 sidecar 语义。回归：`tests/session-rejected-files.test.ts`。该优化只消除已拒绝文件的重复解析，不代表冷扫描或多秒端到端输入卡顿已根治。
+- **统一 IPC 入口（`local-pi:*` 唯一注册点）必须先校验来源、再执行业务，且严格一次**：不得为
+  「先跑一遍拿返回值、跑完再校验、校验通过后又跑一遍」的形态。旧入口（d4f7d94）正是如此：
+  合法同步调用业务执行两遍——每次 IPC 的主进程开销翻倍，`history()` / `sessions()` / `scan()`
+  这类同步热路径直接双倍阻塞主进程（与本条「单次同步阻塞 < 50ms」的验收口径冲突）；异步 handler
+  在提前 `return promise` 处根本走不到校验行，未授权调用照样拿到结果。修复后：授权在任何业务
+  执行之前，同步值 / Promise 返回 / throw / rejection 四种语义原样透传，慢调用计时每次调用恰记录
+  一次（含失败路径）且记录失败被就地吞掉——观测不得影响业务，也不得制造 unhandled rejection。
+  回归：`tests/ipc-entry.test.ts`（授权先于业务、非法 sender/frame/窗口缺失时业务零执行、四条
+  返回语义、计时恰一次、记录抛错不外溢、`index.ts` 接入约束——helper 不得变成孤岛）。
 
-**状态**：大部分满足。切片 1（labelsFor 缓存，v0.1.24 #120）已修 memo 击穿；切片 2a/2b（history() 去全扫 + 增量 tail 解析，实测 421ms → 平均 6.3ms）已修（PR #128）；**渲染侧热路径（Phase 2，实测 sentConversationMessages 热路径 259ms/拍 → 流式 tick 10-12ms，22×）：anchorOf/indexById O(1) 化 + 排序锚值预计算 + segment 整段缓存（branch 数组身份隔离，live/tools 内容签名穿透）+ ChatView queue/scrollRequest props 稳定化**；剩余：运行中会话改走 RPC get_entries（切片 2c）、可选虚拟化（切片 3）、活动段/历史段 useMemo 拆分（A1，若剩余 10ms/拍仍感知卡再做）。
+**状态**：大部分满足。切片 1（labelsFor 缓存，v0.1.24 #120）已修 memo 击穿；切片 2a/2b（history() 去全扫 + 增量 tail 解析，实测 421ms → 平均 6.3ms）已修（PR #128）；**渲染侧热路径（Phase 2，实测 sentConversationMessages 热路径 259ms/拍 → 流式 tick 10-12ms，22×）：anchorOf/indexById O(1) 化 + 排序锚值预计算 + segment 整段缓存（branch 数组身份隔离，live/tools 内容签名穿透）+ ChatView queue/scrollRequest props 稳定化**；**统一 IPC 入口的「业务双执行 + 异步绕过授权」已修**（自 0.1.30 计时埋点 `a1c4f7c` 引入：它把原本「先校验 → `return fn(...args)`」的入口包成「先跑业务 → 校验 → 再跑业务」；修复即恢复该语义并保留埋点——提取 `src/main/ipc-entry.ts`，`index.ts` 的 `handle` 改为 `createIpcHandle`，123 个通道注册点逐字不变；合法同步调用的主进程工作量减半，未授权同步/异步调用一律零业务执行）；剩余：运行中会话改走 RPC get_entries（切片 2c）、可选虚拟化（切片 3）、活动段/历史段 useMemo 拆分（A1，若剩余 10ms/拍仍感知卡再做）。
 
-**回归触发**：改 `session-index.ts`（增量偏移/快路径、拒绝 stamp 缓存及 scan/watch/poll 失效一致性）/`adapter.ts`（sentConversationMessages 及其 segment 缓存）/`PiReplicaApp.tsx`（ChatView props 稳定性）；pi RPC `get_entries` 增量契约变化。缓存正确性由 `tests/sent-conversation-cache.test.ts` 钉住（同 id live 内容增长/历史身份恒定/late progress 穿透/refresh 追加）。
+**回归触发**：改 `session-index.ts`（增量偏移/快路径、拒绝 stamp 缓存及 scan/watch/poll 失效一致性）/`adapter.ts`（sentConversationMessages 及其 segment 缓存）/`PiReplicaApp.tsx`（ChatView props 稳定性）/`src/main/index.ts` 的 `handle` 工厂与 `src/main/ipc-entry.ts`（统一入口的授权顺序、执行次数与计时语义）；pi RPC `get_entries` 增量契约变化。缓存正确性由 `tests/sent-conversation-cache.test.ts` 钉住（同 id live 内容增长/历史身份恒定/late progress 穿透/refresh 追加）。
 
 ### R-render-02　聊天图片可显示、可下载（blob URL 与 CSP/主进程契约一致）
 
