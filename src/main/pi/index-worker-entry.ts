@@ -123,15 +123,46 @@ function errorPayload(error: unknown): { message: string; code?: string } {
   return { message: typeof err?.message === 'string' ? err.message : String(error), ...(code ? { code } : {}) };
 }
 
-/** Utility-process entry: config arrives as argv[1] JSON, requests over `process.parentPort`. */
-function main(): void {
+/** 双工通道：Electron utility process 用 `process.parentPort`；普通 Node 子进程
+ *  （`child_process.fork`，用于测试与真实性能探针）用 IPC 的 `process.send`。
+ *  两者语义一致（结构化克隆 + 'message' 事件），所以下面的协议处理完全共用。 */
+function duplexChannel(): { postMessage(v: unknown): void; on(event: 'message', cb: (v: unknown) => void): void } | undefined {
   const parentPort = (process as unknown as { parentPort?: { postMessage(v: unknown): void; on(event: 'message', cb: (v: unknown) => void): void } }).parentPort;
+  if (parentPort) return parentPort;
+  const send = (process as unknown as { send?: (v: unknown) => boolean }).send;
+  if (typeof send === 'function') {
+    return {
+      postMessage: (v: unknown) => { send.call(process, v); },
+      on: (_event: 'message', cb: (v: unknown) => void) => { process.on('message', cb as (v: unknown) => void); },
+    };
+  }
+  return undefined;
+}
+
+/** 配置发现：不依赖固定的 argv 下标。`utilityProcess.fork` 与 `child_process.fork`
+ *  给子进程的 argv 形状不同（前者不含模块路径），写死下标会在其中一个宿主里静默
+ *  拿到 undefined 并报「配置无效」。这里取第一个能解析成合法配置形状的 argv。 */
+function readConfig(argv: string[]): WorkerConfig | undefined {
+  for (const arg of argv) {
+    if (typeof arg !== 'string' || !arg.startsWith('{')) continue;
+    try {
+      const parsed = JSON.parse(arg) as WorkerConfig;
+      if (parsed && Array.isArray(parsed.roots) && typeof parsed.ownedRoot === 'string'
+        && typeof parsed.agentDir === 'string' && typeof parsed.outlineCachePath === 'string') return parsed;
+    } catch { /* 不是配置 JSON，继续找下一个 argv */ }
+  }
+  return undefined;
+}
+
+/** Worker entry: config arrives as a JSON argv entry, requests over the duplex channel. */
+function main(): void {
+  const parentPort = duplexChannel();
   const send = (message: WorkerReply | WorkerEvent) => parentPort?.postMessage(message);
   if (!parentPort) return;
   let handle: IndexWorkerHandle;
   try {
-    const config = JSON.parse(process.argv[2] ?? '{}') as WorkerConfig;
-    if (!config || !Array.isArray(config.roots) || typeof config.ownedRoot !== 'string' || typeof config.agentDir !== 'string' || typeof config.outlineCachePath !== 'string') {
+    const config = readConfig(process.argv);
+    if (!config) {
       send({ ev: 'fatal', message: '会话索引 worker 配置无效' });
       return;
     }
