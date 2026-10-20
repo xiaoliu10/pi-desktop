@@ -14,6 +14,7 @@ import os from 'node:os';
 import type { PiEntry, PiEvent, PiRun, PiSession, PiUiRequest } from '../../shared/pi';
 import type { PiImage } from '../../shared/composer';
 import { RemoteVisibility } from './remote-visibility';
+export { historyWindow, HISTORY_PAGE_SIZE } from './history-window';
 
 export interface RemoteStatus {
   running: boolean;
@@ -33,7 +34,9 @@ export interface RemoteDataProvider {
   /** 已移除/隐藏项目路径（桌面侧 hiddenProjects）：与桌面侧栏一致，手机端不展示。 */
   hiddenProjects?(): string[];
   runs(): PiRun[];
-  history(key: string): PiHistoryLite | null;
+  /** 一页手机端历史：窗口计算由会话索引 worker 完成（`IndexPort.remotePage`），
+   *  HTTP 层只做可见性守卫与 JSON 输出。字段名与 worker 返回一致。 */
+  historyPage(key: string, before: string | null): Promise<{ branch: PiEntry[]; hasMore: boolean; before: number } | null>;
   version(): string | null;
   /** Desktop 应用自身版本（app.getVersion()）：让手机端能分辨连的是哪个版本的桌面。 */
   desktopVersion?(): string;
@@ -53,9 +56,6 @@ export interface PiHistoryLite {
 
 const MAX_SSE_CLIENTS = 8;
 const MAX_BODY_BYTES = 64 * 1024;
-/** /api/history tail 懒加载每页条数：移动端进会话/回合结束只拉最近一页，
- * 上滑到顶按 ?before 游标翻更早的一页（避免 151MB 大会话全量重拉）。 */
-const HISTORY_PAGE_SIZE = 50;
 /** 超限 body 也读完才回 400（见 readBody），这是中途放弃读取的硬顶。 */
 const MAX_HARD_BODY_BYTES = 8 * 1024 * 1024;
 const MAX_PROMPT_CHARS = 200_000;
@@ -340,19 +340,18 @@ export class RemoteServer {
           // 逐条历史不能因为拿到 key 就在手机端读出来；404 与「会话不存在」同形，不
           // 泄露存在性。索引损坏时 snapshot 内部降级为不过滤（恢复页面可用）。
           const readable = !!key && this.visibility.snapshot(true).keyVisible(key);
-          const history = readable ? this.data.history(key) : null;
-          if (!history) {
+          // tail 懒加载：默认只回最近一页 + hasMore + before（分支内索引游标）；
+          // ?before=N 取 N 之前更早的一页。窗口计算在会话索引 worker 内（historyWindow），
+          // 这里不再自己算：主进程拿到的只是已经裁好的有界一页。可见性守卫在 tail
+          // 模式下同样生效（不可见会话 404）。
+          const page = readable ? await this.data.historyPage(key, url.searchParams.get('before')) : null;
+          if (!page) {
             res.writeHead(404, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
             res.end(JSON.stringify({ error: 'unknown session' }));
             return;
           }
-          // tail 懒加载：默认只回最近 HISTORY_PAGE_SIZE 条 + hasMore + before（分支内
-          // 索引游标）；?before=N 取 N 之前更早的一页。游标即本页起始索引，前端据此
-          // prepend 更早消息。可见性守卫在 tail 模式下同样生效（不可见会话 404）。
-          const branch = history.branch ?? [];
-          const win = historyWindow(branch.length, url.searchParams.get('before'));
           res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
-          res.end(JSON.stringify({ branch: branch.slice(win.start, win.end), hasMore: win.hasMore, before: win.start }));
+          res.end(JSON.stringify({ branch: page.branch, hasMore: page.hasMore, before: page.before }));
           return;
         }
         case '/api/events': {
@@ -384,25 +383,6 @@ function lightSessions(sessions: PiSession[]) {
     .map((s) => ({ key: s.key, name: s.name, cwd: s.cwd, updatedAt: s.updatedAt, owned: s.owned }))
     .sort((a, b) => b.updatedAt - a.updatedAt)
     .slice(0, 200);
-}
-
-/**
- * /api/history tail 分页窗口：返回 [start, end) 与「是否还有更早」标记。
- *  - 不带 before：取分支末尾最近 page 条（默认最近 50）。
- *  - before=N：取 N 之前的 page 条（更早的一页），end 先 clamp 到 [0, len]。
- *  非数值 / 空字符串 before 视作缺省（默认 tail），避免把脏参当 0 读出空页。
- *  返回的 start 同时是「取下一页更早历史」要用的游标（?before=start）。纯函数，
- *  便于直接单测；HTTP 层与可见性守卫在其外包裹。
- */
-export function historyWindow(len: number, beforeParam: string | null, page = HISTORY_PAGE_SIZE): { start: number; end: number; hasMore: boolean } {
-  const total = Number.isFinite(len) && len > 0 ? Math.floor(len) : 0;
-  let end = total;
-  if (beforeParam !== null && beforeParam !== '') {
-    const n = Number(beforeParam);
-    if (Number.isFinite(n)) end = Math.max(0, Math.min(total, Math.floor(n)));
-  }
-  const start = Math.max(0, end - page);
-  return { start, end, hasMore: start > 0 };
 }
 
 function isCanonicalBase64(data: string): boolean {

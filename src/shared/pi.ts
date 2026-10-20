@@ -21,7 +21,7 @@ export interface PiEnvironment {
   bundledVersion?: string | null;
 }
 export interface PiUpgradeResult { exitCode: number; stdout: string; stderr: string }
-export interface PiSession { key: string; id: string; path: string; cwd: string; name: string; updatedAt: number; size: number; warnings: string[]; owned: boolean; parentSession?: string; sidecarOf?: string }
+export interface PiSession { key: string; id: string; path: string; cwd: string; name: string; updatedAt: number; size: number; warnings: string[]; owned: boolean; parentSession?: string; sidecarOf?: string; /** 超限降级（只有元数据，无 entries）：消费方据此 fail-closed，不得靠 warnings 文案正则猜（文案一改就静默失效）。 */ oversized?: true }
 export interface PiEntry { type: string; id?: string; parentId?: string | null; timestamp?: string; message?: Record<string, unknown>; [key: string]: unknown }
 /** 会话内搜索命中：只回定位信息（entryId + 预览），全文由 history(before) 取回。
  *  索引=entry 链表本身（稳定 id + parentId），摘要=user 消息/工具 summary，零额外结构。 */

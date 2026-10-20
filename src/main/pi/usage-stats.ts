@@ -130,15 +130,27 @@ export function computeUsageStats(sessions: PiSession[], now = new Date()): Usag
   };
 }
 
-/** Cached snapshot: rescans at most once per minute. */
+/** Cached snapshot: rescans at most once per minute.
+ *
+ *  聚合在 owner（session-index worker）内执行（usageStatsAsync → computeUsageStats），
+ *  主进程只收聚合结果——旧实现在主线程 readFileSync 所有会话文件（1.1GB 数据集实测
+ *  250ms/73MB，线性放大 3-4s 主线程独占），正是 P1-6 要消除的残留。provider 可返回
+ *  Promise；同一窗口内的并发调用共享同一次聚合（不叠拍）。 */
 export class UsageStatsService {
   private cache: { at: number; stats: UsageStats } | null = null;
-  constructor(private readonly sessions: () => PiSession[]) {}
+  private inFlight: Promise<UsageStats> | undefined;
+  constructor(private readonly aggregate: () => UsageStats | Promise<UsageStats>) {}
 
-  get(): UsageStats {
-    if (!this.cache || Date.now() - this.cache.at > 60_000) {
-      this.cache = { at: Date.now(), stats: computeUsageStats(this.sessions()) };
+  get(): Promise<UsageStats> {
+    if (this.cache && Date.now() - this.cache.at <= 60_000) return Promise.resolve(this.cache.stats);
+    if (!this.inFlight) {
+      this.inFlight = Promise.resolve(this.aggregate())
+        .then(stats => {
+          this.cache = { at: Date.now(), stats };
+          return stats;
+        })
+        .finally(() => { this.inFlight = undefined; });
     }
-    return this.cache.stats;
+    return this.inFlight;
   }
 }

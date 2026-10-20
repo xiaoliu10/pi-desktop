@@ -239,6 +239,20 @@ describe('sidecar eviction & closed isolation (review fixes)', () => {
     expect(index.history(second.key).branch).toEqual([]);
   });
 
+  it('P2-5 超限 bound 会话 fail-closed，不依赖 warnings 文案且不重建绑定', async () => {
+    const { service, backend, mainKey, index, data, emit } = setup(true);
+    const first = await service.ensure(mainKey);
+    backend.close(first.key);
+    const session = index.sessionMeta(first.key)!;
+    session.oversized = true;
+    session.warnings = ['localized warning'];
+    const connect = vi.spyOn(backend, 'connect');
+    const restored = new SidecarService(backend, index, data, emit);
+    await expect(restored.ensure(mainKey)).rejects.toThrow(/读取上限/);
+    expect(connect).not.toHaveBeenCalled();
+    expect(restored.bindingOf(mainKey)).toBe(first.key);
+  });
+
   it.each(['{broken\n', '{"type":"session","id":42,"cwd":"/tmp"}\n'])('rejects a non-readable bound file without replacing it: %s', async raw => {
     const { service, backend, mainKey, index, data, emit } = setup(true);
     const first = await service.ensure(mainKey);

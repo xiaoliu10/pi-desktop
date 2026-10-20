@@ -1,4 +1,4 @@
-import { subagentCapabilityStatus, recoverSubagents, cleanupSubagents, subagentChildTranscript } from './pi/official-subagent';
+import { subagentCapabilityStatus, cleanupSubagents } from './pi/official-subagent';
 import { startDingTalkRegistration, pollDingTalkRegistration } from './pi/dingtalk-registration';
 import { syncBuiltinSkills, syncBuiltinPrompts } from './pi/builtin-skills';
 import { applyContinuations, continuationChainKeys, loadContinuations } from './pi/session-continuations';
@@ -22,6 +22,7 @@ import { SessionArchive } from './pi/session-archive';
 import { autoArchiveKeys } from './pi/auto-archive';
 import { autoDeleteArchivedKeys, deleteArchivedSession } from './pi/auto-delete';
 import { projectFiles, projectContext, readContext, projectBranch, skillChoices } from './pi/composer-service';
+import { createIpcHandle, type IpcEntryEvent } from './ipc-entry';
 import { isAccessMode } from '../shared/access-mode';
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, shell } from 'electron';
 import path from 'node:path';
@@ -32,6 +33,7 @@ import { SettingsService } from './pi/settings-service';
 import { VoiceService } from './pi/voice-service';
 import { PiHost } from './pi/host';
 import { RemoteServer } from './pi/remote-server';
+import { HISTORY_PAGE_SIZE } from './pi/history-window';
 import { ImBot } from './pi/im-bot';
 import { createBotActions } from './pi/bot/actions';
 import { startUpdateChecker, downloadUpdateZip, type UpdateChecker, type UpdateStatus } from './update-check';
@@ -45,9 +47,9 @@ const remote = new RemoteServer({
   archivedSessions: () => archive.list(),
   hiddenProjects: () => settings.preferences().hiddenProjects ?? [],
   runs: () => host.backend.runs().filter(r => r.sidecarOf === undefined), // 副驾不出现在手机端会话列表（可被误 stop/误路由）
-  history: key => {
-    try { return host.index.history(key); } catch { return null; }
-  },
+  // 分页窗口在 worker 内算好（historyWindow）：主进程拿到的已是裁好的一页；不可读/
+  // 超限/会话不存在时 worker 返回 null，与旧 try/catch 回 null 同形（HTTP 404）。
+  historyPage: (key, before) => host.index.remotePage(key, before, HISTORY_PAGE_SIZE),
   version: () => host.environment.version,
   // Desktop 应用自身版本：手机端据它分辨连的是哪个版本的桌面（与 pi 内核版本分开显示）。
   desktopVersion: () => app.getVersion(),
@@ -90,6 +92,16 @@ let updateChecker: UpdateChecker | undefined;
 let updateUrl: string | undefined;
 let updateInFlight = false;
 
+/**
+ * IPC 来源判定：只有主窗口的顶层文档能调用 `local-pi:*`。
+ * 三项缺一不可——窗口存在（启动中/已关闭时拒绝）、sender 是主窗口 webContents（挡其他窗口/
+ * 内置浏览器 guest）、senderFrame 是主 frame（挡子 frame）。判定式必须在业务执行前跑完，
+ * 见 ipc-entry.ts 顶部注释（旧实现把校验写在业务之后，同步双跑、异步直接绕过）。
+ */
+function assertMainWindowSender(event: IpcEntryEvent) {
+  if (!mainWindow || event.sender !== mainWindow.webContents || event.senderFrame !== mainWindow.webContents.mainFrame) throw new Error('非法 IPC 来源');
+}
+
 function broadcast(event: PiEvent) {
   const eventKey = event.type === 'run' ? event.run.key : 'key' in event ? event.key : undefined;
   // closed 优先读事件自带 sidecarOf（事发时 active 已删，runs() 事后快照查不到）；
@@ -129,19 +141,14 @@ function registerIpc() {
   terminals = new TerminalService(event => {
     if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(event.type === 'terminalData' ? 'local-pi:terminalData' : 'local-pi:terminalExit', event);
   });
-  // IPC 慢调用观测：>100ms 落盘到 main-perf.log（与 event-loop 监控互补——尖峰时
-  // 直接看到是哪条通道在阻塞主进程）。零开销路径：快调用只有一次 Date.now()。
+  // 统一 IPC 入口（唯一注册点）：授权先于业务、业务严格一次、同步/Promise/throw/rejection 语义原样透传。
+  // 慢调用观测：>100ms 落盘到 main-perf.log（与 event-loop 监控互补——尖峰时直接看到是哪条通道在阻塞
+  // 主进程）。计时每次调用恰记录一次（含失败路径）；记录失败被 ipc-entry 就地吞掉，不影响业务。
   const perfLog = (line: string) => { try { fsSync.appendFileSync(nodePath.join(nodeOs.homedir(), 'Library', 'Logs', 'PI Desktop', 'main-perf.log'), `${new Date().toISOString()} ${line}\n`); } catch { /* 不可见不影响主流程 */ } };
-  const handle = (name: string, fn: (...args: any[]) => unknown) => ipcMain.handle(`local-pi:${name}`, (event, ...args) => {
-    const __t0 = Date.now();
-    const __done = () => { const c = Date.now() - __t0; if (c > 100) perfLog(`ipc ${name} ${c}ms`); };
-    try {
-      const __r = fn(...args);
-      if (__r && typeof (__r as Promise<unknown>).then === 'function') { void (__r as Promise<unknown>).then(() => __done(), () => __done()); return __r; }
-      __done();
-    } catch (e) { __done(); throw e; }
-    if (!mainWindow || event.sender !== mainWindow.webContents || event.senderFrame !== mainWindow.webContents.mainFrame) throw new Error('非法 IPC 来源');
-    return fn(...args);
+  const handle = createIpcHandle({
+    register: (channel, listener) => ipcMain.handle(channel, listener),
+    authorize: assertMainWindowSender,
+    record: (name, ms) => { if (ms > 100) perfLog(`ipc ${name} ${ms}ms`); },
   });
   handle('automationSnapshot',()=>automations!.snapshot());
   handle('terminalCreate', input => terminals.create(input ?? {}));
@@ -307,7 +314,10 @@ function registerIpc() {
     broadcast({ type: 'sessions-changed' });
     return result;
   });
-  handle('sessions', () => {
+  handle('sessions', async () => {
+    // 首屏保持 renderer 现有 loading（ready=false），窗口本身不等索引冷扫。
+    // waiter 在就绪/fatal/close 必 settle，首次快照同时广播 sessions-changed。
+    await host.ready();
     // cache 视图而非全量 scan：流式期间 signature 每 120ms 变化触发 renderer 重拉，
     // 每次 scan 全量 walk（244ms 同步）会把主进程打满（实测 text-input 排队 616ms）。
     const sessions = host.index.sessionsView();
@@ -325,9 +335,9 @@ function registerIpc() {
   handle('sidecarBinding', mainKey => host.sidecar.bindingOf(mainKey));
   const rendererHistory = new RendererHistory();
   handle('resolveSession', key => host.backend.resolveSessionKey(key));
-  handle('history', (key, leaf, opts) => rendererHistory.project(host.index.history(key, leaf, opts)));
-  handle('searchSession', (key, query, opts) => host.index.searchSession(key, query, opts));
-  handle('sessionOutline', key => host.index.sessionOutline(key));
+  handle('history', async (key, leaf, opts) => rendererHistory.project(await host.index.historyAsync(key, leaf, opts)));
+  handle('searchSession', (key, query, opts) => host.index.searchAsync(key, query, opts));
+  handle('sessionOutline', key => host.index.outlineAsync(key));
   handle('resources', cwd => host.resources(cwd));
   handle('connect', input => {
     if (!input || typeof input.trustProject !== 'boolean' || !isAccessMode(input.permission)) throw new Error('连接参数无效');
@@ -370,8 +380,8 @@ function registerIpc() {
   // F-2（PR148 复审）：fork 后子代理指针只存在于链尾文件；renderer 只持稳定 runtime
   // key。查询前按延续链只读归一到真实文件 key——identity 锚定（status.sessionId ===
   // history.session.path）与 containment 校验都在归一后的链尾上原样执行，不放松。
-  handle('recoverSubagents', (key: string, leaf?: string, pinned?: string[], knownSignature?: string) => recoverSubagents(host.environment.agentDir, host.backend.resolveHistoryKey(key), host.index, leaf, pinned, knownSignature));
-  handle('subagentChildTranscript', (key: string, callId: string, childId: string) => subagentChildTranscript(host.environment.agentDir, host.backend.resolveHistoryKey(key), host.index, callId, childId));
+  handle('recoverSubagents', (key: string, leaf?: string, pinned?: string[], knownSignature?: string) => host.index.recoverSubagents(host.environment.agentDir, host.backend.resolveHistoryKey(key), leaf, pinned, knownSignature));
+  handle('subagentChildTranscript', (key: string, callId: string, childId: string) => host.index.subagentChildTranscript(host.environment.agentDir, host.backend.resolveHistoryKey(key), callId, childId));
   handle('cleanupSubagents', (key: string) => cleanupSubagents(host.environment.agentDir, key));
   // 记忆衔接层：探测 CLI 记忆插件（如 pi-memory），未启用时回退 Desktop 内置桥
   const memoryProject = (cwd: unknown) => cwd === undefined || cwd === '' ? undefined : authorizeProjectCwd(cwd,
@@ -670,16 +680,20 @@ if (!primaryInstance) {
 app.on('second-instance',()=>{if(mainWindow&&!mainWindow.isDestroyed()){if(mainWindow.isMinimized())mainWindow.restore();mainWindow.show();mainWindow.focus();}else if(host)createWindow();});
 // 主进程 event-loop 阻塞监控：5s 窗口内 max>400ms 落盘（与 IPC 计时互补：
 // 非 IPC 的同步长任务（fs 同步/大计算）只有它能看见）。
+// 单位陷阱：monitorEventLoopDelay 的 max 是**纳秒**。旧写法拿它直接和 400 比，
+// 于是每个 5s 窗口都必然命中（哪怕只阻塞了几十 ms），日志既淹没有价值的尖峰，
+// 也让人误读成「每 5 秒卡一次」。阈值必须换算成纳秒再比。
+const EVENT_LOOP_BLOCK_NS = 400 * 1e6;
 const __eld = monitorEventLoopDelay({ resolution: 20 });
 __eld.enable();
 setInterval(() => {
-  if (__eld.max > 400) {
+  if (__eld.max > EVENT_LOOP_BLOCK_NS) {
     try { fsSync.appendFileSync(nodePath.join(nodeOs.homedir(), 'Library', 'Logs', 'PI Desktop', 'main-perf.log'), `${new Date().toISOString()} event-loop 阻塞 ${(__eld.max / 1e6).toFixed(0)}ms\n`); } catch { /* ignore */ }
   }
   __eld.reset();
 }, 5000).unref();
 
-void app.whenReady().then(() => {
+void app.whenReady().then(async () => {
   if(!primaryInstance)return;
   const policy = app.isPackaged ? path.join(process.resourcesPath, 'desktop-policy/index.mjs') : path.join(app.getAppPath(), 'extensions/desktop-policy/index.mjs');
   host = new PiHost(app.getPath('userData'), policy, broadcast, process.env.PI_SMOKE_SETTINGS ? path.join(app.getPath('userData'), 'shared-skills') : undefined, app.getVersion());
@@ -712,6 +726,12 @@ void app.whenReady().then(() => {
     if (renamed && !prefs.sessionRenames?.[toKey]) settings.savePreferences({ sessionRenames: { ...prefs.sessionRenames, [toKey]: renamed } });
   };
   registerIpc();
+  // P0-1/P1-5：窗口创建不再压在索引就绪之后。冷扫（真实数据集实测 6.7s/1.1GB）期间
+  // 渲染层用加载态承担首屏；更关键的是 worker 启动失败（打包丢 entry/冷扫期 OOM）时，
+  // 旧写法 await host.ready() 永久挂起 → 应用只有 dock 图标、永不建窗、无任何提示。
+  // ready() 现保证必 settle（P0-1 waiter 列表），这里只做「就绪后补广播」：镜像就绪后
+  // 已加载的侧栏拉到真实列表（客户端首个快照也经 changed → sessions-changed，这里幂等兜底）。
+  void host.ready().then(() => broadcast({ type: 'sessions-changed' })).catch(() => undefined);
   // 更新检查不跑 smoke：smoke 快速退出，无需网络请求。状态推送进 registerIpc 里注册的回调闭包。
   if (!process.env.PI_SMOKE) {
     updateChecker = startUpdateChecker({
@@ -738,6 +758,8 @@ void app.whenReady().then(() => {
     if (!dockIcon.isEmpty()) app.dock.setIcon(dockIcon);
   }
   if (process.env.PI_SMOKE === '1') {
+    // smoke 日志断言会话数：保持旧行为等首个快照（P0-1 修复后 ready() 必 settle，不会永久挂起）。
+    await host.ready();
     console.log('[smoke] pi host booted; version:', host.environment.version, 'sessions:', host.index.scan().length);
     host.dispose(); app.exit(0); return;
   }

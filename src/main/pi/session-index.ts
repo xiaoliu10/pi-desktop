@@ -4,6 +4,9 @@ import { createHash } from 'node:crypto';
 import type { PiEntry, PiHistory, PiOutline, PiOutlineItem, PiSearchHit, PiSearchResult, PiSession } from '../../shared/pi';
 import { OutlineCache } from './outline-cache';
 import { MAX_SESSION, OversizedSessionError, sessionStub } from './session-size';
+import { computeUsageStats, type UsageStats } from './usage-stats';
+import { recoverSubagents, subagentChildTranscript } from './official-subagent';
+import { historyWindow } from './history-window';
 /** 大于该值的会话文件变更时只更新元数据、延后全量解析：流式期间活动会话每个 delta
  * 都在追加，若每次 watch/轮询都重读重解析整个 MB 级文件，主进程会被持续拖死。 */
 const DEFER_PARSE_BYTES = 256 * 1024;
@@ -86,6 +89,9 @@ export class SessionIndex {
    *  ~500ms）。entries 引用 + leaf 不变则复用——流式期间每拍都调 history()，这是
    *  主进程阻塞的第一根因（埋点报告 history-ipc 33 次共 17.6s）。 */
   private branchMemo = new Map<string, Map<string, { entries: PiEntry[]; branch: PiEntry[] }>>();
+  /** 已成功读取、但没有有效 pi header 的内容（含未成行 header）。仅记当前文件 stamp，
+   *  不记 I/O 错误；任何追加/改写/替换均重新识别，避免每次兜底扫描重读非 pi jsonl。 */
+  private rejected = new Map<string, string>();
   /** 嵌套子会话（pi-subagents async 布局）文件 → 推断的主会话路径。 */
   private nestedParents = new Map<string, string>();
   /** 已有缓存但文件又增长了的会话：等写入平息后再全量重解析。 */
@@ -122,10 +128,25 @@ export class SessionIndex {
       return { stat, stamp: `${stat.ino}:${stat.size}:${stat.mtimeMs}:${stat.ctimeMs}` };
     } catch { return undefined; }
   }
+  /** 内容失效/删除时所有派生缓存一起清理，尤其不能留下 dirty 旧历史或计划。 */
+  private forgetSession(key: string): void {
+    this.cache.delete(key);
+    this.branchMemo.delete(key);
+    this.planMemos.delete(key);
+    this.outlines?.delete(key);
+    this.dirty.delete(key);
+  }
+  private forgetFile(file: string): void {
+    this.forgetSession(fileKey(file));
+    this.rejected.delete(file);
+    this.fileDirs.delete(file);
+  }
   private parseFile(file: string, key: string, incremental = false): void {
     const stamped = this.stampOf(file);
     if (!stamped) return;
     const { stat, stamp } = stamped;
+    if (this.rejected.get(file) === stamp) return;
+    this.rejected.delete(file);
     if (stat.size > MAX_SESSION) throw new OversizedSessionError(file, stat.size);
     const cached = this.cache.get(key);
     // 增量门：仅在「同一 inode 且 size ≥ 已读偏移」时安全。文件替换（rename-replace，
@@ -153,7 +174,11 @@ export class SessionIndex {
       catch { warnings.push(`第 ${i + 1} 行损坏，已跳过`); }
     }
     const header = parsed[0];
-    if (header?.type !== 'session' || typeof header.id !== 'string' || typeof header.cwd !== 'string') { this.cache.delete(key); this.branchMemo.delete(key); this.outlines?.delete(key); return; }
+    if (header?.type !== 'session' || typeof header.id !== 'string' || typeof header.cwd !== 'string') {
+      this.forgetSession(key);
+      this.rejected.set(file, stamp);
+      return;
+    }
     const entries = parsed.slice(1), branch = branchEntries(entries);
     const first = entries.find(e => e.type === 'message' && e.message?.role === 'user')?.message?.content;
     const title = typeof first === 'string' ? first : Array.isArray(first) ? first.filter(b => b.type === 'text').map(b => b.text).join(' ') : '';
@@ -286,48 +311,15 @@ export class SessionIndex {
       const file = history.session.path;
       // Parent creation/removal changes visibility even when the child file itself is unchanged.
       if (!files.has(file) || previousParents.get(file) !== this.nestedParents.get(file)) {
-        this.cache.delete(key); this.branchMemo.delete(key); this.outlines?.delete(key);
-        this.dirty.delete(key);
+        this.forgetSession(key);
       }
     }
-    for (const file of files.keys()) {
-      const key = fileKey(file);
-      try {
-        const stamped = this.stampOf(file);
-        if (!stamped) continue;
-        const { stat, stamp } = stamped;
-        const cached = this.cache.get(key);
-        if (cached?.stamp === stamp) continue;
-        if (cached && stat.size > DEFER_PARSE_BYTES) {
-          // 大文件增长：只更新廉价元数据（列表显示用），全量解析延后到平息。
-          cached.history.session.size = stat.size;
-          cached.history.session.updatedAt = stat.mtimeMs;
-          this.dirty.set(key, file);
-          continue;
-        }
-        this.parseFile(file, key);
-      } catch (err) {
-        if ((err as NodeJS.ErrnoException).code === 'ENOENT') { this.cache.delete(key); this.branchMemo.delete(key); this.outlines?.delete(key); continue; }
-        if (err instanceof OversizedSessionError) {
-          // 超限会话降级为「元数据可见」：列表/侧栏照常显示（此前整个会话从侧栏消失，
-          // 用户看到「该项目还没有会话」——96MB ashare 主会话 2026-10-09 的真实事故）。
-          const stub = sessionStub(file);
-          const stamped = this.stampOf(file); // 包裹 ENOENT：文件被并发删除时安全跳过（P2）
-          if (!stub || !stamped) continue;
-          const { stat, stamp } = stamped;
-          const degraded = {
-            session: { key, id: String(stub.header.id ?? key), path: file, cwd: String(stub.header.cwd ?? path.dirname(file)), name: String(stub.firstUserText || '未命名 pi 会话').slice(0, 180), updatedAt: stat.mtimeMs, size: stat.size, warnings: [err.message], owned: file.startsWith(canonical(this.ownedRoot) + path.sep), parentSession: typeof stub.header.parentSession === 'string' ? stub.header.parentSession : this.nestedParents.get(file), sidecarOf: path.basename(file).startsWith('sidecar_') ? '' : undefined },
-            entries: [], branch: [], leaves: [], leafId: null, syncedAt: Date.now(),
-          };
-          this.oversized.add(degraded);
-          // parsedBytes/pendingTail 对超限降级缓存无意义（永不增量解析），置 0/空满足类型。
-          this.cache.set(key, { stamp, history: degraded, parsedBytes: 0, pendingTail: Buffer.alloc(0), parsedIno: stat.ino });
-          continue;
-        }
-        const old = this.cache.get(key);
-        if (old) old.history.session.warnings = [(err as Error).message];
-      }
+    for (const file of this.fileDirs.keys()) {
+      if (!files.has(file)) this.forgetFile(file);
     }
+    // 全扫与 watch/check 共享同一 stamp/拒绝/错误处理，保留原全量发现与嵌套推断。
+    this.fileDirs = files;
+    for (const [file, dir] of files) this.refreshOne(file, dir);
     return [...this.cache.values()].map(x => x.history.session).filter(s => includeSidecars || s.sidecarOf === undefined).sort((a, b) => b.updatedAt - a.updatedAt);
   }
   /** 会话列表视图：直接从 cache 构建（check 的增量维护保证新鲜）。IPC sessions
@@ -338,6 +330,84 @@ export class SessionIndex {
   sessionsView(includeSidecars = false): PiSession[] {
     return [...this.cache.values()].map(x => x.history.session).filter(s => includeSidecars || s.sidecarOf === undefined);
   }
+  // ── IndexPort (see ./index-port) 的进程内实现 ────────────────────────────────
+  // 主进程改由 utility process 持有时，同一套接口由 IndexWorkerClient 满足；本类在
+  // 测试与非 Electron 调用方里直连文件系统，行为与历史实现逐字一致。
+  /** 元数据查询。owner 侧（进程内 SessionIndex / worker）cache 未命中时做一次全量
+   *  发现——与旧 history() 的慢路径逐字一致（新 fork 出的副本、watch 漏事件都靠它
+   *  收口）；主进程的 IndexWorkerClient 覆写为纯镜像读，绝不触盘。 */
+  sessionMeta(key: string): PiSession | undefined {
+    const hit = this.cache.get(key)?.history.session;
+    if (hit) return hit;
+    this.scan();
+    return this.cache.get(key)?.history.session;
+  }
+  /** 分支尾部 n 条：与旧 `history(key).branch.slice(-n)` 同口径——先增量消费文件尾部
+   *  （history 的快路径：stat + 增量解析，毫秒级）再读缓存；超限/不存在同样抛错，
+   *  调用方沿用原 try/catch fail-closed。owner 侧触盘，主进程只收到有界镜像。 */
+  branchTail(key: string, n: number): PiEntry[] {
+    const branch = this.history(key).branch;
+    return n >= branch.length ? [...branch] : branch.slice(branch.length - n);
+  }
+  /** 事件时刻的 owner 读：与 branchTail 同口径（history() 快路径增量消费文件尾部），
+   *  只是异步签名——跨进程时由 worker op 承载（见 index-worker-protocol）。 */
+  async branchTailAsync(key: string, n: number): Promise<PiEntry[]> { return this.branchTail(key, n); }
+  /** 用量统计在 owner 内聚合（按需读取文件）：主进程只收聚合结果，不做任何会话文件 IO。
+   *  now 与 computeUsageStats 默认值一致（调用方可注入确定时钟）。 */
+  async usageStatsAsync(now?: Date): Promise<UsageStats> { return computeUsageStats(this.scan(), now); }
+  branchLength(key: string): number {
+    const cached = this.cache.get(key)?.history;
+    if (!cached) throw new Error('Session unavailable');
+    return cached.branch.length;
+  }
+  async historyAsync(key: string, leaf?: string, opts?: { tail?: number; before?: string; count?: number }): Promise<PiHistory> { return this.history(key, leaf, opts); }
+  async searchAsync(key: string, query: string, opts?: { limit?: number }): Promise<PiSearchResult> { return this.searchSession(key, query, opts); }
+  async outlineAsync(key: string): Promise<PiOutline> { return this.sessionOutline(key); }
+  async remotePage(key: string, before: string | null, page: number): Promise<{ branch: PiEntry[]; hasMore: boolean; before: number } | null> {
+    // 与 worker remotePage op 同一实现（utility worker 之外的进程内 IndexPort 也要逐字
+    // 一致）：history() 抛错（超限/不可读/会话不存在）时回 null，由 HTTP 层回 404。
+    let history;
+    try { history = this.history(key); } catch { return null; }
+    const branch = history.branch ?? [];
+    const win = historyWindow(branch.length, before, page);
+    return { branch: branch.slice(win.start, win.end), hasMore: win.hasMore, before: win.start };
+  }
+  /** fork-to-continue 的无损副本：用缓存里已解析的全量 entries 按 backend 旧实现逐字
+   *  相同的逐行 JSON 规则写出 Desktop 副本。原子落盘（tmp+rename），失败不留半文件。
+   *  只在 worker 进程被调用——全量 entries 不得跨进程回主进程（见 index-worker-entry
+   *  职责边界注释）。 */
+  forkCopySource(key: string, targetPath: string, header: { id: string; timestamp: string; parentSession: string }): { path: string; entries: number } {
+    const cached = this.cache.get(key)?.history;
+    if (!cached) throw new Error('会话不存在、不可读或不在选定目录中。');
+    if (this.oversized.has(cached)) throw new OversizedSessionError(cached.session.path, cached.session.size);
+    // 与旧实现 fs.writeFileSync(targetPath, ..., { flag: 'wx' }) 语义一致：目标已存在
+    // 必须原样抛 EEXIST，绝不覆盖。
+    if (fs.existsSync(targetPath)) {
+      const err = new Error(`EEXIST: file already exists, open '${targetPath}'`) as NodeJS.ErrnoException;
+      err.code = 'EEXIST'; throw err;
+    }
+    // 原子落盘（tmp+rename）：写失败/进程被杀都不会留下半截目标文件；tmp 用 wx 防撞。
+    const tmp = `${targetPath}.copy-tmp-${process.pid}-${Date.now()}`;
+    const sourceHeader = JSON.parse(fs.readFileSync(cached.session.path, 'utf8').split('\n')[0] ?? '{}') as Record<string, unknown>;
+    const payload = [
+      JSON.stringify({ ...sourceHeader, id: header.id, timestamp: header.timestamp, parentSession: header.parentSession }),
+      ...cached.entries.map(e => JSON.stringify(e)),
+      '',
+    ].join('\n');
+    try {
+      fs.writeFileSync(tmp, payload, { flag: 'wx', mode: 0o600 });
+      fs.renameSync(tmp, targetPath);
+    } catch (err) {
+      try { fs.rmSync(tmp, { force: true }); } catch { /* 失败时尽力清理临时文件 */ }
+      throw err;
+    }
+    return { path: targetPath, entries: cached.entries.length };
+  }
+  async recoverSubagents(agentDir: string, key: string, leaf?: string, pinned?: string[], knownSignature?: string) { return recoverSubagents(agentDir, key, this, leaf, pinned, knownSignature); }
+  async subagentChildTranscript(agentDir: string, key: string, callId: string, childId: string) { return subagentChildTranscript(agentDir, key, this, callId, childId); }
+  async ready(): Promise<void> { /* 进程内：cache 在 start() 内同步就绪 */ }
+  async subscribe(_key: string): Promise<void> { /* 进程内：无需镜像 */ }
+  unsubscribe(_key: string): void { /* 进程内：无需镜像 */ }
 
   /** Polling must not trigger a filesystem scan/reparse of every session. The
    * normal index watcher/history path owns refresh; expose only an indexed key. */
@@ -388,8 +458,8 @@ export class SessionIndex {
     // 少了这一步，文件增长后 sessionOutline 会拿着 scan() 时的旧 entries 聚合——
     // 既是过期数据（正确性），也让持久化缓存永远命中旧 stamp（用户看到的大纲不更新）。
     // history() 已按 (entries 引用, leaf) memo，热路径 0.42ms，不会成为新瓶颈。
-    let cached = this.cache.get(key)?.history;
-    try { this.history(key); cached = this.cache.get(key)?.history ?? cached; } catch { /* 超限/读取失败：退回旧缓存聚合 */ }
+    try { this.history(key); } catch { /* 超限/暂时读取失败保留的缓存仍可聚合；无效/删除的不复活。 */ }
+    const cached = this.cache.get(key)?.history;
     if (!cached) return { turns: [], total: 0 };
     const file = cached.session.path;
     const stamped = this.stampOf(file);
@@ -614,7 +684,7 @@ export class SessionIndex {
     // 它；无 tail 时此前整条链路不带 plan——面板跨窗口兜底从未生效）。
     return this.wireLite(key, full);
   }
-  start(changed: () => void) {
+  start(changed: () => void): Promise<void> {
     this.close();
     const signature = (sessions: PiSession[]) => sessions.map(s => `${s.key}:${s.size}:${s.updatedAt}:${s.warnings?.length ?? 0}`).join('|');
     let last = signature(this.scan(true));
@@ -637,11 +707,12 @@ export class SessionIndex {
         // 周期 100% 尖峰（实测 uv_fs_* 风暴）。定向路径（watch 报告的文件）不受影响。
         if (statSweepNow - this.lastStatSweep >= 30_000) {
           this.lastStatSweep = statSweepNow;
-          for (const [key, entry] of [...this.cache.entries()]) {
-            const file = entry.history.session.path;
+          // 包含拒绝文件及暂时读取失败的文件：stamp 变化要重试，未变则不读内容。
+          for (const file of [...this.fileDirs.keys()]) {
+            const key = fileKey(file);
             const stamped = this.stampOf(file);
             if (!stamped) { this.refreshOne(file, this.fileDirs.get(file) ?? ''); sawChange = true; continue; }
-            if (this.cache.get(key)?.stamp === stamped.stamp) continue;
+            if ((this.cache.get(key)?.stamp ?? this.rejected.get(file)) === stamped.stamp) continue;
             this.refreshOne(file, this.fileDirs.get(file) ?? '');
             sawChange = true;
           }
@@ -725,6 +796,7 @@ export class SessionIndex {
       } catch { /* Poll fallback includes new roots. */ }
     }
     this.timer = setInterval(check, 1200); this.timer.unref();
+    return Promise.resolve();
   }
 
   /** watch 报告的路径定向处理：文件走 refreshOne；目录只 walk 该目录；删除清缓存。
@@ -762,9 +834,7 @@ export class SessionIndex {
       }
       if (!st) {
         // 路径消失：可能是文件或目录。按文件清；目录级清理交给全量兜底。
-        for (const [key, entry] of [...this.cache.entries()]) {
-          if (entry.history.session.path === target) { this.cache.delete(key); this.branchMemo.delete(key); this.outlines?.delete(key); this.fileDirs.delete(target); }
-        }
+        this.forgetFile(target);
       }
     }
     return rescan;
@@ -776,10 +846,11 @@ export class SessionIndex {
     const key = fileKey(file);
     try {
       const stamped = this.stampOf(file);
-      if (!stamped) { this.cache.delete(key); this.branchMemo.delete(key); this.outlines?.delete(key); this.dirty.delete(key); this.fileDirs.delete(file); return; }
+      if (!stamped) { this.forgetFile(file); return; }
       const { stat, stamp } = stamped;
+      this.fileDirs.set(file, root || this.fileDirs.get(file) || '');
       const cached = this.cache.get(key);
-      if (cached?.stamp === stamp) { this.fileDirs.set(file, root || this.fileDirs.get(file) || ''); return; }
+      if ((cached?.stamp ?? this.rejected.get(file)) === stamp) return;
       if (cached && stat.size > DEFER_PARSE_BYTES) {
         cached.history.session.size = stat.size;
         cached.history.session.updatedAt = stat.mtimeMs;
@@ -789,7 +860,7 @@ export class SessionIndex {
       this.parseFile(file, key);
       if (root) this.fileDirs.set(file, root);
     } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === 'ENOENT') { this.cache.delete(key); this.branchMemo.delete(key); this.outlines?.delete(key); this.dirty.delete(key); this.fileDirs.delete(file); return; }
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') { this.forgetFile(file); return; }
       if (err instanceof OversizedSessionError) {
         try {
           const stub = sessionStub(file);
@@ -797,7 +868,7 @@ export class SessionIndex {
           if (!stub || !stamped) return;
           const { stat, stamp } = stamped;
           const degraded = {
-            session: { key, id: String(stub.header.id ?? key), path: file, cwd: String(stub.header.cwd ?? path.dirname(file)), name: String(stub.firstUserText || '未命名 pi 会话').slice(0, 180), updatedAt: stat.mtimeMs, size: stat.size, warnings: [err.message], owned: file.startsWith(canonical(this.ownedRoot) + path.sep), parentSession: typeof stub.header.parentSession === 'string' ? stub.header.parentSession : this.nestedParents.get(file), sidecarOf: path.basename(file).startsWith('sidecar_') ? '' : undefined } as PiSession,
+            session: { key, id: String(stub.header.id ?? key), path: file, cwd: String(stub.header.cwd ?? path.dirname(file)), name: String(stub.firstUserText || '未命名 pi 会话').slice(0, 180), updatedAt: stat.mtimeMs, size: stat.size, warnings: [err.message], owned: file.startsWith(canonical(this.ownedRoot) + path.sep), parentSession: typeof stub.header.parentSession === 'string' ? stub.header.parentSession : this.nestedParents.get(file), sidecarOf: path.basename(file).startsWith('sidecar_') ? '' : undefined, oversized: true } as PiSession,
             entries: [], branch: [], leaves: [], leafId: null as string | null, syncedAt: Date.now(),
           };
           this.oversized.add(degraded);

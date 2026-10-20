@@ -184,7 +184,7 @@ describe('host.configure corrupt-document protection (review #2)', () => {
     fs.writeFileSync(path.join(data, 'pi-desktop.json'), corrupt);
     const { PiHost } = await import('../src/main/pi/host');
     const host = new PiHost(data, path.resolve('extensions/desktop-policy/index.mjs'), () => {}, undefined, '0.1.16');
-    expect(() => host.configure({ runtime: 'bundled', agentDir: path.join(root, 'agent') })).toThrow(/损坏/);
+    await expect(host.configure({ runtime: 'bundled', agentDir: path.join(root, 'agent') })).rejects.toThrow(/损坏/);
     // 原文件字节未变
     expect(fs.readFileSync(path.join(data, 'pi-desktop.json'), 'utf8')).toBe(corrupt);
     host.dispose();
@@ -197,7 +197,7 @@ describe('host.configure corrupt-document protection (review #2)', () => {
     fs.writeFileSync(path.join(data, 'pi-desktop.json'), JSON.stringify({ codemode: true, piPackages: ['npm:pi-memory'] }));
     const { PiHost } = await import('../src/main/pi/host');
     const host = new PiHost(data, path.resolve('extensions/desktop-policy/index.mjs'), () => {}, undefined, '0.1.16');
-    host.configure({ runtime: 'bundled', agentDir: path.join(root, 'agent') });
+    await host.configure({ runtime: 'bundled', agentDir: path.join(root, 'agent') });
     const doc = JSON.parse(fs.readFileSync(path.join(data, 'pi-desktop.json'), 'utf8'));
     expect(doc.codemode).toBe(true);
     expect(doc.piPackages).toEqual(['npm:pi-memory']);
