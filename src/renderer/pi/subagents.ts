@@ -14,7 +14,21 @@ import { findAdapter } from './subagent-registry';
  * 滑动尾窗（每次取最近 60 条）里同一下标会变成另一条消息，不换键会命中旧缓存。
  */
 export function subagentTranscriptTurns(messages: SubagentChild['messages'], turnKey: string, epoch?: number): ChatTurn[] {
-  const entries = messages.map((message, i) => ({ type: 'message', id: `${turnKey}:${i}`, timestamp: epoch, message }) as unknown as PiEntry);
+  // epoch 是「同一下标内容变化时击穿 messageCache」的缓存版本号，绝不能放进 timestamp：
+  // 渲染层把 timestamp 当 Unix 毫秒与 Date.now() 相减，epoch=1 会显示成「已工作 49 万小时」。
+  // epoch 只进 entry id（缓存命名空间）；时间戳只取消息自身的真实时间，缺失就留空——
+  // 没有时间就不计时，不用版本号/当前时间编造。
+  const epochNs = epoch === undefined ? '' : `:e${epoch}`;
+  const entries = messages.map((message, i) => {
+    const raw = message && typeof message === 'object' ? (message as Record<string, unknown>).timestamp : undefined;
+    const time = typeof raw === 'number' ? raw : typeof raw === 'string' ? Date.parse(raw) : NaN;
+    return {
+      type: 'message',
+      id: `${turnKey}${epochNs}:${i}`,
+      ...(Number.isFinite(time) ? { timestamp: time } : {}),
+      message,
+    } as unknown as PiEntry;
+  });
   return executionTurns(historyToMessages(entries));
 }
 
