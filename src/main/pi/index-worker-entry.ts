@@ -156,6 +156,7 @@ function readConfig(argv: string[]): WorkerConfig | undefined {
 
 /** Worker entry: config arrives as a JSON argv entry, requests over the duplex channel. */
 function main(): void {
+  // 见文件末尾的 bootstrap 守卫：只有真正的 worker 宿主才进入 main()。
   const parentPort = duplexChannel();
   const send = (message: WorkerReply | WorkerEvent) => parentPort?.postMessage(message);
   if (!parentPort) return;
@@ -195,4 +196,12 @@ function main(): void {
   });
 }
 
-main();
+/** Bootstrap 守卫：本模块同时被 index-transport 静态导入（进程内回退复用同一份 runtime
+ *  实现），所以模块加载本身不得产生副作用。只有真正的 worker 宿主才启动协议循环：
+ *  Electron utility process 有 process.parentPort；普通 Node 子进程（child_process.fork
+ *  的测试与性能探针）由启动方显式设置 PI_INDEX_WORKER=1。
+ *  少了这道守卫时，vitest 的 tinypool worker 同样有 process.send，本模块会去应答 vitest
+ *  自己的内部 IPC 消息，把测试进程打挂（实测 ERR_INVALID_ARG_TYPE / Unhandled Rejection）。 */
+const isWorkerHost = Boolean((process as unknown as { parentPort?: unknown }).parentPort)
+  || process.env.PI_INDEX_WORKER === '1';
+if (isWorkerHost) main();
