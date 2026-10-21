@@ -619,6 +619,9 @@
 
 .pi-model-editor { display: grid; gap: 12px; }
 .pi-model-editor__head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+/* 查询模型列表行：可输入下拉框撑满剩余宽度 */
+.pi-model-fetch { display: flex; gap: 8px; }
+.pi-model-fetch input { flex: 1 1 auto; min-width: 0; }
 .pi-model-editor__card { padding: 14px; border: 1px solid var(--pi-border); border-radius: 10px; display: grid; gap: 12px; }
 .pi-model-editor__grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px; }
 .pi-providerform .pi-model-editor__capabilities { display: flex; flex-wrap: wrap; gap: 16px; }

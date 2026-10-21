@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import type { PiEnvironment, PiEvent, PiModelProviderDraft, PiPreferences } from '../../shared/pi';
 import { discoverPi, expand } from './environment';
-import { readModelCatalog, mergeModelCatalog, writeDefaultModel, writeModelProvider, removeModelProvider, writeProviderApiKey } from './model-catalog';
+import { readModelCatalog, mergeModelCatalog, writeDefaultModel, writeModelProvider, removeModelProvider, writeProviderApiKey, fetchProviderModels } from './model-catalog';
 import { mergeRuntimeProviders, packagesFromSettings, runtimeModelsFromRuns } from './provider-registry';
 import { UsageStatsService } from './usage-stats';
 import type { IndexPort } from './index-port';
@@ -187,6 +187,8 @@ export class PiHost {
   modelProviderSave(provider: PiModelProviderDraft) { return this.adoptModelConfiguration(writeModelProvider(this.environment.agentDir, provider)); }
   modelProviderAuthSave(input: { id: string; apiKey?: string; clear?: boolean }) { return this.adoptModelConfiguration(writeProviderApiKey(this.environment.agentDir, input)); }
   modelProviderRemove(id: string) { return this.adoptModelConfiguration(removeModelProvider(this.environment.agentDir, id)); }
+  /** 查询提供商 /models 清单（主进程发起避 CORS）；不落盘，结果交渲染层填入表单。 */
+  modelProviderFetchModels(input: { id?: string; baseUrl?: string; apiKey?: string }) { return fetchProviderModels(this.environment.agentDir, input); }
   usageStats() { return this.usage.get(); }
   review(cwd: string) {
     if (!this.index.scan().some(s => s.cwd === cwd) && !this.backend.runs().some(r => r.cwd === cwd)) throw new Error('请先选择该项目的会话');

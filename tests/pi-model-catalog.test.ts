@@ -348,3 +348,82 @@ describe('session affinity (compat) persistence', () => {
     fs.rmSync(dir, { recursive: true, force: true });
   });
 });
+
+// ── fetchProviderModels：从提供商 /models 拉取清单 ──────────────────────────
+import { createServer, type Server } from 'node:http';
+import { fetchProviderModels } from '../src/main/pi/model-catalog';
+
+function startModelsServer(handler: (req: import('node:http').IncomingMessage, res: import('node:http').ServerResponse) => void): Promise<{ server: Server; url: string }> {
+  return new Promise(resolve => {
+    const server = createServer(handler);
+    server.listen(0, '127.0.0.1', () => {
+      const addr = server.address();
+      const port = typeof addr === 'object' && addr ? addr.port : 0;
+      resolve({ server, url: `http://127.0.0.1:${port}/v1` });
+    });
+  });
+}
+
+describe('fetchProviderModels', () => {
+  it('解析 OpenAI 形状 data[]，带 Bearer 认证，归一化 /models 端点', async () => {
+    let gotAuth = '';
+    const { server, url } = await startModelsServer((req, res) => {
+      gotAuth = req.headers.authorization ?? '';
+      expect(req.url).toBe('/v1/models');
+      res.setHeader('content-type', 'application/json');
+      res.end(JSON.stringify({ data: [
+        { id: 'gpt-4o' },
+        { id: 'text-embedding-3-small' },       // 应被过滤
+        { id: 'whisper-1' },                    // 应被过滤
+        { id: 'gpt-4o-mini', context_length: 128000 },
+      ] }));
+    });
+    try {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-fetchm-'));
+      const out = await fetchProviderModels(dir, { baseUrl: url, apiKey: 'sk-test' });
+      expect(gotAuth).toBe('Bearer sk-test');
+      expect(out.models.map(m => m.id)).toEqual(['gpt-4o', 'gpt-4o-mini']);
+      expect(out.models[1]!.contextWindow).toBe(128000);
+      fs.rmSync(dir, { recursive: true, force: true });
+    } finally { server.close(); }
+  });
+
+  it('兼容 baseUrl 尾部斜杠与 /chat/completions 写法', async () => {
+    let pathHit = '';
+    const { server, url } = await startModelsServer((req, res) => { pathHit = req.url ?? ''; res.end(JSON.stringify({ data: [{ id: 'm1' }] })); });
+    try {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-fetchm2-'));
+      await fetchProviderModels(dir, { baseUrl: `${url}/chat/completions`, apiKey: 'k' });
+      expect(pathHit).toBe('/v1/models');
+      fs.rmSync(dir, { recursive: true, force: true });
+    } finally { server.close(); }
+  });
+
+  it('入参未给 key 时回退读 models.json 已存 apiKey', async () => {
+    let gotAuth = '';
+    const { server, url } = await startModelsServer((req, res) => { gotAuth = req.headers.authorization ?? ''; res.end(JSON.stringify({ models: [{ id: 'x' }] })); });
+    try {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-fetchm3-'));
+      fs.writeFileSync(path.join(dir, 'models.json'), JSON.stringify({ providers: { p1: { baseUrl: url, apiKey: 'sk-from-disk', models: [] } } }));
+      const out = await fetchProviderModels(dir, { id: 'p1', baseUrl: url });
+      expect(gotAuth).toBe('Bearer sk-from-disk');
+      expect(out.models.map(m => m.id)).toEqual(['x']); // models[] 形状也接受
+      fs.rmSync(dir, { recursive: true, force: true });
+    } finally { server.close(); }
+  });
+
+  it('非 2xx 抛含状态码的可执行错误', async () => {
+    const { server, url } = await startModelsServer((_req, res) => { res.statusCode = 401; res.end('invalid api key'); });
+    try {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-fetchm4-'));
+      await expect(fetchProviderModels(dir, { baseUrl: url, apiKey: 'bad' })).rejects.toThrow(/401/);
+      fs.rmSync(dir, { recursive: true, force: true });
+    } finally { server.close(); }
+  });
+
+  it('Base URL 非 http(s) 直接拒绝，不发请求', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-fetchm5-'));
+    await expect(fetchProviderModels(dir, { baseUrl: 'ftp://x/v1' })).rejects.toThrow(/http/);
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+});
