@@ -341,7 +341,7 @@ export function ChannelConfigDialog(props: {
                       <div className="pi-settingrow__title">{zh ? '推送服务' : 'Push service'}</div>
                       <div className="pi-settingrow__desc">{zh ? 'Server酱或 PushPlus，二选一。' : 'Server酱 or PushPlus.'}</div>
                     </div>
-                    <div className="pi-settingrow__control">
+                    <div className="pi-settingrow__control pi-settingrow__control--wide">
                       <select className="pi-mono" value={im.pushProvider ?? 'serverchan'} onChange={(e) => void props.onSave({ pushProvider: e.target.value as ImConfig['pushProvider'], provider: channel as ImConfig['provider'] })}>
                         <option value="serverchan">Server酱</option>
                         <option value="pushplus">PushPlus</option>
