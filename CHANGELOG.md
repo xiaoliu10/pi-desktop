@@ -3,6 +3,13 @@
 所有重要变更记录在本文件。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 README 只保留最近版本摘要；本文件为完整记录。
 
+## [0.1.33] - 2026-10-21
+
+### 修复
+- **0.1.32 重启后会话点开历史空白**：三个打包连环问题叠加——①索引 worker 的入口和依赖文件打在 asar 里，Electron utilityProcess 无法从 asar 内启动（EACCES 反复重启后放弃）；②手工列的解包清单漏了 8 个传递依赖（MODULE_NOT_FOUND）；③utilityProcess 父→子方向的消息带 MessageEvent 包装，worker 把它当裸消息读导致全部请求被静默丢弃。现在目录级解包整个 worker 闭包、入口路径重写到解包目录、消息包装按 Electron 实测语义解包，`PI_SMOKE=1` 走完整生产链路验证 worker 正常启动并完成冷扫。
+
+## [0.1.32] - 2026-10-20
+
 ## [0.1.32] - 2026-10-20
 
 ### 修复
