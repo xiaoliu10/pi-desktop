@@ -87,7 +87,9 @@
       "dist/preload/**/*"
     ],
     "asarUnpack": [
-      "node_modules/node-pty/**"
+      "node_modules/node-pty/**",
+      "dist/main/pi/**",
+      "dist/shared/**"
     ],
     "beforePack": "scripts/check-runtime.cjs",
     "extraResources": [

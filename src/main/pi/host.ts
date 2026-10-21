@@ -15,6 +15,18 @@ import { SidecarService } from './sidecar-service';
 import { resourceCatalog } from './resource-catalog';
 import { listInstalledPackages, searchMarket, installPackage, registerPackage, packageCovers as packageCoversImpl } from './pi-packages';
 import { workspaceReview } from './workspace-review';
+
+/** 打包后 index-worker-entry.js 及其全部 require 闭包在 asar 外（asarUnpack 目录级
+ *  dist/main/pi/** + dist/shared/**），utility process 的 CJS loader 读不了 asar 内模块，
+ *  缺一个就 MODULE_NOT_FOUND code=1，重试耗尽后 fatal——0.1.32 发布事故（会话列表全空）。
+ *  闭包完整性由 tests/index-worker-unpack-closure.test.ts 守护：新增依赖漏 unpack 会红。
+ *  开发/测试（非 asar）路径不变；打包环境把 __dirname 里的 app.asar 段替换为
+ *  app.asar.unpacked（asarUnpack 产物所在目录）。 */
+function workerEntryPath(): string {
+  const p = path.join(__dirname, 'index-worker-entry.js');
+  return p.replace(`${path.sep}app.asar${path.sep}`, `${path.sep}app.asar.unpacked${path.sep}`);
+}
+
 export class PiHost {
   preferences: PiPreferences;
   environment;
@@ -101,7 +113,7 @@ export class PiHost {
     const owned = path.join(this.environment.agentDir, 'sessions', 'desktop');
     return new IndexWorkerClient(
       { roots: [...new Set([...this.environment.sessionDirs, owned])], ownedRoot: owned, agentDir: this.environment.agentDir, outlineCachePath: path.join(this.dataDir, 'outline-cache.json') },
-      cfg => utilityTransport(cfg, path.join(__dirname, 'index-worker-entry.js')),
+      cfg => utilityTransport(cfg, workerEntryPath()),
     );
   }
   /** 首个 sessions IPC 等镜像快照；窗口创建不等待此 Promise（冷扫期间显示加载态）。 */

@@ -226,12 +226,28 @@ function errorPayload(error: unknown): { message: string; code?: string } {
   return { message: typeof err?.message === 'string' ? err.message : String(error), ...(code ? { code } : {}) };
 }
 
+/** Electron utility process 的 parentPort 是 MessagePortMain：'message' 回调收到
+ *  MessageEvent { data, ports }，裸消息在 data 里（与 renderer MessagePort 同语义）；
+ *  而 Node child_process 的 process.on('message') 直接给裸消息。0.1.32 打包环境实测：
+ *  main→child 方向有包装、child→main 方向是裸值（非对称）。协议消息必有 id（请求/应答）
+ *  或 ev（出站事件），{data,ports} 包装没有 id/ev——据此判定并解包，通道层归一为裸消息。 */
+function unwrapPortMessage(raw: unknown): unknown {
+  if (raw && typeof raw === 'object' && 'data' in raw && !('id' in raw) && !('ev' in raw)) {
+    return (raw as { data: unknown }).data;
+  }
+  return raw;
+}
+
 /** 双工通道：Electron utility process 用 `process.parentPort`；普通 Node 子进程
  *  （`child_process.fork`，用于测试与真实性能探针）用 IPC 的 `process.send`。
- *  两者语义一致（结构化克隆 + 'message' 事件），所以下面的协议处理完全共用。 */
+ *  两者语义一致（结构化克隆 + 'message' 事件），入站形状由 unwrapPortMessage 归一，
+ *  所以下面的协议处理完全共用。 */
 function duplexChannel(): { postMessage(v: unknown): void; on(event: 'message', cb: (v: unknown) => void): void } | undefined {
   const parentPort = (process as unknown as { parentPort?: { postMessage(v: unknown): void; on(event: 'message', cb: (v: unknown) => void): void } }).parentPort;
-  if (parentPort) return parentPort;
+  if (parentPort) return {
+    postMessage: (v: unknown) => parentPort.postMessage(v),
+    on: (_event: 'message', cb: (v: unknown) => void) => parentPort.on('message', (raw: unknown) => cb(unwrapPortMessage(raw))),
+  };
   const send = (process as unknown as { send?: (v: unknown) => boolean }).send;
   if (typeof send === 'function') {
     return {
