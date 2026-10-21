@@ -909,9 +909,87 @@
 }
 .pireplica .pi-chdialog__warn svg { flex: none; margin-top: 1px; }
 
-/* 卡片内的输入框撑满控制列（复用设置页 control--wide 口径）。 */
+/* 对话框表单是纵向卡片：标签在上、输入框在下满宽。覆盖设置页 settingrow 的
+   横向行布局（那里是左标签+右控件、控件 flex-shrink:0 不撑满——直接复用到
+   对话框会导致输入框缩成中间一小块、标签与输入框错位，IM 手动配置页即此问题）。 */
+.pireplica .pi-chdialog__form .pi-settingrow--card {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  padding: 12px 14px;
+}
+.pireplica .pi-chdialog__form .pi-settingrow__text {
+  width: 100%;
+}
+.pireplica .pi-chdialog__form .pi-settingrow__desc {
+  max-width: none;
+  margin-top: 2px;
+}
+.pireplica .pi-chdialog__form .pi-settingrow__control {
+  width: 100%;
+  flex-shrink: 1;
+}
+.pireplica .pi-chdialog__form .pi-settingrow__control--wide {
+  width: 100%;
+}
+
+/* 开关行（control 不带 --wide，里面只有 checkbox）保持横向：标题在左、开关在右。
+   文本/下拉输入行的 control 都带 --wide，走上面的纵向满宽规则。 */
+.pireplica .pi-chdialog__form .pi-settingrow--card:not(:has(.pi-settingrow__control--wide)) {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+}
+.pireplica .pi-chdialog__form .pi-settingrow--card:not(:has(.pi-settingrow__control--wide)) .pi-settingrow__control {
+  width: auto;
+  flex-shrink: 0;
+  justify-content: flex-end;
+}
+
+/* 卡片内的输入框 / 下拉撑满整行；checkbox 保持原始尺寸不被拉宽。 */
 .pireplica .pi-chdialog__form .pi-settingrow__control input[type="checkbox"] { width: 16px; height: 16px; }
-.pireplica .pi-chdialog__form .pi-mono { width: 100%; }
+.pireplica .pi-chdialog__form .pi-mono,
+.pireplica .pi-chdialog__form .pi-settingrow__control input:not([type="checkbox"]),
+.pireplica .pi-chdialog__form .pi-settingrow__control select {
+  width: 100%;
+  box-sizing: border-box;
+}
+.pireplica .pi-chdialog__form .pi-settingrow__control input:not([type="checkbox"]) {
+  padding: 8px 11px;
+  font-size: 13px;
+  border: 1px solid var(--pi-border);
+  border-radius: var(--pi-radius-sm, 8px);
+  background: var(--pi-bg);
+  color: var(--pi-text);
+}
+.pireplica .pi-chdialog__form .pi-settingrow__control input:not([type="checkbox"]):focus {
+  outline: none;
+  border-color: var(--pi-accent, #0a84ff);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--pi-accent, #0a84ff) 18%, transparent);
+}
+
+/* 通知场景：三项开关合成一张紧凑卡片（替代三张松散的 settingrow 大卡）。 */
+.pireplica .pi-chdialog__notifcard {
+  border: 1px solid var(--pi-border);
+  border-radius: var(--pi-radius-md, 12px);
+  background: var(--pi-bg-card);
+  overflow: hidden;
+}
+.pireplica .pi-chdialog__notifrow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  font-size: var(--pi-font-size-md, 13px);
+  color: var(--pi-text);
+}
+.pireplica .pi-chdialog__notifrow + .pi-chdialog__notifrow {
+  border-top: 1px solid var(--pi-border);
+}
+.pireplica .pi-chdialog__notifrow .pi-switch { margin: 0; }
+/* 开关行的 control 不需要满宽（#155 的 control width:100% 只作用于 settingrow，这里不受影响）。 */
+.pireplica .pi-chdialog__form .pi-settingrow--card:not(:has(.pi-settingrow__control--wide)) .pi-switch { flex-shrink: 0; }
 
 .pireplica .pi-chdialog__foot {
   display: flex;
