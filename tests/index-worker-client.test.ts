@@ -119,7 +119,7 @@ describe('IndexWorkerClient (scripted transport)', () => {
   let client: IndexWorkerClient;
   beforeEach(() => {
     transport = new ScriptedTransport();
-    client = new IndexWorkerClient({ roots: [], ownedRoot: '/tmp/owned', agentDir: '/tmp/agent', outlineCachePath: '/tmp/oc.json' }, () => transport);
+    client = new IndexWorkerClient({ roots: [], ownedRoot: '/tmp/owned', agentDir: '/tmp/agent', outlineCachePath: '/tmp/oc.json', metaCachePath: '/tmp/oc-meta.json', metaCachePath: '/tmp/oc-meta.json' }, () => transport);
   });
   afterEach(() => { try { client.close(); } catch { /* noop */ } });
 
@@ -224,7 +224,7 @@ describe('IndexWorkerClient (scripted transport)', () => {
       subscribeGeneration = 0;
       const spawned: ScriptedTransport[] = [];
       const restartClient = new IndexWorkerClient(
-        { roots: [], ownedRoot: '/tmp/owned', agentDir: '/tmp/agent', outlineCachePath: '/tmp/oc.json' },
+        { roots: [], ownedRoot: '/tmp/owned', agentDir: '/tmp/agent', outlineCachePath: '/tmp/oc.json', metaCachePath: '/tmp/oc-meta.json', metaCachePath: '/tmp/oc-meta.json' },
         () => { const t = new ScriptedTransport(); wireSubscribe(t); spawned.push(t); return t; },
       );
       const boot = async (t: ScriptedTransport) => {
@@ -261,7 +261,7 @@ describe('IndexWorkerClient (scripted transport)', () => {
     try {
       const spawned: ScriptedTransport[] = [];
       const restartClient = new IndexWorkerClient(
-        { roots: [], ownedRoot: '/tmp/owned', agentDir: '/tmp/agent', outlineCachePath: '/tmp/oc.json' },
+        { roots: [], ownedRoot: '/tmp/owned', agentDir: '/tmp/agent', outlineCachePath: '/tmp/oc.json', metaCachePath: '/tmp/oc-meta.json', metaCachePath: '/tmp/oc-meta.json' },
         () => { const t = new ScriptedTransport(); wireSubscribe(t); spawned.push(t); return t; },
       );
       const first = restartClient.ready();
@@ -288,7 +288,7 @@ describe('IndexWorkerClient (scripted transport)', () => {
     try {
       const spawned: ScriptedTransport[] = [];
       const restartClient = new IndexWorkerClient(
-        { roots: [], ownedRoot: '/tmp/owned', agentDir: '/tmp/agent', outlineCachePath: '/tmp/oc.json' },
+        { roots: [], ownedRoot: '/tmp/owned', agentDir: '/tmp/agent', outlineCachePath: '/tmp/oc.json', metaCachePath: '/tmp/oc-meta.json', metaCachePath: '/tmp/oc-meta.json' },
         () => { const t = new ScriptedTransport(); wireSubscribe(t); spawned.push(t); return t; },
       );
       const first = restartClient.ready();
@@ -309,7 +309,7 @@ describe('IndexWorkerClient (scripted transport)', () => {
     try {
       const spawned: ScriptedTransport[] = [];
       const c = new IndexWorkerClient(
-        { roots: [], ownedRoot: '/tmp/owned', agentDir: '/tmp/agent', outlineCachePath: '/tmp/oc.json' },
+        { roots: [], ownedRoot: '/tmp/owned', agentDir: '/tmp/agent', outlineCachePath: '/tmp/oc.json', metaCachePath: '/tmp/oc-meta.json', metaCachePath: '/tmp/oc-meta.json' },
         () => { const t = new ScriptedTransport(); wireSubscribe(t); spawned.push(t); return t; },
       );
       const first = c.ready();
@@ -333,7 +333,7 @@ describe('IndexWorkerClient (scripted transport)', () => {
     try {
       const spawned: ScriptedTransport[] = [];
       const c = new IndexWorkerClient(
-        { roots: [], ownedRoot: '/tmp/owned', agentDir: '/tmp/agent', outlineCachePath: '/tmp/oc.json' },
+        { roots: [], ownedRoot: '/tmp/owned', agentDir: '/tmp/agent', outlineCachePath: '/tmp/oc.json', metaCachePath: '/tmp/oc-meta.json', metaCachePath: '/tmp/oc-meta.json' },
         () => { const t = new ScriptedTransport(); wireSubscribe(t); spawned.push(t); return t; },
       );
       const first = c.ready();
@@ -366,7 +366,7 @@ describe('IndexWorkerClient (scripted transport)', () => {
   it('P1-1 spawn 同步抛错后 transport 失效：请求立即拒绝而不是进死 transport 的黑洞', async () => {
     let throwSpawn = true;
     const c = new IndexWorkerClient(
-      { roots: [], ownedRoot: '/tmp/owned', agentDir: '/tmp/agent', outlineCachePath: '/tmp/oc.json' },
+      { roots: [], ownedRoot: '/tmp/owned', agentDir: '/tmp/agent', outlineCachePath: '/tmp/oc.json', metaCachePath: '/tmp/oc-meta.json', metaCachePath: '/tmp/oc-meta.json' },
       () => { if (throwSpawn) throw new Error('EACCES: entry missing'); const t = new ScriptedTransport(); wireSubscribe(t); return t; },
     );
     try {
@@ -381,7 +381,7 @@ describe('IndexWorkerClient (scripted transport)', () => {
     try {
       const spawned: ScriptedTransport[] = [];
       const c = new IndexWorkerClient(
-        { roots: [], ownedRoot: '/tmp/owned', agentDir: '/tmp/agent', outlineCachePath: '/tmp/oc.json' },
+        { roots: [], ownedRoot: '/tmp/owned', agentDir: '/tmp/agent', outlineCachePath: '/tmp/oc.json', metaCachePath: '/tmp/oc-meta.json', metaCachePath: '/tmp/oc-meta.json' },
         () => { const t = new ScriptedTransport(); wireSubscribe(t); spawned.push(t); return t; },
       );
       const ready = c.ready();
@@ -490,7 +490,7 @@ describe('IndexWorkerClient ↔ real worker runtime (in-memory duplex)', () => {
     index.scan();
     key = fileKey(file);
     index.close();
-    pair = inMemoryPair({ roots: [owned], ownedRoot: owned, agentDir: path.join(dir, 'agent'), outlineCachePath: path.join(dir, 'oc.json') });
+    pair = inMemoryPair({ roots: [owned], ownedRoot: owned, agentDir: path.join(dir, 'agent'), outlineCachePath: path.join(dir, 'oc.json'), metaCachePath: path.join(dir, 'meta.json') });
   });
   afterEach(() => { try { pair.client.close(); } catch { /* noop */ } fs.rmSync(dir, { recursive: true, force: true }); });
 
@@ -614,7 +614,7 @@ describe('IndexWorkerClient ↔ real worker runtime (in-memory duplex)', () => {
         JSON.stringify({ type: 'message', id: 'img1', parentId: 'r19', timestamp: '2026-01-01T00:00:00.000Z', message: { role: 'toolResult', content: [{ type: 'image', data: 'A'.repeat(400 * 1024), mimeType: 'image/png' }] } }),
         '',
       ].join('\n'));
-      const local = inMemoryPair({ roots: [owned], ownedRoot: owned, agentDir: path.join(dir, 'agent'), outlineCachePath: path.join(dir, 'oc.json') });
+      const local = inMemoryPair({ roots: [owned], ownedRoot: owned, agentDir: path.join(dir, 'agent'), outlineCachePath: path.join(dir, 'oc.json'), metaCachePath: path.join(dir, 'meta.json') });
       try {
         const bigKey = fileKey(big);
         await local.client.ready();

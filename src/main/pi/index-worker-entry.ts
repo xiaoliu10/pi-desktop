@@ -1,5 +1,6 @@
 import { SessionIndex } from './session-index';
 import { OutlineCache } from './outline-cache';
+import { SessionMetaCache } from './session-meta-cache';
 import { recoverSubagents, subagentChildTranscript } from './official-subagent';
 import { RendererHistory } from './renderer-history';
 import type { PiEntry, PiSession } from '../../shared/pi';
@@ -39,7 +40,8 @@ export interface IndexWorkerHandle {
  *  window). */
 export function createIndexWorkerRuntime(config: WorkerConfig, emit: (event: WorkerEvent) => void): IndexWorkerHandle {
   const outlines = new OutlineCache(config.outlineCachePath);
-  const index = new SessionIndex(config.roots, config.ownedRoot, outlines);
+  const metaCache = new SessionMetaCache(config.metaCachePath);
+  const index = new SessionIndex(config.roots, config.ownedRoot, outlines, metaCache);
   const rendererHistory = new RendererHistory();
   const subscribed = new Set<string>();
   const mirrorEntries = new WeakMap<PiEntry, PiEntry>();
@@ -72,9 +74,20 @@ export function createIndexWorkerRuntime(config: WorkerConfig, emit: (event: Wor
     pushSessions();
     emit({ ev: 'changed' });
   });
-  // SessionIndex.start() primes its cache synchronously, so this first snapshot is exact.
+  // 快照模式（冷启动）：先用预填的元数据立刻出列表，全量冷扫延后到 ready 帧之后，
+  // 避免 7s 扫描阻塞首帧；无快照（首次启动/测试）时 start() 已同步热扫，帧即精确值。
+  const primed = index.isSnapshotPrimed();
   pushSessions();
   emit({ ev: 'ready' });
+  if (primed) {
+    setImmediate(() => {
+      try {
+        index.coldRescan(); // stat 指纹校正：新增/删除/变更；未变文件仍不解析
+        pushSessions(true);
+        emit({ ev: 'changed' });
+      } catch { /* 校正失败保留快照，下一轮 check 兼底 */ }
+    });
+  }
 
   return {
     index,
@@ -137,6 +150,7 @@ export function createIndexWorkerRuntime(config: WorkerConfig, emit: (event: Wor
       subscribed.clear();
       index.close();
       outlines.flushNow();
+      metaCache.flushNow();
     },
   };
 }
@@ -267,7 +281,7 @@ function readConfig(argv: string[]): WorkerConfig | undefined {
     try {
       const parsed = JSON.parse(arg) as WorkerConfig;
       if (parsed && Array.isArray(parsed.roots) && typeof parsed.ownedRoot === 'string'
-        && typeof parsed.agentDir === 'string' && typeof parsed.outlineCachePath === 'string') return parsed;
+        && typeof parsed.agentDir === 'string' && typeof parsed.outlineCachePath === 'string' && typeof parsed.metaCachePath === 'string') return parsed;
     } catch { /* 不是配置 JSON，继续找下一个 argv */ }
   }
   return undefined;

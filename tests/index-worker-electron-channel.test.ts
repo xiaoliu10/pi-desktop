@@ -44,7 +44,7 @@ async function bootWorker(): Promise<MockPort> {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'idx-chan-test-'));
   const owned = path.join(dir, 'owned');
   fs.mkdirSync(owned, { recursive: true });
-  const config = { roots: [dir], ownedRoot: owned, agentDir: dir, outlineCachePath: path.join(dir, 'outline.json') };
+  const config = { roots: [dir], ownedRoot: owned, agentDir: dir, outlineCachePath: path.join(dir, 'outline.json'), metaCachePath: path.join(dir, 'meta.json') };
   const port = mockParentPort();
   (process as unknown as { parentPort?: unknown }).parentPort = port;
   process.argv.push(JSON.stringify(config));

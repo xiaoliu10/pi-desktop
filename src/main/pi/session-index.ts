@@ -3,6 +3,7 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import type { PiEntry, PiHistory, PiOutline, PiOutlineItem, PiSearchHit, PiSearchResult, PiSession } from '../../shared/pi';
 import { OutlineCache } from './outline-cache';
+import { SessionMetaCache } from './session-meta-cache';
 import { MAX_SESSION, OversizedSessionError, sessionStub } from './session-size';
 import { computeUsageStats, type UsageStats } from './usage-stats';
 import { recoverSubagents, subagentChildTranscript } from './official-subagent';
@@ -84,7 +85,9 @@ export class SessionIndex {
    *  详见 parseAppends 注释。
    *  大会话流式期间每次只追加几 KB，history() 对脏文件走增量 tail 解析（毫秒级），
    *  不再全量重读（实测 103MB 会话全量重解析 421ms，同步阻塞主进程）。 */
-  private cache = new Map<string, { stamp: string; history: PiHistory; parsedBytes: number; pendingTail: Buffer; parsedIno: number }>();
+  /** meta=true：只有列表元数据（来自持久化快照），entries/branch 为空，任何需要
+ *  内容的读入口先 ensureHydrated 全量解析；正常解析后即为 meta=false 的完整条目。 */
+  private cache = new Map<string, { stamp: string; history: PiHistory; parsedBytes: number; pendingTail: Buffer; parsedIno: number; meta?: boolean }>();
   /** 分支 memo：leaf 模式下每次 history() 都要从全量 entries 回溯分支（17609 条实测
    *  ~500ms）。entries 引用 + leaf 不变则复用——流式期间每拍都调 history()，这是
    *  主进程阻塞的第一根因（埋点报告 history-ipc 33 次共 17.6s）。 */
@@ -121,7 +124,54 @@ export class SessionIndex {
   /** 已知目录集合（全量 walk 时记录）：增量 check 对它们做顶层 readdir 以发现新
    *  文件（watch 失效时的轮询兜底），比全树递归便宜一个量级。 */
   private knownDirs = new Set<string>();
-  constructor(public roots: string[], private readonly ownedRoot: string, private readonly outlines?: OutlineCache) {}
+  /** 从持久化快照预填列表（构造时同步读，百 KB 级）：未解析任何会话内容，
+ *  条目带 meta=true。启动首帧列表由此而来；start() 在快照模式下不同步热扫，
+ *  冷扫（coldRescan）延后到 ready 帧之后只做 stat 级校正。 */
+  private primedFromSnapshot = false;
+  private primeFromSnapshot(): void {
+    if (!this.metaCache) return;
+    const all = this.metaCache.all();
+    if (!all.length) return;
+    const rootReal = this.roots.map(r => { try { return canonical(r); } catch { return r; } });
+    for (const meta of all) {
+      const { stamp, ...session } = meta;
+      const history: PiHistory = { session, entries: [], branch: [], leaves: [], leafId: null, syncedAt: 0 };
+      if (session.oversized) this.oversized.add(history);
+      // parsedBytes=0 / parsedIno=0：任何变更后的增量门都会落回全量解析（见 parseAppends）。
+      this.cache.set(session.key, { stamp, history, parsedBytes: 0, pendingTail: Buffer.alloc(0), parsedIno: 0, meta: true });
+      // fileDirs 一并恢复：否则 check() 顶层 readdir 会把快照条目当「新发现文件」
+      // 逐个 refreshOne → 全量解析，快照白做。归属 root 按路径前缀匹配。
+      try {
+        const real = fs.realpathSync(session.path);
+        const root = rootReal.find(r => real === r || real.startsWith(r + path.sep)) ?? '';
+        this.fileDirs.set(real, root);
+      } catch { /* 文件已删：留给 coldRescan 清理 */ }
+    }
+    this.primedFromSnapshot = true;
+  }
+
+  /** 需要内容的读入口共用：meta 条目（仅快照元数据）先全量解析一次再继续；
+ *  解析本身会在超限时抛 OversizedSessionError，语义与历史调用方一致。 */
+  private requireParsed(key: string): { stamp: string; history: PiHistory; parsedBytes: number; pendingTail: Buffer; parsedIno: number; meta?: boolean } {
+    const cached = this.cache.get(key);
+    if (!cached) throw new Error('会话不存在、不可读或不在选定目录中。');
+    if (cached.meta) this.parseFile(cached.history.session.path, key);
+    const cur = this.cache.get(key)!;
+    if (this.oversized.has(cur.history)) {
+      throw new OversizedSessionError(cur.history.session.path, cur.history.session.size);
+    }
+    return cur;
+  }
+
+  /** 快照模式下 start() 跳过同步热扫；worker 在 ready 帧后调 coldRescan 做一次
+ *  全量发现校正（新增/删除/nested 关系；stamp 匹配的仍不解析）。无快照（测试/
+ *  非持久化场景）保持 start 内同步 scan 的旧行为。 */
+  isSnapshotPrimed(): boolean { return this.primedFromSnapshot; }
+  coldRescan(): void { this.scan(true); }
+
+  constructor(public roots: string[], private readonly ownedRoot: string, private readonly outlines?: OutlineCache, private readonly metaCache?: SessionMetaCache) {
+    this.primeFromSnapshot();
+  }
   private stampOf(file: string): { stat: fs.Stats; stamp: string } | undefined {
     try {
       const stat = fs.statSync(file);
@@ -134,6 +184,7 @@ export class SessionIndex {
     this.branchMemo.delete(key);
     this.planMemos.delete(key);
     this.outlines?.delete(key);
+    this.metaCache?.delete(key);
     this.dirty.delete(key);
   }
   private forgetFile(file: string): void {
@@ -189,6 +240,8 @@ export class SessionIndex {
     // Buffer，解码无损），增量时与新 chunk 拼接后再统一解码——撕裂多字节在字节层面
     // 补齐后才能正确解码，任何字符串层面的提前处理都会经 U+FFFD 永久丢字节。
     this.cache.set(key, { stamp, history: { session, entries, branch, leaves: entries.filter(e => e.id && !parents.has(e.id)).map(e => e.id!), leafId: branch.at(-1)?.id || null, syncedAt: Date.now() }, parsedBytes: buf.length, pendingTail: Buffer.from(tailBytes), parsedIno: stat.ino });
+    // 真实解析结果回写快照：下次冷启动该文件未变即可跳过全文解析，直接进列表。
+    this.metaCache?.set(key, session, stamp);
     this.dirty.delete(key);
   }
   /** 增量消费 cached.parsedBytes 之后的新增字节。parsedBytes 是**已读偏移**（pendingTail
@@ -196,7 +249,7 @@ export class SessionIndex {
    *  文件缩短/替换（stamp 变小）时回退全量。只读新增段，不重读旧内容——这是大会话流式
    *  期间 history() 从几百 ms 同步阻塞降到毫秒级的关键。有新增完整行时替换 history 对象
    *  （原契约：重解析返回新引用）；仅尾部未成行时只更新元数据，不换引用以免渲染抖动。 */
-  private parseAppends(file: string, key: string, stat: fs.Stats, stamp: string, cached: { stamp: string; history: PiHistory; parsedBytes: number; pendingTail: Buffer; parsedIno: number }): void {
+  private parseAppends(file: string, key: string, stat: fs.Stats, stamp: string, cached: { stamp: string; history: PiHistory; parsedBytes: number; pendingTail: Buffer; parsedIno: number; meta?: boolean }): void {
     const { history, parsedBytes, pendingTail } = cached;
     if (stat.ino !== cached.parsedIno) { this.parseFile(file, key); return; } // 替换（新 inode）：全量
     if (stat.size < parsedBytes) { this.parseFile(file, key); return; } // 截断：全量
@@ -268,6 +321,8 @@ export class SessionIndex {
       leafId: branch.at(-1)?.id || history.leafId,
       syncedAt: Date.now(),
     };
+    cached.meta = false;
+    this.metaCache?.set(key, cached.history.session, stamp);
     this.dirty.delete(key);
   }
   /** 文件写入平息 1.5s 后再重解析脏会话（流式追加是连续的，只有间隙才安全）。 */
@@ -377,6 +432,7 @@ export class SessionIndex {
    *  只在 worker 进程被调用——全量 entries 不得跨进程回主进程（见 index-worker-entry
    *  职责边界注释）。 */
   forkCopySource(key: string, targetPath: string, header: { id: string; timestamp: string; parentSession: string }): { path: string; entries: number } {
+    this.requireParsed(key); // 副本要无损全量条目，快照态必须先解析
     const cached = this.cache.get(key)?.history;
     if (!cached) throw new Error('会话不存在、不可读或不在选定目录中。');
     if (this.oversized.has(cached)) throw new OversizedSessionError(cached.session.path, cached.session.size);
@@ -412,6 +468,7 @@ export class SessionIndex {
   /** Polling must not trigger a filesystem scan/reparse of every session. The
    * normal index watcher/history path owns refresh; expose only an indexed key. */
   subagentHistory(key: string, leaf?: string): PiHistory {
+    this.requireParsed(key); // meta 快照条目无 entries，先全量解析
     const found = this.cache.get(key)?.history;
     if (!found || this.oversized.has(found)) throw new Error('Session unavailable');
     if (leaf && !found.entries.some(e => e.id === leaf)) throw new Error('Unknown leaf');
@@ -424,6 +481,7 @@ export class SessionIndex {
    * 只搜当前 branch（与渲染一致）；空 query 返回空（调用方负责拦截）。
    */
   searchSession(key: string, query: string, opts?: { limit?: number }): PiSearchResult {
+    this.requireParsed(key); // 未解析的快照条目没有可搜内容，先解析
     const cached = this.cache.get(key)?.history;
     if (!cached) return { total: 0, hits: [] };
     const needle = query.trim();
@@ -650,6 +708,8 @@ export class SessionIndex {
   }
 
   private fromCache(key: string, leaf?: string, opts?: { tail?: number; before?: string; count?: number }): PiHistory {
+    // meta 快照条目只有列表元数据：任何 history 读取先全量解析（首开/搜索/分页才付这个钱）。
+    if (this.cache.get(key)?.meta) this.parseFile(this.cache.get(key)!.history.session.path, key);
     const cached = this.cache.get(key)?.history;
     if (!cached) throw new Error('会话不存在、不可读或不在选定目录中。');
     // 超限会话只做了元数据降级：列表可见但全量历史不可读，给可执行错误而不是空历史。
@@ -687,7 +747,9 @@ export class SessionIndex {
   start(changed: () => void): Promise<void> {
     this.close();
     const signature = (sessions: PiSession[]) => sessions.map(s => `${s.key}:${s.size}:${s.updatedAt}:${s.warnings?.length ?? 0}`).join('|');
-    let last = signature(this.scan(true));
+    // 快照模式：列表已由构造时预填，不同步热扫（390 文件冷扫 7s 会把首帧列表堵在
+    // ready 之后）；基线直接取快照签名，冷扫由 coldRescan() 在 ready 帧后触发。
+    let last = this.primedFromSnapshot ? signature(this.sessionsView(true)) : signature(this.scan(true));
     const check = () => {
       try {
         // watch 事件定向处理（不 walk）：流式期间 pi 每 delta 追加一次会话文件，
@@ -873,6 +935,7 @@ export class SessionIndex {
           };
           this.oversized.add(degraded);
           this.cache.set(key, { stamp, history: degraded, parsedBytes: 0, pendingTail: Buffer.alloc(0), parsedIno: stat.ino });
+          this.metaCache?.set(key, degraded.session, stamp);
         } catch { /* 并发删除：下轮兜底 */ }
         return;
       }
@@ -880,5 +943,5 @@ export class SessionIndex {
       if (old) old.history.session.warnings = [(err as Error).message];
     }
   }
-  close() { clearInterval(this.timer); clearTimeout(this.debounce); clearTimeout(this.settleTimer); this.watchers.forEach(w => w.close()); this.watchers = []; this.dirty.clear(); }
+  close() { clearInterval(this.timer); clearTimeout(this.debounce); clearTimeout(this.settleTimer); this.watchers.forEach(w => w.close()); this.watchers = []; this.dirty.clear(); this.metaCache?.flushNow(); }
 }

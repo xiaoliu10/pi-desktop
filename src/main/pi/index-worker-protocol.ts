@@ -14,6 +14,8 @@ export interface WorkerConfig {
   ownedRoot: string;
   agentDir: string;
   outlineCachePath: string;
+  /** 会话列表元数据快照路径（启动秒出列表，见 SessionMetaCache）。 */
+  metaCachePath: string;
 }
 
 export type WorkerRequest =

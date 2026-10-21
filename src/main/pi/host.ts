@@ -112,7 +112,7 @@ export class PiHost {
   private createIndex(): IndexPort {
     const owned = path.join(this.environment.agentDir, 'sessions', 'desktop');
     return new IndexWorkerClient(
-      { roots: [...new Set([...this.environment.sessionDirs, owned])], ownedRoot: owned, agentDir: this.environment.agentDir, outlineCachePath: path.join(this.dataDir, 'outline-cache.json') },
+      { roots: [...new Set([...this.environment.sessionDirs, owned])], ownedRoot: owned, agentDir: this.environment.agentDir, outlineCachePath: path.join(this.dataDir, 'outline-cache.json'), metaCachePath: path.join(this.dataDir, 'session-meta.json') },
       cfg => utilityTransport(cfg, workerEntryPath()),
     );
   }
