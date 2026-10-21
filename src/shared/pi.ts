@@ -235,6 +235,8 @@ export interface LocalPiApi extends importSettingsApi {
   modelProviderSave(provider: PiModelProviderDraft): Promise<PiModelCatalog>;
   modelProviderAuthSave(input: { id: string; apiKey?: string; clear?: boolean }): Promise<PiModelCatalog>;
   modelProviderRemove(id: string): Promise<PiModelCatalog>;
+  /** 拉取提供商 /models 清单（编辑器未保存的 url/key 也可试），结果用于填充模型下拉。 */
+  modelProviderFetchModels(input: { id?: string; baseUrl?: string; apiKey?: string }): Promise<{ models: Array<{ id: string; name?: string; contextWindow?: number }>; endpoint: string }>;
   usageStats(): Promise<PiUsageStats>;
   onEvent(callback: (event: PiEvent) => void): () => void;
   /** 应用更新：查询最近一次检查结果（启动后 10s 首查，之后每 6h 静默复查）。 */

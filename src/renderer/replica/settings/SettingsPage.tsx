@@ -279,6 +279,33 @@ function ModelsPane(props: SettingsProps) {
   const modelFilter = modelQuery.trim().toLowerCase();
   const visibleModels = selected ? selected.models.filter((m) => !modelFilter || m.id.toLowerCase().includes(modelFilter) || (m.name ?? '').toLowerCase().includes(modelFilter)) : [];
   const openCreate = () => setForm({ open: true, editingId: null, name: '', baseUrl: '', apiKey: '', modelLine: '', models: [], error: undefined });
+  // 查询提供商 /models：渲染进程直连会被 CORS 拦，走主进程 IPC；
+  // 编辑器里未保存的 URL/Key 也能先试（编辑已有提供商且 Key 留空时主进程回退读已存的）。
+  const [fetchedModels, setFetchedModels] = useState<Array<{ id: string; name?: string; contextWindow?: number }>>([]);
+  const [fetching, setFetching] = useState(false);
+  const [fetchError, setFetchError] = useState<string | undefined>();
+  const [pick, setPick] = useState('');
+  useEffect(() => { if (!form.open) { setFetchedModels([]); setFetchError(undefined); setPick(''); } }, [form.open]);
+  const fetchModelList = async () => {
+    if (fetching) return;
+    if (!/^https?:\/\//.test(form.baseUrl.trim())) { setFetchError('请先填写以 http(s):// 开头的 Base URL。'); return; }
+    setFetching(true); setFetchError(undefined);
+    try {
+      const res = await window.localPi!.modelProviderFetchModels({ id: form.editingId ?? undefined, baseUrl: form.baseUrl.trim(), apiKey: form.apiKey || undefined });
+      setFetchedModels(res.models);
+      if (!res.models.length) setFetchError('接口返回了空模型列表；可在下方手动输入。');
+    } catch (e) { setFetchError(String((e as Error).message || e)); }
+    finally { setFetching(false); }
+  };
+  // 下拉选中或手动输入 ID 后回车：追加进表单草稿（去重）；从列表选取时带出名称/上下文，手动输入仅填 ID 可后续编辑。
+  const addPicked = () => {
+    const id = pick.trim();
+    if (!id) return;
+    setPick('');
+    if ((form.models ?? []).some(m => m.id === id)) return;
+    const cand = fetchedModels.find(m => m.id === id);
+    setForm({ models: [...(form.models ?? []), { id, name: cand?.name, contextWindow: cand?.contextWindow }] });
+  };
   const authDialog = authEditor && (
     <dialog ref={authDialogRef} className="pi-provider-dialog" aria-labelledby="pi-authkey-dialog-title" aria-modal="true" onCancel={e=>{e.preventDefault(); if(!authSaving) setAuthEditor(null);}} onClick={e=>{if(e.target===e.currentTarget){const r=e.currentTarget.getBoundingClientRect();if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY<r.bottom){ if(!authSaving) setAuthEditor(null);}}}}>
       <header className="pi-provider-dialog__header"><h2 id="pi-authkey-dialog-title">{authEditor.configured ? '修改 API Key' : '设置 API Key'} · {authEditor.name}</h2><button type="button" className="pi-iconbtn" aria-label="关闭" disabled={authSaving} onClick={()=>setAuthEditor(null)}><Icon name="x" size={18}/></button></header>
@@ -324,7 +351,18 @@ function ModelsPane(props: SettingsProps) {
               <input type="password" value={form.apiKey} onChange={(e) => setForm({ apiKey: e.target.value })} aria-label={L.providerApiKey} autoComplete="new-password" placeholder={form.editingId ? '留空保留现有 API Key' : 'sk-…'} />
             </label>
             <div className="pi-model-editor">
-              <div className="pi-model-editor__head"><strong>{L.providerModels}</strong><button type="button" className="pi-btn pi-btn--outline" onClick={()=>setModelEditor({model:{id:''},...(form.editingId?{providerId:form.editingId}:{})})}><Icon name="plus" size={14}/>添加模型</button></div>
+              <div className="pi-model-editor__head"><strong>{L.providerModels}</strong><span style={{ display:'flex', gap:8 }}><button type="button" className="pi-btn pi-btn--outline" disabled={fetching} onClick={()=>void fetchModelList()} title="调用提供商 /models 接口拉取可用模型"><Icon name="refresh" size={14}/>{fetching?'查询中…':'查询模型列表'}</button><button type="button" className="pi-btn pi-btn--outline" onClick={()=>setModelEditor({model:{id:''},...(form.editingId?{providerId:form.editingId}:{})})}><Icon name="plus" size={14}/>添加模型</button></span></div>
+              <div className="pi-model-fetch">
+                <input className="pi-mono" list="pi-fetch-model-options" value={pick} onChange={(e)=>setPick(e.target.value)}
+                  onKeyDown={(e)=>{if(e.key==='Enter'){e.preventDefault();addPicked();}}}
+                  placeholder="输入模型 ID 回车添加，或点「查询模型列表」后从下拉选择"
+                  aria-label="添加模型 ID" />
+                <datalist id="pi-fetch-model-options">
+                  {fetchedModels.filter(m=>!(form.models??[]).some(x=>x.id===m.id)).map(m=><option key={m.id} value={m.id}>{m.name?`${m.name} (${m.id})`:m.id}</option>)}
+                </datalist>
+              </div>
+              {fetchError && <em className="pi-providerform__err" role="alert">{fetchError}</em>}
+              {fetchedModels.length>0 && <p className="pi-providerform__hint">已拉取 {fetchedModels.length} 个模型：在上方输入框点选或直接输入后回车添加（已过滤已添加项）。</p>}
               {(form.models??[]).map((model,index)=><div className="pi-model-summary" key={index}>
                 <div><strong>{model.name||model.id}</strong><small>{model.id} · {model.contextWindow?.toLocaleString()??'默认'} 上下文 · {model.input?.includes('image')?'图片':'文本'}{model.reasoning?' · 推理':''}</small></div>
                 <button type="button" className="pi-iconbtn" aria-label={`编辑模型 ${model.id}`} onClick={()=>setModelEditor({model,index,originalId:model.id,...(form.editingId?{providerId:form.editingId}:{})})}><Icon name="pencil" size={14}/></button>

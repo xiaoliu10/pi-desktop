@@ -420,6 +420,7 @@ function registerIpc() {
   handle('modelProviderSave', draft => host.modelProviderSave(draft));
   handle('modelProviderAuthSave', input => host.modelProviderAuthSave(input));
   handle('modelProviderRemove', id => host.modelProviderRemove(id));
+  handle('modelProviderFetchModels', input => host.modelProviderFetchModels(input));
   handle('usageStats', () => host.usageStats());
   handle('revealPath', p => {
     if (typeof p !== 'string' || !path.isAbsolute(p)) throw new Error('路径无效');
