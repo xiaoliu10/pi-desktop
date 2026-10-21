@@ -968,6 +968,29 @@
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--pi-accent, #0a84ff) 18%, transparent);
 }
 
+/* 通知场景：三项开关合成一张紧凑卡片（替代三张松散的 settingrow 大卡）。 */
+.pireplica .pi-chdialog__notifcard {
+  border: 1px solid var(--pi-border);
+  border-radius: var(--pi-radius-md, 12px);
+  background: var(--pi-bg-card);
+  overflow: hidden;
+}
+.pireplica .pi-chdialog__notifrow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  font-size: var(--pi-font-size-md, 13px);
+  color: var(--pi-text);
+}
+.pireplica .pi-chdialog__notifrow + .pi-chdialog__notifrow {
+  border-top: 1px solid var(--pi-border);
+}
+.pireplica .pi-chdialog__notifrow .pi-switch { margin: 0; }
+/* 开关行的 control 不需要满宽（#155 的 control width:100% 只作用于 settingrow，这里不受影响）。 */
+.pireplica .pi-chdialog__form .pi-settingrow--card:not(:has(.pi-settingrow__control--wide)) .pi-switch { flex-shrink: 0; }
+
 .pireplica .pi-chdialog__foot {
   display: flex;
   justify-content: flex-end;

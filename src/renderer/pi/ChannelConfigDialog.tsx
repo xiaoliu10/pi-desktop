@@ -404,15 +404,19 @@ export function ChannelConfigDialog(props: {
                       <input className="pi-mono" type="password" value={im.appSecret ?? ''} onChange={(e) => props.onImChange({ ...im, appSecret: e.target.value })} onBlur={(e) => void props.onSave({ appSecret: e.target.value })} />
                     </div>
                   </label>
-                  <label className="pi-settingrow pi-settingrow--card">
+                  <div className="pi-settingrow pi-settingrow--card">
                     <div className="pi-settingrow__text">
                       <div className="pi-settingrow__title">{zh ? '启用双向对话' : 'Enable two-way chat'}</div>
                       <div className="pi-settingrow__desc">{zh ? '开启后桌面端会保持一条到平台网关的长连接。' : 'Keeps one long connection to the platform gateway.'}</div>
                     </div>
                     <div className="pi-settingrow__control">
-                      <input type="checkbox" checked={Boolean(im.twoWay)} onChange={(e) => void props.onSave({ twoWay: e.target.checked })} />
+                      <button type="button" role="switch" aria-checked={Boolean(im.twoWay)} aria-label={zh ? '启用双向对话' : 'Enable two-way chat'}
+                        className={`pi-switch ${im.twoWay ? 'pi-switch--on' : ''}`}
+                        onClick={() => void props.onSave({ twoWay: !im.twoWay })}>
+                        <span className="pi-switch__knob" />
+                      </button>
                     </div>
-                  </label>
+                  </div>
                   {!im.appKey && im.twoWay && (
                     <div className="pi-chdialog__warn" role="alert">
                       <Icon name="shield-alert" size={14} />
@@ -427,30 +431,22 @@ export function ChannelConfigDialog(props: {
                   <Icon name="bell" size={14} />
                   <span>{zh ? '通知场景' : 'Notify on'}</span>
                 </div>
-                <label className="pi-settingrow pi-settingrow--card">
-                  <div className="pi-settingrow__text">
-                    <div className="pi-settingrow__title">{zh ? '任务完成' : 'Completion'}</div>
-                  </div>
-                  <div className="pi-settingrow__control">
-                    <input type="checkbox" checked={im.notifyCompleted} onChange={(e) => void props.onSave({ notifyCompleted: e.target.checked })} />
-                  </div>
-                </label>
-                <label className="pi-settingrow pi-settingrow--card">
-                  <div className="pi-settingrow__text">
-                    <div className="pi-settingrow__title">{zh ? '任务出错' : 'Errors'}</div>
-                  </div>
-                  <div className="pi-settingrow__control">
-                    <input type="checkbox" checked={im.notifyError} onChange={(e) => void props.onSave({ notifyError: e.target.checked })} />
-                  </div>
-                </label>
-                <label className="pi-settingrow pi-settingrow--card">
-                  <div className="pi-settingrow__text">
-                    <div className="pi-settingrow__title">{zh ? '等待确认' : 'Awaiting confirmation'}</div>
-                  </div>
-                  <div className="pi-settingrow__control">
-                    <input type="checkbox" checked={im.notifyAttention} onChange={(e) => void props.onSave({ notifyAttention: e.target.checked })} />
-                  </div>
-                </label>
+                <div className="pi-chdialog__notifcard">
+                  {([
+                    { key: 'notifyCompleted', label: zh ? '任务完成' : 'Completion', value: im.notifyCompleted },
+                    { key: 'notifyError', label: zh ? '任务出错' : 'Errors', value: im.notifyError },
+                    { key: 'notifyAttention', label: zh ? '等待确认' : 'Awaiting confirmation', value: im.notifyAttention },
+                  ] as const).map((row) => (
+                    <div className="pi-chdialog__notifrow" key={row.key}>
+                      <span>{row.label}</span>
+                      <button type="button" role="switch" aria-checked={row.value} aria-label={row.label}
+                        className={`pi-switch ${row.value ? 'pi-switch--on' : ''}`}
+                        onClick={() => void props.onSave({ [row.key]: !row.value })}>
+                        <span className="pi-switch__knob" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
               </section>
             </div>
           )}
