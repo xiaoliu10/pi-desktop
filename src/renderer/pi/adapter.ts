@@ -1254,9 +1254,20 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
       // 首屏一屏（tail=HISTORY_PAGE）：大会话打开速度的关键（205MB 会话全量序列化
       // 实测 3.5s/次）。「打开就有完整历史」由 loadEarlierHistory 的无缝补拉提供——
       // 顶部按钮/触底触发，按钮显示真实剩余条数，不是把整个会话塞进首屏。
+      // 窗口保持（用户 2026-10-21 实测「点几次补拉没反应」）：已载入过历史且其上还有
+      // 更早页（truncated）时，流式刷新不能再无条件要 tail=500——那会把用户刚补拉到的
+      // 1000/1500 条整体冲回最后 500 条，表现为补拉被「吃掉」、计数回弹。改为以当前
+      // 最旧条目为锚点 count=0：worker 返回从锚点到尾部的全部，已展开的更早页不丢，
+      // 尾部新消息照常纳入（流式只在尾部 append，锚点索引稳定）。首屏 history=undefined
+      // 仍走 tail=500。
+      const currentHistory = get().history;
+      const anchorId = currentHistory?.branch?.[0]?.id;
+      const loadOpts = anchorId && currentHistory?.truncated && get().selectedKey === key
+        ? { before: anchorId, count: 0 }
+        : { tail: HISTORY_PAGE };
       startPhase('history-ipc');
       let value: PiHistory;
-      try { value = await api.history(historyKey, state.leaf, { tail: HISTORY_PAGE }); } finally { endPhase('history-ipc'); }
+      try { value = await api.history(historyKey, state.leaf, loadOpts); } finally { endPhase('history-ipc'); }
       // 代际守卫（含 F-1 的无 run 读路径）：run 存在时校验 generation/historyKey 未变；
       // 读取期间 run 出现或消失都视为过期，交还给下一次由事件触发的刷新。
       const runNow = get().runs.find(r => r.key === key);
