@@ -657,6 +657,22 @@ export class PiBackend {
     const intermediateSettlement = run.retry.event(event);
     if ((event.type === 'auto_retry_end' && run.retry.needsSettlement)
       || (event.type === 'agent_end' && event.willRetry === false && run.retry.tracking)) this.ensureSettlement(run);
+    // 普通回合的 agent_end（非重试链、不会自动续跑）：pi 每个回合结束都先发它，比
+    // agent_settled 更早且更可靠（settled 在事件流里丢失时，旧逻辑只能干等 120s
+    // watchdog，计时条白转两分钟，实测多次复现）。这里主动 get_state 快速核实一次：
+    // pi 确认真空闲（isStreaming/isCompacting/pending 均假）立即收口，真还在跑则
+    // 什么都不做，交给后续 agent_start/settled 或 120s watchdog。
+    // 信号判定（tracking 不是依据——每个普通 prompt 都 begin，tracking 恒真）：
+    //  · willRetry===true：pi 还要继续（工具循环/重试/steering），绝不收口；
+    //  · willRetry===false：上面已起 settlement 握手（run.settlement 非空），让它走；
+    //  · willRetry===undefined：pi bundle 普通回合结束的裸 agent_end，正是要探测的。
+    // 有待审批框/停止未确认/握手中/已在核实时同样不收口。
+    if (event.type === 'agent_end' && event.willRetry === undefined
+      && run.view.status === 'running'
+      && !run.stopUnconfirmed && !run.settlement
+      && run.dialogs.size === 0 && !run.verifying) {
+      void this.verifyStuckRun(run);
+    }
     if (event.type === 'agent_start') run.retryEntryId = undefined;
     if ((event.type === 'agent_start' || event.type === 'auto_retry_start' || event.type === 'compaction_start') && run.view.status !== 'stopping') {
       if (!run.view.timing || run.view.timing.endedAt !== undefined) run.view.timing = { startedAt: Date.now() };
