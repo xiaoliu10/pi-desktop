@@ -727,13 +727,17 @@ export class SessionIndex {
     // 体积远小于 branch。裁掉的条数通过 truncated 告知调用方。
     // before：向上补拉一页——返回 [before 之前 count 条] + [before 起的全部尾部]，
     // 调用方把新页拼到自己已有 branch 的前面即得到更长的历史。
+    // count=0 是「窗口保持」语义：不往前扩，只返回从 before（当前已载入最旧条目）到
+    // 尾部的全部——流式刷新用它在不丢失用户已补拉更早页的前提下纳入尾部新消息；
+    // 流式只在尾部 append，旧条目索引稳定，故 before 锁定的下限不漂。
     if (before) {
       const at = full.branch.findIndex(e => e.id === before);
-      if (at > 0) {
-        const count = Math.max(1, Math.min(opts?.count ?? 500, at));
-        const page = full.branch.slice(Math.max(0, at - count), at);
+      if (at >= 0) {
+        const count = Math.max(0, Math.min(opts?.count ?? 500, at));
+        const page = full.branch.slice(at - count, at);
         return this.wireLite(key, { ...full, branch: [...page, ...full.branch.slice(at)], truncated: { total: full.branch.length, returned: page.length + (full.branch.length - at) } });
       }
+      // 最旧条目已不在分支上（压缩/截断）：回退全量，安全但不保持窗口（罕见路径）。
       return full;
     }
     if (typeof tail === 'number' && tail > 0 && full.branch.length > tail) {

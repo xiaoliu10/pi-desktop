@@ -73,3 +73,24 @@ describe('history paging (tail / before)', () => {
     } finally { rmSync(dir, { recursive: true, force: true }); }
   });
 });
+
+it('before + count=0 保持窗口下限只更新尾部（流式刷新不丢已补拉页）', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'hist-page0-'));
+  try {
+    const { ids } = makeSession(dir, 1000);
+    const index = new SessionIndex([dir], dir);
+    const key = index.scan()[0].key;
+    const first = index.history(key, undefined, { tail: 100 });
+    const oldestLoaded = first.branch[0]!.id; // ids[900]
+    // count=0：不往前扩，返回从该锚点到尾部（100 条）
+    const refreshed = index.history(key, undefined, { before: oldestLoaded, count: 0 });
+    expect(refreshed.branch.length).toBe(100);
+    expect(refreshed.branch[0]!.id).toBe(ids[900]);
+    expect(refreshed.branch.at(-1)!.id).toBe(ids[999]);
+    expect(refreshed.truncated).toEqual({ total: 1000, returned: 100 });
+    // 对比：count=50 才往前扩到 ids[850]
+    const expanded = index.history(key, undefined, { before: oldestLoaded, count: 50 });
+    expect(expanded.branch[0]!.id).toBe(ids[850]);
+    expect(expanded.branch.length).toBe(150);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
