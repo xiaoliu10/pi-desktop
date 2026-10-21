@@ -75,6 +75,9 @@ function handle(r) {
   // 假 running：agent_start 后既不结算也不 streaming（pi 循环已结束但 Desktop 没收到事件），
   // 用于验证后端 get_state 核实拉直。
   if(r.message === '/stuck') { ok({}); send({type:'agent_start'}); return; }
+  // agent_end 正常到达但 agent_settled 丢失（streaming 已假）：验证后端凭 agent_end
+  // 主动 get_state 核实后立即收口，不再干等 120s watchdog。
+  if(r.message === '/endnosettle') { ok({}); send({type:'agent_start'}); send({type:'agent_end',messages:[]}); return; }
   // 一次模型调用的结束边界：常用于验证挂起的模型/思考切换在此下发。
   if(r.message === '/boundary') { send({type:'message_end',message:{role:'assistant',stopReason:'stop',content:[{type:'text',text:'step done'}]}}); return ok({}); }
   if(r.message === '/compact-start') { ok({}); streaming=true; send({type:'compaction_start'}); return; }

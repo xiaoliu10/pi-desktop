@@ -187,3 +187,31 @@ it('结算确认三次仍无回执：约 45s 窗口后降级手动恢复，错�
   expect(String(run.view.error)).toContain('多次确认运行时空闲失败');
   expect(String(run.view.error)).toContain('重新发送');
 }, 20_000);
+
+it('agent_end 正常但 agent_settled 丢失：主动 get_state 核实后立即收口，不等 120s watchdog', async () => {
+  const { backend, events } = setup();
+  const view = await backend.connect({ cwd: process.cwd(), trustProject: false, permission: 'ask' });
+  const t0 = Date.now();
+  await backend.prompt(view.key, '/endnosettle', 'followUp');
+  // agent_end 立即触发核实，get_state（fake-pi isStreaming=false）回来即 idle——无需 backdate、
+  // 无需手动 stuckScan（旧逻辑要静默满 120s 才兜底）。
+  await vi.waitFor(() => {
+    const last = runEvents(events).at(-1)!;
+    expect(last.run.status).toBe('idle');
+  }, { timeout: 8000, interval: 50 });
+  expect(Date.now() - t0).toBeLessThan(10_000); // 远小于 120s 静默窗
+  const run = (backend as any).active.get(view.key);
+  expect(run.view.timing?.endedAt).toBeGreaterThan(0);
+}, 20_000);
+
+it('agent_end 后 pi 仍在 streaming（真在跑）时不收口', async () => {
+  const { backend } = setup();
+  const view = await backend.connect({ cwd: process.cwd(), trustProject: false, permission: 'ask' });
+  // /long：agent_start 后 streaming=true、不结算
+  await backend.prompt(view.key, '/long', 'followUp');
+  const run = await waitStatus(backend, view.key, 'running');
+  // 直接灌一个 agent_end（异常顺序），get_state 会报 isStreaming=true → 必须保持 running
+  run.client.emit('event', { type: 'agent_end', willRetry: false });
+  await new Promise(r => setTimeout(r, 800));
+  expect((backend as any).active.get(view.key)?.view.status).toBe('running');
+});
