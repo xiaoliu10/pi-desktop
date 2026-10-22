@@ -425,7 +425,13 @@
 }
 
 .pireplica .pi-md a {
-  color: inherit;
+  color: var(--pi-text);
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--pi-text) 35%, transparent);
+  text-underline-offset: 2px;
+}
+.pireplica .pi-md a:hover {
+  text-decoration-color: var(--pi-text);
 }
 
 .pireplica .pi-md table {
