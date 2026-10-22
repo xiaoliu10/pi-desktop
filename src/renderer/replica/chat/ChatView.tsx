@@ -85,7 +85,28 @@ function CodeBlockPre({ children, zh, node: _node, ...rest }: React.ComponentPro
 /** 记忆化：文本不变时不重新解析 markdown（避免每次按键/流式更新都重解析全部消息）。 */
 export const ChatMarkdown = memo(function ChatMarkdown({ text, zh }: { text: string; zh?: boolean }) {
   // pre 覆写在每次渲染按当前 zh 重建 components：语言切换时按钮文案随之变化。
-  const components = useMemo(() => ({ pre: (props: React.ComponentProps<'pre'> & { zh?: boolean }) => <CodeBlockPre {...props} zh={zh} /> }), [zh]);
+  // a 覆写：GFM autolink 会把裸 URL 变成 <a href>（无链接样式时看起来像纯文本），
+  // 点击默认触发主窗口顶层导航 → will-navigate 拦截后落到 about:blank#blocked →
+  // did-navigate 防护重载入口页（整个 app 重置回首页）。改为 preventDefault +
+  // window.open：走主进程 setWindowOpenHandler → 系统浏览器，顶层导航不再发生。
+  const components = useMemo(() => ({
+    pre: (props: React.ComponentProps<'pre'> & { zh?: boolean }) => <CodeBlockPre {...props} zh={zh} />,
+    a: ({ node: _node, children, href, ...rest }: React.ComponentProps<'a'> & { node?: unknown }) => (
+      <a
+        {...rest}
+        href={href}
+        target="_blank"
+        rel="noreferrer noopener"
+        onClick={(e) => {
+          if (!href || !/^https?:\/\//.test(href)) return; // 非 http(s) 链接不处理，避免任何导航
+          e.preventDefault();
+          window.open(href, '_blank');
+        }}
+      >
+        {children}
+      </a>
+    ),
+  }), [zh]);
   const content = useMemo(() => <ReactMarkdown remarkPlugins={remarkGfmPlugins} components={components}>{text}</ReactMarkdown>, [text, components]);
   return <div className="pi-md">{content}</div>;
 });
