@@ -424,8 +424,31 @@
   border-radius: var(--pi-radius-sm);
 }
 
-.pireplica .pi-md a {
+.pireplica .pi-md .pi-md__file-link {
+  display: inline;
+  padding: 0;
+  border: 0;
+  background: none;
   color: inherit;
+  font: inherit;
+  text-align: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-color: var(--pi-border);
+  text-underline-offset: 3px;
+  overflow-wrap: anywhere;
+}
+.pireplica .pi-md .pi-md__file-link:hover { text-decoration-color: currentColor; }
+.pireplica .pi-md .pi-md__file-link:focus-visible { outline: 2px solid var(--pi-accent); outline-offset: 3px; }
+
+.pireplica .pi-md a {
+  color: var(--pi-text);
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--pi-text) 35%, transparent);
+  text-underline-offset: 2px;
+}
+.pireplica .pi-md a:hover {
+  text-decoration-color: var(--pi-text);
 }
 
 .pireplica .pi-md table {
