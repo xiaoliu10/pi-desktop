@@ -40,6 +40,8 @@ export interface PiUiRequest { id: string; method: string; title?: string; messa
 export interface PiRetryGroup {
   group: number; maxGroups: number;
   phase: 'running' | 'waiting' | 'completed' | 'exhausted' | 'cancelled' | 'failed';
+  /** Actual output resumed; presentation only, not task completion or a fresh retry budget. */
+  outputRecovered?: boolean;
   delayMs?: number; nextRetryAt?: number; error?: string;
 }
 export interface PiModelRefresh { status: 'pending' | 'refreshing' | 'refreshed' | 'error'; count?: number; message?: string }

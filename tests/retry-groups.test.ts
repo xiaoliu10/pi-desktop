@@ -35,6 +35,31 @@ it('counts initial attempt as group1, waits for settled, and bounds a continuous
   expect(groups.state).toMatchObject({ group: 10, phase: 'exhausted' });
   await vi.runAllTimersAsync(); expect(resume).toHaveBeenCalledTimes(9);
 });
+it.each(['text_delta', 'thinking_delta', 'toolcall_delta'])('records recovered %s without settling or replenishing the retry budget', async type => {
+  const { groups } = setup(); exhaustion(groups); groups.event({ type: 'agent_settled' });
+  await vi.advanceTimersByTimeAsync(10000);
+  groups.event({ type: 'agent_start' });
+  for (const event of [
+    { type: 'message_start', message: { role: 'assistant', content: [] } },
+    { type: 'message_update', assistantMessageEvent: { type: 'start' } },
+    { type: 'message_update', assistantMessageEvent: { type, delta: '' } },
+    { type: 'message_update', assistantMessageEvent: { type: 'error' } },
+  ]) groups.event(event);
+  expect(groups.state?.outputRecovered).not.toBe(true);
+  groups.event({ type: 'message_update', assistantMessageEvent: { type, delta: 'resumed' } });
+  expect(groups.state).toMatchObject({ group: 2, phase: 'running', outputRecovered: true });
+  expect(groups.tracking).toBe(true);
+  groups.event({ type: 'message_end', message: { role: 'assistant', stopReason: 'toolUse' } });
+  groups.event({ type: 'agent_start' });
+  expect(groups.state).toMatchObject({ group: 2, outputRecovered: true });
+  groups.event({ type: 'auto_retry_start', attempt: 1, maxAttempts: 3 });
+  expect(groups.state?.outputRecovered).not.toBe(true);
+  groups.event({ type: 'message_update', message: { role: 'assistant', content: [{ type: 'thinking', thinking: 'checking again' }] } });
+  expect(groups.state?.outputRecovered).toBe(true);
+  exhaustion(groups); groups.event({ type: 'agent_settled' });
+  expect(groups.state).toMatchObject({ group: 2, phase: 'waiting', delayMs: 20000 });
+  expect(groups.state?.outputRecovered).not.toBe(true);
+});
 it('does not replenish the outer budget on internal recovery, tools, deltas, or low-level agent_end', async () => {
   const { groups, resume } = setup(); exhaustion(groups); groups.event({ type: 'agent_settled' });
   await vi.advanceTimersByTimeAsync(10000);
