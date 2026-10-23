@@ -18,14 +18,17 @@ it('schedule guidance is injected via launch args whenever the extension ships (
 
 function fakeService(): AutomationBridgeService & { calls: [string, unknown][] } {
   const calls: [string, unknown][] = [];
+  const saved: any[] = [];
   return {
     calls,
     saveTask: vi.fn((task: any) => {
       calls.push(['save', task]);
-      return { id: 'task-1', runCount: 0, updatedAt: 1, args: {}, ...task, nextRunAt: (task.schedule as any)?.at ?? 42 } as any;
+      const item = { id: `task-${saved.length + 1}`, runCount: 0, updatedAt: 1, args: {}, ...task, nextRunAt: (task.schedule as any)?.at ?? 42 };
+      saved.push(item);
+      return item;
     }),
     deleteTask: vi.fn((id: string) => { calls.push(['delete', id]); }),
-    snapshot: vi.fn(() => ({ tasks: [{ id: 'a', name: 'A', schedule: { kind: 'once', at: 1 }, enabled: true, nextRunAt: 1, runCount: 2 } as any] })),
+    snapshot: vi.fn(() => ({ tasks: [{ id: 'a', name: 'A', schedule: { kind: 'once', at: 1 }, enabled: true, nextRunAt: 1, runCount: 2 } as any, ...saved] })),
   };
 }
 
@@ -44,8 +47,26 @@ describe('runAutomationBridge', () => {
     const service = fakeService();
     runAutomationBridge(service, { cwd: ctx.cwd, permission: 'autoedit' }, JSON.stringify({ action: 'create', name: 'x', prompt: 'p', schedule: { kind: 'once', at: 1790000000000 } }));
     expect((service.calls[0][1] as any).permission).toBe('autoedit');
-    runAutomationBridge(service, { cwd: ctx.cwd, permission: 'plan' }, JSON.stringify({ action: 'create', name: 'x', prompt: 'p', schedule: { kind: 'once', at: 1790000000000 } }));
+    runAutomationBridge(service, { cwd: ctx.cwd, permission: 'plan' }, JSON.stringify({ action: 'create', name: 'x', prompt: 'p2', schedule: { kind: 'once', at: 1790000000000 } })); // prompt 不同绕开幂等去重
     expect((service.calls[1][1] as any).permission).toBe('ask');
+  });
+
+  it('create is idempotent: an identical enabled task is returned instead of duplicated', () => {
+    const service = fakeService();
+    const payload = JSON.stringify({ action: 'create', name: '今晚发版', prompt: 'deploy', schedule: { kind: 'once', at: 1790000000000 } });
+    const first = runAutomationBridge(service, ctx, payload);
+    const second = runAutomationBridge(service, ctx, payload);
+    expect(first.ok).toBe(true);
+    expect(second).toMatchObject({ ok: true, action: 'create', duplicate: true, task: { id: (first as any).task.id } });
+    expect(service.calls.filter(([kind]) => kind === 'save')).toHaveLength(1); // 只落一次库
+  });
+
+  it('create is not deduplicated when the schedule or prompt differs', () => {
+    const service = fakeService();
+    runAutomationBridge(service, ctx, JSON.stringify({ action: 'create', name: '今晚发版', prompt: 'deploy', schedule: { kind: 'once', at: 1790000000000 } }));
+    runAutomationBridge(service, ctx, JSON.stringify({ action: 'create', name: '今晚发版', prompt: 'deploy', schedule: { kind: 'once', at: 1790000000001 } }));
+    runAutomationBridge(service, ctx, JSON.stringify({ action: 'create', name: '今晚发版', prompt: 'deploy-2', schedule: { kind: 'once', at: 1790000000000 } }));
+    expect(service.calls.filter(([kind]) => kind === 'save')).toHaveLength(3);
   });
 
   it('list works without a service; create/cancel require one', () => {
@@ -93,6 +114,15 @@ describe('desktop_schedule extension', () => {
     await expect(tool.execute('c3', { action: 'create', name: 'x', prompt: 'p', schedule: { kind: 'whenever' } }, undefined, undefined, ctx)).rejects.toThrow('once / interval / cron');
   });
 
+  it('renders a duplicate create without claiming a new task was created', async () => {
+    const tool = await loadTool();
+    const { captured, ctx } = fakeCtx(JSON.stringify({ ok: true, action: 'create', duplicate: true, task: { id: 't', name: '今晚发版', nextRunAt: Date.now() + 60000 } }));
+    const at = new Date(Date.now() + 120000).toISOString();
+    const result = await tool.execute('c8', { action: 'create', name: '今晚发版', prompt: 'deploy', schedule: { kind: 'once', at } }, undefined, undefined, ctx);
+    expect(result.content[0].text).toContain('未重复创建');
+    expect(result.content[0].text).toContain('今晚发版');
+  });
+
   it('surfaces Desktop-side failures and cancellations without throwing', async () => {
     const tool = await loadTool();
     const fail = fakeCtx(JSON.stringify({ ok: false, error: '自动化服务不可用' }));
@@ -119,6 +149,25 @@ describe('bridge + real AutomationService', () => {
       expect(JSON.parse(fs.readFileSync(file, 'utf8')).tasks).toHaveLength(1);
       expect(runAutomationBridge(service, { cwd: dir, permission: 'full' }, JSON.stringify({ action: 'cancel', id: task.id })).ok).toBe(true);
       expect(service.snapshot().tasks).toHaveLength(0);
+    } finally {
+      service.dispose();
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('duplicate create through the bridge lands a single task in automations.json', () => {
+    const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'auto-bridge-dup-')));
+    const file = path.join(dir, 'automations.json');
+    const service = new AutomationService(file, () => ({}) as any);
+    try {
+      const payload = JSON.stringify({ action: 'create', name: '重复创建回归', prompt: 'run checks', schedule: { kind: 'once', at: Date.now() + 60000 } });
+      const first = runAutomationBridge(service, { cwd: dir, permission: 'fullAccess' }, payload);
+      const second = runAutomationBridge(service, { cwd: dir, permission: 'fullAccess' }, payload);
+      expect(first.ok && second.ok).toBe(true);
+      expect((second as any).duplicate).toBe(true);
+      expect((second as any).task.id).toBe((first as any).task.id);
+      expect(service.snapshot().tasks).toHaveLength(1);
+      expect(JSON.parse(fs.readFileSync(file, 'utf8')).tasks).toHaveLength(1);
     } finally {
       service.dispose();
       fs.rmSync(dir, { recursive: true, force: true });
