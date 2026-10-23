@@ -10,7 +10,7 @@ import { officialSubagentDetails, SubagentNavigation } from '../../pi/subagents'
  * message nav rail, composer with menus, and the conversation/home views.
  */
 
-import { memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { createContext, memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { navigatePromptHistory } from '../prompt-history';
 import { registerComposerFlush } from '../../pi/adapter';
@@ -45,7 +45,11 @@ import { acquireImageUrl, releaseImageUrl } from './image-url';
 import { toolFilePreview } from '../../pi/tool-file-preview';
 import { executionTurns, formatElapsed, type ChatTurn } from './execution';
 
+import { remarkFileReferences } from './file-references';
+
+const FilePreviewAvailable = createContext(false);
 const remarkGfmPlugins = [remarkGfm];
+const remarkFilePlugins = [remarkGfm, remarkFileReferences];
 
 /** 从 ReactNode 树里递归抽取纯文本（代码块复制用；react-markdown 的 code 子节点是语法高亮前的纯文本）。 */
 function extractText(node: ReactNode): string {
@@ -84,6 +88,7 @@ function CodeBlockPre({ children, zh, node: _node, ...rest }: React.ComponentPro
 
 /** 记忆化：文本不变时不重新解析 markdown（避免每次按键/流式更新都重解析全部消息）。 */
 export const ChatMarkdown = memo(function ChatMarkdown({ text, zh }: { text: string; zh?: boolean }) {
+  const filePreviewAvailable = useContext(FilePreviewAvailable);
   // pre 覆写在每次渲染按当前 zh 重建 components：语言切换时按钮文案随之变化。
   // a 覆写：GFM autolink 会把裸 URL 变成 <a href>（无链接样式时看起来像纯文本），
   // 点击默认触发主窗口顶层导航 → will-navigate 拦截后落到 about:blank#blocked →
@@ -91,6 +96,7 @@ export const ChatMarkdown = memo(function ChatMarkdown({ text, zh }: { text: str
   // window.open：走主进程 setWindowOpenHandler → 系统浏览器，顶层导航不再发生。
   const components = useMemo(() => ({
     pre: (props: React.ComponentProps<'pre'> & { zh?: boolean }) => <CodeBlockPre {...props} zh={zh} />,
+    button: ({ node: _node, ...props }: React.ComponentProps<'button'> & { node?: unknown }) => <button {...props} title={zh ? '在右侧查看文件' : 'View file on the right'} />,
     a: ({ node: _node, children, href, ...rest }: React.ComponentProps<'a'> & { node?: unknown }) => (
       <a
         {...rest}
@@ -107,7 +113,7 @@ export const ChatMarkdown = memo(function ChatMarkdown({ text, zh }: { text: str
       </a>
     ),
   }), [zh]);
-  const content = useMemo(() => <ReactMarkdown remarkPlugins={remarkGfmPlugins} components={components}>{text}</ReactMarkdown>, [text, components]);
+  const content = useMemo(() => <ReactMarkdown remarkPlugins={filePreviewAvailable ? remarkFilePlugins : remarkGfmPlugins} components={components}>{text}</ReactMarkdown>, [text, components, filePreviewAvailable]);
   return <div className="pi-md">{content}</div>;
 });
 
@@ -997,7 +1003,14 @@ export const ChatView = memo(function ChatView(props: ChatViewProps) {
   }, [hiddenCount, loadEarlier, props.earlierTotal, props.earlierLoading, props.onLoadEarlier, turns.length]);
 
   return (
-    <div className="pi-chat">
+    <FilePreviewAvailable.Provider value={Boolean(props.onOpenFile)}>
+    <div className="pi-chat" onClick={event => {
+      if (!(event.target instanceof Element)) return;
+      const button = event.target.closest<HTMLButtonElement>('button[data-file-path]');
+      if (!button || !event.currentTarget.contains(button)) return;
+      event.preventDefault(); event.stopPropagation();
+      props.onOpenFile?.(button.dataset.filePath!, button.dataset.fileLine ? Number(button.dataset.fileLine) : undefined);
+    }}>
       <MessageNav turns={turns} listRef={listRef} onJump={jump} />
       {props.sessionMapOpen && (
         <SessionMap
@@ -1076,6 +1089,7 @@ export const ChatView = memo(function ChatView(props: ChatViewProps) {
         </button>
       )}
     </div>
+    </FilePreviewAvailable.Provider>
   );
 });
 
