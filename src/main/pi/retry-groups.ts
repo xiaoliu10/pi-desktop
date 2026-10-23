@@ -1,4 +1,5 @@
 import type { PiRetryGroup } from '../../shared/pi';
+import { hasModelOutput } from '../../shared/model-output';
 
 /** Desktop budget; deliberately independent of settings.retry / CLI attempt counts. */
 export const RETRY_GROUP_DELAYS_MS = [10, 20, 40, 80, 160, 300, 600, 900, 1200].map(s => s * 1000);
@@ -69,7 +70,11 @@ export class RetryGroups {
       this.publish({ phase: 'running', nextRetryAt: undefined, delayMs: undefined });
     }
     if (event.type === 'message_end' && event.message?.role === 'assistant') this.lastOutcome = event.message.stopReason;
+    if (this.state?.phase === 'running' && !this.state.outputRecovered && hasModelOutput(event)) {
+      this.publish({ outputRecovered: true });
+    }
     if (event.type === 'auto_retry_start') {
+      if (this.state?.outputRecovered) this.publish({ outputRecovered: false });
       this.maxAttempts = Number.isInteger(event.maxAttempts) && event.maxAttempts > 0 ? event.maxAttempts : 0;
     }
     if (event.type === 'auto_retry_end') {
@@ -85,12 +90,12 @@ export class RetryGroups {
     if (this.exhausted && this.state!.group < MAX_RETRY_GROUPS) {
       const epoch = this.epoch;
       const delayMs = RETRY_GROUP_DELAYS_MS[this.state!.group - 1];
-      this.publish({ phase: 'waiting', delayMs, nextRetryAt: Date.now() + delayMs });
+      this.publish({ phase: 'waiting', outputRecovered: false, delayMs, nextRetryAt: Date.now() + delayMs });
       this.timer = setTimeout(() => {
         this.timer = undefined;
         if (!this.active || this.epoch !== epoch) return;
         this.exhausted = false;
-        this.publish({ group: this.state!.group + 1, phase: 'running', delayMs: undefined, nextRetryAt: undefined });
+        this.publish({ group: this.state!.group + 1, phase: 'running', outputRecovered: false, delayMs: undefined, nextRetryAt: undefined });
         // A timeout/rejection is ambiguous: never retry this dispatch or replay a prompt.
         void this.resume().catch(error => {
           if (!this.active || this.epoch !== epoch) return;
