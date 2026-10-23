@@ -73,7 +73,8 @@ export default function desktopSchedule(pi) {
       if (!result?.ok) return { content: [{ type: 'text', text: `定时任务操作失败：${result?.error ?? '未知错误'}` }], details: result };
       if (result.action === 'create') {
         const when = result.task?.nextRunAt ? new Date(result.task.nextRunAt).toLocaleString() : '调度器计算的时间';
-        return { content: [{ type: 'text', text: `已创建定时任务「${result.task.name}」，下次执行 ${when}。届时 Desktop 会用全新会话执行任务指令（不含当前对话上下文）。` }], details: result.task };
+        const lead = result.duplicate ? `已存在相同的定时任务「${result.task.name}」，未重复创建；下次执行 ${when}。` : `已创建定时任务「${result.task.name}」，下次执行 ${when}。届时 Desktop 会用全新会话执行任务指令（不含当前对话上下文）。`;
+        return { content: [{ type: 'text', text: lead }], details: result.task };
       }
       if (result.action === 'cancel') return { content: [{ type: 'text', text: '已删除定时任务。' }] };
       return { content: [{ type: 'text', text: `当前共有 ${result.tasks?.length ?? 0} 个定时任务：\n${(result.tasks ?? []).map(t => `- ${t.name}${t.enabled ? '' : '（已停用）'}`).join('\n') || '（无）'}` }], details: { tasks: result.tasks } };
