@@ -905,7 +905,11 @@ export interface PiReplicaState {
   behavior: Behavior;
   draftText: string;
   contextItems: ContextItem[];
-  draftModelId?: string;
+  /** 模型草稿按 composer 归属键隔离（owner key → provider/model）：全局单值会跨会话
+   *  泄漏——A 会话选的模型会显示在 B 会话并在 B 发送时被下发（2026-10-23 用户实测）。
+   *  与文字草稿的 composerDrafts 同语义；运行中 pickModel 也同步草稿，腾位重连后
+   *  沿用用户最近一次选择。 */
+  draftModels?: Record<string, string>;
   draftThinking?: ThinkingLevel;
   pendingPrompt?: string;
   /** Client identities survive IPC acknowledgement and history replacement. */
@@ -2209,7 +2213,8 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
             set({ runs: [...get().runs.filter(r => r.key !== run!.key), run], sends: get().sends?.map(s => s.id === send.id ? { ...s, key: run!.key } : s) });
             // Do not pull the user back if they navigated elsewhere during startup.
             if (get().selectedKey === state.selectedKey) get().selectSession(run.key);
-            if (state.draftModelId) { const slash = state.draftModelId.indexOf('/'); await window.localPi!.model(run.key, state.draftModelId.slice(0,slash), state.draftModelId.slice(slash+1)); }
+            const modelDraft = state.draftModels?.[composerKeyOf(state) ?? ''];
+            if (modelDraft) { const slash = modelDraft.indexOf('/'); await window.localPi!.model(run.key, modelDraft.slice(0,slash), modelDraft.slice(slash+1)); }
             const thinking = state.draftThinking ?? state.desktopPreferences?.defaultThinkingLevel;
             // pi 会将不支持的等级自动钳制到模型能力（非推理模型为 off），因此始终下发，避免代理模型漏报 max 时固化值失效。
             if (thinking && thinking !== 'off') await window.localPi!.thinking(run.key, thinking);
@@ -2375,11 +2380,14 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
     pickModel: (combinedId) => {
       const state = get();
       const run = currentRun(state);
-      if (!run) { set({draftModelId: combinedId}); return; }
+      const ownerKey = composerKeyOf(state) ?? '';
+      if (!run) { set({ draftModels: { ...state.draftModels, [ownerKey]: combinedId } }); return; }
       // 运行中也允许选择：后端挂起为待生效，在下一次模型调用边界统一切换。
       const slash = combinedId.indexOf('/');
       const provider = combinedId.slice(0,slash), id = combinedId.slice(slash+1);
       void attempt(() => window.localPi!.model(run.key, provider, id));
+      // 同步草稿：会话被腾位/断开后重连发送时，沿用用户最近一次选择而不是回退默认。
+      if (state.draftModels?.[ownerKey] !== combinedId) set({ draftModels: { ...state.draftModels, [ownerKey]: combinedId } });
     },
 
     addContext: items => set(state => ({contextItems: [...new Map([...state.contextItems,...items].map(item=>[item.id,item])).values()]})),
