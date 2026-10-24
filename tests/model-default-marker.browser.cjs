@@ -39,7 +39,7 @@ async (page) => {
       listFiles: async () => [], projectBranch: async () => null, gitStatus: async () => ({ isRepo: false, files: [] }),
     };
     window.store = usePiStore;
-    usePiStore.setState({ ready: true, selectedKey: null, sessions: [], runs: [], view: 'settings', settingsPage: 'models', searchQuery: '', lang: 'zh', theme: 'light', desktopPreferences: preferences, workbenchOpen: false, catalog: undefined, catalogLoading: false, draftModelId: 'beta/shared/id', notifications: [], error: undefined });
+    usePiStore.setState({ ready: true, selectedKey: null, sessions: [], runs: [], view: 'settings', settingsPage: 'models', searchQuery: '', lang: 'zh', theme: 'light', desktopPreferences: preferences, workbenchOpen: false, catalog: undefined, catalogLoading: false, draftModels: {}, notifications: [], error: undefined });
     const root = createRoot(document.getElementById('root'));
     window.mountApp = () => flushSync(() => root.render(React.createElement(App)));
     window.mountLegacy = (lang = 'en') => {

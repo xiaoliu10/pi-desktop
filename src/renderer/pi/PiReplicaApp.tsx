@@ -394,7 +394,7 @@ export default function PiReplicaApp() {
     setPromptHistory(recordWorkspacePrompt(composerCwd ?? '', { text, items }));
     s.send(text);
   }, [composerCwd, s.send]);
-  const draftModelId = s.draftModelId ?? (s.catalog?.defaultProvider && s.catalog?.defaultModel ? `${s.catalog.defaultProvider}/${s.catalog.defaultModel}` : '');
+  const draftModelId = s.draftModels?.[composerOwnerKeyOf(s) ?? ''] ?? (s.catalog?.defaultProvider && s.catalog?.defaultModel ? `${s.catalog.defaultProvider}/${s.catalog.defaultModel}` : '');
   const draftModel = s.catalog?.providers.flatMap(p=>p.models.map(m=>({...m,combinedId:`${p.id}/${m.id}`}))).find(m=>m.combinedId===draftModelId);
   const [filePreview, setFilePreview] = useState<ReturnType<typeof toolFilePreview>>(null);
   // ↑↓ 历史浏览前的未发草稿快照：退出浏览态时原样还原（文字+附件不被 recall 清掉）
