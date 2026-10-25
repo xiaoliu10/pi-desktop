@@ -6,7 +6,7 @@
 
 ## 字段说明
 
-- **ID**：`R-<域>-<序号>`，域分 `subagent`/`model`/`plan`/`render`/`session`/`io`/`deploy`。
+- **ID**：`R-<域>-<序号>`，域分 `subagent`/`model`/`plan`/`render`/`session`/`io`/`deploy`/`automation`。
 - **状态**：`满足` / `部分满足` / `不满足` / `待上游` / `风险`。
 - **上游依赖**：若需求满足与否依赖第三方（pi 内核、pi-subagents、CCR、Electron），写明版本与 issue 链接。
 - **回归触发**：什么时候要重新验证这条（升级/改某文件/发版前）。
@@ -238,6 +238,23 @@
 **回归触发**：改 `src/renderer/index.html`（CSP）、`image-url.ts`（若换回 data URL 或改用自定义协议）、`shared/image-download.ts`（下载归一化）、`main/pi/image-file.ts`（下载校验）、Electron 升级（webSecurity / CSP 处理变化）。
 
 ---
+
+## 自动化域（automation）
+
+### R-automation-01　定时任务默认跑在项目原会话；重复指令不重复执行
+
+**需求**：定时任务（desktop_schedule 工具 / 自动化页）默认（sessionMode=reuse）必须执行在项目下最近活跃的原会话——会话正忙（running）按 followUp 排队、同项目并发的多个自动化 run 在同一会话串行投递；只有创建时明确选「独立新会话」（fresh）才开新会话。完全相同的创建指令（同名、同 prompt、同 schedule、同项目）不得落第二个任务。
+
+**背景**：2026-10-23 实测一个请求落了两个同名任务，到点 6ms 内先后触发——一个接上原会话、另一个撞上旧的「同项目已有自动化在跑→新建隔离」互斥分支开了独立会话，用户看到两份执行。
+
+**验收**：
+- reuse 模式下，同项目已有自动化 run 在跑时，后续 run 投进同一会话并在其收尾后串行投递（会话锁保护 waiter/stepGuard 单槽），不新建隔离会话；事件归因始终指向持锁投递的 run。
+- bridge create 幂等：已存在同项目+同名+同 prompt+同 schedule 的 enabled 任务时，直接返回既有任务（`duplicate: true`），不重复落库；schedule 或 prompt 不同则正常新建。
+- fresh 模式仍新开独立会话并应用任务配置；等锁期间被停止的 run 不投递任何步骤。
+
+**状态**：实现与测试通过，待审查 / 发版验收。
+
+**回归触发**：改 `automation-service.ts`（resolveSession/execute/onPiEvent）、`automation-bridge.ts`、`extensions/desktop-schedule/index.mjs`。测试：`tests/pi-automation.test.ts`（2d 同会话串行）、`tests/desktop-schedule.test.ts`（幂等创建/文案）。
 
 ### R-render-03　对话中的文件引用可在右侧查看
 
