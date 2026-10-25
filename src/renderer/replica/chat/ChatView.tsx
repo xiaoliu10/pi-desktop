@@ -96,7 +96,10 @@ export const ChatMarkdown = memo(function ChatMarkdown({ text, zh }: { text: str
   // window.open：走主进程 setWindowOpenHandler → 系统浏览器，顶层导航不再发生。
   const components = useMemo(() => ({
     pre: (props: React.ComponentProps<'pre'> & { zh?: boolean }) => <CodeBlockPre {...props} zh={zh} />,
+<<<<<<< HEAD
     button: ({ node: _node, ...props }: React.ComponentProps<'button'> & { node?: unknown }) => <button {...props} title={zh ? '在右侧查看文件' : 'View file on the right'} />,
+=======
+>>>>>>> origin/main
     a: ({ node: _node, children, href, ...rest }: React.ComponentProps<'a'> & { node?: unknown }) => (
       <a
         {...rest}
@@ -113,7 +116,11 @@ export const ChatMarkdown = memo(function ChatMarkdown({ text, zh }: { text: str
       </a>
     ),
   }), [zh]);
+<<<<<<< HEAD
   const content = useMemo(() => <ReactMarkdown remarkPlugins={filePreviewAvailable ? remarkFilePlugins : remarkGfmPlugins} components={components}>{text}</ReactMarkdown>, [text, components, filePreviewAvailable]);
+=======
+  const content = useMemo(() => <ReactMarkdown remarkPlugins={remarkGfmPlugins} components={components}>{text}</ReactMarkdown>, [text, components]);
+>>>>>>> origin/main
   return <div className="pi-md">{content}</div>;
 });
 

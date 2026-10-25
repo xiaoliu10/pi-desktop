@@ -1,5 +1,6 @@
 import type { ModelRetryState } from '../replica/contracts';
 import type { PiRetryGroup } from '../../shared/pi';
+import { hasModelOutput } from '../../shared/model-output';
 import { redactDiagnosticText } from '../../../extensions/desktop-policy/diagnostic-text.mjs';
 
 /** Presentation only: the renderer never advances groups or replenishes their budget. */
@@ -11,9 +12,12 @@ export function retryPresentation(group?: PiRetryGroup, inner?: ModelRetryState 
   const settled = group?.phase === 'completed' || group?.phase === 'cancelled';
   // CLI state belongs to one group; do not leak its countdown into outer waits/terminal states.
   const retry = group && group.phase !== 'running' ? undefined : inner ?? undefined;
+  // A new CLI retry overrides a previous host recovery snapshot; terminal errors stay visible.
+  const outputRecovered = (!group || group.phase === 'running')
+    && (retry ? retry.phase === 'streaming' : group?.outputRecovered === true);
   return {
     retry,
-    visible: Boolean(!settled && group && (group.group > 1 || group.phase === 'waiting' || group.error) || retry),
+    visible: !outputRecovered && Boolean(!settled && group && (group.group > 1 || group.phase === 'waiting' || group.error) || retry),
     recovering: !stopping && Boolean(activeGroup || retry),
     cancellable: !stopping && Boolean(activeGroup || retry),
   };
@@ -35,13 +39,7 @@ export function nextModelRetryState(current: ModelRetryState | null, event: Reco
   if (event.type === 'auto_retry_end' || event.type === 'agent_settled' || event.type === 'desktop_retry_group_wait') return null;
   const message = event.message as { role?: string; stopReason?: string } | undefined;
   if (event.type === 'message_end' && message?.role === 'assistant' && message.stopReason === 'aborted') return null;
-  const delta = event.assistantMessageEvent as { type?: string; delta?: unknown } | undefined;
-  const snapshot = event.message as { role?: string; content?: unknown } | undefined;
-  const hasOutput = event.type === 'message_update' && (
-    (['text_delta', 'thinking_delta', 'toolcall_delta'].includes(delta?.type ?? '') && typeof delta?.delta === 'string' && delta.delta.length > 0) ||
-    (snapshot?.role === 'assistant' && (typeof snapshot.content === 'string' ? snapshot.content.length > 0 : Array.isArray(snapshot.content) && snapshot.content.some(block => (block.type === 'text' && block.text) || (block.type === 'thinking' && block.thinking) || block.type === 'toolCall')))
-  );
-  if (current && hasOutput && current.phase !== 'streaming') return { ...current, phase: 'streaming' };
+  if (current && hasModelOutput(event) && current.phase !== 'streaming') return { ...current, phase: 'streaming' };
   // Empty stream starts also occur on failed requests; only pi's terminal retry event settles them.
   if (current && event.type === 'message_start' && message?.role === 'assistant' && current.phase === 'waiting') {
     return { ...current, phase: 'requesting' };
