@@ -159,6 +159,22 @@
 
 ---
 
+### R-model-04　有效输出恢复后重试状态条退场
+
+**需求**：模型在同一用户轮内恢复有效输出（文本、思考或工具调用）后，隐藏「Desktop 重试 / 等待模型响应」状态条；恢复输出不等于任务完成，不得重置组数或提前释放排队任务。
+
+**验收**：
+- 空流开始、错误事件、用户消息、工具结果不算恢复；非空 assistant delta / snapshot 才算。
+- Desktop 第 2–10 组和 CLI 内部重试均适用；主进程快照带恢复事实，切回会话不会复活横幅。
+- 再次内部重试或等待下一组时重新显示状态条；组数和退避预算不变。
+- 重试期间当前轮模型错误卡继续隐藏；最终 failed/exhausted 显示错误详情，上一轮错误和工具错误不误删，原始日志不改。
+
+**状态**：修复已测试，待审查 / 发版验收。
+
+**回归触发**：改 `src/shared/model-output.ts`、`retry-groups.ts`、`model-retry.ts`；pi 流式事件形态变化。测试：`tests/model-output.test.ts`、`tests/retry-groups{,-backend,-renderer}.test.ts`、`tests/retry-groups-ui.browser.cjs`。
+
+---
+
 ## 计划域（plan）
 
 ### R-plan-01　任务清单只显示最近一轮
