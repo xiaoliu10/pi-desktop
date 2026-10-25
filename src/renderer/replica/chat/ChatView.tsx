@@ -113,11 +113,7 @@ export const ChatMarkdown = memo(function ChatMarkdown({ text, zh }: { text: str
       </a>
     ),
   }), [zh]);
-<<<<<<< HEAD
   const content = useMemo(() => <ReactMarkdown remarkPlugins={filePreviewAvailable ? remarkFilePlugins : remarkGfmPlugins} components={components}>{text}</ReactMarkdown>, [text, components, filePreviewAvailable]);
-=======
-  const content = useMemo(() => <ReactMarkdown remarkPlugins={remarkGfmPlugins} components={components}>{text}</ReactMarkdown>, [text, components]);
->>>>>>> origin/main
   return <div className="pi-md">{content}</div>;
 });
 
