@@ -617,8 +617,8 @@ function createWindow(): void {
   // 再发生时日志直接给出根因；跑飞的顶层导航立即拉回入口，用户无需手动 Cmd+R。
   const rendererLog = path.join(app.getPath('logs'), 'renderer.log');
   try { fsSync.mkdirSync(path.dirname(rendererLog), { recursive: true }); } catch { /* 忽略 */ }
-  const logLine = (msg: string) => { try { fsSync.appendFileSync(rendererLog, `${new Date().toISOString()} ${msg}\n`); } catch { /* 日志失败不影响运行 */ } };
-  logLine(`--- launch pid=${process.pid} dev=${Boolean(devUrl)} ---`);
+  logLine(windowEverCreated ? `--- window recreated pid=${process.pid} dev=${Boolean(devUrl)} ---` : `--- launch pid=${process.pid} dev=${Boolean(devUrl)} ---`);
+  windowEverCreated = true;
   const isAppEntry = (url: string) => (devUrl ? url.startsWith(devUrl) : url.startsWith('file://') && url.includes('renderer/index.html'));
 
   mainWindow.webContents.on('will-navigate', (event, url) => {
@@ -656,8 +656,28 @@ app.setName('PI Desktop');
 //   （渲染层 normalizeUrl 先行拦截，这里兜底防页面内跳转绕过）；
 // - 外链（target=_blank / window.open）一律 deny 并转交系统默认浏览器，
 //   绝不新建可能带 node 权限的 Electron 窗口。
+// 渲染层取证日志（模块级，所有窗口/webContents 共用）：0.1.35 换包代际窗口再现
+// 「整页渲染 bundle 源码文本页」却零 will-navigate/did-navigate 痕迹——取证钩子
+// 必须覆盖全部窗口与导航起点，否则 heisenbug 永远拿不到根因。首次建窗记 launch，
+// 之后记 window recreated（同 pid 双 launch 行曾误导排查）。
+let rendererLogPath: string | null = null;
+let windowEverCreated = false;
+const logLine = (msg: string) => {
+  try {
+    if (!rendererLogPath) { rendererLogPath = path.join(app.getPath('logs'), 'renderer.log'); fsSync.mkdirSync(path.dirname(rendererLogPath), { recursive: true }); }
+    fsSync.appendFileSync(rendererLogPath, `${new Date().toISOString()} ${msg}\n`);
+  } catch { /* 日志失败不影响运行 */ }
+};
+
 app.on('web-contents-created', (_event, contents) => {
-  if (contents.getType() !== 'webview') return;
+  if (contents.getType() !== 'webview') {
+    // 非 webview（BrowserWindow 窗口）也留导航痕：heisenbug 复发时至少能拿到
+    // 「导航到了哪、是否 main frame、渲染进程是否死亡」三件事。
+    contents.on('did-start-navigation', (_e, url) => { if (!url.startsWith('devtools:')) logLine(`[nav start] type=${contents.getType()} url=${url}`); });
+    contents.on('did-navigate-in-page', (_e, url) => logLine(`[nav in-page] type=${contents.getType()} url=${url}`));
+    contents.on('render-process-gone', (_e, details) => logLine(`[render-gone type=${contents.getType()}] ${JSON.stringify(details)}`));
+    return;
+  }
   contents.setWindowOpenHandler(({ url }) => {
     if (/^https?:\/\//i.test(url)) void shell.openExternal(url);
     return { action: 'deny' };
