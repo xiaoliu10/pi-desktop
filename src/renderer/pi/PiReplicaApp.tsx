@@ -575,6 +575,7 @@ export default function PiReplicaApp() {
   // ── Composer memo 稳定 props（第二轮）：这些每次 render 新建，不加这层 memo 必败 ──
   // slashCommands：内容只随 (run?.commands, lang) 变；数组每拍重建 = memo 每拍失效。
   const slashCommands = useMemo(() => [
+    { name: '/new', description: s.lang === 'zh' ? '开始新任务（新建会话）；可附带首句草稿' : 'Start a new task; trailing text becomes its first draft' },
     ...(run ? [{ name: '/compact', description: s.lang === 'zh' ? '手动压缩会话上下文' : 'Manually compact the session context' }] : []),
     ...(run ? [{ name: '/reload', description: s.lang === 'zh' ? '重载扩展/skills/prompts 等资源' : 'Reload extensions/skills/prompts' }] : []),
     ...(run?.commands ?? []).map((c) => ({ name: `/${c.name}`, description: c.description ?? '' })),

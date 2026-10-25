@@ -2167,6 +2167,15 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
           .catch((error) => set({ error: String((error as Error).message ?? error), errorKey: state.selectedKey ?? undefined }));
         return;
       }
+      if (trimmedCommand === '/new' || trimmedCommand.startsWith('/new ')) {
+        // 内置 /new（pi CLI 同款）：开始新任务。桌面等价 = 新任务按钮（⇧⌘N）的 startNewSession；
+        // 附带文本作为新任务草稿，已添加的附件保留，不进 prompt。
+        const rest = trimmedCommand === '/new' ? '' : trimmedCommand.slice('/new '.length).trim();
+        const keptItems = state.contextItems;
+        get().startNewSession();
+        set({ draftText: rest, contextItems: keptItems });
+        return;
+      }
       const existing = currentRun(state);
       const sourceKey = existing ? undefined : state.selectedKey ?? undefined;
       const behavior = state.behavior;
