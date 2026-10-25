@@ -159,6 +159,22 @@
 
 ---
 
+### R-model-04　有效输出恢复后重试状态条退场
+
+**需求**：模型在同一用户轮内恢复有效输出（文本、思考或工具调用）后，隐藏「Desktop 重试 / 等待模型响应」状态条；恢复输出不等于任务完成，不得重置组数或提前释放排队任务。
+
+**验收**：
+- 空流开始、错误事件、用户消息、工具结果不算恢复；非空 assistant delta / snapshot 才算。
+- Desktop 第 2–10 组和 CLI 内部重试均适用；主进程快照带恢复事实，切回会话不会复活横幅。
+- 再次内部重试或等待下一组时重新显示状态条；组数和退避预算不变。
+- 重试期间当前轮模型错误卡继续隐藏；最终 failed/exhausted 显示错误详情，上一轮错误和工具错误不误删，原始日志不改。
+
+**状态**：修复已测试，待审查 / 发版验收。
+
+**回归触发**：改 `src/shared/model-output.ts`、`retry-groups.ts`、`model-retry.ts`；pi 流式事件形态变化。测试：`tests/model-output.test.ts`、`tests/retry-groups{,-backend,-renderer}.test.ts`、`tests/retry-groups-ui.browser.cjs`。
+
+---
+
 ## 计划域（plan）
 
 ### R-plan-01　任务清单只显示最近一轮
@@ -239,6 +255,20 @@
 **状态**：实现与测试通过，待审查 / 发版验收。
 
 **回归触发**：改 `automation-service.ts`（resolveSession/execute/onPiEvent）、`automation-bridge.ts`、`extensions/desktop-schedule/index.mjs`。测试：`tests/pi-automation.test.ts`（2d 同会话串行）、`tests/desktop-schedule.test.ts`（幂等创建/文案）。
+
+### R-render-03　对话中的文件引用可在右侧查看
+
+**需求**：消息中的内联代码文件路径和 Markdown 本地文件链接可点击，在右侧工作台查看当前文件，而不触发主窗口导航。
+
+**验收**：
+- 相对路径按当前会话项目目录解析；支持绝对路径、`文件:行号[:列号]` 和 `#L行号`，定位到对应行。
+- 复用文件预览 IPC 与工作台，消息引用优先展示完整文件内容，不强制跳到 Git diff；原有工具卡的历史修改预览保持不变。
+- 只在用户点击时读取；代码块、URL、命令和普通标识符不误识别，不嵌套交互元素；按钮可键盘操作。
+- 缺失文件明确提示；晚到的旧请求不得覆盖新选择、跳到别的会话或重新打开用户已关闭的面板。
+
+**状态**：实现与浏览器验证通过，待审查 / 发版验收。
+
+**回归触发**：改 `ChatMarkdown`、`file-references.ts`、`PiReplicaApp.tsx` 文件预览入口。测试：`tests/chat-file-references.test.ts`、`tests/chat-file-preview.browser.cjs`、既有 `pi-file-preview/pi-tool-file-preview` 回归。
 
 ---
 

@@ -64,6 +64,11 @@ async (page) => {
       groups: groups.length,
       titles: groups.map(g => (g.querySelector('.pi-chdialog__grouptitle')?.textContent || '').trim()),
       cards: d.querySelectorAll('.pi-settingrow--card').length,
+      // 通知场景三项合并为一张紧凑卡（不再是三张松散 settingrow）
+      notifRows: d.querySelectorAll('.pi-chdialog__notifrow').length,
+      // 四个原生 checkbox（双向 + 三通知）全部换成 role=switch 滑块
+      switches: d.querySelectorAll('[role="switch"]').length,
+      nativeCheckboxes: d.querySelectorAll('input[type="checkbox"]').length,
       warn: warn ? (warn.textContent || '').trim().slice(0, 60) : null,
       webhook: Boolean(webhook),
       webhookEmpty: webhook ? webhook.value === '' : null,
@@ -80,7 +85,11 @@ async (page) => {
   assert(probe.webhookEmpty === true, 'webhook 为空（复现用户状态）');
   assert(probe.appKey, '双向 AppKey 在');
   assert(Boolean(probe.warn), 'webhook 空 + 通知开关开着 → 醒目警告必须显示');
-  assert(probe.cards >= 6, `卡片式布局（实际 ${probe.cards} 张卡）`);
+  // 美化后：5 张输入/双向 settingrow + 通知三场合一张卡；原生蓝方块 checkbox 全部换成滑块
+  assert(probe.cards === 5, `卡片布局（webhook/secret/appKey/appSecret/双向 = 5，实际 ${probe.cards}）`);
+  assert(probe.notifRows === 3, `通知场景三项合一张卡（实际 ${probe.notifRows} 行）`);
+  assert(probe.switches === 4, `4 个滑块开关（双向+三通知，实际 ${probe.switches}）`);
+  assert(probe.nativeCheckboxes === 0, `无原生 checkbox（实际 ${probe.nativeCheckboxes}）`);
   const errorLine = errors.length ? 'ERRORS ' + errors.slice(0, 3).join(' | ') : 'ERRORS none';
   console.log('PROBE ' + JSON.stringify(probe));
   console.log(errorLine);

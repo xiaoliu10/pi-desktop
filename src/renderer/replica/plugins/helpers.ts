@@ -11,7 +11,7 @@ export function filterInstalled(rows: PluginRowData[], query: string): PluginRow
   const q = query.trim().toLowerCase();
   if (!q) return rows;
   return rows.filter(
-    (p) => p.name.toLowerCase().includes(q) || p.packageId.toLowerCase().includes(q),
+    (p) => p.name.toLowerCase().includes(q) || p.packageId.toLowerCase().includes(q) || p.id.toLowerCase().includes(q),
   );
 }
 
@@ -26,7 +26,9 @@ export function filterMarketplace(cards: MarketplaceCardData[], query: string, t
   return cards.filter((c) => {
     if (tag !== 'all' && !c.tags.includes(tag)) return false;
     if (!q) return true;
-    return c.name.toLowerCase().includes(q) || c.description.toLowerCase().includes(q) || c.publisher.toLowerCase().includes(q);
+    // c.id 是原始包名（显示名被剥了 scope/pi- 前缀美化）：搜「pi-lens」必须命中
+    // 显示名为「lens」的本体，而不是只剩 description 里提到它的 fork 们。
+    return c.name.toLowerCase().includes(q) || c.id.toLowerCase().includes(q) || c.description.toLowerCase().includes(q) || c.publisher.toLowerCase().includes(q);
   });
 }
 

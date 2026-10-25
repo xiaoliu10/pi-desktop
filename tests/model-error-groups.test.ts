@@ -94,7 +94,7 @@ describe('repeat model error presentation', () => {
       const render = (retry: Parameters<typeof RetryStatus>[0]['retry'], zh = true) => renderToStaticMarkup(createElement(RetryStatus, { retry, zh }));
       expect(render({ attempt: 2, max: 3, retryAt: 5000, phase: 'waiting' })).toContain('4 秒后重试');
       expect(render({ attempt: 2, max: 3, retryAt: 0 })).toContain('等待模型响应');
-      expect(render({ attempt: 2, max: 3, phase: 'streaming' })).toContain('已恢复输出');
+      expect(render({ attempt: 2, max: 3, phase: 'streaming' })).toBe('');
       expect(render({ attempt: 2, max: 0 }, false)).toContain('Retrying request (attempt 2)');
       expect(render({ attempt: 2, max: 3, error: 'Authorization: Bearer SUPER_SECRET' })).not.toContain('SUPER_SECRET');
     } finally { vi.restoreAllMocks(); }

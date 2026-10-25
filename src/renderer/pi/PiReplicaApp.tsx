@@ -519,19 +519,17 @@ export default function PiReplicaApp() {
   const loadEarlier = useCallback(() => { void s.loadEarlierHistory(); }, [s.loadEarlierHistory]);
   const closeSessionMap = useCallback(() => { s.setSessionMapOpen(false); }, [s.setSessionMapOpen]);
   const draftChange = useCallback((text: string, owner?: string | null) => { writeComposerDraftText(text, owner); }, []);
-  const openToolFile: NonNullable<import('../replica/contracts').ChatViewProps['onOpenToolFile']> = useCallback(part => {
-    const preview = toolFilePreview(part);
-    if (!preview) return;
+  const openFilePreview = useCallback((preview: NonNullable<ReturnType<typeof toolFilePreview>>, preferContent = false) => {
     const request = ++previewRequest.current;
     setFilePreview(preview); setFilePreviewVersion(v=>v+1);
     if (preview.current && cwd) {
-      const key = s.selectedKey;
+      const key = usePiStore.getState().selectedKey;
       void window.localPi!.filePreview(cwd, preview.path).then(result=>{
         if(request !== previewRequest.current || usePiStore.getState().selectedKey !== key || !usePiStore.getState().workbenchOpen) return;
         const diff = parseUnifiedDiff(result.diff)[0];
         setFilePreview({...result, line:preview.line, diff:diff ? {...diff,path:result.path} : undefined, current:true});
         setFilePreviewVersion(v=>v+1);
-        usePiStore.setState({workbenchOpen:true,workbenchTab:diff ? 'review' : 'files'});
+        usePiStore.setState({workbenchOpen:true,workbenchTab:!preferContent && diff ? 'review' : 'files'});
       }).catch(error=>{
         if(request !== previewRequest.current || usePiStore.getState().selectedKey !== key || !usePiStore.getState().workbenchOpen) return;
         setFilePreview({path:preview.path,note:`无法预览文件：${String((error as Error).message || error)}`});
@@ -539,6 +537,13 @@ export default function PiReplicaApp() {
     }
     usePiStore.setState({workbenchOpen:true,workbenchTab:preview.diff ? 'review' : 'files'});
   }, [cwd]);
+  const openToolFile: NonNullable<import('../replica/contracts').ChatViewProps['onOpenToolFile']> = useCallback(part => {
+    const preview = toolFilePreview(part);
+    if (preview) openFilePreview(preview);
+  }, [openFilePreview]);
+  const openMessageFile = useCallback((path: string, line?: number) => {
+    openFilePreview({ path, line, current: true, note: '正在读取文件…' }, true);
+  }, [openFilePreview]);
   // 编辑已发送消息。空闲：fork 截断回该条目后重发（等价 ZCode 编辑语义）；
   // 运行中：fork 会截断在跑 agent 的上下文（后端拒绝），改为把修改后的文本
   // 走既有 队列/steer 链路作为更正发送，原消息保留。稳定回调避免击穿 TurnArticle 的 memo。
@@ -1075,6 +1080,7 @@ export default function PiReplicaApp() {
                     demo={false}
                     labels={t.chat}
                     onOpenToolFile={openToolFile}
+                    onOpenFile={cwd ? openMessageFile : undefined}
                     onJumpToMessage={noop}
                     pendingJump={s.pendingJump}
                     onJumpConsumed={s.clearPendingJump}

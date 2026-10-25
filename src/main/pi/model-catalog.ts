@@ -353,3 +353,74 @@ export function removeModelProvider(agentDir: string, id: string): PiModelCatalo
   }
   return readModelCatalog(agentDir);
 }
+
+/** 探测提供商模型列表的输入：编辑器里未保存的 URL/Key 也能先试，已存在提供商可只传 id。 */
+export interface FetchModelsInput {
+  id?: string;
+  baseUrl?: string;
+  apiKey?: string;
+}
+export interface FetchedModel { id: string; name?: string; contextWindow?: number }
+export interface FetchModelsResult { models: FetchedModel[]; endpoint: string }
+
+/** 归一化到 /models 端点：兼容用户填 .../v1、.../v1/、.../v1/chat/completions。 */
+function modelsEndpoint(baseUrl: string): string {
+  let u = baseUrl.trim().replace(/\/+$/, '');
+  if (/\/chat\/completions$/.test(u)) u = u.replace(/\/chat\/completions$/, '');
+  if (/\/messages$/.test(u)) u = u.replace(/\/messages$/, '');
+  return `${u}/models`;
+}
+
+/**
+ * 调用提供商的 GET /models 拉取模型清单（OpenAI 兼容端点；Anthropic 等也提供同形状）。
+ * 在主进程发请求：渲染进程直连会被 CORS 拦。Key 解析顺序：入参（编辑器未保存值）→
+ * models.json 里该 id 已存的 apiKey。密钥只用于 Authorization 头，绝不写日志/返回。
+ */
+export async function fetchProviderModels(agentDir: string, input: FetchModelsInput): Promise<FetchModelsResult> {
+  const baseUrl = (input.baseUrl ?? '').trim();
+  if (!/^https?:\/\//.test(baseUrl)) throw new Error('请先填写以 http(s):// 开头的 Base URL。');
+  let apiKey = (input.apiKey ?? '').trim();
+  if (!apiKey && input.id) {
+    const doc = readJson(path.join(agentDir, 'models.json'));
+    const providers = (doc?.providers ?? {}) as Record<string, Record<string, unknown>>;
+    const raw = providers[input.id];
+    const stored = raw && typeof raw.apiKey === 'string' ? raw.apiKey : '';
+    apiKey = stored;
+  }
+  const endpoint = modelsEndpoint(baseUrl);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 15_000);
+  try {
+    const headers: Record<string, string> = { 'Accept': 'application/json' };
+    if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
+    const res = await fetch(endpoint, { headers, signal: controller.signal });
+    if (!res.ok) {
+      const body = (await res.text().catch(() => '')).slice(0, 300);
+      throw new Error(`接口返回 ${res.status} ${res.statusText}${body ? `：${body}` : ''}`);
+    }
+    const data = await res.json() as { data?: unknown[]; models?: unknown[] };
+    const list = Array.isArray(data.data) ? data.data : Array.isArray(data.models) ? data.models : [];
+    const models: FetchedModel[] = [];
+    const seen = new Set<string>();
+    for (const item of list) {
+      if (!item || typeof item !== 'object') continue;
+      const m = item as Record<string, unknown>;
+      const id = typeof m.id === 'string' ? m.id : typeof m.model === 'string' ? m.model : '';
+      if (!id || seen.has(id)) continue;
+      // 过滤明显非对话模型（OpenRouter 等返回的 embedding/图像/音频/rerank/TTS/STT）。
+      // 保守只按常见 id 子串，宁可多显示也不静默丢掉正常模型。
+      if (/(^|[-_.:])(embed|embedding|whisper|tts|speech|rerank|image|dall-e|stable-diffusion|moderation|transcri)/i.test(id)) continue;
+      seen.add(id);
+      const contextWindow = typeof m.context_length === 'number' ? m.context_length
+        : typeof m.contextWindow === 'number' ? m.contextWindow : undefined;
+      const name = typeof m.name === 'string' ? m.name : undefined;
+      models.push({ id, name, contextWindow });
+    }
+    return { models, endpoint };
+  } catch (e) {
+    if ((e as Error).name === 'AbortError') throw new Error('查询超时（15 秒），请检查 Base URL 或网络。');
+    throw e;
+  } finally {
+    clearTimeout(timer);
+  }
+}

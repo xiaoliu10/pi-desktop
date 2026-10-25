@@ -51,6 +51,19 @@ async function setup(start = true) {
   const continuationCalls = () => run.client.calls.filter((c: any) => c.type === 'prompt' && c.data.message.startsWith('/desktop-retry-'));
   return { root, backend, view, run, events, event, exhausted, continuationCalls };
 }
+it('broadcasts output recovery for group 2 before settlement, preserving live work and the budget', async () => {
+  const { backend, run, events, event, exhausted } = await setup();
+  exhausted(); await vi.advanceTimersByTimeAsync(10000); event({ type: 'agent_start' });
+  event({ type: 'message_update', assistantMessageEvent: { type: 'thinking_delta', delta: 'working again' } });
+  expect(backend.runs()[0]).toMatchObject({ status: 'running', retryGroup: { phase: 'running', group: 2, outputRecovered: true } });
+  expect(events.filter(e => e.type === 'run').at(-1)).toMatchObject({ run: { retryGroup: { outputRecovered: true } } });
+  const count = events.filter(e => e.type === 'run').length;
+  event({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: 'more output' } });
+  expect(events.filter(e => e.type === 'run')).toHaveLength(count);
+  expect(run.retry.tracking).toBe(true);
+  event({ type: 'auto_retry_start', attempt: 1, maxAttempts: 3 });
+  expect(backend.runs()[0].retryGroup?.outputRecovered).not.toBe(true);
+});
 it('holds the run across the inter-group boundary and dispatches one validated continuation', async () => {
   const { backend, view, run, events, event, exhausted, continuationCalls } = await setup();
   const startedAt = run.view.timing.startedAt;
