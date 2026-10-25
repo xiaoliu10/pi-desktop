@@ -399,6 +399,7 @@ export interface ChatViewProps {
   /** A new local send forces bottom once; subsequent manual scroll pauses following. */
   scrollRequest?: string;
   onOpenToolFile?: (part: ToolPart) => void;
+  onOpenFile?: (path: string, line?: number) => void;
   /** Re-read persisted conversation without resending a prompt or restarting the run. */
   onRefreshProcess?: () => Promise<boolean>;
   runTiming?: { startedAt: number; endedAt?: number };

@@ -1,5 +1,12 @@
+import fs from 'node:fs';
 import type { AccessMode } from '../../shared/access-mode';
 import type { AutomationTask } from '../../shared/automation';
+
+/** 比较两个项目目录是否同一位置（自动化落库的 cwd 已 realpath，会话上下文的未必）。 */
+function sameDir(a: string, b: string): boolean {
+  const real = (p: string) => { try { return fs.realpathSync(p); } catch { return p; } };
+  return real(a) === real(b);
+}
 
 /** Narrow surface of AutomationService the bridge needs (type-only: avoids a cycle). */
 export interface AutomationBridgeService {
@@ -38,7 +45,15 @@ export function runAutomationBridge(service: AutomationBridgeService | undefined
       const requested = typeof payload.permission === 'string' && ALIAS[payload.permission] ? ALIAS[payload.permission] : current;
       const permission = ORDER.indexOf(requested) > ORDER.indexOf(current) ? current : requested;
       const name = typeof payload.name === 'string' && payload.name.trim() ? payload.name.trim().slice(0, 100) : '会话定时任务';
-      const task = service.saveTask({ cwd: context.cwd, name, prompt: String(payload.prompt ?? ''), schedule: payload.schedule, permission, enabled: true } as AutomationTask);
+      const prompt = String(payload.prompt ?? '');
+      // 幂等创建：模型重试或并行会话重复调用 desktop_schedule 会落两个完全相同的任务，
+      // 到点各执行一份（2026-10-23 实测：同毫秒双任务 → 一个接原会话 + 一个开独立会话）。
+      // 已存在完全相同的 enabled 任务时直接返回它，不重复落库。
+      const duplicate = service.snapshot().tasks.find(t => t.enabled && t.name === name && t.prompt === prompt
+        && JSON.stringify(t.schedule) === JSON.stringify(payload.schedule ?? null)
+        && sameDir(t.cwd, context.cwd));
+      if (duplicate) return { ok: true, action, duplicate: true, task: { id: duplicate.id, name: duplicate.name, permission: duplicate.permission, schedule: duplicate.schedule, nextRunAt: duplicate.nextRunAt } };
+      const task = service.saveTask({ cwd: context.cwd, name, prompt, schedule: payload.schedule, permission, enabled: true } as AutomationTask);
       return { ok: true, action, task: { id: task.id, name: task.name, permission: task.permission, schedule: task.schedule, nextRunAt: task.nextRunAt } };
     }
     if (action === 'cancel') {

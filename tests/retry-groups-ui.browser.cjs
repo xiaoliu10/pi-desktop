@@ -35,6 +35,9 @@ async (page) => {
     };
     window.rpcRetry = event => window.emitRetry({ type: 'rpc', key: run.key, generation: 'g', event });
     window.getRetryRun = () => usePiStore.getState().runs[0];
+    window.recoverySnapshot = outputRecovered => {
+      window.emitRetry({ type: 'run', run: { ...run, retryGroup: { group: 2, maxGroups: 10, phase: 'running', outputRecovered } } });
+    };
     function Harness() {
       const s = usePiStore(); const r = s.runs[0];
       return React.createElement('main', { className: 'pireplica', style: { height: '100vh' } }, React.createElement(ChatView, {
@@ -57,6 +60,25 @@ async (page) => {
   await page.evaluate(() => window.rpcRetry({ type: 'auto_retry_end', success: false }));
   await page.waitForTimeout(60);
   assert(await page.locator('.pi-error-card').count() === 0, 'end/start gap hides model errors');
+  for (const type of ['text_delta', 'thinking_delta', 'toolcall_delta']) {
+    await page.evaluate(() => window.rpcRetry({ type: 'auto_retry_end', success: true }));
+    await set('running', 2);
+    assert(await page.locator('.pi-chat__retry').count() === 1, 'group2 waits before real output');
+    await page.evaluate(() => window.rpcRetry({ type: 'message_update', assistantMessageEvent: { type: 'start' } }));
+    assert(await page.locator('.pi-chat__retry').count() === 1, 'empty start does not prove recovery');
+    await page.evaluate(type => { window.recoverySnapshot(true); window.rpcRetry({ type: 'message_update', assistantMessageEvent: { type, delta: 'recovered output' } }); }, type);
+    await page.waitForTimeout(180);
+    assert(await page.locator('.pi-chat__retry').count() === 0, 'real output hides outer banner: ' + type);
+    assert(await page.locator('.pi-error-card').count() === 0, 'previous model errors remain hidden during recovery');
+    const r = await page.evaluate(() => window.getRetryRun());
+    assert(r.status === 'running' && r.retryGroup.group === 2 && r.retryGroup.outputRecovered, 'recovery is not completion or a new budget');
+    await page.evaluate(() => { window.recoverySnapshot(false); window.rpcRetry({ type: 'auto_retry_start', attempt: 2, maxAttempts: 3, delayMs: 0, errorMessage: 'fetch failed again' }); });
+    await page.waitForTimeout(60);
+    assert(await page.locator('.pi-chat__retry').count() === 1, 'new failure restores retry status');
+    await page.evaluate(type => window.rpcRetry({ type: 'message_update', assistantMessageEvent: { type, delta: 'second recovery' } }), type);
+    await page.waitForTimeout(180);
+    assert(await page.locator('.pi-chat__retry').count() === 0, 'inner recovery hides retry status too');
+  }
   await set('waiting', 2, false, Date.now() + 3000);
   assert((await page.locator('.pi-chat__retry').innerText()).includes('秒后开始下一组'), 'host countdown');
   const before = await page.evaluate(() => window.historyCalls);

@@ -56,6 +56,23 @@ describe('Desktop group presentation (host-owned)', () => {
       expect(chat(group(phase, 2))).not.toContain('pi-chat__retry');
     }
   });
+  it('hides retry chrome on real output without calling the host task completed', () => {
+    const g = Object.freeze({ ...group('running', 2), outputRecovered: true });
+    expect(status(g)).toBe('');
+    expect(retryPresentation(g).recovering).toBe(true);
+    expect(g).toMatchObject({ phase: 'running', group: 2 });
+    // A later internal retry takes precedence over the host's previous recovery snapshot.
+    expect(status(g, inner)).toContain('等待模型响应');
+    const streaming = nextModelRetryState(inner, { type: 'message_update', assistantMessageEvent: { type: 'thinking_delta', delta: 'resumed' } }, 0)!;
+    expect(renderToStaticMarkup(createElement(RetryStatus, { group: group('running', 2), retry: streaming, zh: true }))).toBe('');
+    expect(renderToStaticMarkup(createElement(RetryStatus, { retry: streaming, zh: true }))).toBe('');
+    expect(chat(g)).not.toContain('pi-error-card');
+    for (const phase of ['failed', 'exhausted'] as const) {
+      const terminal = { ...g, phase, error: 'final failure' };
+      expect(status(terminal)).toContain('final failure');
+      expect(chat(terminal)).toContain('pi-error-card');
+    }
+  });
   it('keeps stop pending disabled without changing the host budget', () => {
     const g = Object.freeze(group('waiting'));
     expect(status(g, undefined, true)).toContain('disabled=""');

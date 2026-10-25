@@ -119,6 +119,7 @@ const localPi: LocalPiApi = {
   modelProviderSave: draft => invoke('modelProviderSave', draft),
   modelProviderAuthSave: input => invoke('modelProviderAuthSave', input),
   modelProviderRemove: id => invoke('modelProviderRemove', id),
+  modelProviderFetchModels: (input: { id?: string; baseUrl?: string; apiKey?: string }) => invoke('modelProviderFetchModels', input),
   usageStats: () => invoke('usageStats'),
   remoteStart: () => invoke('remoteStart'), remoteStop: () => invoke('remoteStop'), remoteStatus: () => invoke('remoteStatus'),
   imConfig: () => invoke('imConfig'), imSave: patch => invoke('imSave', patch), imTest: () => invoke('imTest'),

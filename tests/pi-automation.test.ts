@@ -89,15 +89,31 @@ it('reuse mode (default): prefers a live session, then the most recent project s
  await vi.waitFor(()=>expect(h2c.service.snapshot().runs[0].status).toBe('succeeded'));
  expect(h2c.backend.connect).not.toHaveBeenCalled();
 
- // 2d) 同 cwd 已有自动化在跑：不再复用（waiter 单槽会互相覆盖）→ 新建隔离
+ // 2d) 同 cwd 已有自动化在跑：投进同一会话串行排队（默认复用语义；旧实现直接新建
+ // 隔离会话，2026-10-23 实测产生「一个接原会话 + 一个独立会话」两份执行）。waiter/
+ // stepGuard 每会话单槽由会话锁保护：前一个 run 的步骤全部收尾后才轮到本 run 投递。
  const h2d=setup();
  (h2d.backend as unknown as { runs: unknown }).runs = vi.fn(() => [{ key: 'live-x', cwd: h2d.root, status: 'idle', timing: { startedAt: 1 } }]);
  const t2d=h2d.task();h2d.advance(61000);h2d.service.tick();
- await vi.waitFor(()=>expect(h2d.backend.prompt).toHaveBeenCalledTimes(1));
+ await vi.waitFor(()=>expect(h2d.backend.prompt).toHaveBeenCalledTimes(1)); // 任务步骤1 已投递 live-x
+ expect(h2d.backend.connect).not.toHaveBeenCalled();
  const w2d=h2d.workflow();h2d.service.runWorkflow({id:w2d.id,cwd:h2d.root,args:{target:'Y4'},permission:'ask'});
  await vi.waitFor(()=>expect(h2d.service.snapshot().runs.find(r=>r.workflowId===w2d.id)?.sessionKey).toBeDefined());
- const wfKey=h2d.service.snapshot().runs.find(r=>r.workflowId===w2d.id)!.sessionKey!;
- expect(wfKey).not.toBe('live-x'); // 没有复用被自动化占用的 key
+ const wf=h2d.service.snapshot().runs.find(r=>r.workflowId===w2d.id)!;
+ expect(wf.sessionKey).toBe('live-x'); // 复用同一会话，不新建隔离
+ expect(wf.reusedSession).toBe(true);
+ await new Promise(r=>setTimeout(r,10));
+ expect(h2d.backend.prompt).toHaveBeenCalledTimes(1); // 会话锁未释放，workflow 步骤不得抢投
+ expect(h2d.backend.connect).not.toHaveBeenCalled();
+ h2d.settle('live-x'); // 任务步骤1 结算 → 任务收尾并释放会话锁
+ await vi.waitFor(()=>expect(h2d.backend.prompt).toHaveBeenCalledTimes(2)); // workflow 步骤1 此时才投递
+ expect(h2d.backend.prompt.mock.calls[1][0]).toBe('live-x');
+ const arm2d=(n:number)=>h2d.service.onPiEvent({type:'rpc',key:'live-x',generation:'g',event:{type:'message_start',message:{role:'user',content:h2d.backend.prompt.mock.calls[n][1]}}});
+ arm2d(1);h2d.settle('live-x');
+ await vi.waitFor(()=>expect(h2d.backend.prompt).toHaveBeenCalledTimes(3));
+ arm2d(2);h2d.settle('live-x');
+ await vi.waitFor(()=>expect(h2d.service.snapshot().runs.find(r=>r.workflowId===w2d.id)!.status).toBe('succeeded'));
+ expect(h2d.backend.connect).not.toHaveBeenCalled(); // 全程未新建会话
 
  // 2e) busy 会话的文件恰是「最近会话文件」（活跃对话 mtime 最新）：仍投递进该 busy 会话
  // 排队，不走 sourceKey、不新建

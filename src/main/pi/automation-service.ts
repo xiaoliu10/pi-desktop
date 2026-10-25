@@ -39,6 +39,12 @@ export class AutomationService {
  /** 步骤结算武装：复用会话排队投递时，只有本步骤 prompt 的 user message_start 出现后才认
   *  agent_settled——用户自己回合的 settle 不得误结算（#79 的 settle 边界错位由此闭环）。 */
  private stepGuard=new Map<string,{text:string;armed:boolean}>();
+ /** 会话锁：reuse 模式多个 run 投进同一会话时串行投递（waiter/stepGuard 每会话单槽，
+  *  并发投递会互相覆盖结算目标；旧实现为互斥直接新建隔离会话，实测一个任务两份执行、
+  *  一个接原会话一个开独立会话——2026-10-23 用户反馈）。lockedRun 让事件归因保持
+  *  「当前持锁投递的 run」，等锁中的 run 不抢事件。 */
+ private sessionLocks=new Map<string,Promise<void>>();
+ private lockedRun=new Map<string,AutomationRun>();
  /** launch 同步临界区防重入锁（persist→changed 可能同步回调）；运行期去重由 live-run guard 承担。 */
  private launching=new Set<string>();
  constructor(private file:string,private backend:()=>PiBackend,private index:()=>IndexPort,private changed:()=>void=()=>{},private now=()=>Date.now()) {
@@ -92,14 +98,15 @@ export class AutomationService {
   *  单次触发只投递到一个会话：同 cwd 有可投递的活跃会话时——running 就按 pi 既定 followUp
   *  语义排队进该会话（不再静默另开「自动化：…」新会话），干净的 idle 则立即执行。
   *  排队投递的步骤归因靠 stepGuard：见到本步骤 prompt 的 user message_start 才认 agent_settled。
-  *  会话处于 starting/stopping/error、或 idle 但有待恢复队列/待审批等不可投递状态时回落新建隔离；
-  *  同 cwd 已有自动化在跑同样新建（waiter 单槽互斥）。 */
- private async resolveSession(cwd:string,sessionMode:'reuse'|'fresh'|undefined,config:{permission:WorkflowLaunch['permission'];model?:string},self?:AutomationRun):Promise<{key:string;reused:boolean}>{
+  *  同 cwd 并发的多个自动化 run 也投进同一会话，由 execute 的会话锁串行投递（waiter/stepGuard
+  *  每会话单槽）——不再为互斥新建隔离会话。会话处于 starting/stopping/error、或 idle 但有
+  *  待恢复队列/待审批等不可投递状态时回落新建隔离。 */
+ private async resolveSession(cwd:string,sessionMode:'reuse'|'fresh'|undefined,config:{permission:WorkflowLaunch['permission'];model?:string}):Promise<{key:string;reused:boolean}>{
   const backend=this.backend();
   // macOS /var→/private/var：会话文件 header 的 cwd 未必 realpath 过，归一化后比较
   const target=canonical(cwd);
   const sameCwd=(v:string)=>{try{return canonical(v)===target;}catch{return v===cwd;}};
-  if(sessionMode==='fresh'||this.data.runs.some(r=>live(r)&&r!==self&&sameCwd(r.cwd))){
+  if(sessionMode==='fresh'){
    const session=await backend.connect({cwd,trustProject:false,permission:config.permission,model:config.model});
    return {key:session.key,reused:false};
   }
@@ -125,9 +132,15 @@ export class AutomationService {
   return {key:session.key,reused:false};
  }
  private async execute(run:AutomationRun,prompts:string[],config:{permission:WorkflowLaunch['permission'];model?:string;thinking?:WorkflowLaunch['thinking'];sessionMode?:'reuse'|'fresh'}){
-  let key:string|undefined;let reused=false;
+  let key:string|undefined;let reused=false;let releaseLock:(()=>void)|undefined;let chain:Promise<void>|undefined;
   try{
-   const backend=this.backend();const resolved=await this.resolveSession(run.cwd,config.sessionMode,config,run);key=resolved.key;reused=resolved.reused;run.sessionKey=key;run.reusedSession=reused;
+   const backend=this.backend();const resolved=await this.resolveSession(run.cwd,config.sessionMode,config);key=resolved.key;reused=resolved.reused;run.sessionKey=key;run.reusedSession=reused;
+   // 同会话串行：拿到复用会话后先排队等前一个自动化 run 收尾，再开始投递本 run 的步骤。
+   // 等锁期间被停止（stop 只置状态不注册 waiter）→ 拿到锁后 live 检查不过即收尾。
+   const prev=this.sessionLocks.get(key)??Promise.resolve();
+   let release!:()=>void;const gate=new Promise<void>(done=>{release=done;});
+   chain=prev.then(()=>gate);releaseLock=release;this.sessionLocks.set(key,chain);
+   await prev;this.lockedRun.set(key,run);
    if(!live(run)||this.closed){if(!reused)backend.close(key);return;}
    // 复用会话沿用该会话当前的模型/思考等级（不能永久改写用户的会话级设置）；fresh 才应用任务配置
    if(config.thinking&&!reused)await backend.thinking(key,config.thinking);
@@ -152,11 +165,14 @@ export class AutomationService {
    }
    if(live(run))run.status='succeeded';
   }catch(error){if(live(run)){run.status='failed';run.error=String((error as Error).message||error);if(run.steps[run.stepIndex])run.steps[run.stepIndex].status='failed';}}
-  finally{run.endedAt=this.now();for(const step of run.steps)if(step.status==='running')step.status=run.status==='failed'?'failed':'stopped';this.persist();if(key){this.waiters.delete(key);if(!reused)this.backend().close(key);}}
+  finally{run.endedAt=this.now();for(const step of run.steps)if(step.status==='running')step.status=run.status==='failed'?'failed':'stopped';this.persist();
+   if(key){releaseLock?.();this.waiters.delete(key);if(this.lockedRun.get(key)===run)this.lockedRun.delete(key);if(chain&&this.sessionLocks.get(key)===chain)this.sessionLocks.delete(key);if(!reused)this.backend().close(key);}}
  }
  onPiEvent(event:PiEvent){
   const key=event.type==='run'?event.run.key:'key' in event?event.key:undefined;if(!key)return;
-  const run=this.data.runs.find(r=>r.sessionKey===key&&(live(r)||r.status==='stopped'));if(!run)return;
+  // 事件归因优先取当前持锁投递的 run：等锁中的 run 已写入 sessionKey，若按 runs 顺序
+  // 匹配会抢走持锁 run 的事件（状态互串、结算丢失）。
+  const run=this.lockedRun.get(key)??this.data.runs.find(r=>r.sessionKey===key&&(live(r)||r.status==='stopped'));if(!run)return;
   if(event.type==='run'&&event.run.status==='stopping'&&live(run)){run.status='stopped';run.endedAt=this.now();this.persist();}
   if(run.status==='stopped'){if(event.type==='rpc'&&event.event.type==='agent_settled')setTimeout(()=>this.waiters.get(key)?.reject(Error('用户停止')),0);return;}
   if(event.type==='ui'&&['confirm','input','select','editor'].includes(event.request.method)){run.status='waiting';this.persist();}
