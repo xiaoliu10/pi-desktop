@@ -22,7 +22,7 @@ beforeEach(async () => {
   api.connect.mockReset().mockResolvedValue(run);
   api.history.mockReset().mockImplementation(async (key: string) => history(key));
   resetComposerDrafts();
-  usePiStore.setState({ selectedKey: null, view: 'home', env: { supported: true } as any, sessions: [session(sourceKey, false), session(copyKey, true)], runs: [], history: undefined, leaf: undefined, connecting: false, changingAccessMode: false, archivedKeys: [], desktopPreferences: undefined, draftText: '', contextItems: [], draftModelId: undefined, draftThinking: undefined, sends: [], live: {}, toolProgress: {}, sentAt: undefined, pendingPrompt: undefined, pendingPromptAt: undefined, error: undefined });
+  usePiStore.setState({ selectedKey: null, view: 'home', env: { supported: true } as any, sessions: [session(sourceKey, false), session(copyKey, true)], runs: [], history: undefined, leaf: undefined, connecting: false, changingAccessMode: false, archivedKeys: [], desktopPreferences: undefined, draftText: '', contextItems: [], draftModels: undefined, draftThinking: undefined, sends: [], live: {}, toolProgress: {}, sentAt: undefined, pendingPrompt: undefined, pendingPromptAt: undefined, error: undefined });
 });
 afterAll(async () => { await vi.advanceTimersByTimeAsync(1000); vi.useRealTimers(); vi.unstubAllGlobals(); });
 
