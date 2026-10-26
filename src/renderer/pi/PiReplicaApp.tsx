@@ -970,9 +970,9 @@ export default function PiReplicaApp() {
                     ? (s.lang === 'zh' ? `正在下载更新 ${updateStatus.progress ?? 0}%` : `Downloading update ${updateStatus.progress ?? 0}%`)
                     : updateStatus.state === 'ready'
                       ? (s.lang === 'zh' ? '重启以完成更新' : 'Restart to finish updating')
-                      : process.platform === 'darwin'
+                      : (navigator.platform.includes('Mac')
                         ? (s.lang === 'zh' ? `新版本 ${updateStatus.latest} 可用，点击下载并重启` : `Version ${updateStatus.latest} available — click to download and restart`)
-                        : (s.lang === 'zh' ? `新版本 ${updateStatus.latest} 可用，点击查看` : `Version ${updateStatus.latest} available — click to view`),
+                        : (s.lang === 'zh' ? `新版本 ${updateStatus.latest} 可用，点击查看` : `Version ${updateStatus.latest} available — click to view`)),
                 }
               : undefined}
             onOpenUpdate={() => { void window.localPi!.updateApply(); }}
