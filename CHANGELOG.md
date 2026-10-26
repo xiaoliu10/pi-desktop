@@ -3,6 +3,11 @@
 所有重要变更记录在本文件。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 README 只保留最近版本摘要；本文件为完整记录。
 
+## [Unreleased]
+
+### 修复
+- **聊天里的 file:// 交付文件链接点了没反应**：assistant 以 `[高清 PNG](file:///…)` 形式交付的本地文件（PNG/PDF/HTML 等）此前有两处断点——react-markdown 默认 URL 白名单把 file:// 的 href 剥成空串，点击处理又只认 http(s)，剩余 target=_blank 导航被主进程拦截，用户只能看到带下划线的死链。现在 file:// 链接会解码成本地路径，文档型文件用系统默认应用打开（预览/浏览器），其他类型在 Finder 中显示（可执行文件不会因此运行），http(s) 链接行为不变。
+
 ## [0.1.36] - 2026-10-26
 
 ### 新增

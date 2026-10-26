@@ -46,6 +46,7 @@ import { toolFilePreview } from '../../pi/tool-file-preview';
 import { executionTurns, formatElapsed, type ChatTurn } from './execution';
 
 import { remarkFileReferences } from './file-references';
+import { fileUrlToPath, markdownUrlTransform } from './file-url';
 
 const FilePreviewAvailable = createContext(false);
 const remarkGfmPlugins = [remarkGfm];
@@ -104,16 +105,25 @@ export const ChatMarkdown = memo(function ChatMarkdown({ text, zh }: { text: str
         target="_blank"
         rel="noreferrer noopener"
         onClick={(e) => {
-          if (!href || !/^https?:\/\//.test(href)) return; // 非 http(s) 链接不处理，避免任何导航
+          if (!href) { e.preventDefault(); return; }
+          if (/^https?:\/\//.test(href)) {
+            e.preventDefault();
+            window.open(href, '_blank');
+            return;
+          }
+          // file:// 交付文件链接：主进程用系统默认应用打开文档、其他类型在 Finder 显示。
+          // 其余协议也必须 preventDefault——旧实现直接 return，默认 target=_blank 导航
+          // 被主进程 setWindowOpenHandler deny，用户看到的是「有下划线却点了没反应」。
           e.preventDefault();
-          window.open(href, '_blank');
+          const localPath = fileUrlToPath(href);
+          if (localPath) void window.localPi?.openLocalFile(localPath).catch(error => console.warn('[ChatMarkdown] openLocalFile failed', error));
         }}
       >
         {children}
       </a>
     ),
   }), [zh]);
-  const content = useMemo(() => <ReactMarkdown remarkPlugins={filePreviewAvailable ? remarkFilePlugins : remarkGfmPlugins} components={components}>{text}</ReactMarkdown>, [text, components, filePreviewAvailable]);
+  const content = useMemo(() => <ReactMarkdown remarkPlugins={filePreviewAvailable ? remarkFilePlugins : remarkGfmPlugins} components={components} urlTransform={markdownUrlTransform}>{text}</ReactMarkdown>, [text, components, filePreviewAvailable]);
   return <div className="pi-md">{content}</div>;
 });
 

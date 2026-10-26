@@ -272,6 +272,22 @@
 
 ---
 
+### R-render-04　聊天 file:// 交付文件链接可打开（非死链）
+
+**需求**：assistant 消息中以 `[名称](file:///绝对路径)` 形式交付的本地产物（PNG/PDF/HTML 等）必须可点击打开；http(s) 链接继续走系统浏览器，任何链接点击都不得触发主窗口顶层导航。
+
+**验收**：
+- `ChatMarkdown` 通过 `markdownUrlTransform` 保留 file:// href（react-markdown 默认 `defaultUrlTransform` 的 safeProtocol 白名单不含 file，会把 href 剥成空串）。
+- 点击 file:// 链接经 `fileUrlToPath` 解码（中文、%20、Windows 盘符；拒绝远程 host/非 file 协议/NUL）后走 `openLocalFile` IPC：文档型扩展名（图片/PDF/HTML/Markdown/文本等白名单）用系统默认应用打开，目录在文件管理器打开，**可执行载荷与未知类型（.app/.command/.exe/无扩展名等）只在 Finder 显示**，不因一次点击变成执行入口；文件不存在明确报错。
+- 其他非 http(s) 协议一律 preventDefault，不出现「有下划线但点了没反应」的死链，也不允许 about:blank 导航。
+- 回归：`tests/chat-file-url.test.ts`（URL 解码/安全过滤）、`tests/open-local-file.test.ts`（打开 vs 显示的安全门）、`tests/chat-file-link-click.browser.cjs`（真实点击 → openLocalFile 收到解码路径、http 行为不变、无导航）；既有 `tests/chat-link-click.browser.cjs` 必须保持绿。
+
+**状态**：本分支实现，浏览器与单测验证通过，待审查 / 发版验收。
+
+**回归触发**：改 `ChatMarkdown`（components.a / urlTransform）、`file-url.ts`、`open-local-file.ts`、`openLocalFile` IPC 与 preload 暴露；react-markdown 升级（默认 URL 过滤策略变化）。
+
+---
+
 ## 会话协作域（collaboration）
 
 ### R-collab-01　跨会话交接：投递到目标项目的既有会话
