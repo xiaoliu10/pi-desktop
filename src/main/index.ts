@@ -9,6 +9,7 @@ import { gitStatusCached } from './pi/git-status';
 import fs from 'node:fs/promises';
 import fsSync from 'node:fs';
 import { monitorEventLoopDelay } from 'node:perf_hooks';
+import { HandoffService } from './pi/handoff-bridge';
 import { AutomationService } from './pi/automation-service';
 import { importAttachments, clipboardAttachments, readAttachment, downloadImage } from './pi/attachments';
 import { createProjectWorktree } from './pi/project-worktree';
@@ -720,6 +721,13 @@ void app.whenReady().then(async () => {
     if(mainWindow&&!mainWindow.isDestroyed())mainWindow.webContents.send('local-pi:automations-changed');
   });
   host.backend.automations = automations; // desktop_schedule 工具的调度通道
+  // desktop_handoff 跨会话交接：目标会话记忆的访问模式从桌面偏好取（重连时沿用）。
+  host.backend.handoff = new HandoffService({
+    index: host.index,
+    archivedKeys: () => archive.list(),
+    backend: host.backend,
+    rememberedMode: key => settings.preferences().sessionAccessModes?.[key],
+  });
   // 编辑重发 fork 后把用户对原条目的改名迁移到延续条目（复制不删：renderer 内存副本会整体回写）。
   host.backend.onContinuation = (fromKey, toKey) => {
     const prefs = settings.preferences();

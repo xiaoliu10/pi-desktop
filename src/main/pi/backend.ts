@@ -9,6 +9,7 @@ import { canonical, fileKey } from './session-index';
 import { OversizedSessionError } from './session-size';
 import type { IndexPort } from './index-port';
 import { runAutomationBridge, SCHEDULE_GUIDANCE } from './automation-bridge';
+import { runHandoffBridge, HandoffService } from './handoff-bridge';
 import { cacheHitRateFromTotals, summarizeContext } from './context-details';
 import { migrateOldSubagentExtension, persistSubagentEvent, runningSubagentCounts } from './official-subagent';
 import { detectThirdPartyAsk, bridgeableQuestions, planAnswer, type AskBridgeState, type AskBridgeQuestion } from './third-party-ask';
@@ -61,6 +62,7 @@ export class PiBackend {
   memoryOptions: (() => { enabled: boolean; dir: string }) | undefined;
   /** main 在 AutomationService 就绪后注入；desktop_schedule 工具经 automation-bridge 读写定时任务。 */
   automations: import('./automation-bridge').AutomationBridgeService | undefined;
+  handoff: HandoffService | undefined;
   /** main 提供：编辑重发 fork 后迁移用户 rename（旧 key → 新 key，复制不删）。 */
   onContinuation?: (fromKey: string, toKey: string) => void;
   /** 测试注入点：替换 PiRpcClient 构造（生产不设）。 */
@@ -352,6 +354,9 @@ export class PiBackend {
     // Desktop 定时任务工具：会话内可创建/管理 automations.json 调度任务（缺失不阻塞会话）。
     const schedulePath = path.join(path.dirname(this.policyPath), '..', 'desktop-schedule', 'index.mjs');
     const scheduleArgs = fs.existsSync(schedulePath) ? ['-e', schedulePath] : [];
+    // 跨会话交接工具（desktop_handoff，缺失不阻塞会话）。
+    const handoffPath = path.join(path.dirname(this.policyPath), '..', 'desktop-handoff', 'index.mjs');
+    const handoffArgs = fs.existsSync(handoffPath) ? ['-e', handoffPath] : [];
     // 记忆衔接扩展：memoryAssist 开启时随会话装载，agent_end 后自动整理记忆。
     const memory = this.memoryOptions?.() ?? { enabled: false, dir: '' };
     const memoryPath = path.join(path.dirname(this.policyPath), '..', 'desktop-memory', 'index.mjs');
@@ -385,6 +390,7 @@ export class PiBackend {
       '-e', path.join(path.dirname(this.policyPath), 'retry-continuation.mjs'),
       ...askArgs,
       ...scheduleArgs,
+      ...handoffArgs,
       ...memoryArgs,
       ...subagentArgs,
       ...nudgeArgs,
@@ -602,6 +608,15 @@ export class PiBackend {
         if (run.view.status === 'stopping') { run.client.send({ type: 'extension_ui_response', id: req.id, cancelled: true }); return; }
         const result = runAutomationBridge(this.automations, { cwd: run.input.cwd, permission: run.input.permission }, String(req.placeholder ?? ''));
         run.client.send({ type: 'extension_ui_response', id: req.id, value: JSON.stringify(result) });
+        return;
+      }
+      if (req.method === 'input' && req.title === 'desktop-handoff') {
+        // desktop_handoff：异步（目标会话可能需要重连），应答结果含目标会话与排队状态。
+        if (run.view.status === 'stopping') { run.client.send({ type: 'extension_ui_response', id: req.id, cancelled: true }); return; }
+        const payload = String(req.placeholder ?? '');
+        void runHandoffBridge(this.handoff, { cwd: run.input.cwd, sourceSessionKey: key, permission: run.input.permission }, payload)
+          .then(result => { if (this.active.get(key) === run) run.client.send({ type: 'extension_ui_response', id: req.id, value: JSON.stringify(result) }); })
+          .catch(() => { if (this.active.get(key) === run) run.client.send({ type: 'extension_ui_response', id: req.id, value: JSON.stringify({ ok: false, error: '交接服务异常' }) }); });
         return;
       }
       if (req.method === 'setStatus' && req.statusKey === 'desktop-policy' && req.statusText) run.policyReady = true;

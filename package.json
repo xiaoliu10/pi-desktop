@@ -134,6 +134,10 @@
       {
         "from": "resources/builtin-prompts",
         "to": "builtin-prompts"
+      },
+      {
+        "from": "extensions/desktop-handoff",
+        "to": "desktop-handoff"
       }
     ],
     "mac": {
