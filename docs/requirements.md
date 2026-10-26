@@ -272,6 +272,25 @@
 
 ---
 
+## 会话协作域（collaboration）
+
+### R-collab-01　跨会话交接：投递到目标项目的既有会话
+
+**需求**：会话 A 可通过 `desktop_handoff` 把自包含的排查/任务上下文投递给**另一个项目**的既有会话 B——项目级记忆/MCP/权限随 B 的项目隔离，不新建孤立会话、不把内容灌进 A。默认目标 = 目标项目下未归档、非副驾、Desktop 自建的最近活跃会话（已连接的活跃 run 优先）；也可显式指定 sessionKey。
+
+**验收**：
+- B 空闲：立即以一个带交接信头的 user 回合开始；B 运行中：按 followUp 排队，不打断当前回合；B 未连接：按其记忆的访问模式重连后投递。
+- 已归档、副驾、其他项目、超限会话不得被默认选中；目标与源会话相同必须拒绝（防自触发循环）。
+- 幂等键去重：同键重试/并发只投递一次，失败后允许同键重试。
+- 目标不存在/项目目录无效/消息超长时返回明确错误，不静默新建会话。
+- 可先用 action=list 查询项目候选及连接状态。
+
+**状态**：实现与测试通过（模型工具 v1，无 UI），待审查/发版验收。
+
+**回归触发**：改 `handoff-bridge.ts`、`extensions/desktop-handoff/index.mjs`、backend 的 `desktop-handoff` 拦截与扩展加载、打包 extraResources。测试：`tests/handoff-bridge.test.ts`。
+
+---
+
 ## 升级回归总表
 
 升级 pi / pi-subagents / CCR / Electron 前，按下表核对相关需求：
