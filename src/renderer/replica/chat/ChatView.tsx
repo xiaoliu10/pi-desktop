@@ -116,7 +116,18 @@ export const ChatMarkdown = memo(function ChatMarkdown({ text, zh }: { text: str
           // 被主进程 setWindowOpenHandler deny，用户看到的是「有下划线却点了没反应」。
           e.preventDefault();
           const localPath = fileUrlToPath(href);
-          if (localPath) void window.localPi?.openLocalFile(localPath).catch(error => console.warn('[ChatMarkdown] openLocalFile failed', error));
+          if (!localPath) return;
+          const anchor = e.currentTarget;
+          void window.localPi?.openLocalFile(localPath).catch(() => {
+            // 文件已移动/不可访问时必须有可见反馈，不能再变回「点了没反应」的死链。
+            const note = anchor.parentElement?.querySelector('.pi-md__open-failed');
+            if (note) return;
+            const span = document.createElement('span');
+            span.className = 'pi-md__open-failed';
+            span.textContent = zh ? '（文件已移动或不可访问）' : '(file moved or unavailable)';
+            anchor.parentElement?.appendChild(span);
+            window.setTimeout(() => span.remove(), 4000);
+          });
         }}
       >
         {children}

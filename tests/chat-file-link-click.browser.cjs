@@ -50,6 +50,15 @@ async (page) => {
   const web = await page.evaluate(() => window.__opens);
   assert(web.length === 1 && web[0] === 'https://example.com/docs', `https 仍走 window.open（实际 ${JSON.stringify(web)}）`);
 
+  // 文件不存在（IPC reject）时链接旁必须出现可见提示，不再是死链
+  await page.evaluate(() => {
+    window.localPi.openLocalFile = () => Promise.reject(new Error('文件不存在或不可访问'));
+    document.querySelector('.pi-md a').click();
+  });
+  await page.waitForTimeout(200);
+  const failedNote = await page.evaluate(() => document.querySelector('.pi-md__open-failed')?.textContent ?? null);
+  assert(failedNote && failedNote.includes('不可访问'), `打开失败有可见提示（实际 ${failedNote}）`);
+
   console.log(`PASS (${checks} checks): file:// 链接点击可打开本地文件，http 行为不变，无死链/无导航`);
   return { checks };
 }

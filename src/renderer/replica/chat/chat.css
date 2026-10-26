@@ -440,6 +440,7 @@
 }
 .pireplica .pi-md .pi-md__file-link:hover { text-decoration-color: currentColor; }
 .pireplica .pi-md .pi-md__file-link:focus-visible { outline: 2px solid var(--pi-accent); outline-offset: 3px; }
+.pireplica .pi-md .pi-md__open-failed { margin-left: 6px; color: var(--pi-red); font-size: var(--pi-font-size-xs); white-space: nowrap; }
 .pireplica .pi-md a {
   color: var(--pi-text);
   text-decoration: underline;
