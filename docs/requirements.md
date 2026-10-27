@@ -256,7 +256,7 @@
 
 **回归触发**：改 `automation-service.ts`（resolveSession/execute/onPiEvent）、`automation-bridge.ts`、`extensions/desktop-schedule/index.mjs`。测试：`tests/pi-automation.test.ts`（2d 同会话串行）、`tests/desktop-schedule.test.ts`（幂等创建/文案）。
 
-### R-render-05　临时拒发错误进对话流并随恢复自动消失
+### R-render-07　临时拒发错误进对话流并随恢复自动消失
 
 **需求**：发送被 pi 内核以「压缩进行中」拒绝（`Cannot submit a prompt while compaction is in progress`）时，错误要显示在对话流里，且压缩结束后自动消失；不能用永不自动清除的全局错误横幅（用户 2026-10-27 反馈：压缩结束后红条仍挂着，只能手点 ×）。
 
@@ -300,7 +300,7 @@
 
 ---
 
-### R-render-04　聊天 file:// 交付文件链接可打开（非死链）
+### R-render-05　聊天 file:// 交付文件链接可打开（非死链）
 
 **需求**：assistant 消息中以 `[名称](file:///绝对路径)` 形式交付的本地产物（PNG/PDF/HTML 等）必须可点击打开；http(s) 链接继续走系统浏览器，任何链接点击都不得触发主窗口顶层导航。
 
@@ -316,7 +316,7 @@
 
 ---
 
-### R-render-05　工作台 HTML 文件可渲染预览，渲染/源码由用户选择
+### R-render-06　工作台 HTML 文件可渲染预览，渲染/源码由用户选择
 
 **需求**：文件预览对 `.html/.htm` 交付文件默认展示渲染效果，用户可一键切回源码查看；不强制单一视图。
 
