@@ -868,6 +868,7 @@ export default function PiReplicaApp() {
           vendorEmpty={t.settings.noVendor}
           catalogInfo={`${runModels.length} models available from pi`}
           demo={false}
+          appVersion={s.env?.desktopVersion}
           labels={t.settings}
           onBack={s.backToApp}
           onSearch={s.setSearchQuery}
