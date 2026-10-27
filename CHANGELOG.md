@@ -5,9 +5,23 @@ README 只保留最近版本摘要；本文件为完整记录。
 
 ## [0.1.37] - 2026-10-27
 
-### 修复
-- **设置 → 关于里的版本号固定显示 0.1.0-desktop**：该文案是历史硬编码占位串，不是真实版本。已改为显示主进程上报的真实 Desktop 版本。
-- **支持本机 pi 1.4.x，内置 pi 升级到 1.4.0**：兼容的本机 1.4.x 在「自动」模式下可优先使用，不再因旧版本上界回退。内置运行时同时获得上游的压缩摘要、工具恢复和重试修复；Windows 本机 npm pi 的检测与启动支持仍需另行适配。
+### English
+
+#### Fixed
+
+- **About now shows the actual Desktop version** instead of the hardcoded `0.1.0-desktop` placeholder.
+- **Bundled pi upgraded to 1.4.0**: use pi 1.4.0 without installing a separate CLI, including upstream fixes for compaction summaries, tool recovery, and retries. On macOS/Linux, Auto mode can prefer a compatible local pi 1.4.x instead of rejecting it at the previous version limit.
+
+Windows users can select **Bundled pi** to use 1.4.0. Detecting and launching a local npm-installed pi on Windows still requires separate support; this release does not resolve that limitation.
+
+### 中文
+
+#### 修复
+
+- **关于页显示真实 Desktop 版本**，不再固定显示硬编码占位串 `0.1.0-desktop`。
+- **内置 pi 升级到 1.4.0**：无需另外安装 CLI 即可使用，包含上游压缩摘要、工具恢复和重试修复。macOS/Linux 的「自动」模式可优先使用兼容的本机 pi 1.4.x，不再因旧版本上界被拒绝。
+
+Windows 用户可选择**内置 pi** 使用 1.4.0。Windows 本机 npm pi 的检测与启动仍需单独适配，本版未解决该限制。
 
 ## [0.1.36] - 2026-10-26
 
