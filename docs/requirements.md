@@ -300,6 +300,22 @@
 
 ---
 
+### R-render-05　工作台 HTML 文件可渲染预览，渲染/源码由用户选择
+
+**需求**：文件预览对 `.html/.htm` 交付文件默认展示渲染效果，用户可一键切回源码查看；不强制单一视图。
+
+**验收**：
+- 默认渲染：iframe `sandbox="allow-scripts"`（opaque origin，无同源权限）+ `srcDoc` 内联渲染当前磁盘内容；不为主任务放宽全局 CSP。
+- 「源码」切回既有高亮源码视图；切换预览文件时回到渲染视图。
+- 「系统打开」按钮（runtime 具备 `openLocalFile` 时显示）交系统默认应用处理交互式页面。
+- 回归：`tests/workbench-html-preview.browser.cjs`（默认渲染/sandbox/srcdoc、切源码、切回渲染、系统打开）；`tests/workbench-home.browser.cjs` 保持绿。
+
+**状态**：本分支实现，浏览器与全量测试通过，待审查 / 发版验收。
+
+**回归触发**：改 `WorkbenchPanel.tsx`（files 渲染分支）、`workbench.css` 预览样式、`openLocalFile` IPC 面；react/CSP 策略变化（sandbox iframe 行为）。
+
+---
+
 ## 会话协作域（collaboration）
 
 ### R-collab-01　跨会话交接：投递到目标项目的既有会话

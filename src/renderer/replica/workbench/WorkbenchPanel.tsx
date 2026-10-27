@@ -14,10 +14,23 @@ import { FileIcon } from '../FileIcon';
 import { DiffBlock } from '../chat/ChatView';
 import './workbench.css';
 
+// openLocalFile 来自 PR #166（file:// 链接打开），旧 runtime 没有该 API 时隐藏入口。
+const localPiApi = (): { openLocalFile?: (path: string) => Promise<unknown> } | undefined =>
+  (window as unknown as { localPi?: { openLocalFile?: (path: string) => Promise<unknown> } }).localPi;
+const canOpenLocalFile = (): boolean => typeof localPiApi()?.openLocalFile === 'function';
+const openLocalFileSafe = (path: string, onError?: (message: string) => void): void => {
+  // 失败必须可见（file:// 链接链路同口径）：路径被删/无权限时只吞掉会让人以为按钮坏了。
+  void localPiApi()?.openLocalFile?.(path).catch((e) => onError?.(String((e as Error)?.message ?? e)));
+};
+
 export function WorkbenchPanel(props: WorkbenchProps) {
   const [expanded, setExpanded] = useState<string | null>(props.selectedFile);
+  // HTML 交付文件：默认渲染效果，可切源码；切换预览文件时回到渲染视图。
+  const [htmlPreview, setHtmlPreview] = useState(true);
   // 图片灯箱：面板窄，点击放大到全屏（复用聊天的 pi-lightbox 样式，portal 到 body）。
   const [lightbox, setLightbox] = useState(false);
+  // 「系统打开」失败反馈（路径被删/无权限）：按钮不能静默无反应。
+  const [openError, setOpenError] = useState<string | null>(null);
   useEffect(() => {
     if (!lightbox) return;
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setLightbox(false); };
@@ -30,6 +43,7 @@ export function WorkbenchPanel(props: WorkbenchProps) {
   if (props.selectedFile !== lastFile.current) {
     lastFile.current = props.selectedFile;
     setExpanded(props.selectedFile);
+    setHtmlPreview(true);
   }
   // 浏览器 tab 打开过一次后常挂载（display:none 隐藏），切换 tab / 收起面板都不销毁 webview。
   const browserStarted = useRef(false);
@@ -133,6 +147,26 @@ export function WorkbenchPanel(props: WorkbenchProps) {
                   ? <button type="button" className="pi-workbench__imgbtn" title="点击放大" onClick={() => setLightbox(true)}>
                       <img className="pi-workbench__img" src={`data:${props.image.mime};base64,${props.image.base64}`} alt={selected.path} />
                     </button>
+                  : /\.html?$/i.test(selected.path) ? (() => {
+                      const content = selected.excerpt.join('\n');
+                      return (
+                        <>
+                          <div className="pi-workbench__filetoolbar pi-workbench__htmlbar">
+                            <div className="pi-workbench__htmlmodes" role="group" aria-label="HTML 查看方式">
+                              <button type="button" className={`pi-workbench__htmlmode ${htmlPreview ? 'is-active' : ''}`} aria-pressed={htmlPreview} onClick={() => setHtmlPreview(true)}>渲染</button>
+                              <button type="button" className={`pi-workbench__htmlmode ${!htmlPreview ? 'is-active' : ''}`} aria-pressed={!htmlPreview} onClick={() => setHtmlPreview(false)}>源码</button>
+                            </div>
+                            {openError && <span className="pi-workbench__htmlopenerr" role="alert">{openError}</span>}
+                            {canOpenLocalFile() && <button type="button" className="pi-workbench__htmlopen" title="用系统默认应用打开" onClick={() => { setOpenError(null); openLocalFileSafe(selected.path, setOpenError); }}>系统打开</button>}
+                          </div>
+                          {htmlPreview
+                            // sandbox：opaque origin（无同源）+ 脚本可跑但碰不到宿主/DOM/存储；
+                            // 交付 HTML 常含内联样式与脚本，不能为它放宽全局 CSP。
+                            ? <iframe className="pi-workbench__htmlframe" sandbox="allow-scripts" srcDoc={content} title={selected.path} />
+                            : <FileCodeViewer path={selected.path} content={content} line={props.fileLine}/>}
+                        </>
+                      );
+                    })()
                   : <FileCodeViewer path={selected.path} content={selected.excerpt.join('\n')} line={props.fileLine}/>}
               </>
             )}

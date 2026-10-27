@@ -5,47 +5,6 @@ README 只保留最近版本摘要；本文件为完整记录。
 
 ## [Unreleased]
 
-### English
-
-#### Fixed
-
-- **Local file links in chat did nothing when clicked**: assistant-delivered `file://` links (PNG/PDF/HTML) were broken in two places — react-markdown stripped the file href and the click handler only understood http(s). Document types now open with the system default app, everything else is revealed in Finder (executables never run), and http(s) behaviour is unchanged. Network shares (UNC) and executables inside app bundles are refused.
-- **"Cannot submit a prompt while compaction is in progress" no longer sticks on screen**: temporary rejections now appear inline at the end of the conversation and disappear once the session recovers.
-
-#### Added
-
-- **HTML delivery files render in the workbench**: `.html`/`.htm` previews render by default in a sandboxed iframe (no same-origin access), with a render/source toggle and a "open with system app" entry.
-
-### 中文
-
-#### 修复
-
-- **聊天里的 file:// 交付文件链接点了没反应**：assistant 以 `[高清 PNG](file:///…)` 交付的本地文件（PNG/PDF/HTML 等）此前有两处断点——react-markdown 默认白名单把 href 剥成空串，点击处理又只认 http(s)，用户只看到带下划线的死链。现在文档型文件用系统默认应用打开，其他类型在 Finder 中显示（可执行文件不会因此运行），http(s) 行为不变；网络共享（UNC）与 .app 包内可执行文件一律拒绝。
-- **「压缩上下文进行中无法发送」不再一直挂在页面顶部**：这类临时拒发改为显示在对话流末尾，会话恢复后自动消失。
-
-#### 新增
-
-- **工作台可直接渲染 HTML 交付文件**：`.html`/`.htm` 默认按渲染效果展示（sandbox iframe，无同源），可切「渲染/源码」，并提供「系统打开」用默认应用打开。
-
-## [0.1.37] - 2026-10-27
-
-### English
-
-#### Fixed
-
-- **About now shows the actual Desktop version** instead of the hardcoded `0.1.0-desktop` placeholder.
-- **Bundled pi upgraded to 1.4.0**: use pi 1.4.0 without installing a separate CLI, including upstream fixes for compaction summaries, tool recovery, and retries. On macOS/Linux, Auto mode can prefer a compatible local pi 1.4.x instead of rejecting it at the previous version limit.
-
-Windows users can select **Bundled pi** to use 1.4.0. Detecting and launching a local npm-installed pi on Windows still requires separate support; this release does not resolve that limitation.
-
-### 中文
-
-#### 修复
-
-- **关于页显示真实 Desktop 版本**，不再固定显示硬编码占位串 `0.1.0-desktop`。
-- **内置 pi 升级到 1.4.0**：无需另外安装 CLI 即可使用，包含上游压缩摘要、工具恢复和重试修复。macOS/Linux 的「自动」模式可优先使用兼容的本机 pi 1.4.x，不再因旧版本上界被拒绝。
-
-Windows 用户可选择**内置 pi** 使用 1.4.0。Windows 本机 npm pi 的检测与启动仍需单独适配，本版未解决该限制。
 
 ## [0.1.36] - 2026-10-26
 
