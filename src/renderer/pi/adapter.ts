@@ -5,7 +5,7 @@ import { projectSubagents, runningSubagents } from './subagents';
 import { dismissibleSubagentIds } from './subagent-dismissal';
 import { applyAssistantStreamDelta } from './stream-delta';
 import { modelErrorPart } from './model-error';
-import { isTransientSendError } from '../../shared/send-error';
+import { classifyTransientSendError } from '../../shared/send-error';
 import { nextModelRetryState } from './model-retry';
 import { type AccessMode } from '../../shared/access-mode';
 import type { DesktopPreferences } from '../../shared/settings';
@@ -1921,6 +1921,8 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
             break; }
           case 'closed':
             if (state.runs.some(r => r.key === event.key && r.generation !== event.generation)) break;
+            // 死会话不该挂着「压缩完成后会自动消失」的陈旧卡片（审查 P2）。
+            if (get().sendError?.key === event.key) set({ sendError: undefined });
             set({
               retrying: { ...state.retrying, [event.key]: null },
               runs: state.runs.filter((r) => !(r.key === event.key && r.generation === event.generation)),
@@ -2207,7 +2209,9 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
       scheduleStreamFlush(true);
       const send: OptimisticSend = { id: `send-${crypto.randomUUID()}`, key: state.selectedKey, at: Date.now(), text: message, images, baseline: (state.history?.branch ?? []).flatMap(e => e.id ? [e.id] : []) };
       // 重新发送即表示用户在重试：旧的「等空闲再发」提示没有意义，先清掉。
-      const staleSendError = state.sendError;
+      // 重发只清当前会话自己的卡片，不影响别的会话（审查 P2：曾无 key 门禁）。
+      const ownerKey = state.selectedKey;
+      const staleSendError = ownerKey && state.sendError?.key === ownerKey ? state.sendError : undefined;
       set({ connecting: !existing, ...(staleSendError ? { sendError: undefined } : {}), sends: queued ? state.sends : [...(state.sends ?? []), send], pendingPrompt: queued ? undefined : message, pendingPromptAt: send.at, draftText: '', contextItems: [] });
       const sentOwner = composerKeyOf(state);
       if (sentOwner !== null) composerDrafts.delete(sentOwner);
@@ -2290,7 +2294,9 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
           const rawMessage = String((error as Error).message ?? error);
           // 临时状态拒发（压缩进行中/会话未收尾）：进对话流的错误卡并随恢复自动消失，
           // 不写全局横幅——横幅不随 compaction_end 清除，会一直挂到用户手点关闭。
-          const transient = isTransientSendError(rawMessage);
+          // 仅内核「压缩进行中」这一类进卡片；连接数满/模型刷新/停止未确认等真实失败
+          // 一律走横幅（审查 P1：曾用「请稍后再试」通配，导致这些失败零反馈）。
+          const transient = classifyTransientSendError(rawMessage) === 'compaction';
           if (transient) {
             set({ sendError: { key: (own?.key ?? targetKey ?? sentOwner) ?? '', message: rawMessage, at: send.at },
               sends: current.sends?.filter(s => s.id !== send.id || !!s.confirmedId),

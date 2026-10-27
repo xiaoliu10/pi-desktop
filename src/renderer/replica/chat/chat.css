@@ -1000,8 +1000,6 @@
 .pireplica .pi-send-error__body strong { font-weight: 500; overflow-wrap: anywhere; }
 .pireplica .pi-send-error__body span { color: var(--pi-text-secondary); font-size: var(--pi-font-size-xs); }
 .pireplica .pi-send-error > button { flex-shrink: 0; margin-left: auto; color: inherit; padding: 0 2px; border-radius: 5px; }
-@media (prefers-reduced-motion: reduce) { .pireplica .pi-send-error { animation: none; } }
-
 /* 「立即」乐观气泡的注记：说明消息已插入当前任务、等待边界分发 */
 .pireplica .pi-chat__steernote {
   margin-top: 4px;

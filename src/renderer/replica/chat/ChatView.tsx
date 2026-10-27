@@ -401,7 +401,7 @@ export function ExecutionNote({ title, text, active, zh, defaultOpen }: { title:
  *  不放全局横幅的原因：横幅不随后续状态清除，会一直挂到用户手点关闭（用户 2026-10-27 反馈）。 */
 export function SendErrorCard({ message, zh, onDismiss }: { message: string; zh: boolean; onDismiss?: () => void }) {
   const summary = transientSendErrorSummary(message);
-  return <div className="pi-send-error" role="status">
+  return <div className="pi-send-error" role="alert">
     <Icon name="info" size={15} />
     <div className="pi-send-error__body">
       <strong>{summary}</strong>

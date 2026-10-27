@@ -23,6 +23,7 @@ beforeAll(async () => {
     settingsSnapshot: vi.fn().mockRejectedValue('mock'), environment: vi.fn().mockRejectedValue('mock'),
     sessions: vi.fn().mockResolvedValue([]), runs: vi.fn().mockResolvedValue([]), archivedSessions: vi.fn().mockResolvedValue([]),
     onEvent: (fn: typeof emit) => { emit = fn; },
+    recoverSubagents: vi.fn().mockResolvedValue({ unchanged: true }),
     prompt: vi.fn(async () => { throw new Error(COMPACTING); }),
     history: vi.fn().mockResolvedValue({ branch: [], leafId: null }),
   };
@@ -40,7 +41,11 @@ const reset = (extra: Record<string, unknown> = {}) => usePiStore.setState({
 
 it('classifies transient rejections and strips the IPC prefix', () => {
   expect(isTransientSendError(COMPACTING)).toBe(true);
-  expect(isTransientSendError('当前会话暂不能发送；请先停止确认执行状态')).toBe(true);
+  // 审查 P1：连接数满/模型刷新/停止未确认都是真实失败，必须走横幅，不能进临时卡片。
+  expect(isTransientSendError('最多同时连接 5 个会话，且都在运行或等待交互；请稍后再试。')).toBe(false);
+  expect(isTransientSendError('正在刷新模型配置，请稍后再试。')).toBe(false);
+  expect(isTransientSendError('当前会话暂不能发送；请先停止确认执行状态')).toBe(false);
+  expect(isTransientSendError('正在退出')).toBe(false);
   expect(isTransientSendError('pi 已退出 (SIGKILL)。')).toBe(false);
   expect(isTransientSendError('')).toBe(false);
   expect(transientSendErrorSummary(COMPACTING)).toBe('Cannot submit a prompt while compaction is in progress. Wait for compaction to finish and retry.');
@@ -93,4 +98,40 @@ it('renders the inline error card at the end of the conversation', () => {
   expect(html).toContain('Cannot submit a prompt while compaction is in progress');
   expect(html).not.toContain("Error invoking remote method");
   expect(html).toContain('压缩完成后会自动消失');
+});
+
+// 审查 P1 补充：分类只认「压缩中」，容量满/模型刷新/停止未确认都必须走全局横幅。
+it('capacity and model-refresh rejections stay on the global banner', async () => {
+  reset();
+  api.prompt = vi.fn(async () => { throw new Error('最多同时连接 5 个会话，且都在运行或等待交互；请稍后再试。'); });
+  usePiStore.getState().send('继续');
+  await vi.advanceTimersByTimeAsync(50);
+  const s = usePiStore.getState() as any;
+  expect(s.error).toContain('最多同时连接');
+  expect(s.sendError).toBeUndefined();
+});
+
+it('turn_start also clears the inline error, and dismissSendError clears it manually', async () => {
+  reset({ sendError: { key: 'k-1', message: COMPACTING, at: 1 } });
+  emit({ type: 'rpc', key: 'k-1', generation: 'g1', event: { type: 'turn_start' } });
+  expect((usePiStore.getState() as any).sendError).toBeUndefined();
+
+  usePiStore.setState({ sendError: { key: 'k-1', message: COMPACTING, at: 1 } } as any);
+  usePiStore.getState().dismissSendError();
+  expect((usePiStore.getState() as any).sendError).toBeUndefined();
+});
+
+it('a send in another session does not clear this session inline error', () => {
+  reset({ selectedKey: 'k-2', sendError: { key: 'k-1', message: COMPACTING, at: 1 }, runs: [
+    { key: 'k-1', generation: 'g1', cwd: '/a', status: 'idle', models: [], commands: [], pending: 0 },
+    { key: 'k-2', generation: 'g2', cwd: '/b', status: 'idle', models: [], commands: [], pending: 0 },
+  ] });
+  usePiStore.getState().send('x');
+  expect((usePiStore.getState() as any).sendError?.key).toBe('k-1');
+});
+
+it('closed clears the inline error of the dead session', () => {
+  reset({ sendError: { key: 'k-1', message: COMPACTING, at: 1 } });
+  emit({ type: 'closed', key: 'k-1', generation: 'g1' });
+  expect((usePiStore.getState() as any).sendError).toBeUndefined();
 });

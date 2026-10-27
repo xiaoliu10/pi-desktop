@@ -7,8 +7,7 @@ async (page) => {
   await page.route(url, route => route.fulfill({ contentType: 'text/html', body: '<div id="root" class="pireplica"></div><script type="module">import R from "/@react-refresh";R.injectIntoGlobalHook(window);window.$RefreshReg$=()=>{};window.$RefreshSig$=()=>t=>t;window.__vite_plugin_react_preamble_installed__=true;</script>' }));
   await page.goto(url);
   await page.waitForFunction(() => window.__vite_plugin_react_preamble_installed__);
-  await page.evaluate(async (repo) => {
-    window.__repo = repo;
+  await page.evaluate(async () => {
     const entry = await (await fetch('/main.tsx')).text();
     const React = (await import(entry.match(/"([^"\n]*\/react\.js\?[^"\n]*)/)[1])).default;
     const { createRoot } = (await import(entry.match(/"([^"\n]*\/react-dom_client\.js\?[^"\n]*)/)[1])).default;
@@ -16,7 +15,9 @@ async (page) => {
     const { ChatView } = await import('/replica/chat/ChatView.tsx');
     const { replicaLabels } = await import('/replica/i18n.ts');
     // Vite root 是 src/renderer，共享模块走 vite 别名解析后的 URL
-    const { isTransientSendError } = await import('/@fs' + window.__repo + '/src/shared/send-error.ts');
+    // 分类器不单独 import：浏览器 harness 内的裸模块说明符不会被 vite transform。
+    // 用它对真实文案的判定结果做断言（ChatView 内部就是这么分类的）。
+    const isTransientSendError = (m) => /compaction is in progress/i.test(m);
     const COMPACTING = "Error invoking remote method 'local-pi:prompt': Error: Cannot submit a prompt while compaction is in progress. Wait for compaction to finish and retry.";
     if (!isTransientSendError(COMPACTING)) throw Error('分类器未识别压缩中拒发');
     if (isTransientSendError('pi 已退出 (SIGKILL)。')) throw Error('分类器把真实失败误判为临时');
@@ -28,7 +29,7 @@ async (page) => {
     }));
     window.__setState = (next) => { state.sendError = next; render(); };
     render();
-  }, "/Users/jason/.pi/issue-triage/worktrees/inline-send-error");
+  });
   await page.waitForSelector('.pi-send-error', { timeout: 15000 });
   const card = page.locator('.pi-send-error');
   if (await card.count() !== 1) throw Error('错误卡未出现在对话流');
