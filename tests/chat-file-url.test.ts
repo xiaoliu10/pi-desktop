@@ -46,3 +46,11 @@ describe('fileUrlToPath', () => {
     expect(fileUrlToPath('file:/tmp/x.png')).toBeNull();
   });
 });
+
+// 审查 P1：file:////host/share 的 hostname 为空、pathname 以 // 开头，曾绕过远程 host 校验；
+// Windows 上会变成 UNC 路径发起 SMB 连接。
+it('rejects UNC-style file URLs instead of treating them as local paths', () => {
+  expect(fileUrlToPath('file:////attacker/share/x.png')).toBeNull();
+  expect(fileUrlToPath('file:////server/share/docs/a.pdf')).toBeNull();
+  expect(fileUrlToPath('file:///%2F%2Fhost/share/x.png')).toBeNull();
+});

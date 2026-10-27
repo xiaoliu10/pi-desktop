@@ -21,6 +21,9 @@ export function fileUrlToPath(href: string | undefined): string | null {
     if (!url.pathname || url.pathname === '/') return null;
     const pathname = decodeURIComponent(url.pathname);
     if (!pathname || pathname.includes('\0')) return null;
+    // 拒绝 UNC 远程共享：file:////host/share 的 hostname 为空、pathname 以 // 开头，
+    // 会绕过上面的 host 校验；Windows 上 openPath('\\\\host\\share') 会发起 SMB 连接。
+    if (pathname.startsWith('//') || pathname.startsWith('\\\\')) return null;
     // 拒绝编码过的目录穿越（%2e%2e），避免路径混淆。
     if (pathname.split('/').includes('..')) return null;
     // Windows 盘符：file:///C:/... → C:/...

@@ -1,7 +1,7 @@
-import { mkdtempSync, mkdirSync, symlinkSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, symlinkSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { openLocalFile } from '../src/main/pi/open-local-file';
 
 let dir: string;
@@ -98,4 +98,30 @@ describe('openLocalFile', () => {
     expect(result).toEqual({ action: 'opened' });
     expect(f.calls.opened).toEqual([path.join(dir, 'design')]);
   });
+});
+
+// 审查 P1：UNC 路径在 Windows 上会发起 SMB 连接并可能发送凭据，必须拒绝。
+it('refuses UNC network share paths before touching the filesystem', async () => {
+  const statSync = vi.fn(() => ({ isDirectory: () => false, isFile: () => true }));
+  await expect(openLocalFile('//attacker/share/x.png', { statSync })).rejects.toThrow('网络共享路径');
+  await expect(openLocalFile('\\\\attacker\\share\\x.png', { statSync })).rejects.toThrow('网络共享路径');
+  expect(statSync).not.toHaveBeenCalled();
+});
+
+// 审查 P2：.app 包内同扩展名可执行文件（Contents/MacOS/x.png）不能因扩展名白名单被直接打开。
+it('reveals executables that live inside an app bundle even with a document extension', async () => {
+  const payload = path.join(dir, 'Delivery.app', 'Contents', 'MacOS', 'implant.png');
+  mkdirSync(path.dirname(payload), { recursive: true });
+  writeFileSync(payload, 'x');
+  const link = path.join(dir, 'bundle-link.png');
+  try { rmSync(link, { force: true }); } catch { /* ignore */ }
+  symlinkSync(payload, link);
+  const opened: string[] = [];
+  const revealed: string[] = [];
+  expect(await openLocalFile(link, {
+    openPath: async (target: string) => { opened.push(target); return ''; },
+    showItemInFolder: (target: string) => { revealed.push(target); },
+  })).toEqual({ action: 'revealed' });
+  expect(opened).toEqual([]);
+  expect(revealed).toEqual([link]);
 });

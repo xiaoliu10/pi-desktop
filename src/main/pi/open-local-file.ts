@@ -27,14 +27,22 @@ const DANGEROUS_EXTENSIONS = new Set([
   '.dmg', '.pkg', '.sh',
 ]);
 
+/** 真实路径落在 .app 包内（Contents/MacOS/x.png 这类同扩展名可执行文件）：
+ *  只看扩展名会放行，故按路径段判定，包内一律不直接打开。 */
+function isInsideAppBundle(target: string): boolean {
+  return /\.app\/(?:Contents\/)?[^/]+/i.test(target.replace(/\\/g, '/'));
+}
+
 function isDangerousPath(target: string): boolean {
   return DANGEROUS_EXTENSIONS.has(path.extname(target.replace(/[/\\]+$/, '')).toLowerCase());
 }
 
 export async function openLocalFile(target: unknown, deps: OpenLocalFileDeps = {}): Promise<{ action: 'opened' | 'revealed' }> {
-  if (typeof target !== 'string' || !target || target.includes('\0') || !path.isAbsolute(target)) {
-    throw new Error('文件路径无效');
-  }
+  if (typeof target !== 'string' || !target) throw new Error('文件路径无效');
+  // UNC（//host/share 或 \\\\host\\share）在 Windows 上会发起 SMB 连接并发送凭据；
+  // 聊天里的 file:// 链接可能来自不可信文本，统一按非本机路径拒绝。
+  if (/^[\\/]{2}/.test(target)) throw new Error('不支持网络共享路径');
+  if (target.includes('\0') || !path.isAbsolute(target)) throw new Error('文件路径无效');
   const statSync = deps.statSync ?? fs.statSync;
   const realpathSync = deps.realpathSync ?? fs.realpathSync;
   const openPath = deps.openPath ?? (async () => '');
@@ -49,7 +57,7 @@ export async function openLocalFile(target: unknown, deps: OpenLocalFileDeps = {
   } catch {
     throw new Error('文件不存在或不可访问');
   }
-  if (isDangerousPath(target) || isDangerousPath(realTarget)) {
+  if (isDangerousPath(target) || isDangerousPath(realTarget) || isInsideAppBundle(realTarget)) {
     showItemInFolder(target);
     return { action: 'revealed' };
   }
