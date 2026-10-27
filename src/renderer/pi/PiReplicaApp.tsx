@@ -1094,6 +1094,8 @@ export default function PiReplicaApp() {
                     onDownloadImage={downloadImage}
                     onRefreshProcess={s.refreshConversation}
                     compacting={run?.compacting}
+                    sendError={s.sendError && s.sendError.key === s.selectedKey ? s.sendError : undefined}
+                    onDismissSendError={s.dismissSendError}
                     imageCards={imageCards}
                   />
                   {/* ask_user_question / 权限审批：ZCode 式覆盖输入框位置（卡片显示时替换 composer，

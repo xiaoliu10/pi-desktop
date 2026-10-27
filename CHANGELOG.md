@@ -3,6 +3,20 @@
 所有重要变更记录在本文件。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 README 只保留最近版本摘要；本文件为完整记录。
 
+## [Unreleased]
+
+### English
+
+#### Fixed
+
+- **"Cannot submit a prompt while compaction is in progress" no longer sticks on screen**: rejections caused by a temporary session state (compaction in progress, session not settled yet) now appear inline at the end of the conversation instead of the global error banner, and disappear automatically once the session recovers (compaction finishes, a new turn starts, or the resend succeeds). Real failures still use the banner.
+
+### 中文
+
+#### 修复
+
+- **「压缩上下文进行中无法发送」的错误不再一直挂在页面顶部**：压缩中、会话尚未收尾这类「等一会儿重发就好」的拒发提示，改为显示在对话流末尾的错误卡，并在会话恢复后（压缩结束、新一轮开始或重发成功）自动消失；真正的失败仍走原来的错误横幅。
+
 ## [0.1.37] - 2026-10-27
 
 ### English

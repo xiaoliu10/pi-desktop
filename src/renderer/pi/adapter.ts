@@ -5,6 +5,7 @@ import { projectSubagents, runningSubagents } from './subagents';
 import { dismissibleSubagentIds } from './subagent-dismissal';
 import { applyAssistantStreamDelta } from './stream-delta';
 import { modelErrorPart } from './model-error';
+import { isTransientSendError } from '../../shared/send-error';
 import { nextModelRetryState } from './model-retry';
 import { type AccessMode } from '../../shared/access-mode';
 import type { DesktopPreferences } from '../../shared/settings';
@@ -958,6 +959,9 @@ export interface PiReplicaState {
   error?: string;
   /** 错误归属的会话：横幅只在该会话内展示（无 key = 应用级错误，全局展示）。 */
   errorKey?: string;
+  /** 发送被临时状态拒绝（压缩中/忙碌/重试结算中）：进对话流的错误卡而非全局横幅，
+   *  会话恢复（compaction_end / 下一轮开始 / 重发成功）后自动消失。 */
+  sendError?: { key: string; message: string; at: number };
 
   dialogs: Dialog[];
   live: Record<string, Record<string, Record<string, unknown>>>;
@@ -1035,6 +1039,8 @@ export interface PiReplicaActions {
   /** 清空全部通知。 */
   clearNotifications: () => void;
   dismissError: () => void;
+  /** 关闭对话流里的「暂时不能发送」错误卡（恢复后会自动消失，这里只是手动兜底）。 */
+  dismissSendError: () => void;
   dismissNotice: () => void;
   answerDialog: (response: { id: string; value?: string; confirmed?: boolean; cancelled?: boolean }) => void;
   scanResources: () => void;
@@ -1669,6 +1675,12 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
       return;
     }
     if (type === 'auto_retry_start' || type === 'auto_retry_end') return;
+    // 会话恢复：压缩结束 / 新一轮开始 / 模型恢复输出 —— 之前「等空闲再发」的
+    // 拒绝原因已不成立，会话内错误卡随之退场（用户要求：恢复后自动删除，不留残影）。
+    if (type === 'compaction_end' || type === 'agent_start' || type === 'turn_start') {
+      const stale = get().sendError;
+      if (stale && stale.key === key) set({ sendError: undefined });
+    }
     if (type === 'compaction_start') {
       if (!state.runs.some(r => r.key === key && r.sidecarOf !== undefined)) pushNotification({ kind: 'info', title: 'pi 正在压缩上下文', time: '刚刚' });
       return;
@@ -2192,7 +2204,9 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
       const queued = existing && ['running', 'starting', 'stopping'].includes(existing.status);
       scheduleStreamFlush(true);
       const send: OptimisticSend = { id: `send-${crypto.randomUUID()}`, key: state.selectedKey, at: Date.now(), text: message, images, baseline: (state.history?.branch ?? []).flatMap(e => e.id ? [e.id] : []) };
-      set({ connecting: !existing, sends: queued ? state.sends : [...(state.sends ?? []), send], pendingPrompt: queued ? undefined : message, pendingPromptAt: send.at, draftText: '', contextItems: [] });
+      // 重新发送即表示用户在重试：旧的「等空闲再发」提示没有意义，先清掉。
+      const staleSendError = state.sendError;
+      set({ connecting: !existing, ...(staleSendError ? { sendError: undefined } : {}), sends: queued ? state.sends : [...(state.sends ?? []), send], pendingPrompt: queued ? undefined : message, pendingPromptAt: send.at, draftText: '', contextItems: [] });
       const sentOwner = composerKeyOf(state);
       if (sentOwner !== null) composerDrafts.delete(sentOwner);
       // 草稿首发立即切到 chat 视图：connect 空窗（pi 启动加载扩展可达 10s+）里 working bar、
@@ -2271,6 +2285,26 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
         } catch (error) {
           const current = get();
           const own = current.sends?.find(s => s.id === send.id);
+          const rawMessage = String((error as Error).message ?? error);
+          // 临时状态拒发（压缩进行中/会话未收尾）：进对话流的错误卡并随恢复自动消失，
+          // 不写全局横幅——横幅不随 compaction_end 清除，会一直挂到用户手点关闭。
+          const transient = isTransientSendError(rawMessage);
+          if (transient) {
+            set({ sendError: { key: (own?.key ?? targetKey ?? sentOwner) ?? '', message: rawMessage, at: send.at },
+              sends: current.sends?.filter(s => s.id !== send.id || !!s.confirmedId),
+              ...(composerKeyOf(current) === (own?.key ?? targetKey ?? sentOwner) && !own?.confirmedId && !current.draftText && !current.contextItems.length ? { draftText: text, contextItems: state.contextItems } : {}),
+              ...(current.pendingPromptAt === send.at ? { pendingPrompt: undefined, pendingPromptAt: undefined } : {}),
+              ...(!own?.confirmedId && current.sentAt?.key === targetKey && current.sentAt.at === send.at ? { sentAt: undefined } : {}),
+              ...(queuedItem ? { runs: current.runs.map(r => {
+                if (r.key !== targetKey || !r.queue?.includes(queuedItem!)) return r;
+                const queue = r.queue.filter(q => q !== queuedItem);
+                return { ...r, queue, pending: queue.length };
+              }) } : {}) });
+            const transientOwner = own?.key ?? targetKey ?? sentOwner;
+            if (!own?.confirmedId && transientOwner !== null && composerKeyOf(get()) !== transientOwner
+              && !composerDrafts.has(transientOwner)) stashComposerDraft(transientOwner, { text, items: state.contextItems });
+            return;
+          }
           // Late rejection cannot erase another session's draft or an already confirmed send.
           set({ error: String((error as Error).message ?? error), errorKey: state.selectedKey ?? undefined, sends: current.sends?.filter(s => s.id !== send.id || !!s.confirmedId),
             ...(composerKeyOf(current) === (own?.key ?? targetKey ?? sentOwner) && !own?.confirmedId && !current.draftText && !current.contextItems.length ? { draftText: text, contextItems: state.contextItems } : {}),
@@ -2605,6 +2639,7 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
     dismissNotification: (id) => set({ notifications: get().notifications.filter((n) => n.id !== id) }),
     clearNotifications: () => set({ notifications: [] }),
     dismissError: () => set({ error: undefined, errorKey: undefined }),
+    dismissSendError: () => set({ sendError: undefined }),
     dismissNotice: () => set({ notice: undefined }),
 
     answerDialog: (response) => {

@@ -256,6 +256,22 @@
 
 **回归触发**：改 `automation-service.ts`（resolveSession/execute/onPiEvent）、`automation-bridge.ts`、`extensions/desktop-schedule/index.mjs`。测试：`tests/pi-automation.test.ts`（2d 同会话串行）、`tests/desktop-schedule.test.ts`（幂等创建/文案）。
 
+### R-render-05　临时拒发错误进对话流并随恢复自动消失
+
+**需求**：发送被**临时状态**拒绝（压缩进行中、会话尚未收尾等）时，错误要显示在对话流里，且会话恢复后自动消失；不能用永不自动清除的全局错误横幅（用户 2026-10-27 反馈：压缩结束后红条仍挂着，只能手点 ×）。
+
+**验收**：
+- 分类口径集中在 `src/shared/send-error.ts#isTransientSendError`：pi 内核的 compaction 拒发文案 + Desktop backend 的「暂不能发送」类文案；真实失败（进程退出、鉴权、网络）不得误判。
+- 会话内错误卡显示去掉 IPC 前缀的原因与「压缩完成后会自动消失」说明，可手动关闭；同一会话恢复事件（`compaction_end` / `agent_start` / `turn_start`）或重发成功时清除，其他会话的错误不受影响。
+- 发送失败仍还原草稿与附件。
+- 回归：`tests/inline-send-error.test.ts`（分类/不进横幅/恢复清除/跨会话隔离/真实失败仍走横幅/渲染）、`tests/inline-send-error.browser.cjs`（真实浏览器：卡片出现、无 `.pi-banner--error`、恢复后消失、手动关闭）。
+
+**状态**：实现与浏览器验证通过，待审查 / 发版验收。
+
+**回归触发**：改 `adapter.ts` 发送 catch 与 rpc 事件清理、`ChatView` 尾部渲染、`send-error.ts` 匹配口径；pi 内核新增/改写拒发文案时必须同步分类表。
+
+---
+
 ### R-render-03　对话中的文件引用可在右侧查看
 
 **需求**：消息中的内联代码文件路径和 Markdown 本地文件链接可点击，在右侧工作台查看当前文件，而不触发主窗口导航。
