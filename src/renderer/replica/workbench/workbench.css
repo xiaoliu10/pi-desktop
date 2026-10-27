@@ -567,4 +567,8 @@
 .pireplica .pi-workbench__htmlmode.is-active { background: var(--pi-accent); border-color: var(--pi-accent); color: #fff; }
 .pireplica .pi-workbench__htmlopen { border: 0; background: none; color: var(--pi-text-tertiary); font-size: var(--pi-font-size-xs); cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
 .pireplica .pi-workbench__htmlopen:hover { color: var(--pi-text); }
-.pireplica .pi-workbench__htmlframe { flex: 1; width: 100%; border: 0; background: #fff; }
+.pireplica .pi-workbench__htmlopenerr { color: var(--pi-red); font-size: var(--pi-font-size-xs); }
+/* flex:1 会把 flex-basis 压成 0，iframe 的 height:auto 退回默认 150px（审查 P0：
+   预览只剩一条邮票高）。用 auto 基准 + min-height:0 撑满 body，并沿用 .pi-file-code 的
+   max-height 约定。背景色只给「透明文档」兜底，深色主题下交付 HTML 通常自带背景。 */
+.pireplica .pi-workbench__htmlframe { flex: 1 1 auto; min-height: 420px; max-height: calc(100vh - 230px); width: 100%; border: 0; background: #fff; }
