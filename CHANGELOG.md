@@ -3,11 +3,25 @@
 所有重要变更记录在本文件。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 README 只保留最近版本摘要；本文件为完整记录。
 
-## [Unreleased]
+## [0.1.37] - 2026-10-27
 
-### 修复
-- **设置 → 关于里的版本号固定显示 0.1.0-desktop**：该文案是历史硬编码占位串，不是真实版本。已改为显示主进程上报的真实 Desktop 版本（如 0.1.36）。
-- **支持本机 pi 1.4.x，内置 pi 升级到 1.4.0**：兼容的本机 1.4.x 在「自动」模式下可优先使用，不再因旧版本上界回退。内置运行时同时获得上游的压缩摘要、工具恢复和重试修复；Windows 本机 npm pi 的检测与启动支持仍需另行适配。
+### English
+
+#### Fixed
+
+- **About now shows the actual Desktop version** instead of the hardcoded `0.1.0-desktop` placeholder.
+- **Bundled pi upgraded to 1.4.0**: use pi 1.4.0 without installing a separate CLI, including upstream fixes for compaction summaries, tool recovery, and retries. On macOS/Linux, Auto mode can prefer a compatible local pi 1.4.x instead of rejecting it at the previous version limit.
+
+Windows users can select **Bundled pi** to use 1.4.0. Detecting and launching a local npm-installed pi on Windows still requires separate support; this release does not resolve that limitation.
+
+### 中文
+
+#### 修复
+
+- **关于页显示真实 Desktop 版本**，不再固定显示硬编码占位串 `0.1.0-desktop`。
+- **内置 pi 升级到 1.4.0**：无需另外安装 CLI 即可使用，包含上游压缩摘要、工具恢复和重试修复。macOS/Linux 的「自动」模式可优先使用兼容的本机 pi 1.4.x，不再因旧版本上界被拒绝。
+
+Windows 用户可选择**内置 pi** 使用 1.4.0。Windows 本机 npm pi 的检测与启动仍需单独适配，本版未解决该限制。
 
 ## [0.1.36] - 2026-10-26
 
@@ -30,7 +44,6 @@ README 只保留最近版本摘要；本文件为完整记录。
 - **模型已恢复输出却仍显示「等待模型响应」**：重试后的正文、思考或工具调用恢复时立即隐藏重试状态条，不再误导为仍在等待；任务继续执行，重试组数和预算不重置。若再次失败，重试状态恢复显示，最终失败详情仍保留。
 - **定时任务重复执行、开出两个会话**：一个创建请求可能落两个完全相同的任务（模型重试/重复调用 desktop_schedule 时无幂等拦截），到点同时触发——旧逻辑里「同项目已有自动化在跑就新开隔离会话」的互斥分支让后触发的那个开了独立会话，就出现一个接原会话、一个独立会话各跑一份。现在：①完全相同的创建指令直接返回已有任务不再重复落库；②默认复用模式下，同项目并发的多个自动化改投进同一会话串行执行（前一个收尾后才轮到下一个），不再为互斥新开会话；明确选「独立新会话」的任务行为不变。
 - **一个会话换模型，另一个会话的模型也跟着变（偶发）**：模型选择此前是全局单值草稿，不按会话隔离——在未连接的会话（刚重启、会话被腾位、新任务页）里选模型后，切到别的会话会显示这个选择，发送时还会真的把该模型下发过去。现在模型草稿按会话归属隔离，与文字草稿同机制；运行中选择的模型也会记住，会话被腾位重连后沿用你最近一次选择，不再回退默认或串到别的会话。
->>>>>>> origin/main
 
 ## [0.1.34] - 2026-10-21
 
