@@ -537,7 +537,7 @@ function InfoPane(props: SettingsProps) {
           <div className="pi-settingrow pi-settingrow--card">
             <div className="pi-settingrow__text">
               <div className="pi-settingrow__title">{props.labels.version}</div>
-              <div className="pi-settingrow__desc pi-mono">0.1.0-desktop</div>
+              <div className="pi-settingrow__desc pi-mono">{props.appVersion || '—'}</div>
             </div>
           </div>
           <div className="pi-settingrow pi-settingrow--card">

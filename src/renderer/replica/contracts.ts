@@ -788,6 +788,8 @@ export interface SettingsProps {
   /** Production: extra real-content block rendered inside the Info pane. */
   infoExtra?: ReactNode;
   pageContent?: ReactNode;
+  /** Real Desktop version (app.getVersion via IPC); demo/preview may omit it. */
+  appVersion?: string;
   labels: SettingsLabels;
   onBack: () => void;
   onSearch: (q: string) => void;

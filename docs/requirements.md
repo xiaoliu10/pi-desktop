@@ -270,6 +270,18 @@
 
 **回归触发**：改 `ChatMarkdown`、`file-references.ts`、`PiReplicaApp.tsx` 文件预览入口。测试：`tests/chat-file-references.test.ts`、`tests/chat-file-preview.browser.cjs`、既有 `pi-file-preview/pi-tool-file-preview` 回归。
 
+### R-render-04　设置 → 关于显示真实 Desktop 版本
+
+**需求**：设置页「关于」展示的版本必须是主进程 `app.getVersion()` 的真实版本，不得保留任何硬编码占位串。
+
+**验收**：
+- `SettingsPage` 的版本字段来自 `SettingsProps.appVersion`，由 `PiReplicaApp` 传 `s.env.desktopVersion`（主进程 `withAppVersion` 注入）；preview/demo 未传时降级为 `—`，不显示假版本。
+- 回归：`tests/settings-version.browser.cjs`（显示 0.1.36 且不含 `0.1.0-desktop`）。
+
+**状态**：本分支实现，浏览器与全量测试通过（issue #168），待审查 / 发版验收。
+
+**回归触发**：改 `SettingsPage` InfoPane、`SettingsProps`、PiReplicaApp 的设置页接线、版本注入链路（host.withAppVersion / environment.desktopVersion）。
+
 ---
 
 ## 会话协作域（collaboration）
