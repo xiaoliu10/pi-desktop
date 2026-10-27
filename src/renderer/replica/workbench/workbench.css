@@ -559,3 +559,12 @@
 .pireplica .pi-browser__btn:hover {
   background: var(--pi-bg-hover);
 }
+
+/* HTML 渲染/源码切换（R-render-05）：交付 HTML 默认渲染效果，可切源码。 */
+.pireplica .pi-workbench__htmlbar { justify-content: space-between; gap: 8px; }
+.pireplica .pi-workbench__htmlmodes { display: flex; gap: 4px; }
+.pireplica .pi-workbench__htmlmode { border: 1px solid var(--pi-border); background: none; color: var(--pi-text); border-radius: 999px; padding: 2px 10px; font-size: var(--pi-font-size-xs); cursor: pointer; }
+.pireplica .pi-workbench__htmlmode.is-active { background: var(--pi-accent); border-color: var(--pi-accent); color: #fff; }
+.pireplica .pi-workbench__htmlopen { border: 0; background: none; color: var(--pi-text-tertiary); font-size: var(--pi-font-size-xs); cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
+.pireplica .pi-workbench__htmlopen:hover { color: var(--pi-text); }
+.pireplica .pi-workbench__htmlframe { flex: 1; width: 100%; border: 0; background: #fff; }
