@@ -131,6 +131,7 @@ const localPi: LocalPiApi = {
   },
   pickDirectory: () => invoke('pickDirectory'),
   revealPath: p => invoke('revealPath', p),
+  openLocalFile: (p: string) => invoke('openLocalFile', p),
   externalApps: () => invoke('externalApps'), openWith: (cwd, appId) => invoke('openWith', cwd, appId),
   terminalCreate: input => invoke('terminalCreate', input),
   terminalWrite: (id, data) => invoke('terminalWrite', id, data),

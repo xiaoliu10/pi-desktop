@@ -3,6 +3,30 @@
 所有重要变更记录在本文件。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 README 只保留最近版本摘要；本文件为完整记录。
 
+## [Unreleased]
+
+### English
+
+#### Fixed
+
+- **Local file links in chat did nothing when clicked**: assistant-delivered `file://` links (PNG/PDF/HTML) were broken in two places — react-markdown stripped the file href and the click handler only understood http(s). Document types now open with the system default app, everything else is revealed in Finder (executables never run), and http(s) behaviour is unchanged. Network shares (UNC) and executables inside app bundles are refused.
+- **"Cannot submit a prompt while compaction is in progress" no longer sticks on screen**: temporary rejections now appear inline at the end of the conversation and disappear once the session recovers.
+
+#### Added
+
+- **HTML delivery files render in the workbench**: `.html`/`.htm` previews render by default in a sandboxed iframe (no same-origin access), with a render/source toggle and a "open with system app" entry.
+
+### 中文
+
+#### 修复
+
+- **聊天里的 file:// 交付文件链接点了没反应**：assistant 以 `[高清 PNG](file:///…)` 交付的本地文件（PNG/PDF/HTML 等）此前有两处断点——react-markdown 默认白名单把 href 剥成空串，点击处理又只认 http(s)，用户只看到带下划线的死链。现在文档型文件用系统默认应用打开，其他类型在 Finder 中显示（可执行文件不会因此运行），http(s) 行为不变；网络共享（UNC）与 .app 包内可执行文件一律拒绝。
+- **「压缩上下文进行中无法发送」不再一直挂在页面顶部**：这类临时拒发改为显示在对话流末尾，会话恢复后自动消失。
+
+#### 新增
+
+- **工作台可直接渲染 HTML 交付文件**：`.html`/`.htm` 默认按渲染效果展示（sandbox iframe，无同源），可切「渲染/源码」，并提供「系统打开」用默认应用打开。
+
 ## [0.1.37] - 2026-10-27
 
 ### English

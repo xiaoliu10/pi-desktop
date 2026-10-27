@@ -221,6 +221,8 @@ export interface LocalPiApi extends importSettingsApi {
   pickDirectory(): Promise<string | null>;
   /** Show a local file/folder in the OS file manager (session context menu). */
   revealPath(path: string): Promise<void>;
+  /** 聊天 file:// 链接：文档型系统默认应用打开（opened），其他类型 Finder 显示（revealed）。 */
+  openLocalFile(path: string): Promise<{ action: 'opened' | 'revealed' }>;
   /** 已安装的外部应用白名单（用外部应用打开当前项目）。 */
   externalApps(): Promise<import('./open-with').ExternalApp[]>;
   /** 用白名单内的外部应用打开项目目录；cwd 必须是已授权项目/会话/运行中工作区。 */

@@ -15,6 +15,7 @@ import { importAttachments, clipboardAttachments, readAttachment, downloadImage 
 import { createProjectWorktree } from './pi/project-worktree';
 import { openMemoryFile } from './pi/memory-open';
 import { authorizeProjectCwd, listExternalApps, openWithApp } from './pi/open-with';
+import { openLocalFile } from './pi/open-local-file';
 import { canonical, fileKey } from './pi/session-index';
 import { RendererHistory } from './pi/renderer-history';
 import { bundleIcon } from './pi/app-icon';
@@ -427,6 +428,8 @@ function registerIpc() {
     if (typeof p !== 'string' || !path.isAbsolute(p)) throw new Error('路径无效');
     shell.showItemInFolder(p);
   });
+  // 聊天 file:// 交付文件链接：文档型用系统默认应用打开，其余仅在 Finder 显示。
+  handle('openLocalFile', p => openLocalFile(p, { openPath: target => shell.openPath(target), showItemInFolder: target => shell.showItemInFolder(target) }));
   // 外部应用打开当前项目：真实系统图标（best effort），白名单探测 + argv 启动。
   // app.getFileIcon 在 macOS 26 对 .app 一律返回通用占位图，优先走 bundle 内 icns 提取。
   const fileIcon = async (p: string) => {
