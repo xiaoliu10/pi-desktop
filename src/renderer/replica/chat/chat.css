@@ -983,6 +983,24 @@
   .pireplica .pi-composer .pi-access__trigger > span { display: none; }
 }
 
+/* 会话内「暂时不能发送」错误卡（压缩中/忙碌）：随会话恢复自动消失，不用全局横幅 */
+.pireplica .pi-send-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  margin: 6px 0 2px;
+  padding: 9px 12px;
+  border: 1px solid color-mix(in srgb, var(--pi-red) 34%, transparent);
+  border-radius: var(--pi-radius-md);
+  background: var(--pi-red-bg);
+  color: var(--pi-red);
+  font-size: var(--pi-font-size-sm);
+}
+.pireplica .pi-send-error > svg { flex-shrink: 0; margin-top: 2px; }
+.pireplica .pi-send-error__body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.pireplica .pi-send-error__body strong { font-weight: 500; overflow-wrap: anywhere; }
+.pireplica .pi-send-error__body span { color: var(--pi-text-secondary); font-size: var(--pi-font-size-xs); }
+.pireplica .pi-send-error > button { flex-shrink: 0; margin-left: auto; color: inherit; padding: 0 2px; border-radius: 5px; }
 /* 「立即」乐观气泡的注记：说明消息已插入当前任务、等待边界分发 */
 .pireplica .pi-chat__steernote {
   margin-top: 4px;
