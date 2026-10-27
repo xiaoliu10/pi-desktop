@@ -45,7 +45,7 @@ it('accepts pi 0.85.1 and 0.87.0 as supported, rejects 0.84.0',()=>{
   expect(piVersionSupported('0.84.0')).toBe(false);
   expect(piVersionSupported(null)).toBe(false);
 });
-it('accepts pi 0.99.x–1.3.x (native MCP era) and keeps 1.4.0 as the exclusive bound',()=>{
+it('accepts pi 0.99.x–1.4.x (native MCP era) and keeps 1.5.0 as the exclusive bound',()=>{
   expect(piVersionSupported('0.90.0')).toBe(process.platform !== 'win32');
   expect(piVersionSupported('0.99.0')).toBe(process.platform !== 'win32');
   expect(piVersionSupported('0.99.1')).toBe(process.platform !== 'win32');
@@ -57,8 +57,9 @@ it('accepts pi 0.99.x–1.3.x (native MCP era) and keeps 1.4.0 as the exclusive 
   expect(piVersionSupported('1.3.0')).toBe(process.platform !== 'win32');
   expect(piVersionSupported('1.3.1')).toBe(process.platform !== 'win32');
   expect(piVersionSupported('1.3.5')).toBe(process.platform !== 'win32');
-  expect(piVersionSupported('1.4.0')).toBe(false);
-  expect(piVersionSupported('1.4.1')).toBe(false);
+  expect(piVersionSupported('1.4.0')).toBe(process.platform !== 'win32');
+  expect(piVersionSupported('1.4.1')).toBe(process.platform !== 'win32');
+  expect(piVersionSupported('1.5.0')).toBe(false);
   expect(piVersionSupported('2.0.0')).toBe(false);
   // Pin the exclusive-bound invariant itself, not just the literal: the bound must reject
   // its own value and accept the patch level just below it.
@@ -68,9 +69,9 @@ it('accepts pi 0.99.x–1.3.x (native MCP era) and keeps 1.4.0 as the exclusive 
   expect(piHasNativeMcp('1.0.0')).toBe(true);
   expect(piHasNativeMcp('1.2.0')).toBe(true);
   expect(piHasNativeMcp('0.87.0')).toBe(false);
-  const local=localFixture('1.2.0');const bundled=bundledFixture();
+  const local=localFixture('1.4.0');const bundled=bundledFixture();
   expect(discoverPi({agentDir:local},{PATH:path.join(local,'bin')},bundled))
-    .toMatchObject({runtime:'system',requestedRuntime:'auto',supported:true,fallback:false,version:'1.2.0',systemSupported:true,bundledVersion:'0.86.0'});
+    .toMatchObject({runtime:'system',requestedRuntime:'auto',supported:true,fallback:false,version:'1.4.0',systemSupported:true,bundledVersion:'0.86.0'});
 });
 it('compares versions numerically per segment',()=>{
   expect(compareVersion('0.86.0','0.86.0')).toBe(0);
