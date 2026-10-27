@@ -1678,6 +1678,8 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
     // 会话恢复：压缩结束 / 新一轮开始 / 模型恢复输出 —— 之前「等空闲再发」的
     // 拒绝原因已不成立，会话内错误卡随之退场（用户要求：恢复后自动删除，不留残影）。
     if (type === 'compaction_end' || type === 'agent_start' || type === 'turn_start') {
+      // 会话已恢复：该会话「等空闲再发」的提示失去意义。新错误产生时会被新记录覆盖，
+      // 跨会话由 key 隔离，故此处只需按 key 清空，无需额外时序判断。
       const stale = get().sendError;
       if (stale && stale.key === key) set({ sendError: undefined });
     }
