@@ -60,8 +60,10 @@ export default function sessionHandoff(pi, options = {}) {
     return {sessionKey: sessionKey(file), sessionId: ctx.sessionManager.getSessionId(), sessionFile: canonical(file), cwd: canonical(ctx.cwd), name: pi.getSessionName?.() || '', mode: ctx.mode};
   };
   function markReceipt(event) {
+    const prompt = typeof event?.prompt === 'string' ? event.prompt : '';
     for (const [id, receipt] of receipts) {
-      if (event.prompt?.includes(`交接编号：${id}`)) {
+      // Confirm the exact injected envelope, not a marker copied into another turn.
+      if (prompt === receipt.text) {
         clearTimeout(receipt.timer); receipts.delete(id); receipt.resolve({disposition: 'started'});
       }
     }
@@ -77,7 +79,7 @@ export default function sessionHandoff(pi, options = {}) {
         receipts.delete(id);
         reject(new Error('未收到接收会话的启动确认；投递结果不确定，请先检查目标会话，不要盲目重发'));
       }, options.receiptTimeoutMs ?? 3000);
-      receipts.set(id, {resolve, reject, timer});
+      receipts.set(id, {resolve, reject, timer, text});
       try { pi.sendUserMessage(text, {deliverAs: 'followUp', expandPromptTemplates: false}); }
       catch (error) { clearTimeout(timer); receipts.delete(id); reject(error); }
     });
@@ -113,11 +115,8 @@ export default function sessionHandoff(pi, options = {}) {
     // the same way desktop-policy activates desktop_update_plan.
     try {
       const active = pi.getActiveTools?.() ?? [];
-      console.error('DBG active before=', JSON.stringify(active));
       if (!active.includes('session_handoff')) pi.setActiveTools?.([...active, 'session_handoff']);
-      console.error('DBG active after=', JSON.stringify(pi.getActiveTools?.() ?? []));
-    } catch (e) { console.error('DBG activate threw', e); }
-    try { ctx.ui.setStatus('session-handoff', 'mode=' + ctx.mode); } catch {}
+    } catch { /* activation is best-effort; the tool still works when called explicitly */ }
     await start(ctx);
   });
   pi.on('before_agent_start', async (event, ctx) => {markReceipt(event); await start(ctx);});
@@ -174,8 +173,21 @@ export default function sessionHandoff(pi, options = {}) {
             if (raw !== undefined) {
               const extra = JSON.parse(raw);
               if (!extra.ok) throw new Error(extra.error || 'Desktop 候选查询失败');
-              const keys = new Set(sessions.map(s => s.key));
-              sessions.push(...(extra.sessions || []).filter(s => s.key !== self && !keys.has(s.key)));
+              // Both sides describe the same session with different identities: the
+              // plugin keys by session-file hash, the Desktop bridge by its run key.
+              // Match on the canonical session path so one session cannot appear twice
+              // (the model would otherwise think there are two targets to choose from).
+              const fileOf = s => s.sessionFile || s.path;
+              const seenPaths = new Set(sessions.filter(fileOf).map(s => canonical(fileOf(s))));
+              const seenKeys = new Set(sessions.map(s => s.key));
+              const selfFile = metadata(ctx)?.sessionFile;
+              sessions.push(...(extra.sessions || []).filter(s => {
+                const file = fileOf(s) ? canonical(fileOf(s)) : undefined;
+                if (s.key === self || seenKeys.has(s.key) || (file && (file === selfFile || seenPaths.has(file)))) return false;
+                seenKeys.add(s.key);
+                if (file) seenPaths.add(file);
+                return true;
+              }));
             }
           }
           result = {ok: true, action: 'list', sessions};
