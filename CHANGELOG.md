@@ -3,6 +3,20 @@
 所有重要变更记录在本文件。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 README 只保留最近版本摘要；本文件为完整记录。
 
+## [Unreleased]
+
+### English
+
+#### Fixed
+
+- **Cancelling a scheduled task by name silently did nothing**: `desktop_schedule(action:"cancel")` passed the caller's identifier straight into an id-only filter, so passing a task **name** (the only identifier `list` exposes) matched nothing while still answering "deleted". The task stayed in `automations.json` and kept firing on schedule. The target is now resolved by exact id first, then by unique name; an ambiguous or unknown identifier returns `ok:false` with the candidate tasks instead of a false success, and a successful cancel reports which task was removed.
+
+### 中文
+
+#### 修复
+
+- **按任务名取消定时任务会假报成功**：`desktop_schedule(action:"cancel")` 原先只按 id 过滤，而 `list` 只暴露任务名——调用方传名字时一条都匹配不到，却仍返回「已删除」。任务留在 `automations.json` 里继续按计划触发。现在先按 id 精确匹配，未命中再按唯一 name 匹配；匹配到多个或找不到时返回 `ok:false` 并附上候选任务，不再假装成功；删除成功会回报具体删除了哪一个。
+
 ## [0.1.39] - 2026-10-28
 
 ### English

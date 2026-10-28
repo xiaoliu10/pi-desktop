@@ -57,8 +57,25 @@ export function runAutomationBridge(service: AutomationBridgeService | undefined
       return { ok: true, action, task: { id: task.id, name: task.name, permission: task.permission, schedule: task.schedule, nextRunAt: task.nextRunAt } };
     }
     if (action === 'cancel') {
-      service.deleteTask(String(payload.id ?? ''));
-      return { ok: true, action };
+      // 调用方（LLM）拿到的标识来自 list 的 name，而任务的真实 id 是 randomUUID()。
+      // 早期只按 id 精确匹配，name 传进来时 filter 不命中任何任务却仍返回 ok，
+      // 于是「已删除」的假消息让调用方以为删掉了，任务留在库里继续触发。
+      // 这里按 id 精确匹配优先，其次按 name 唯一匹配；两者都不确定就报错列出候选。
+      const query = String(payload.id ?? '').trim();
+      if (!query) return { ok: false, error: 'cancel 需要 id 或 name' };
+      const tasks = service?.snapshot().tasks ?? [];
+      const byId = tasks.find(t => t.id === query);
+      const byName = tasks.filter(t => t.name === query);
+      let target = byId;
+      if (!target) {
+        if (byName.length === 1) target = byName[0];
+        else if (byName.length > 1) {
+          return { ok: false, error: `名称「${query}」匹配到 ${byName.length} 个任务，请用 id 指定`, candidates: byName.map(t => ({ id: t.id, name: t.name, nextRunAt: t.nextRunAt })) };
+        }
+      }
+      if (!target) return { ok: false, error: `找不到 id 或名称为「${query}」的定时任务`, tasks: tasks.map(t => ({ id: t.id, name: t.name })) };
+      service.deleteTask(target.id);
+      return { ok: true, action, removed: { id: target.id, name: target.name } };
     }
     return { ok: false, error: 'action 只支持 create / list / cancel' };
   } catch (e) {
