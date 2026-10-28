@@ -631,3 +631,17 @@ describe('viewerPage emitted script (\\n-template守卫)', () => {
     expect(() => new Function(m![1])).not.toThrow();
   });
 });
+
+describe('remote project search input', () => {
+  // 用户 2026-10-28 反馈：连接失败后搜索框仍然无法输入。搜索只读本地 sessions，
+  // 与 /api/state 是否成功无关，因此不能被网络失败永久锁死。
+  it('does not hard-disable the search box in the static page', () => {
+    expect(viewerPage()).not.toMatch(/id="projSearch"[^>]*\bdisabled\b/);
+  });
+
+  it('re-enables the search box on the failure path so a failed state load never locks the input', () => {
+    const script = viewerPage().slice(viewerPage().indexOf('function loadState'));
+    const failure = script.slice(script.indexOf('} catch (e) {'), script.indexOf('} catch (e) {') + 400);
+    expect(failure).toMatch(/projSearch['"]\)?\.disabled\s*=\s*false/);
+  });
+});

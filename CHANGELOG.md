@@ -5,13 +5,31 @@ README 只保留最近版本摘要；本文件为完整记录。
 
 ## [Unreleased]
 
-### Added
-- 会话交接可在 TUI 与 GUI 之间互通：新增可移植 `session_handoff` 插件（`extensions/session-handoff/`），GUI 与 TUI 共用同一实现，按项目发现本机活跃会话并投递自包含任务；目标忙碌时排队、不打断当前回合。Desktop 启动的会话同时保留 `desktop_handoff`，目标未连接时经 Desktop 主进程重连续聊会话后投递。
+### English
 
-### Fixed
-- 修复空闲会话无法被交接发现的问题：会话文件尚未落盘时不再因路径不存在而放弃注册（此前 `session_start` 静默失败，对端永远看不到该会话）。
-- 修复探活被当作真实投递的问题：新增专用 `/ping` 路由，探测不再消耗排队中的交接。
-- 修复端口复用导致已退出会话伪装成可用目标的问题：描述符与探活应答均携带实例 ID，只有同一实例才算在线。
+#### Added
+
+- **Session handoff now works between TUI and GUI**: a new portable `session_handoff` plugin (`extensions/session-handoff/`) is shared by both interfaces. It discovers active local sessions by project and delivers a self-contained task; a busy target is queued instead of interrupting its current turn. Desktop sessions keep `desktop_handoff` as well, so a disconnected Desktop session can still be reached by reconnecting it through the main process.
+
+#### Fixed
+
+- **Idle sessions could not be discovered for handoff**: a session whose transcript has not been flushed yet no longer fails to register because its path does not exist yet.
+- **Liveness probing was mistaken for a real delivery**: a dedicated `/ping` route now answers probes without consuming a queued handoff.
+- **A closed session could impersonate a usable target**: descriptors and probe responses both carry an instance id, so only the same instance counts as online.
+- **Remote control search box was locked after a connection failure**: the phone remote-control page hard-disabled the project/task search input until `/api/state` succeeded, so an expired QR code left a dead UI that showed "connection failed" but refused typing. Search only reads locally loaded sessions, so it no longer depends on network state.
+
+### 中文
+
+#### 新增
+
+- **会话交接可在 TUI 与 GUI 之间互通**：新增可移植 `session_handoff` 插件（`extensions/session-handoff/`），GUI 与 TUI 共用同一实现，按项目发现本机活跃会话并投递自包含任务；目标忙碌时排队，不打断当前回合。Desktop 会话同时保留 `desktop_handoff`，目标未连接时经主进程重连续聊会话后投递。
+
+#### 修复
+
+- **空闲会话无法被交接发现**：会话文件尚未落盘时不再因路径不存在而放弃注册。
+- **探活被当作真实投递**：新增专用 `/ping` 路由，探测不再消耗排队中的交接。
+- **端口复用让已退出会话伪装成可用目标**：描述符与探活应答均携带实例 ID，只有同一实例才算在线。
+- **远程控制页搜索框不再被连接失败锁死**：此前搜索框一直禁用直到 `/api/state` 成功，二维码失效时页面显示「连接失败」却无法输入。搜索只读本地已加载的会话，与网络状态无关——现在静态页面不再写死禁用，连接失败分支也会显式恢复输入能力。
 
 ## [0.1.38] - 2026-10-27
 
