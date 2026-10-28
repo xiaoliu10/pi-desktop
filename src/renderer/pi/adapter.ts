@@ -643,6 +643,9 @@ export interface OptimisticSend {
   messageIdentity?: string;
   /** prompt RPC 已应答（pi 已持久化该消息）；此后仍未确认 = 确实无法认领的孤儿。 */
   promptDone?: boolean;
+  /** 落盘内容与原始输入分叉（如 /skill 展开成 <skill> XML）：确认后必须渲染落盘版
+   *  （带技能 chip），否则用户看到的是永远变成原始命令文本的气泡（2026-10-28）。 */
+  diverged?: boolean;
 }
 
 /** Received boundaries keep transient history anchored; they are not local send requests. */
@@ -671,11 +674,21 @@ export function confirmSends(sends: OptimisticSend[], history: PiHistory, key: s
       // 原文前缀 + 图片数量；claimed/baseline 已防跨条目误认领。
       const text = contentText(content);
       if (s.received) return text === s.text && images.every((image: any, i: number) => image.data === s.images[i].data && image.mimeType === s.images[i].mimeType);
+      // /skill 命令会被 pi 展开成 <skill name="…">…</skill> + 原正文 落盘——展开文本与输入
+      // 既不相等也不是前缀，走不到下面的匹配，乐观气泡永挂成第二条重复用户消息
+      //（2026-10-28 用户实测）。按「技能名出现 + 原正文完整包含」认领；claimed/baseline
+      // 已防跨条目误认领，同名技能的多条历史也不会错认（正文必须同时包含）。
+      const skill = /\/skill[:\s]+([^\s]+)\s*([\s\S]*)$/.exec(s.text);
+      if (skill) {
+        const rest = skill[2]!.trim();
+        if (text.includes(`<skill name="${skill[1]}"`) && (rest === '' || text.includes(rest))) return true;
+      }
       return text === s.text || (s.text.length > 0 && text.startsWith(s.text));
     });
     if (!entry?.id) return s;
     claimed.add(entry.id);
-    return { ...s, confirmedId: entry.id, messageIdentity: s.messageIdentity ?? userMessageIdentity(entry.message!) };
+    const skillClaimed = /\/skill[:\s]+([^\s]+)\s*([\s\S]*)$/.test(s.text) && contentText(entry.message?.content) !== s.text;
+    return { ...s, confirmedId: entry.id, diverged: s.diverged || skillClaimed, messageIdentity: s.messageIdentity ?? userMessageIdentity(entry.message!) };
   });
 }
 
@@ -819,7 +832,7 @@ function sentConversationMessagesInner(branch: PiEntry[], live: Record<string, R
     const anchor = anchorOf(send);
     const end = at >= cursor ? at : anchor >= cursor ? anchor : branch.length;
     out.push(...segment(branch.slice(cursor, end), sends[i - 1]?.id));
-    if ((send.id.startsWith('history:') || send.received) && at >= 0) out.push(...historyToMessages([branch[at]]));
+    if ((send.id.startsWith('history:') || send.received || send.diverged) && at >= 0) out.push(...historyToMessages([branch[at]]));
     else out.push({ id: send.id, role: 'user', timestamp: send.at, parts: [
       { kind: 'text', id: `${send.id}-text`, text: send.text },
       ...send.images.map((image, n) => ({ ...image, kind: 'image' as const, id: `${send.id}-image-${n}` })),
