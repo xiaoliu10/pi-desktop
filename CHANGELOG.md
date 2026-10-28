@@ -3,7 +3,7 @@
 所有重要变更记录在本文件。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 README 只保留最近版本摘要；本文件为完整记录。
 
-## [Unreleased]
+## [0.1.39] - 2026-10-28
 
 ### English
 
