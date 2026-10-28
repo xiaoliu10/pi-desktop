@@ -621,6 +621,34 @@ describe('RemoteServer history lazy-load (tail paging)', () => {
   });
 });
 
+describe('remote dialog rendering excludes internal protocol channels', () => {
+  // 用户 2026-10-28 反馈：手机端每个项目进去都弹「需要你的确认」空白框，点了没反应。
+  // 根因：desktop-handoff / desktop-automation 是主进程程序化应答的保留通道（backend 提前
+  // return，从不 emit ui），远控页却把它们当普通 input 渲染，于是把内部 JSON 协议的
+  // placeholder 暴露成空白输入框。
+  const internalChannels = ['desktop-handoff', 'desktop-automation'];
+
+  it('never renders an internal protocol channel as a user dialog', () => {
+    const page = viewerPage();
+    const script = page.slice(page.indexOf('function renderDialog'));
+    // 守卫必须在任何分支渲染之前生效（进函数就 return），不能等到方法分支末端。
+    const guard = script.indexOf('INTERNAL_CHANNELS');
+    expect(guard, 'renderDialog 缺少内部通道守卫').toBeGreaterThan(-1);
+    expect(guard).toBeLessThan(script.indexOf("if (r.method === 'confirm')"));
+    expect(guard).toBeLessThan(script.indexOf('renderAsk('));
+    // 两个通道都必须被声明为内部通道，且集中在页面脚本里定义一次。
+    const declared = page.slice(page.indexOf('const INTERNAL_CHANNELS'), page.indexOf('const INTERNAL_CHANNELS') + 200);
+    for (const channel of internalChannels) expect(declared).toContain(channel);
+  });
+
+  it('reports an already-consumed dialog instead of leaving a dead card', () => {
+    // 桌面端先应答 → 手机端再点必然失败。旧行为按 review P2 故意留卡让用户重试，但该 dialog
+    // 已被他端消费，重试永不成功 → 死卡片关不掉。
+    const script = viewerPage().slice(viewerPage().indexOf('function respondDialog'));
+    expect(script).toMatch(/已被.*?(处理|应答)|已在其他|已处理/s);
+  });
+});
+
 describe('viewerPage emitted script (\\n-template守卫)', () => {
   it('parses as a function body — catches emitted JS strings left open by a \\n in the template', () => {
     const html = viewerPage();
