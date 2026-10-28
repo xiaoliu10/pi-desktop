@@ -1,7 +1,8 @@
-/** 发送被 pi 内核的「压缩进行中」拒绝时：这是唯一一种「等一下就好、无需用户处理」
- *  的临时拒发，故走对话流错误卡并随恢复自动消失（用户 2026-10-27 反馈）。
- *  其他「暂不能发送」（连接数满、模型刷新中、stopUnconfirmed…）是**真实失败/需要动作**，
- *  继续走全局错误横幅，绝不能被这里吞掉（审查 P1：过宽匹配会让用户零反馈）。 */
+/** 发送被「临时状态」拒绝的判定：**只**认 pi 内核的「压缩进行中」这一类。
+ *  命中后 Desktop 完全静默处理（不写全局横幅、不写对话流错误卡，正文退回输入框，
+ *  压缩结束后用户自行重发）——用户 2026-10-28 反馈：连错误卡也取消。
+ *  连接数满/模型刷新中/停止未确认/进程退出/鉴权/网络等都是**真实失败**，
+ *  一律继续走全局错误横幅，不得被这里吞掉（审查 P1）。 */
 export type TransientSendErrorKind = 'compaction';
 
 const COMPACTION_RE = /cannot submit a prompt while compaction is in progress|compaction is in progress/i;
@@ -16,13 +17,4 @@ export function classifyTransientSendError(message: string | null | undefined): 
 /** 是否属于「等压缩结束后重发即可」的临时拒发错误。 */
 export function isTransientSendError(message: string | null | undefined): boolean {
   return classifyTransientSendError(message) !== null;
-}
-
-/** 单行摘要：去掉 IPC 前缀（Error invoking remote method 'local-pi:prompt': Error: …），
- *  同一错误在对话流里没必要把通道名嚷给用户看。 */
-export function transientSendErrorSummary(message: string): string {
-  return String(message ?? '')
-    .replace(/^Error invoking remote method '[^']*':\s*/, '')
-    .replace(/^Error:\s*/, '')
-    .trim();
 }

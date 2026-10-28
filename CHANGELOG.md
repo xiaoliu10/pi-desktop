@@ -3,6 +3,20 @@
 所有重要变更记录在本文件。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 README 只保留最近版本摘要；本文件为完整记录。
 
+## [Unreleased]
+
+### English
+
+#### Changed
+
+- **Sending while compaction is running is now completely silent**: no error banner and no inline card. The text returns to the composer and you resend when compaction finishes.
+
+### 中文
+
+#### 变更
+
+- **压缩上下文时发送不再弹出任何提示**：不显示错误横幅，也不显示对话内错误卡；正文退回输入框，压缩结束后直接重发即可。
+
 ## [0.1.38] - 2026-10-27
 
 ### English
