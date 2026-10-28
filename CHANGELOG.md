@@ -3,6 +3,20 @@
 所有重要变更记录在本文件。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 README 只保留最近版本摘要；本文件为完整记录。
 
+## [Unreleased]
+
+### English
+
+#### Fixed
+
+- **Remote control search box was locked after a connection failure**: on the phone remote-control page, the project/task search input was hard-disabled until `/api/state` succeeded, so an expired QR code left a dead UI that showed "connection failed" but refused typing. The search only reads locally loaded sessions, so it no longer depends on network state: the static page no longer disables it and the failure branch explicitly re-enables it.
+
+### 中文
+
+#### 修复
+
+- **远程控制页搜索框不再被连接失败锁死**：手机端远程控制页的项目/任务搜索框此前一直处于禁用状态，直到 `/api/state` 成功才解禁；二维码失效时页面显示「连接失败」却无法输入，成了半死界面。搜索本身只读本地已加载的会话，与网络状态无关——现在静态页面不再写死禁用，连接失败分支也会显式恢复输入能力。
+
 ## [0.1.38] - 2026-10-27
 
 ### English

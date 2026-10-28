@@ -532,7 +532,7 @@ export function viewerPage(): string {
   <div class="notice">本次连接可以查看当前设备上已打开的项目、任务和会话；二维码失效后需要回到桌面端重新连接。</div>
   <div class="sect-head"><h2>当前设备上的工作区和任务</h2><button class="refreshbtn" id="refresh">&#8635; 刷新</button></div>
   <div class="sect-sub" id="projStat">读取中…</div>
-  <input class="proj-search" id="projSearch" placeholder="搜索项目或任务…" disabled>
+  <input class="proj-search" id="projSearch" placeholder="搜索项目或任务…">
   <div id="projList"></div>
   <div class="footnote">本地执行 · 数据不会离开你的电脑</div>
 </main>
@@ -998,6 +998,10 @@ async function loadState() {
   } catch (e) {
     document.getElementById('conn').textContent = String(e.message || e);
     document.getElementById('projStat').textContent = '连接失败';
+    // 搜索只读本地 sessions，与本次 /api/state 成败无关：失败也不能把输入框永久锁死
+    // （用户 2026-10-28 反馈连接失败后无法输入）。留可用状态，用户至少能搜已加载内容。
+    document.getElementById('projSearch').disabled = false;
+
     document.getElementById('projList').innerHTML = '<div class="empty">无法连接桌面端（二维码可能已失效，请回桌面端重新扫码）</div>';
   }
 }
