@@ -4,7 +4,6 @@ import { RetryStatus } from './RetryStatus';
 import { retryPresentation } from '../../pi/model-retry';
 import { retryErrorIds } from './error-groups';
 import { WaitingProcess } from './WaitingProcess';
-import { transientSendErrorSummary } from '../../../shared/send-error';
 import { officialSubagentDetails, SubagentNavigation } from '../../pi/subagents';
 /**
  * Chat replica components (U03): markdown rendering, tool cards, diffs,
@@ -416,20 +415,6 @@ export function ExecutionNote({ title, text, active, zh, defaultOpen }: { title:
       <Icon name="chevron-right" size={12} className="pi-execution__chevron" /></summary>
     {open && <div className="pi-execution__note-body"><ChatMarkdown text={text} zh={zh} /></div>}
   </details>;
-}
-
-/** 会话内「暂时不能发送」错误卡：压缩进行中/会话忙碌时发送被拒，等恢复后自动消失。
- *  不放全局横幅的原因：横幅不随后续状态清除，会一直挂到用户手点关闭（用户 2026-10-27 反馈）。 */
-export function SendErrorCard({ message, zh, onDismiss }: { message: string; zh: boolean; onDismiss?: () => void }) {
-  const summary = transientSendErrorSummary(message);
-  return <div className="pi-send-error" role="alert">
-    <Icon name="info" size={15} />
-    <div className="pi-send-error__body">
-      <strong>{summary}</strong>
-      <span>{zh ? '压缩完成后会自动消失，稍后重新发送即可。' : 'This notice goes away once compaction finishes; resend then.'}</span>
-    </div>
-    {onDismiss && <button type="button" aria-label={zh ? '关闭提示' : 'Dismiss'} onClick={onDismiss}><Icon name="x" size={13} /></button>}
-  </div>;
 }
 
 export function ElapsedTime({ startedAt, endedAt, running, zh }: { startedAt?: number; endedAt?: number; running: boolean; zh: boolean }) {
@@ -1116,7 +1101,6 @@ export const ChatView = memo(function ChatView(props: ChatViewProps) {
             const hasProcess = !props.sendingText && lastTurn?.role === 'assistant' && lastTurn.steps.length > 0;
             return hasProcess || props.compacting ? working : <WaitingProcess zh={zh} onRefresh={props.onRefreshProcess}>{working}</WaitingProcess>;
           })()}
-          {props.sendError && <SendErrorCard message={props.sendError.message} zh={props.labels.you === '你'} onDismiss={props.onDismissSendError} />}
           {(props.imageCards ?? []).map(card => <ImageGenCardView key={card.id} card={card} labels={props.labels} onDownload={props.onDownloadImage} />)}
         </div>
       </div>

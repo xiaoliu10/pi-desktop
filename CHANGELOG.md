@@ -11,6 +11,10 @@ README 只保留最近版本摘要；本文件为完整记录。
 
 - **Session handoff now works between TUI and GUI**: a new portable `session_handoff` plugin (`extensions/session-handoff/`) is shared by both interfaces. It discovers active local sessions by project and delivers a self-contained task; a busy target is queued instead of interrupting its current turn. Desktop sessions keep `desktop_handoff` as well, so a disconnected Desktop session can still be reached by reconnecting it through the main process.
 
+#### Changed
+
+- **Sending while compaction is running is now completely silent**: no error banner and no inline card. The text returns to the composer and you resend when compaction finishes.
+
 #### Fixed
 
 - **Idle sessions could not be discovered for handoff**: a session whose transcript has not been flushed yet no longer fails to register because its path does not exist yet.
@@ -24,6 +28,10 @@ README 只保留最近版本摘要；本文件为完整记录。
 #### 新增
 
 - **会话交接可在 TUI 与 GUI 之间互通**：新增可移植 `session_handoff` 插件（`extensions/session-handoff/`），GUI 与 TUI 共用同一实现，按项目发现本机活跃会话并投递自包含任务；目标忙碌时排队，不打断当前回合。Desktop 会话同时保留 `desktop_handoff`，目标未连接时经主进程重连续聊会话后投递。
+
+#### 变更
+
+- **压缩上下文时发送不再弹出任何提示**：不显示错误横幅，也不显示对话内错误卡；正文退回输入框，压缩结束后直接重发即可。
 
 #### 修复
 

@@ -462,7 +462,6 @@ export interface ChatViewProps {
   compacting?: boolean;
   /** 发送被临时状态拒绝（压缩中/会话忙碌）：在对话流末尾显示错误卡，
    *  会话恢复后由 store 自动移除（不写全局错误横幅）。 */
-  sendError?: { key: string; message: string; at: number };
   /** 手动关闭会话内错误卡（自动清除之外的兜底）。 */
   onDismissSendError?: () => void;
   /** 直连生图结果卡片：追加在时间线末尾（本地产物，不入会话历史）。 */
