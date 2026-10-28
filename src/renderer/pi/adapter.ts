@@ -1686,24 +1686,14 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
       return;
     }
     if (type === 'auto_retry_start' || type === 'auto_retry_end') return;
-<<<<<<< HEAD
-=======
-    // 会话恢复：压缩结束 / 新一轮开始 / 模型恢复输出 —— 之前「等空闲再发」的
-    // 拒绝原因已不成立，会话内错误卡随之退场（用户要求：恢复后自动删除，不留残影）。
-    if (type === 'compaction_end' || type === 'agent_start' || type === 'turn_start') {
-      // 会话已恢复：该会话「等空闲再发」的提示失去意义。新错误产生时会被新记录覆盖，
-      // 跨会话由 key 隔离，故此处只需按 key 清空，无需额外时序判断。
-      const stale = get().sendError;
-      if (stale && stale.key === key) set({ sendError: undefined });
-    }
     // 会话恢复：压缩结束 / 新一轮开始 —— 上一轮的失败原因已不成立，错误提示自动退场
     // （用户 2026-10-28：大红横幅很 low、必须手点才消失；现在改小横幅 + 自动清除，
     //  dismissError 保留为兜底）。按 key 隔离：别的会话错误不受影响。
+    // 注：#174 已把 compaction 拒发改为完全静默（不写 error），此处清的是其他真实失败。
     if (type === 'compaction_end' || type === 'agent_start' || type === 'turn_start') {
       const stale = get().error;
       if (stale !== undefined && (!get().errorKey || get().errorKey === key)) set({ error: undefined, errorKey: undefined });
     }
->>>>>>> pr-175
     if (type === 'compaction_start') {
       if (!state.runs.some(r => r.key === key && r.sidecarOf !== undefined)) pushNotification({ kind: 'info', title: 'pi 正在压缩上下文', time: '刚刚' });
       return;
