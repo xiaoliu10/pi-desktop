@@ -3,6 +3,20 @@
 所有重要变更记录在本文件。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 README 只保留最近版本摘要；本文件为完整记录。
 
+## [Unreleased]
+
+### English
+
+#### Fixed
+
+- **Slash-skill messages no longer show as two bubbles**: sending `/skill:<name> …` used to leave the raw typed text stuck as a second message next to the expanded skill entry. Desktop now recognizes the persisted expansion and renders only the final version (skill chip + text).
+
+### 中文
+
+#### 修复
+
+- **/skill 命令消息不再出现两条重复气泡**：发送 `/skill:<名称> <正文>` 时，原始输入气泡会一直挂在展开后的技能消息旁边。Desktop 现在能识别落盘的展开内容，只保留最终版本（技能 chip + 正文）。
+
 ## [0.1.38] - 2026-10-27
 
 ### English

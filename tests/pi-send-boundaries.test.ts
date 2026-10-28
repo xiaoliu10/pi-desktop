@@ -194,6 +194,24 @@ it('renders an image-only send immediately and matches the image, not just fallb
   expect(usePiStore.getState()).toMatchObject({ sends: [], sentAt: undefined, pendingPrompt: undefined, contextItems: [context], draftText: '' });
 });
 
+it('confirms a /skill command send against its expanded <skill> history entry', () => {
+  // pi 把 /skill:name 正文 展开成 <skill name="name">…</skill> + 原正文 落盘；
+  // 展开文本与原始输入既不相等也不是前缀，乐观气泡若不能按「技能名 + 正文」认领，
+  // 就会和历史展开条目并排挂成两条重复的用户消息（2026-10-28 用户实测）。
+  const typed = '/skill:auto-research 现在有一个问题 这个ve没有自主工作的主观能动性';
+  const expanded = '<skill name="auto-research" location="/skills/auto-research/SKILL.md">\n# Auto Research\n</skill>\n\n现在有一个问题 这个ve没有自主工作的主观能动性';
+  const sends = [{ id: 's-skill', key: run.key, at: 1, text: typed, images: [], baseline: ['old-user'] }];
+  const confirmed = confirmSends(sends, history([entry('e-skill', 'user', expanded)]), run.key)[0];
+  expect(confirmed.confirmedId).toBe('e-skill');
+  // 分叉标记：确认后必须渲染落盘的展开版（技能 chip），不能渲染原始命令文本
+  expect(confirmed.diverged).toBe(true);
+  const rendered = sentConversationMessages([entry('e-skill', 'user', expanded)], undefined, undefined, [confirmed]);
+  expect(JSON.stringify(rendered)).not.toContain('/skill:auto-research');
+  // 不同技能名的展开条目不得被误认领
+  const other = expanded.replace('name="auto-research"', 'name="other-skill"');
+  expect(confirmSends([{ ...sends[0]! }], history([entry('e-other', 'user', other)]), run.key)[0].confirmedId).toBeUndefined();
+});
+
 it('routes a late old-tool update by persisted call identity even after progress retirement', () => {
   const branch = [entry('old', 'assistant', [{ type: 'toolCall', id: 'old-call', name: 'read', arguments: {} }]), entry('new', 'user', 'next')];
   const sends = [{ id: 'send-next', key: run.key, at: 1, text: 'next', images: [], baseline: ['old'], confirmedId: 'new' }];

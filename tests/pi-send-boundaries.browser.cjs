@@ -86,6 +86,70 @@ async (page) => {
   await page.waitForTimeout(200);
   assert(await page.evaluate(() => window.store.getState().contextItems.length === 1 && window.store.getState().sends.length === 2), 'attachment rollback');
   assert(Math.abs(await scroll.evaluate(el => el.scrollTop) - top) < 5, 'rollback does not replay old scroll request');
+  // /skill 命令：pi 落盘的是展开后的 <skill>…</skill> + 原正文，不是原始输入。
+  // 乐观气泡必须被认领撤场，否则对话区出现两条重复的用户消息（2026-10-28 用户实测）。
+  // 附件轮回滚会把图片还原进 contextItems；skill 轮不带附件（真实场景即无附件），
+  // 否则 confirmSends 的图片数量门（0≠1）会在 skill 匹配前把认领拒掉。
+  await page.evaluate(() => window.store.setState({ contextItems: [] }));
+  await page.evaluate(() => {
+    window.setLog = [];
+    window.store.subscribe((s) => {
+      const last = s.sends?.at(-1);
+      window.setLog.push({ h: s.history?.branch?.at(-1)?.id ?? null, c: last?.confirmedId ?? null, n: s.sends?.length });
+    });
+  });
+  await page.evaluate(() => window.send('/skill:demo 自主工作问题'));
+  await page.getByText('/skill:demo 自主工作问题', { exact: true }).waitFor();
+  await page.evaluate(() => window.mock.prompts[window.mock.prompts.length - 1].resolve());
+  // 附件轮的 prompt 被拒绝、不产生 history 请求，histories 与 prompts 数量天然错位：
+  // 等本轮的 history resolver 出现后直接解决最后一个。
+  try {
+    await page.waitForFunction(() => window.mock.histories.length >= 3, { timeout: 8000 });
+  } catch (e) {
+    const dump = await page.evaluate(() => ({ histories: window.mock.histories.length, prompts: window.mock.prompts.length, sending: window.store.getState().sending, selected: window.store.getState().selectedKey, runs: window.store.getState().runs?.map(r => r.key) }));
+    throw new Error('skill history resolver wait failed: ' + JSON.stringify(dump));
+  }
+  await page.evaluate(() => {
+    window.branch.push({ id: 'skill-1', type: 'message', message: { role: 'user', content: '<skill name="demo" location="/skills/demo/SKILL.md">\n# Demo\n</skill>\n\n自主工作问题' } });
+    // 可能存在多个待决 history 调用（promptDone 与其它触发背靠背）：全部灌入新 branch，
+    // 过期调用由 refreshHistory 的 seq/generation 守卫丢弃，最新一次会完成确认。
+    for (const resolve of window.mock.histories) resolve({ branch: [...window.branch] });
+    window.mock.histories.length = 0;
+  });
+  // 确认前可能还会排入新的 history 请求（去抖合并）：持续把最新 branch 灌给所有待决
+  // resolver，直到乐观气泡被认领；过期调用由 seq/generation 守卫自行丢弃。
+  const waitSkillConfirm = async (timeout) => page.waitForFunction(() => window.store.getState().sends.at(-1).confirmedId === 'skill-1', { timeout });
+  try {
+    await waitSkillConfirm(8000);
+  } catch (e) {
+    let settled = false;
+    for (let i = 0; i < 8 && !settled; i++) {
+      const had = await page.evaluate(() => {
+        if (!window.mock.histories.length) return false;
+        for (const resolve of window.mock.histories) resolve({ branch: [...window.branch] });
+        window.mock.histories.length = 0;
+        return true;
+      });
+      if (!had) break;
+      try { await waitSkillConfirm(3000); settled = true; } catch { }
+    }
+    if (!settled) {
+      const dump = await page.evaluate(() => {
+        const s = window.store.getState();
+        let direct = null;
+        try { direct = window.confirmSends(s.sends.map(x => ({ ...x })), s.history, 'mock').map(x => x.confirmedId); } catch (e) { direct = 'ERR ' + e.message; }
+        return { storeBranchLast: s.history?.branch?.at(-1)?.id, storeBranchLen: s.history?.branch?.length, windowBranchLen: window.branch.length, direct, skillSend: JSON.parse(JSON.stringify(s.sends.at(-1))), setLog: window.setLog?.slice(-6) };
+      });
+      throw new Error('skill confirm wait failed: ' + JSON.stringify(dump));
+    }
+  }
+  assert(await page.getByText('自主工作问题').count() === 1, 'skill send renders exactly once after ack');
+  const chipCount = await page.getByText('技能 · demo').count();
+  if (chipCount !== 1) {
+    const dump = await page.evaluate(() => Array.from(document.querySelectorAll('.pi-chat__inner > article')).map(a => a.textContent.slice(0, 120)));
+    throw new Error('skill chip count=' + chipCount + ' articles=' + JSON.stringify(dump));
+  }
+  await page.screenshot({ path: 'output/playwright/send-skill-dedupe.png' });
   await page.screenshot({ path: 'output/playwright/send-boundaries.png' });
   assert(errors.length === 0, 'browser errors: ' + errors.join('\n'));
   console.log('PASS: two slow IPC rounds, immediate last user, old tools before user, stable acknowledgement, wheel-up during growth, attachment-only and failure rollback');
