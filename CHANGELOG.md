@@ -3,6 +3,16 @@
 所有重要变更记录在本文件。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 README 只保留最近版本摘要；本文件为完整记录。
 
+## [Unreleased]
+
+### Added
+- 会话交接可在 TUI 与 GUI 之间互通：新增可移植 `session_handoff` 插件（`extensions/session-handoff/`），GUI 与 TUI 共用同一实现，按项目发现本机活跃会话并投递自包含任务；目标忙碌时排队、不打断当前回合。Desktop 启动的会话同时保留 `desktop_handoff`，目标未连接时经 Desktop 主进程重连续聊会话后投递。
+
+### Fixed
+- 修复空闲会话无法被交接发现的问题：会话文件尚未落盘时不再因路径不存在而放弃注册（此前 `session_start` 静默失败，对端永远看不到该会话）。
+- 修复探活被当作真实投递的问题：新增专用 `/ping` 路由，探测不再消耗排队中的交接。
+- 修复端口复用导致已退出会话伪装成可用目标的问题：描述符与探活应答均携带实例 ID，只有同一实例才算在线。
+
 ## [0.1.38] - 2026-10-27
 
 ### English

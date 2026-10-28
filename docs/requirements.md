@@ -345,7 +345,12 @@
 - 目标不存在/项目目录无效/消息超长时返回明确错误，不静默新建会话。
 - 可先用 action=list 查询项目候选及连接状态。
 
-**状态**：实现与测试通过（模型工具 v1，无 UI），待审查/发版验收。
+**状态**：部分满足。
+
+- Desktop → Desktop：满足（`desktop_handoff` 模型工具 v1，无 UI）。
+- **TUI ↔ TUI / TUI ↔ GUI**：满足（v0.1.39 候选，`extensions/session-handoff/` 可移植插件，GUI 与 TUI 共用同一实现；目标会话忙碌时排队，不打断当前回合）。Desktop 侧由 backend 随会话加载该插件，目标未连接时经 `PI_DESKTOP_HANDOFF_BRIDGE=1` 复用上面的 Desktop 主进程桥重连续聊会话；纯 TUI 场景不设该 env，只走本机活跃会话互通。
+
+**回归触发**：改 `handoff-bridge.ts`、`extensions/desktop-handoff/index.mjs`、`extensions/session-handoff/`、backend 的 `desktop-handoff` 拦截与扩展加载、打包 extraResources。测试：`tests/handoff-bridge.test.ts`、`tests/session-handoff-plugin.test.ts`、`tests/session-handoff-transport.test.ts`、`tests/session-handoff-real-process.test.ts`（真实 pi 进程断言工具进入 active 集合并发布可发现描述符）。
 
 **回归触发**：改 `handoff-bridge.ts`、`extensions/desktop-handoff/index.mjs`、backend 的 `desktop-handoff` 拦截与扩展加载、打包 extraResources。测试：`tests/handoff-bridge.test.ts`。
 
