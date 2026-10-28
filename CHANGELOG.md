@@ -3,6 +3,20 @@
 所有重要变更记录在本文件。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 README 只保留最近版本摘要；本文件为完整记录。
 
+## [Unreleased]
+
+### English
+
+#### Changed
+
+- **Errors now show as a small banner above the composer** instead of a full-width red bar, and they clear themselves once the session recovers (next turn starts or compaction finishes). Manual dismiss is still available as a fallback.
+
+### 中文
+
+#### 变更
+
+- **错误提示改为输入框上方的小横幅**：不再是满宽大红条；会话恢复（下一轮开始 / 压缩结束）后自动消失，不再需要手点关闭（手动关闭保留为兜底）。
+
 ## [0.1.38] - 2026-10-27
 
 ### English

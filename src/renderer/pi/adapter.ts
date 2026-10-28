@@ -1683,6 +1683,13 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
       const stale = get().sendError;
       if (stale && stale.key === key) set({ sendError: undefined });
     }
+    // 会话恢复：压缩结束 / 新一轮开始 —— 上一轮的失败原因已不成立，错误提示自动退场
+    // （用户 2026-10-28：大红横幅很 low、必须手点才消失；现在改小横幅 + 自动清除，
+    //  dismissError 保留为兜底）。按 key 隔离：别的会话错误不受影响。
+    if (type === 'compaction_end' || type === 'agent_start' || type === 'turn_start') {
+      const stale = get().error;
+      if (stale !== undefined && (!get().errorKey || get().errorKey === key)) set({ error: undefined, errorKey: undefined });
+    }
     if (type === 'compaction_start') {
       if (!state.runs.some(r => r.key === key && r.sidecarOf !== undefined)) pushNotification({ kind: 'info', title: 'pi 正在压缩上下文', time: '刚刚' });
       return;

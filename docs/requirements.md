@@ -334,6 +334,23 @@
 
 ## 会话协作域（collaboration）
 
+### R-ui-01　错误提示是输入框上方的小横幅，且会话恢复后自动消失
+
+**需求**：错误提示不得使用高饱和「大红横幅」且不得依赖手点关闭（用户 2026-10-28 反馈「很 low、必须要手点才消失、应该能自动恢复」）。形态：输入框上方的低对比小横幅；会话恢复（`agent_start` / `compaction_end` / `turn_start`）时同会话错误自动清除，手点关闭保留为兜底。
+
+**验收**：
+- `.pi-banner--error` 为紧凑小横幅：字号 ≤13px、上下内边距 ≤8px、总高度 <40px，背景低饱和（非纯红底）。
+- 渲染位置在输入框（composer）上方；`role="alert"` 保留（可访问性）。
+- 自动清除按会话隔离：`errorKey` 等于该会话 key 才清；其他会话错误不受影响。
+- 手动 `dismissError` 仍可用（兜底，例如无 run 的全局性错误）。
+- 回归：`tests/error-banner-autoclear.test.ts`（三类恢复事件清除/跨会话隔离/手点兜底/失败仍写 error）、`tests/soft-error-banner.browser.cjs`（真实浏览器：小横幅样式与位置、`agent_start` 自动消失、手点关闭可用）。
+
+**状态**：实现与浏览器验证通过，待发版验收。
+
+**回归触发**：改 `replica-app.css` 的 `.pi-banner--error`、`PiReplicaApp` 横幅渲染位置、adapter 的 error 清除条件时必须同步本条。
+
+---
+
 ### R-collab-01　跨会话交接：投递到目标项目的既有会话
 
 **需求**：会话 A 可通过 `desktop_handoff` 把自包含的排查/任务上下文投递给**另一个项目**的既有会话 B——项目级记忆/MCP/权限随 B 的项目隔离，不新建孤立会话、不把内容灌进 A。默认目标 = 目标项目下未归档、非副驾、Desktop 自建的最近活跃会话（已连接的活跃 run 优先）；也可显式指定 sessionKey。
