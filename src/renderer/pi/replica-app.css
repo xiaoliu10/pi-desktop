@@ -24,11 +24,29 @@
   color: var(--pi-text-secondary);
 }
 
+/* 错误小横幅：不再是高饱和红底大条（用户 2026-10-28 反馈「很 low、必须手点」）。
+   低对比、紧凑、跟随会话恢复自动消失（adapter 的 agent_start/compaction_end/turn_start
+   清除 error），手点关闭保留为兜底。 */
 .pireplica .pi-banner--error {
-  background: var(--pi-red-bg);
-  border-color: color-mix(in srgb, var(--pi-red) 40%, transparent);
-  color: var(--pi-red);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 20px 4px;
+  padding: 5px 10px;
+  border-radius: var(--pi-radius-md);
+  background: color-mix(in srgb, var(--pi-red) 7%, var(--pi-bg-card));
+  border: 1px solid color-mix(in srgb, var(--pi-red) 22%, transparent);
+  color: var(--pi-text-secondary);
+  font-size: var(--pi-font-size-xs);
+  line-height: 1.5;
 }
+.pireplica .pi-banner--error > span {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: color-mix(in srgb, var(--pi-red) 75%, var(--pi-text));
+}
+.pireplica .pi-banner--error svg { flex-shrink: 0; color: color-mix(in srgb, var(--pi-red) 70%, transparent); }
 
 .pireplica .pi-banner button {
   color: inherit;

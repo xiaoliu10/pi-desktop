@@ -15,12 +15,18 @@ README 只保留最近版本摘要；本文件为完整记录。
 
 - **Sending while compaction is running is now completely silent**: no error banner and no inline card. The text returns to the composer and you resend when compaction finishes.
 
+- **Errors now show as a small banner above the composer** instead of a full-width red bar, and they clear themselves once the session recovers (next turn starts or compaction finishes). Manual dismiss is still available as a fallback.
+
 #### Fixed
 
 - **Idle sessions could not be discovered for handoff**: a session whose transcript has not been flushed yet no longer fails to register because its path does not exist yet.
+
 - **Liveness probing was mistaken for a real delivery**: a dedicated `/ping` route now answers probes without consuming a queued handoff.
+
 - **A closed session could impersonate a usable target**: descriptors and probe responses both carry an instance id, so only the same instance counts as online.
+
 - **Remote control search box was locked after a connection failure**: the phone remote-control page hard-disabled the project/task search input until `/api/state` succeeded, so an expired QR code left a dead UI that showed "connection failed" but refused typing. Search only reads locally loaded sessions, so it no longer depends on network state.
+
 - **Slash-skill messages no longer show as two bubbles**: sending `/skill:<name> …` used to leave the raw typed text stuck as a second message next to the expanded skill entry. Desktop now recognizes the persisted expansion and renders only the final version (skill chip + text).
 
 ### 中文
@@ -33,12 +39,18 @@ README 只保留最近版本摘要；本文件为完整记录。
 
 - **压缩上下文时发送不再弹出任何提示**：不显示错误横幅，也不显示对话内错误卡；正文退回输入框，压缩结束后直接重发即可。
 
+- **错误提示改为输入框上方的小横幅**：不再是满宽大红条；会话恢复（下一轮开始 / 压缩结束）后自动消失，不再需要手点关闭（手动关闭保留为兜底）。
+
 #### 修复
 
 - **空闲会话无法被交接发现**：会话文件尚未落盘时不再因路径不存在而放弃注册。
+
 - **探活被当作真实投递**：新增专用 `/ping` 路由，探测不再消耗排队中的交接。
+
 - **端口复用让已退出会话伪装成可用目标**：描述符与探活应答均携带实例 ID，只有同一实例才算在线。
+
 - **远程控制页搜索框不再被连接失败锁死**：此前搜索框一直禁用直到 `/api/state` 成功，二维码失效时页面显示「连接失败」却无法输入。搜索只读本地已加载的会话，与网络状态无关——现在静态页面不再写死禁用，连接失败分支也会显式恢复输入能力。
+
 - **/skill 命令消息不再出现两条重复气泡**：发送 `/skill:<名称> <正文>` 时，原始输入气泡会一直挂在展开后的技能消息旁边。Desktop 现在能识别落盘的展开内容，只保留最终版本（技能 chip + 正文）。
 
 ## [0.1.38] - 2026-10-27

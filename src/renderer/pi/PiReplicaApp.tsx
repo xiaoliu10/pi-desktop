@@ -1024,6 +1024,7 @@ export default function PiReplicaApp() {
             )}
             {s.error && (!s.errorKey || s.errorKey === s.selectedKey) && (
               <div className="pi-banner pi-banner--error" role="alert">
+                <Icon name="info" size={13} />
                 <span>{s.error}</span>
                 <button aria-label="关闭错误" onClick={s.dismissError}>×</button>
               </div>
