@@ -165,6 +165,21 @@ describe('handoff dispatch', () => {
 });
 
 describe('desktop_handoff extension wiring', () => {
+  it('loads the portable session_handoff plugin and packages it, with the Desktop bridge gated by env', () => {
+    expect(fs.existsSync('extensions/session-handoff/index.mjs')).toBe(true);
+    const backend = fs.readFileSync('src/main/pi/backend.ts', 'utf8');
+    // Both extensions load: the legacy desktop_handoff bridge and the portable plugin.
+    expect(backend).toContain("'..', 'desktop-handoff', 'index.mjs'");
+    expect(backend).toContain("'..', 'session-handoff', 'index.mjs'");
+    // The bridge is opt-in for the portable plugin: pure TUI sessions must not get it.
+    expect(backend).toContain('PI_DESKTOP_HANDOFF_BRIDGE');
+    expect(backend).toMatch(/if \(sessionHandoffArgs\.length && handoffArgs\.length\) env\.PI_DESKTOP_HANDOFF_BRIDGE/);
+    const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+    const resources = JSON.stringify(pkg.build.extraResources);
+    expect(resources).toContain('extensions/session-handoff');
+    expect(resources).toContain('extensions/desktop-handoff');
+  });
+
   it('shipped as an extension with the reserved ui.input channel and packaged as extraResource', () => {
     expect(fs.existsSync('extensions/desktop-handoff/index.mjs')).toBe(true);
     const ext = fs.readFileSync('extensions/desktop-handoff/index.mjs', 'utf8');
