@@ -834,11 +834,17 @@ function renderLive() {
   scrollFollow();
 }
 // ---- 审批卡片 ----
+// 主进程程序化应答的保留通道（backend.ts 对这两个 title 提前 return，从不发给桌面端 UI）。
+// 它们不是用户交互：placeholder 里装的是内部 JSON 协议。远控页若按普通 input 渲染，用户看到
+// 的就是「需要你的确认」+ 空白输入框（2026-10-28 反馈：每个项目进去都弹，点了没反应）。
+const INTERNAL_CHANNELS = new Set(['desktop-handoff', 'desktop-automation']);
 function renderDialog() {
   const box = document.getElementById('dialogs');
   // 审批卡只在对话视图显示（项目视图一律隐藏，避免悬浮在列表上）；项目卡片上以
   // 「N 待审批」徽标引导用户进入对应会话处理。
-  const d = !chatView ? null : [...dialogs.values()].find(x => x.key === current);
+  // 取第一个「用户可见」的 dialog：内部协议通道不是交互，跳过它而不是让它占位
+  // （否则同会话同时有内部通道与真实审批时，真实审批会被内部通道挡掉）。
+  const d = !chatView ? null : [...dialogs.values()].find(x => x.key === current && !INTERNAL_CHANNELS.has(x.request.title || ''));
   if (!d) { box.hidden = true; box.innerHTML = ''; return; }
   const r = d.request;
   const isAsk = r.method === 'input' && r.title === 'desktop-ask';
@@ -951,8 +957,14 @@ function respondDialog(d, response) {
       api('/api/state').then(s2 => {
         const live = new Set();
         for (const r of s2.runs || []) for (const dg of r.dialogs || []) live.add(dg.request.id);
-        if (!live.has(id)) { dialogs.delete(id); renderDialog(); }
-        document.getElementById('conn').textContent = live.has(id) ? '提交未送达，请重试' : String(e.message || e);
+        if (!live.has(id)) {
+          // 桌面端快照已无此 id：要么他端已处理，要么已过期。两种都不该让用户对着一个
+          // 永不可能成功的卡片重复点击——明确告知后消失，而不是留死卡片。
+          dialogs.delete(id); renderDialog();
+          document.getElementById('conn').textContent = '该确认已在其他端处理或已过期';
+          return;
+        }
+        document.getElementById('conn').textContent = '提交未送达，请重试';
       }).catch(() => { document.getElementById('conn').textContent = String(e.message || e); });
     });
 }

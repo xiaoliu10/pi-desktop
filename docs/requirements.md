@@ -349,6 +349,21 @@
 
 **回归触发**：改 `handoff-bridge.ts`、`extensions/desktop-handoff/index.mjs`、backend 的 `desktop-handoff` 拦截与扩展加载、打包 extraResources。测试：`tests/handoff-bridge.test.ts`。
 
+### R-collab-02　远控页不渲染内部协议通道，死卡片不得关不掉
+
+**需求**：手机端远程控制页只展示**面向用户的**交互。`desktop-handoff`、`desktop-automation` 是主进程程序化应答的保留通道（`backend.ts` 对这两个 title 提前 return，从不发给桌面端 UI），其 `placeholder` 装的是内部 JSON 协议，不是给用户看的文字。
+
+**验收**：
+- 内部通道请求**不得**在远控页渲染成弹窗（用户 2026-10-28 反馈：每个项目进去都弹「需要你的确认」+ 空白输入框，与项目无关，由模型调用 `desktop_handoff`/`desktop_schedule` 触发）。
+- 选取待渲染 dialog 时跳过内部通道，而不是让它占位——同会话同时存在内部通道与真实审批时，真实审批必须照常显示。
+- `desktop-ask`（`title === 'desktop-ask'`）仍是合法用户交互，走 `renderAsk` 分支，不受影响。
+- 应答失败且桌面端权威快照已无该 id（他端已处理或已过期）时：**明确告知后消失**，不得留死卡片让用户重复点击一个永不可能成功的操作。
+- 回归：`tests/remote-server.test.ts`（内部通道守卫位置与声明、死卡片措辞）、真实浏览器（内部通道 + 真实审批共存时只渲染后者，且无 `input` 泄漏）。
+
+**状态**：已修复，单测 + 真实浏览器验证通过，待发版验收。
+
+**回归触发**：改 `remote-server.ts` 的 `renderDialog`/`respondDialog`/`seedDialogs`、`PiUiRequest` 的 `title` 约定、backend 对保留通道的提前 return 清单；新增任何 `ctx.ui.input` 保留通道时必须同步此处。
+
 ---
 
 ## 升级回归总表
