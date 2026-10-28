@@ -24,4 +24,12 @@
 2. **探活不能走 `/send`**。用 `/send` 探活会把 ping 当成真实投递送进 `receive`，被插件层拒绝后 `probe` 判 stale 并删描述符——活 peer 全部消失。改为专用 `/ping`，只回 `{ok, instanceId}`，不触达会话。
 3. **端口复用会让死 peer 伪装成活 peer**。`close()` 后 OS 可立即把端口分配给同进程里下一个 `startPeer`，`/ping` 照样 200。描述符与 `/ping` 应答都带上 `instanceId`（`randomUUID`，必须在 listener 创建前生成——初版放在 `peer` 对象里导致闭包读到 `undefined`，活 peer 全被判 stale），探活只有回显同一 `instanceId` 才算 live。
 
+## 2026-10-28 自审修复（真实双进程验证暴露）
+
+1. **回执必须核对完整信封**：此前只要回合文本包含「交接编号：X」就确认 started；排队 flush 多信封同回合、或用户手输编号都会误报。现在只在收到与注入内容逐字一致的 user 回合时回报 started。
+2. **幂等收口到接收方**：发送端内存去重在发送方重启后失效，重试会二次投递。接收方按 `发送方sessionKey+幂等键` 记录结果与内容指纹：同键同内容返回 `duplicate:true`，同键不同内容显式拒绝；不确定结果不淘汰，避免重试变成二次投递。
+3. **描述符生命周期防误删**：探活失败（含调用方取消）不再删除描述符——瞬时失败或取消会误删在线会话；`close()` 只删除 instanceId 仍匹配自己的描述符，旧实例退出不再误删同 key 新实例的注册；`update()` 与 `close()` 串行化，关闭后的迟到 update 不复活条目。
+4. **/send 入口校验**：载荷长度/类型/来源对象在进入接收逻辑前校验（超限 413、非法 400），错误请求不再消耗接收方的幂等记录。
+5. **真实双进程回归**（`tests/session-handoff-real-process.test.ts`，本地假 OpenAI 模型真实发起 tool_call）：外部 pi → Desktop backend 与 Desktop → 外部 pi 双向投递、忙碌时 queued 且空闲后才执行、同幂等键重试仅一次投递、reload/关闭清理描述符、Desktop 端保留审批（不继承发送方权限）。打包布局探针（Resources 同构目录）验证插件从打包位置加载并完成投递。
+
 另外修正一处测试断言错误：transport 层不排除自身（排除是插件 `execute()` 的职责），原断言 `list() === []` 把「只剩自己」误判成失败。
