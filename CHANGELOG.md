@@ -3,21 +3,7 @@
 所有重要变更记录在本文件。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 README 只保留最近版本摘要；本文件为完整记录。
 
-## [Unreleased]
-
-### English
-
-#### Fixed
-
-- **Cancelling a scheduled task by name silently did nothing**: `desktop_schedule(action:"cancel")` passed the caller's identifier straight into an id-only filter, so passing a task **name** (the only identifier `list` exposes) matched nothing while still answering "deleted". The task stayed in `automations.json` and kept firing on schedule. The target is now resolved by exact id first, then by unique name; an ambiguous or unknown identifier returns `ok:false` with the candidate tasks instead of a false success, and a successful cancel reports which task was removed.
-
-### 中文
-
-#### 修复
-
-- **按任务名取消定时任务会假报成功**：`desktop_schedule(action:"cancel")` 原先只按 id 过滤，而 `list` 只暴露任务名——调用方传名字时一条都匹配不到，却仍返回「已删除」。任务留在 `automations.json` 里继续按计划触发。现在先按 id 精确匹配，未命中再按唯一 name 匹配；匹配到多个或找不到时返回 `ok:false` 并附上候选任务，不再假装成功；删除成功会回报具体删除了哪一个。
-
-## [0.1.39] - 2026-10-28
+## [0.1.39] - 2026-10-29
 
 ### English
 
@@ -43,6 +29,8 @@ README 只保留最近版本摘要；本文件为完整记录。
 
 - **Slash-skill messages no longer show as two bubbles**: sending `/skill:<name> …` used to leave the raw typed text stuck as a second message next to the expanded skill entry. Desktop now recognizes the persisted expansion and renders only the final version (skill chip + text).
 
+- **Cancelling a scheduled task by name silently did nothing**: `desktop_schedule(action:"cancel")` passed the caller's identifier straight into an id-only filter, so passing a task **name** (the only identifier `list` exposes) matched nothing while still answering "deleted". The task stayed in `automations.json` and kept firing on schedule. The target is now resolved by exact id first, then by unique name; an ambiguous or unknown identifier returns `ok:false` with the candidate tasks instead of a false success, and a successful cancel reports which task was removed.
+
 ### 中文
 
 #### 新增
@@ -66,6 +54,8 @@ README 只保留最近版本摘要；本文件为完整记录。
 - **远程控制页搜索框不再被连接失败锁死**：此前搜索框一直禁用直到 `/api/state` 成功，二维码失效时页面显示「连接失败」却无法输入。搜索只读本地已加载的会话，与网络状态无关——现在静态页面不再写死禁用，连接失败分支也会显式恢复输入能力。
 
 - **/skill 命令消息不再出现两条重复气泡**：发送 `/skill:<名称> <正文>` 时，原始输入气泡会一直挂在展开后的技能消息旁边。Desktop 现在能识别落盘的展开内容，只保留最终版本（技能 chip + 正文）。
+
+- **按任务名取消定时任务会假报成功**：`desktop_schedule(action:"cancel")` 原先只按 id 过滤，而 `list` 只暴露任务名——调用方传名字时一条都匹配不到，却仍返回「已删除」。任务留在 `automations.json` 里继续按计划触发。现在先按 id 精确匹配，未命中再按唯一 name 匹配；匹配到多个或找不到时返回 `ok:false` 并附上候选任务，不再假装成功；删除成功会回报具体删除了哪一个。
 
 ## [0.1.38] - 2026-10-27
 
