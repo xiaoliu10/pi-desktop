@@ -256,6 +256,23 @@
 
 **回归触发**：改 `automation-service.ts`（resolveSession/execute/onPiEvent）、`automation-bridge.ts`、`extensions/desktop-schedule/index.mjs`。测试：`tests/pi-automation.test.ts`（2d 同会话串行）、`tests/desktop-schedule.test.ts`（幂等创建/文案）。
 
+### R-automation-02　取消定时任务必须按调用方可见的标识精确命中，不得假报成功
+
+**需求**：`desktop_schedule(action:"cancel")` 的目标标识必须能被调用方可靠获得，且**任何未命中都必须显式报错**——不能返回 `ok:true` 而什么都没删。
+
+**背景**：2026-10-28 实测 4 次 cancel 全部返回「已删除定时任务。」，任务却留在 `automations.json` 继续按 schedule 触发（litellm 生产切库轮询任务每 15 分钟空跑）。根因：bridge 把 `payload.id` 直接交给 `deleteTask`（`filter(t => t.id !== id)`），而任务真实 id 是 `randomUUID()`；`list` 只回 `{id,name,...}`，调用方自然把**任务名**当 id 传入，filter 一条都不中却仍回 `ok`。
+
+**验收**：
+- 标识解析顺序：先按 `t.id === query` 精确匹配；未命中再按 `t.name === query` 匹配。
+- 按 name 唯一命中才删除；**命中多个必须返回 `ok:false` + `candidates:[{id,name,nextRunAt}]`**，由调用方选定，绝不猜测。
+- 一个都不命中（或 query 为空）返回 `ok:false`，并附上现有任务 `[{id,name}]` 便于核对。
+- 删除成功返回 `removed:{id,name}`，调用方能确认删的是哪一个。
+- 回归：`tests/pi-automation.test.ts`（按 name 取消 / 按真实 id 取消 / 无匹配报错 / 重名拒绝猜测并给 candidates / list 暴露 enabled）。
+
+**状态**：实现与测试通过，待审查 / 发版验收。
+
+**回归触发**：改 `automation-bridge.ts` 的 cancel 分支、`AutomationService.deleteTask/snapshot`、`extensions/desktop-schedule/index.mjs` 的工具描述（必须让模型知道可以传 name）。测试：`tests/pi-automation.test.ts`、`tests/desktop-schedule.test.ts`。
+
 ### R-render-07　压缩中拒发完全静默，正文退回输入框
 
 **需求**：发送被 pi 内核以「压缩进行中」拒绝（`Cannot submit a prompt while compaction is in progress`）时，**不做任何错误呈现**——不写全局错误横幅、不写对话内错误卡；输入内容退回输入框，压缩结束后由用户自行重发（用户 2026-10-27 先要求进对话流，2026-10-28 进一步要求「都取消好了」）。

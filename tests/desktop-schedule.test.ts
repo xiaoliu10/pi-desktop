@@ -72,7 +72,8 @@ describe('runAutomationBridge', () => {
   it('list works without a service; create/cancel require one', () => {
     expect(runAutomationBridge(undefined, ctx, JSON.stringify({ action: 'list' }))).toMatchObject({ ok: true, tasks: [] });
     expect(runAutomationBridge(undefined, ctx, JSON.stringify({ action: 'create', name: 'x', prompt: 'p', schedule: { kind: 'once', at: 1790000000000 } })).ok).toBe(false);
-    expect(runAutomationBridge(fakeService(), ctx, JSON.stringify({ action: 'cancel', id: 'a' }))).toEqual({ ok: true, action: 'cancel' });
+    // 返回值带 removed:{id,name}：调用方才能确认删的是哪一个（R-automation-02）。
+    expect(runAutomationBridge(fakeService(), ctx, JSON.stringify({ action: 'cancel', id: 'a' }))).toEqual({ ok: true, action: 'cancel', removed: { id: 'a', name: 'A' } });
   });
 
   it('fails closed on stopping, malformed payloads, and unknown actions', () => {

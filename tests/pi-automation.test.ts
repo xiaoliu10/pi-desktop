@@ -223,3 +223,68 @@ it('waits through native model retries and fails only when pi settles with an er
  h.service.onPiEvent({type:'rpc',key:'run-1',generation:'g',event:{type:'message_end',message:{role:'assistant',stopReason:'error',errorMessage:'final failure'}}});h.settle('run-1');
  await vi.waitFor(()=>expect(h.service.snapshot().runs[0].status).toBe('failed'));expect(h.service.snapshot().runs[0].error).toBe('final failure');
 });
+
+// ── automation bridge: cancel by id or by name ───────────────────────────────
+
+import { runAutomationBridge } from '../src/main/pi/automation-bridge';
+import type { AutomationBridgeContext, AutomationBridgeService } from '../src/main/pi/automation-bridge';
+
+function bridgeContext(cwd: string): AutomationBridgeContext {
+  return { cwd, permission: 'full', stopping: false } as AutomationBridgeContext;
+}
+
+it('cancels a scheduled task by name when the caller only knows the name', () => {
+  const h = setup();
+  const t = h.task({ name: 'litellm RDS 切库窗口轮询（22:00-05:00，门禁）' });
+  expect(h.service.snapshot().tasks).toHaveLength(1);
+
+  const res = runAutomationBridge(h.service as unknown as AutomationBridgeService, bridgeContext(h.root),
+    JSON.stringify({ action: 'cancel', id: t.name }));
+
+  expect(res.ok).toBe(true);
+  expect(res.removed).toEqual({ id: t.id, name: t.name });
+  expect(h.service.snapshot().tasks).toHaveLength(0);
+});
+
+it('still cancels by the real id', () => {
+  const h = setup();
+  const t = h.task();
+  const res = runAutomationBridge(h.service as unknown as AutomationBridgeService, bridgeContext(h.root),
+    JSON.stringify({ action: 'cancel', id: t.id }));
+  expect(res.ok).toBe(true);
+  expect(h.service.snapshot().tasks).toHaveLength(0);
+});
+
+it('reports an error instead of a silent success when nothing matches', () => {
+  const h = setup();
+  h.task({ name: 'keep me' });
+  const res = runAutomationBridge(h.service as unknown as AutomationBridgeService, bridgeContext(h.root),
+    JSON.stringify({ action: 'cancel', id: 'does not exist' }));
+  expect(res.ok).toBe(false);
+  expect(String(res.error)).toContain('does not exist');
+  expect(h.service.snapshot().tasks).toHaveLength(1);
+});
+
+it('refuses to guess when a name matches several tasks', () => {
+  const h = setup();
+  h.task({ name: 'same name', cwd: h.root, prompt: 'a' });
+  h.task({ name: 'same name', cwd: h.root, prompt: 'b' });
+  const res = runAutomationBridge(h.service as unknown as AutomationBridgeService, bridgeContext(h.root),
+    JSON.stringify({ action: 'cancel', id: 'same name' }));
+  expect(res.ok).toBe(false);
+  expect(String(res.error)).toContain('2');
+  expect(Array.isArray(res.candidates)).toBe(true);
+  expect(h.service.snapshot().tasks).toHaveLength(2);
+});
+
+it('list exposes enabled so callers can tell live tasks from stopped ones', () => {
+  const h = setup();
+  const t = h.task();
+  h.service.toggle(t.id);
+  const res = runAutomationBridge(h.service as unknown as AutomationBridgeService, bridgeContext(h.root),
+    JSON.stringify({ action: 'list' }));
+  expect(res.ok).toBe(true);
+  const listed = (res.tasks as Array<Record<string, unknown>>)[0];
+  expect(listed.id).toBe(t.id);
+  expect(listed.enabled).toBe(false);
+});
