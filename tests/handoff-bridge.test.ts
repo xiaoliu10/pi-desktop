@@ -165,12 +165,17 @@ describe('handoff dispatch', () => {
 });
 
 describe('handoff extension wiring', () => {
-  it('loads the portable session_handoff plugin and packages it', () => {
-    expect(fs.existsSync('extensions/session-handoff/index.mjs')).toBe(true);
+  it('loads the portable session_handoff plugin from the published package', () => {
+    // The plugin lives in its own repository (xiaoliu10/pi-session-handoff) and ships
+    // as an npm dependency; the Desktop build copies it into Resources/session-handoff.
+    expect(fs.existsSync('extensions/session-handoff')).toBe(false);
+    const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+    expect(pkg.dependencies['@wengine-ai/pi-session-handoff']).toBeTruthy();
+    expect(JSON.stringify(pkg.build.extraResources)).toContain(
+      'node_modules/@wengine-ai/pi-session-handoff'
+    );
     const backend = fs.readFileSync('src/main/pi/backend.ts', 'utf8');
     expect(backend).toContain("'..', 'session-handoff', 'index.mjs'");
-    const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
-    expect(JSON.stringify(pkg.build.extraResources)).toContain('extensions/session-handoff');
   });
 
   it('gates the Desktop bridge on the portable plugin alone, never on a second tool', () => {
@@ -198,7 +203,11 @@ describe('handoff extension wiring', () => {
   it('keeps the reserved ui.input channel handled by the main process', () => {
     const backend = fs.readFileSync('src/main/pi/backend.ts', 'utf8');
     expect(backend).toContain("title === 'desktop-handoff'");
-    const ext = fs.readFileSync('extensions/session-handoff/index.mjs', 'utf8');
+    // The Desktop bridge branch inside the plugin talks to that reserved channel.
+    const ext = fs.readFileSync(
+      'node_modules/@wengine-ai/pi-session-handoff/index.mjs',
+      'utf8'
+    );
     expect(ext).toContain("ctx.ui.input('desktop-handoff'");
   });
 });
