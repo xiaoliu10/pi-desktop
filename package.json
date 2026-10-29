@@ -136,10 +136,6 @@
         "to": "builtin-prompts"
       },
       {
-        "from": "extensions/desktop-handoff",
-        "to": "desktop-handoff"
-      },
-      {
         "from": "extensions/session-handoff",
         "to": "session-handoff"
       }

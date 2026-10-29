@@ -354,16 +354,17 @@ export class PiBackend {
     // Desktop 定时任务工具：会话内可创建/管理 automations.json 调度任务（缺失不阻塞会话）。
     const schedulePath = path.join(path.dirname(this.policyPath), '..', 'desktop-schedule', 'index.mjs');
     const scheduleArgs = fs.existsSync(schedulePath) ? ['-e', schedulePath] : [];
-    // 跨会话交接工具（desktop_handoff，缺失不阻塞会话）。
-    const handoffPath = path.join(path.dirname(this.policyPath), '..', 'desktop-handoff', 'index.mjs');
-    const handoffArgs = fs.existsSync(handoffPath) ? ['-e', handoffPath] : [];
     // 可移植交接插件（session_handoff）：GUI 与 TUI 共用同一份实现，本机活跃会话直接互通；
-    // 目标未连接时经 env 开关复用上面 desktop_handoff 的 Desktop 主进程桥（重连续聊会话）。
+    // 目标未连接时经 env 开关复用主进程的 desktop-handoff 桥（重连续聊会话）。
+    // 旧的 desktop_handoff 工具已并入本插件（它是严格超集：同样经保留通道到达主进程桥，
+    // 但额外覆盖 CLI/TUI 互通、候选去重与幂等），因此只加载这一份。桥的可用性只取决于
+    // 本插件是否加载——不要再引入第二个扩展做开关条件，否则那个扩展一旦移除，Desktop
+    // 的断线重连能力会静默失效。
     const sessionHandoffPath = path.join(path.dirname(this.policyPath), '..', 'session-handoff', 'index.mjs');
     const sessionHandoffArgs = fs.existsSync(sessionHandoffPath) ? ['-e', sessionHandoffPath] : [];
-    // 可移植交接插件需要 Desktop 桥时（目标会话未连接、要靠主进程重连续聊）才打开开关；
+    // 本插件需要 Desktop 桥时（目标会话未连接、要靠主进程重连续聊）才打开开关；
     // 纯 TUI 场景无此 env，插件只走本机活跃会话互通。
-    if (sessionHandoffArgs.length && handoffArgs.length) env.PI_DESKTOP_HANDOFF_BRIDGE = '1';
+    if (sessionHandoffArgs.length) env.PI_DESKTOP_HANDOFF_BRIDGE = '1';
     // 记忆衔接扩展：memoryAssist 开启时随会话装载，agent_end 后自动整理记忆。
     const memory = this.memoryOptions?.() ?? { enabled: false, dir: '' };
     const memoryPath = path.join(path.dirname(this.policyPath), '..', 'desktop-memory', 'index.mjs');
@@ -397,7 +398,6 @@ export class PiBackend {
       '-e', path.join(path.dirname(this.policyPath), 'retry-continuation.mjs'),
       ...askArgs,
       ...scheduleArgs,
-      ...handoffArgs,
       ...sessionHandoffArgs,
       ...memoryArgs,
       ...subagentArgs,

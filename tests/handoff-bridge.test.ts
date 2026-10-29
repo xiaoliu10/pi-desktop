@@ -164,31 +164,41 @@ describe('handoff dispatch', () => {
   });
 });
 
-describe('desktop_handoff extension wiring', () => {
-  it('loads the portable session_handoff plugin and packages it, with the Desktop bridge gated by env', () => {
+describe('handoff extension wiring', () => {
+  it('loads the portable session_handoff plugin and packages it', () => {
     expect(fs.existsSync('extensions/session-handoff/index.mjs')).toBe(true);
     const backend = fs.readFileSync('src/main/pi/backend.ts', 'utf8');
-    // Both extensions load: the legacy desktop_handoff bridge and the portable plugin.
-    expect(backend).toContain("'..', 'desktop-handoff', 'index.mjs'");
     expect(backend).toContain("'..', 'session-handoff', 'index.mjs'");
-    // The bridge is opt-in for the portable plugin: pure TUI sessions must not get it.
-    expect(backend).toContain('PI_DESKTOP_HANDOFF_BRIDGE');
-    expect(backend).toMatch(/if \(sessionHandoffArgs\.length && handoffArgs\.length\) env\.PI_DESKTOP_HANDOFF_BRIDGE/);
     const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
-    const resources = JSON.stringify(pkg.build.extraResources);
-    expect(resources).toContain('extensions/session-handoff');
-    expect(resources).toContain('extensions/desktop-handoff');
+    expect(JSON.stringify(pkg.build.extraResources)).toContain('extensions/session-handoff');
   });
 
-  it('shipped as an extension with the reserved ui.input channel and packaged as extraResource', () => {
-    expect(fs.existsSync('extensions/desktop-handoff/index.mjs')).toBe(true);
-    const ext = fs.readFileSync('extensions/desktop-handoff/index.mjs', 'utf8');
-    expect(ext).toContain("name: 'desktop_handoff'");
-    expect(ext).toContain("ctx.ui.input('desktop-handoff'");
+  it('gates the Desktop bridge on the portable plugin alone, never on a second tool', () => {
+    const backend = fs.readFileSync('src/main/pi/backend.ts', 'utf8');
+    expect(backend).toContain('PI_DESKTOP_HANDOFF_BRIDGE');
+    // The bridge must be enabled whenever the portable plugin loads. Gating it on a
+    // second extension silently disables Desktop reconnect for good once that
+    // extension is gone — the exact regression this test exists to catch.
+    expect(backend).toMatch(/if \(sessionHandoffArgs\.length\) env\.PI_DESKTOP_HANDOFF_BRIDGE = '1'/);
+    // No second extension may gate the bridge: the removed desktop_handoff tool
+    // must leave no loadable arguments behind.
+    expect(backend).not.toMatch(/const handoffArgs/);
+    expect(backend).not.toMatch(/&& handoffArgs\.length/);
+  });
+
+  it('no longer ships a duplicate desktop_handoff tool', () => {
+    // session_handoff is a strict superset (it reaches the same main-process bridge
+    // through the reserved channel). Keeping both leaves the model two near-identical
+    // tools to choose between.
+    expect(fs.existsSync('extensions/desktop-handoff')).toBe(false);
+    const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+    expect(JSON.stringify(pkg.build.extraResources)).not.toContain('desktop-handoff');
+  });
+
+  it('keeps the reserved ui.input channel handled by the main process', () => {
     const backend = fs.readFileSync('src/main/pi/backend.ts', 'utf8');
     expect(backend).toContain("title === 'desktop-handoff'");
-    expect(backend).toContain('desktop-handoff');
-    const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
-    expect(JSON.stringify(pkg.build.extraResources)).toContain('extensions/desktop-handoff');
+    const ext = fs.readFileSync('extensions/session-handoff/index.mjs', 'utf8');
+    expect(ext).toContain("ctx.ui.input('desktop-handoff'");
   });
 });

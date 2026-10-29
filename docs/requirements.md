@@ -411,12 +411,13 @@
 
 **状态**：部分满足。
 
-- Desktop → Desktop：满足（`desktop_handoff` 模型工具 v1，无 UI）。
-- **TUI ↔ TUI / TUI ↔ GUI**：满足（v0.1.39 候选，`extensions/session-handoff/` 可移植插件，GUI 与 TUI 共用同一实现；目标会话忙碌时排队，不打断当前回合）。Desktop 侧由 backend 随会话加载该插件，目标未连接时经 `PI_DESKTOP_HANDOFF_BRIDGE=1` 复用上面的 Desktop 主进程桥重连续聊会话；纯 TUI 场景不设该 env，只走本机活跃会话互通。
+- Desktop → Desktop：满足（由 `session_handoff` 经保留通道 `desktop-handoff` 交给主进程桥完成；v0.1.40 起不再有独立的 `desktop_handoff` 工具）。
+- **TUI ↔ TUI / TUI ↔ GUI**：满足（v0.1.39 起 `extensions/session-handoff/` 可移植插件，GUI 与 TUI 共用同一实现；目标会话忙碌时排队，不打断当前回合）。Desktop 侧由 backend 随会话加载该插件，目标未连接时经 `PI_DESKTOP_HANDOFF_BRIDGE=1` 复用主进程桥重连续聊会话；纯 TUI 场景不设该 env，只走本机活跃会话互通。
+- **单一工具入口**（v0.1.40，2026-10-29）：满足。旧的 `extensions/desktop-handoff/`（56 行、只注册 `desktop_handoff` 一个 tool）已删除，其能力是 `session_handoff` 的严格子集。关键约束：桥的开关 `PI_DESKTOP_HANDOFF_BRIDGE` 只能依赖 `session_handoff` 自身是否加载，**不得再引入第二个扩展作为与条件**——否则那个扩展一旦移除，Desktop 的断线重连会静默失效且无任何报错。
 
-**回归触发**：改 `handoff-bridge.ts`、`extensions/desktop-handoff/index.mjs`、`extensions/session-handoff/`、backend 的 `desktop-handoff` 拦截与扩展加载、打包 extraResources。测试：`tests/handoff-bridge.test.ts`、`tests/session-handoff-plugin.test.ts`、`tests/session-handoff-transport.test.ts`、`tests/session-handoff-real-process.test.ts`（真实 pi 进程断言工具进入 active 集合并发布可发现描述符）。
+**回归触发**：改 `handoff-bridge.ts`、`extensions/session-handoff/`、backend 的 `desktop-handoff` 拦截与扩展加载、`PI_DESKTOP_HANDOFF_BRIDGE` 注入条件、打包 extraResources。测试：`tests/handoff-bridge.test.ts`（含「桥开关不得依赖第二个扩展」与「不再随包分发重复工具」两条回归）、`tests/session-handoff-plugin.test.ts`、`tests/session-handoff-transport.test.ts`、`tests/session-handoff-real-process.test.ts`（真实 pi 进程断言工具进入 active 集合并发布可发现描述符）。
 
-**回归触发**：改 `handoff-bridge.ts`、`extensions/desktop-handoff/index.mjs`、backend 的 `desktop-handoff` 拦截与扩展加载、打包 extraResources。测试：`tests/handoff-bridge.test.ts`。
+**回归触发**：改 `handoff-bridge.ts`、backend 的 `desktop-handoff` 拦截与扩展加载、打包 extraResources。测试：`tests/handoff-bridge.test.ts`。
 
 ### R-collab-02　远控页不渲染内部协议通道，死卡片不得关不掉
 
