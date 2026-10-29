@@ -7,12 +7,12 @@ import {spawn, spawnSync} from 'node:child_process';
 import {PiBackend} from '../src/main/pi/backend';
 import {PiRpcClient} from '../src/main/pi/rpc-client';
 import {SessionIndex} from '../src/main/pi/session-index';
-import {sessionKey} from '../extensions/session-handoff/index.mjs';
+import {sessionKey} from '../node_modules/@wengine-ai/pi-session-handoff/index.mjs';
 
 const root = process.cwd();
 const cli = process.env.PI_HANDOFF_TEST_CLI || path.join(root, 'resources/pi-runtime/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js');
 const extensions = process.env.PI_HANDOFF_TEST_EXTENSIONS || path.join(root, 'extensions');
-const plugin = path.join(extensions, 'session-handoff');
+const plugin = path.join(root, 'node_modules/@wengine-ai/pi-session-handoff');
 const cleanEnv = extra => {const env = {...process.env, ...extra}; delete env.PI_PACKAGE_DIR; delete env.PI_SUBAGENTS_PI_CODING_AGENT_PACKAGE_ROOT; return env;};
 async function until(fn, message = 'condition', timeout = 15000) {
   const end = Date.now() + timeout;

@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-const entry = path.resolve('extensions/session-handoff/index.mjs');
+const entry = path.resolve('node_modules/@wengine-ai/pi-session-handoff/index.mjs');
 async function fixture(opts: { mode?: string; busy?: boolean; desktop?: boolean; sidecar?: boolean } = {}) {
   const handlers = new Map<string, Function[]>();
   const tools = new Map<string, any>();
