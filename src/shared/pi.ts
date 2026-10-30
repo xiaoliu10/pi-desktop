@@ -70,6 +70,9 @@ export interface PiMarketPackage { name: string; version: string; description: s
 // ---------------------------------------------------------------------------
 
 export interface RemoteStatus { running: boolean; port?: number; token?: string; urls: string[]; viewers?: number }
+/** 远程隧道（方案 D）：桌面主动外连 relay，手机/浏览器经 relay 访问本机。 */
+export type TunnelState = 'stopped' | 'connecting' | 'waiting' | 'paired' | 'error';
+export interface TunnelStatus { enabled: boolean; state: TunnelState; deviceSid?: string; relayUrl?: string; error?: string }
 export type ImProviderId = 'off' | 'dingtalk' | 'feishu' | 'telegram' | 'wechat';
 /** 微信渠道的推送后端（微信无出站 bot API，走第三方服务号通道推送通知）。 */
 export type ImPushProvider = 'serverchan' | 'pushplus';
@@ -210,6 +213,9 @@ export interface LocalPiApi extends importSettingsApi {
   remoteStart(): Promise<RemoteStatus>;
   remoteStop(): Promise<RemoteStatus>;
   remoteStatus(): Promise<RemoteStatus>;
+  tunnelGet(): Promise<{ enabled: boolean; relayUrl: string; deviceName: string; hasKey: boolean }>;
+  tunnelSave(patch: { enabled?: boolean; relayUrl?: string; deviceName?: string; key?: string }): Promise<{ enabled: boolean; relayUrl: string; deviceName: string; hasKey: boolean }>;
+  tunnelStatus(): Promise<TunnelStatus>;
   imConfig(): Promise<ImConfig>;
   imSave(patch: Partial<ImConfig>): Promise<ImConfig>;
   imTest(): Promise<void>;

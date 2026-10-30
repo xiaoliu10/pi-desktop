@@ -122,6 +122,7 @@ const localPi: LocalPiApi = {
   modelProviderFetchModels: (input: { id?: string; baseUrl?: string; apiKey?: string }) => invoke('modelProviderFetchModels', input),
   usageStats: () => invoke('usageStats'),
   remoteStart: () => invoke('remoteStart'), remoteStop: () => invoke('remoteStop'), remoteStatus: () => invoke('remoteStatus'),
+  tunnelGet: () => invoke('tunnelGet'), tunnelSave: patch => invoke('tunnelSave', patch), tunnelStatus: () => invoke('tunnelStatus'),
   imConfig: () => invoke('imConfig'), imSave: patch => invoke('imSave', patch), imTest: () => invoke('imTest'),
   // 钉钉一键配置：必须走 invoke helper（自动加 local-pi: 前缀）。曾用裸 ipcRenderer.invoke
   // 导致通道名错配（main 注册的是 local-pi:dingtalkRegister:*），点「一键配置」必报 No handler。

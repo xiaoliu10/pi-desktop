@@ -22,6 +22,11 @@ export interface RemoteStatus {
   token?: string;
   urls: string[];
   viewers?: number;
+  /**
+   * 一次性配对码（R-remote-01）。手机扫这个，不是扫 token：code 短 TTL、用后即焚，
+   * 换出的 session 也是短时效，避免「URL 里长驻 token = 永久钥匙」。
+   */
+  pairing?: { code: string; expiresAt: number };
 }
 
 export type RemoteDialogResponse = { id: string; value?: string; confirmed?: boolean; cancelled?: boolean };
@@ -133,6 +138,7 @@ export class RemoteServer {
   async start(preferredPort = 0): Promise<RemoteStatus> {
     if (this.running) return this.status();
     this.token = crypto.randomBytes(16).toString('hex');
+    this.rotatePairingCode();
     const server = http.createServer((req, res) => void this.handle(req, res));
     this.server = server;
     this.port = await new Promise((resolve, reject) => {
@@ -156,7 +162,87 @@ export class RemoteServer {
 
   status(): RemoteStatus {
     if (!this.running) return { running: false, urls: [], viewers: 0 };
-    return { running: true, port: this.port, token: this.token, urls: this.urls(), viewers: this.sseClients.size };
+    return {
+      running: true, port: this.port, token: this.token, urls: this.urls(), viewers: this.sseClients.size,
+      pairing: this.pairing ? { code: this.pairing.code, expiresAt: this.pairing.expiresAt } : undefined,
+    };
+  }
+
+  /** 本机 remote-server 的 base+token（tunnel-client 转发 terminal 请求时用）。未运行返回 null。 */
+  lanEndpoint(): { base: string; token: string } | null {
+    if (!this.running) return null;
+    return { base: `http://127.0.0.1:${this.port}`, token: this.token };
+  }
+
+  /**
+   * 本轮配对码。6 位数字比 32 位 hex 更好念也更短（用户可能要手输），
+   * 但熵只有 ~20 bit —— 所以必须靠 TTL + 一次性 + 失败计数兜住，不能只靠码本身。
+   */
+  private pairing: { code: string; expiresAt: number } | null = null;
+  /** 已签发的 session：token → 过期时间。短时效，过期即删。 */
+  private readonly sessions = new Map<string, number>();
+  /** 每个来源 IP 的失败次数与锁定截止时间（防爆破）。 */
+  private readonly failures = new Map<string, { count: number; until: number }>();
+
+  private static readonly PAIRING_TTL_MS = 120_000;
+  private static readonly SESSION_TTL_MS = 12 * 60 * 60 * 1000;
+  private static readonly MAX_FAILURES = 5;
+  private static readonly LOCKOUT_MS = 5 * 60 * 1000;
+
+  private rotatePairingCode(): void {
+    // 用 rejection sampling 避免 % 1000000 的偏置（虽然偏置很小，但没必要留）。
+    let n = 0;
+    do { n = crypto.randomInt(0, 1_000_000); } while (n === this.failures.size);
+    this.pairing = {
+      code: String(n).padStart(6, '0'),
+      expiresAt: Date.now() + RemoteServer.PAIRING_TTL_MS,
+    };
+  }
+
+  private sourceOf(req: http.IncomingMessage): string {
+    return req.socket.remoteAddress ?? 'unknown';
+  }
+
+  private locked(req: http.IncomingMessage): boolean {
+    const f = this.failures.get(this.sourceOf(req));
+    return !!f && f.until > Date.now();
+  }
+
+  private noteFailure(req: http.IncomingMessage): void {
+    const ip = this.sourceOf(req);
+    const prev = this.failures.get(ip);
+    const count = (prev && prev.until > Date.now() ? prev.count : 0) + 1;
+    this.failures.set(ip, {
+      count,
+      until: count >= RemoteServer.MAX_FAILURES ? Date.now() + RemoteServer.LOCKOUT_MS : 0,
+    });
+  }
+
+  /** 一次性配对码换短时效 session；码用后即焚，换出新的。 */
+  private exchangePairing(req: http.IncomingMessage, code: string): { session: string; expiresAt: number } | null {
+    const expected = this.pairing;
+    if (!expected || expected.expiresAt <= Date.now()) return null;
+    // 定长比较（两个 6 位数字串），避免按字符提前返回泄漏前缀。
+    const a = Buffer.from(code.padEnd(6, '\0'));
+    const b = Buffer.from(expected.code.padEnd(6, '\0'));
+    if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return null;
+    const session = crypto.randomBytes(32).toString('hex');
+    const expiresAt = Date.now() + RemoteServer.SESSION_TTL_MS;
+    this.sessions.set(session, expiresAt);
+    this.rotatePairingCode();
+    this.failures.delete(this.sourceOf(req));
+    return { session, expiresAt };
+  }
+
+  /** 校验收到的凭证：既认长期 token（迁移期），也认短时效 session。 */
+  private matchCredential(supplied: string): boolean {
+    if (!supplied) return false;
+    if (supplied.length === this.token.length
+      && crypto.timingSafeEqual(Buffer.from(supplied), Buffer.from(this.token))) return true;
+    const expiresAt = this.sessions.get(supplied);
+    if (expiresAt === undefined) return false;
+    if (expiresAt <= Date.now()) { this.sessions.delete(supplied); return false; }
+    return true;
   }
 
   /** LAN view links, one per non-internal IPv4 interface. */
@@ -175,12 +261,11 @@ export class RemoteServer {
   }
 
   private authorize(req: http.IncomingMessage, url: URL): boolean {
+    // URL query token 仅作迁移期兼容（旧二维码/旧书签），新链路一律走 Authorization 头。
     const candidates = [url.searchParams.get('token') ?? ''];
     const header = req.headers.authorization;
     if (typeof header === 'string' && header.startsWith('Bearer ')) candidates.push(header.slice(7));
-    for (const supplied of candidates) {
-      if (supplied.length && supplied.length === this.token.length && crypto.timingSafeEqual(Buffer.from(supplied), Buffer.from(this.token))) return true;
-    }
+    for (const supplied of candidates) if (this.matchCredential(supplied)) return true;
     return false;
   }
 
@@ -306,6 +391,28 @@ export class RemoteServer {
       if (method !== 'GET' && method !== 'POST') {
         res.writeHead(405, { 'allow': 'GET, POST' });
         res.end('method not allowed');
+        return;
+      }
+      if (method === 'POST' && url.pathname === '/api/pair') {
+        // 配对必须在鉴权前：换 session 的前提就是还没有任何凭证。
+        // 失败计数与锁定在这里生效，防 6 位码被爆破（~20 bit 熵不能单靠码本身）。
+        if (this.locked(req)) { this.json(res, 429, { error: '尝试次数过多，请稍后再试' }); return; }
+        let code = '';
+        try {
+          const read = await this.readBody(req, { soft: MAX_BODY_BYTES, hard: MAX_HARD_BODY_BYTES });
+          const body = JSON.parse(read.raw || '{}') as { code?: unknown };
+          code = typeof body.code === 'string' ? body.code.trim() : '';
+        } catch {
+          this.json(res, 400, { error: '请求体无效' });
+          return;
+        }
+        const issued = this.exchangePairing(req, code);
+        if (!issued) {
+          this.noteFailure(req);
+          this.json(res, 401, { error: '配对码无效或已过期' });
+          return;
+        }
+        this.json(res, 200, issued);
         return;
       }
       if (!this.authorize(req, url)) {

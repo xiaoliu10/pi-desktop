@@ -3,6 +3,24 @@
 所有重要变更记录在本文件。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 README 只保留最近版本摘要；本文件为完整记录。
 
+## [Unreleased]
+
+### English
+
+#### Added
+
+- **Remote control over the internet (public tunnel)**: control your desktop from anywhere, not just the same LAN. The desktop dials out to a self-hosted relay over WebSocket (no inbound ports, works behind NAT); a phone/terminal connects to the same relay and traffic is forwarded bidirectionally. Relay is a small Go service ([pi-tunnel-relay](https://github.com/xiaoliu10/pi-tunnel-relay), port 8443, single-user self-hosted). Setup is two fields in Settings → Remote: relay address + key. Status badge shows connecting / waiting / connected; enabling the tunnel auto-starts the LAN remote server it forwards to. The relay key is encrypted with the OS keychain (Electron safeStorage) and never stored in plaintext.
+
+- **One-time pairing codes for LAN remote control**: connecting a phone now uses a 6-digit pairing code (120 s TTL, single use) that exchanges for a 12-hour session, instead of a permanent 32-hex token living in the QR URL. Five wrong attempts lock pairing for 5 minutes; codes rotate on restart. The long-lived token still works during the migration window.
+
+### 中文
+
+#### 新增
+
+- **公网远程控制（隧道中转）**：不在同一局域网也能用手机控制桌面。桌面主动外连自建 relay（WebSocket 出站连接，零入站端口，NAT 后可用）；手机/终端连同一 relay，流量双向转发。relay 是一个小型 Go 服务（[pi-tunnel-relay](https://github.com/xiaoliu10/pi-tunnel-relay)，端口 8443，单人自托管）。设置 → 远程控制只需填两个字段：relay 地址 + key。状态徽标显示连接中/等待终端/已接入；启用隧道会自动拉起它转发所用的 LAN 远控服务。relay key 经系统钥匙串（Electron safeStorage）加密落盘，不存明文。
+
+- **LAN 远控改用一次性配对码**：手机接入改为 6 位数字配对码（120 秒有效、用后即焚）换 12 小时会话，不再是二维码 URL 里长驻的 32 位 hex 永久 token。错 5 次锁 5 分钟；重启换码。长期 token 迁移期仍可用。
+
 ## [0.1.39] - 2026-10-29
 
 ### English
