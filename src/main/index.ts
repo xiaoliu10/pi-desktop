@@ -37,6 +37,7 @@ import { PiHost } from './pi/host';
 import { RemoteServer } from './pi/remote-server';
 import { HISTORY_PAGE_SIZE } from './pi/history-window';
 import { ImBot } from './pi/im-bot';
+import { TunnelService } from './pi/tunnel-service';
 import { createBotActions } from './pi/bot/actions';
 import { startUpdateChecker, downloadUpdateZip, type UpdateChecker, type UpdateStatus } from './update-check';
 import { swapAppBundle, cleanupOldBundle } from './update-apply';
@@ -76,6 +77,18 @@ const remote = new RemoteServer({
 const imBot = new ImBot(path.join(app.getPath('userData'), 'im-bot.json'), undefined, () => {
   if (!host || !settings) throw new Error('pi 尚未就绪');
   return createBotActions(host, settings);
+});
+// 远程隧道（方案 D）：桌面主动外连 relay；terminal 的 HTTP 帧在本机还原为对
+// remote-server 的调用。lazy 拉起 LAN remote：tunnel 开启而 LAN 未开时自动补启。
+const tunnel = new TunnelService(path.join(app.getPath('userData'), 'tunnel.json'), {
+  localBase: () => {
+    if (!remote.status().running) throw new Error('LAN 远控未运行');
+    return remote.lanEndpoint()!.base;
+  },
+  localToken: () => remote.lanEndpoint()!.token,
+  // 启动恢复用：隧道启用后重启 app，自动补启 LAN remote（转发目标）
+  ensureLocal: async () => { if (!remote.status().running) await remote.start(); },
+  log: msg => console.log(msg),
 });
 
 let mainWindow: BrowserWindow | null = null;
@@ -451,6 +464,18 @@ function registerIpc() {
   handle('remoteStart', () => remote.start());
   handle('remoteStop', () => remote.stop());
   handle('remoteStatus', () => remote.status());
+  // 远程隧道（方案 D）：relay 中转。启用前确保 LAN remote-server 在跑（tunnel-client
+  // 把 terminal 的 HTTP 帧转给本机 remote-server；不开 LAN 就没有可转发的目标）。
+  handle('tunnelGet', () => {
+    const c = tunnel.current;
+    return { enabled: c.enabled, relayUrl: c.relayUrl, deviceName: c.deviceName, hasKey: !!c.keyEncrypted };
+  });
+  handle('tunnelSave', async patch => {
+    if (patch.enabled === true && !remote.status().running) await remote.start().catch(() => undefined);
+    const c = await tunnel.save(patch);
+    return { enabled: c.enabled, relayUrl: c.relayUrl, deviceName: c.deviceName, hasKey: !!c.keyEncrypted };
+  });
+  handle('tunnelStatus', () => tunnel.status());
   handle('imConfig', () => imBot.current);
   // 钉钉扫码一键配置：应用注册 device flow（init→begin 出二维码，poll 出凭据）。
   handle('dingtalkRegister:start', () => startDingTalkRegistration());
@@ -720,6 +745,11 @@ setInterval(() => {
 
 void app.whenReady().then(async () => {
   if(!primaryInstance)return;
+  // 启动恢复：上次启用了隧道 → 自动补启 LAN 并重连 relay，重启后无需手动再点。
+  // 冒烟测试不恢复（CI 不应外连真实 relay）；失败不阻断启动。
+  if (!process.env.PI_SMOKE && !process.env.PI_SMOKE_SETTINGS && !process.env.PI_SMOKE_REMOTE) {
+    void tunnel.startup().catch(e => console.error('[tunnel] startup failed:', e));
+  }
   const policy = app.isPackaged ? path.join(process.resourcesPath, 'desktop-policy/index.mjs') : path.join(app.getAppPath(), 'extensions/desktop-policy/index.mjs');
   host = new PiHost(app.getPath('userData'), policy, broadcast, process.env.PI_SMOKE_SETTINGS ? path.join(app.getPath('userData'), 'shared-skills') : undefined, app.getVersion());
   // 内置资源：办公技能（pptx/docx/xlsx/pdf）+ 提示词模板（/周报、/报错定位等，
@@ -868,6 +898,7 @@ app.on('before-quit', () => {
   terminals?.dispose();
   updateChecker?.dispose();
   void remote.stop();
+  void tunnel.stop();
   void imBot.stopTransport();
 });
 app.on('window-all-closed', () => { host?.accounts.dispose(); automations?.suspend(); host?.backend.dispose(); if (process.platform !== 'darwin') app.quit(); });

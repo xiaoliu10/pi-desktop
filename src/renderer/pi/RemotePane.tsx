@@ -8,7 +8,7 @@ import { useEffect, useState } from 'react';
 // 互相依赖时会拆成独立 chunk 并静态 import 主 chunk，动态加载时形成循环依赖、
 // 打包 app 里 import() 直接 reject（PR #34 失败分支首次让该错误可见）。
 import { toDataURL as qrToDataURL } from 'qrcode';
-import type { ImConfig, RemoteStatus } from '../../shared/pi';
+import type { ImConfig, RemoteStatus, TunnelStatus } from '../../shared/pi';
 import { usePiStore } from './adapter';
 import { CHANNEL_ICON_URLS } from './brand-icons/channel-icons';
 import { ChannelConfigDialog, type ChannelId as DialogChannelId } from './ChannelConfigDialog';
@@ -18,6 +18,104 @@ const api = () => window.localPi;
 
 type ChannelId = 'dingtalk' | 'feishu' | 'wechat' | 'telegram';
 type RemoteState = 'idle' | 'starting' | 'running' | 'connecting' | 'active' | 'error';
+
+/** 公网隧道卡（方案 D）：桌面主动外连 relay，不限局域网。只填「地址 + key」两个字段。 */
+function TunnelCard({ zh, say }: { zh: boolean; say: (t: string) => void }) {
+  const [cfg, setCfg] = useState<{ enabled: boolean; relayUrl: string; deviceName: string; hasKey: boolean } | null>(null);
+  const [status, setStatus] = useState<TunnelStatus | null>(null);
+  const [relayUrl, setRelayUrl] = useState('');
+  const [key, setKey] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    void api().tunnelGet().then((c) => { setCfg(c); setRelayUrl(c.relayUrl); }).catch(() => undefined);
+    void api().tunnelStatus().then(setStatus).catch(() => undefined);
+  }, []);
+  useEffect(() => {
+    const timer = window.setInterval(() => { void api().tunnelStatus().then(setStatus).catch(() => undefined); }, 3000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  const save = async (patch: { enabled?: boolean }) => {
+    setBusy(true);
+    try {
+      const next = await api().tunnelSave({ relayUrl: relayUrl.trim(), key: key.trim() || undefined, ...patch });
+      setCfg(next);
+      setKey(''); // 安全：输入框里的明文不残留
+      say(zh ? '隧道配置已保存' : 'Tunnel settings saved');
+    } catch (e) { say(String((e as Error).message || e)); } finally { setBusy(false); }
+  };
+
+  const stateLabel: Record<string, { text: string; color: string }> = {
+    stopped: { text: zh ? '未开启' : 'Off', color: 'var(--pi-text-tertiary)' },
+    connecting: { text: zh ? '连接 relay 中' : 'Connecting', color: 'var(--pi-orange)' },
+    waiting: { text: zh ? '已连 relay，等待终端' : 'Waiting for terminal', color: 'var(--pi-orange)' },
+    paired: { text: zh ? '终端已接入' : 'Terminal connected', color: '#0a7d33' },
+    error: { text: zh ? '连接失败（自动重试）' : 'Error (retrying)', color: 'var(--pi-red)' },
+  };
+  const st = stateLabel[status?.state ?? 'stopped'] ?? stateLabel.stopped;
+
+  return (
+    <section className="pi-remote__botcard" style={{ marginTop: 14 }}>
+      <div className="pi-remote__subhead">
+        <Icon name="globe" size={16} />
+        <div className="pi-remote__subheadtext">
+          <div className="pi-remote__subheadtitle">{zh ? '公网隧道（relay 中转）' : 'Public tunnel (via relay)'}</div>
+          <p className="pi-remote__subheaddesc">{zh ? '不在同一局域网也能用手机远程控制。自建 relay 后填入地址和 key。' : 'Control this desktop from anywhere. Self-host a relay, then enter its address and key.'}</p>
+        </div>
+      </div>
+      <div className="pi-remote__statusbar">
+        <div className="pi-remote__statusleft">
+          <div className="pi-remote__statusvalue">
+            <span className="pi-remote__statuslabelval">{zh ? '隧道状态' : 'Tunnel status'}</span>
+            <span className="pi-remote__pill">
+              <span className="pi-remote__pill-dot" style={{ background: st.color }} />
+              <span className="pi-remote__pill-text">{st.text}</span>
+            </span>
+          </div>
+          {status?.error && <div className="pi-remote__statusdetail">{status.error}</div>}
+        </div>
+        {cfg?.enabled ? (
+          <button className="pi-btn pi-btn--outline pi-remote__stopbtn" disabled={busy} onClick={() => void save({ enabled: false })}>
+            <Icon name="x" size={14} />{zh ? '关闭隧道' : 'Disable'}
+          </button>
+        ) : (
+          <button className="pi-btn pi-btn--primary pi-remote__startbtn" disabled={busy || !relayUrl.trim() || !cfg?.hasKey && !key.trim()} onClick={() => void save({ enabled: true })}>
+            <Icon name="globe" size={14} />{zh ? '启用隧道' : 'Enable'}
+          </button>
+        )}
+      </div>
+      <div style={{ display: 'grid', gap: 8, marginTop: 10 }}>
+        <label style={{ display: 'grid', gap: 4 }}>
+          <span style={{ fontSize: 12, color: 'var(--pi-text-secondary)' }}>{zh ? 'Relay 地址' : 'Relay address'}</span>
+          <input
+            className="pi-input"
+            value={relayUrl}
+            placeholder="https://your-relay.example.com:8443"
+            onChange={e => setRelayUrl(e.target.value)}
+            spellCheck={false}
+          />
+        </label>
+        <label style={{ display: 'grid', gap: 4 }}>
+          <span style={{ fontSize: 12, color: 'var(--pi-text-secondary)' }}>{zh ? `Relay Key${cfg?.hasKey ? zh ? '（已设置，留空不改）' : '' : ''}` : `Relay key${cfg?.hasKey ? ' (set, leave empty to keep)' : ''}`}</span>
+          <input
+            className="pi-input"
+            type="password"
+            value={key}
+            placeholder={cfg?.hasKey ? '••••••••' : ''}
+            onChange={e => setKey(e.target.value)}
+            autoComplete="new-password"
+          />
+        </label>
+        <div>
+          <button className="pi-btn pi-btn--outline" disabled={busy} onClick={() => void save({})}>
+            <Icon name="check" size={14} />{zh ? '保存配置' : 'Save'}
+          </button>
+        </div>
+      </div>
+    </section>
+  );
+}
 
 export function RemotePane() {
   const s = usePiStore();
@@ -264,6 +362,9 @@ export function RemotePane() {
           </div>
         </section>
       </div>
+
+      {/* 公网隧道：方案 D，独立于局域网扫码 */}
+      <TunnelCard zh={zh} say={say} />
 
       {configChannel && im && (
         <ChannelConfigDialog

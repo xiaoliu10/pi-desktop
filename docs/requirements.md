@@ -433,6 +433,38 @@
 
 **回归触发**：改 `remote-server.ts` 的 `renderDialog`/`respondDialog`/`seedDialogs`、`PiUiRequest` 的 `title` 约定、backend 对保留通道的提前 return 清单；新增任何 `ctx.ui.input` 保留通道时必须同步此处。
 
+### R-remote-01　远控配对用短时效配对码，不靠长驻 token 二维码
+
+**需求**：LAN 远控的手机接入凭证改为「6 位数字配对码（120s TTL、一次性）→ 换 12h 短时效 session」，避免 URL 里长驻 32 位 hex token（= 永久钥匙）。配对码在 `POST /api/pair` 鉴权前拦截验证；5 次失败锁 5 分钟；比较用 `timingSafeEqual` 定长比较。长期 token 仅迁移期保留。
+
+**验收**：
+- 配对码 120s 过期、用后即焚、重启换新；过期/错码/重放均拒绝且计入失败锁定。
+- session 12h TTL 过期即删；`authorize()` 同时认 session 与长期 token（迁移期）。
+- 回归：`tests/remote-pairing.test.ts`（7 条：过期/错码/重放/锁定/timingSafe）。
+
+**状态**：已实现，随远程隧道 PR 发版。
+
+**回归触发**：改 `remote-server.ts` 的 `rotatePairingCode`/`authorize`/`/api/pair` 路由、session TTL 常量；改远控二维码 payload 结构。
+
+### R-remote-02　公网隧道：桌面主动外连 relay，终端侧只需「地址 + key」
+
+**需求**：不在同一局域网也能手机/终端远程控制。拓扑对齐 ZCode Relay V2：桌面（device）主动外连 relay WSS（零入站端口，NAT 后可用），终端（terminal）也连 relay，relay 只按 sid 双向转发 JSON 帧、不解析 payload。韧性对齐 Harness：未知帧明确回 `WRONG_PARAM` 不静默；relay URL 拒绝内嵌凭据；能力外请求 fail-closed。relay 用 Go 独立仓库（`xiaoliu10/pi-tunnel-relay`，端口 8443）。
+
+**验收**：
+- 身份链：`POST /device` 注册 → `POST /token` 一次性 token（60s TTL、22 字符 base64url、原子消费不可重放）→ WS upgrade；token 重放拒绝。
+- 心跳 5s±1s；15s 无任何帧视为断线，指数退避重连（含重新注册）；同 sid 新连接踢旧（KICKED）。
+- 单帧上限 1MiB，超限断连；relay 不持业务状态（重启不丢消息是预期行为，客户端有重试）。
+- 桌面侧 `tunnel-client.ts`：terminal 的 HTTP 请求帧还原为对本地 remote-server 的调用（带 `Authorization: Bearer`），响应/事件封 data 帧回传；`relayFetch`/`fetchImpl` 分离注入（两者不得共用一个注入口，否则测试里 relay 与本地 mock 互相污染）。
+- relay key 经 Electron safeStorage 加密落盘（`tunnel.json`），永不明文；保存后输入框清空。
+- 设置 → 远程控制页新增「公网隧道」卡：只填 relay 地址 + key 两个字段；状态徽标（未开启/连接中/等待终端/已接入/失败重试）；启用时自动拉起 LAN remote-server（隧道转发目标是它）。
+- 回归：`pi-tunnel-relay` Go 测试 3 条（注册/token/握手、配对双向透传、超限断连）；`tests/tunnel-client.test.ts` 4 条；`tests/tunnel-e2e.test.ts`（真 Go relay 进程 + 真 WS + 假 terminal 端到端）；`tests/tunnel-ui.browser.cjs`（真实浏览器：卡片渲染/保存/开关闭环/状态徽标）。
+
+**边界（明确不做）**：不做端到端加密（ZCode/Harness 均不做，靠 WSS + 预共享 key + 一次性 token）；relay 不做多 terminal 隔离（单人自托管场景）；`docs/design/remote-tunnel.md` §5 记录了完整盲区。
+
+**状态**：已实现（含 Go relay 仓库），随远程隧道 PR 发版；ECS 部署后需真机验证。
+
+**回归触发**：改 `tunnel-client.ts` 帧协议、`tunnel-service.ts` 存储结构（keyEncrypted 语义）、`pi-tunnel-relay` 契约（路由/token 形状）；改 `remote-server.ts` 的 `lanEndpoint`。
+
 ---
 
 ## 升级回归总表
