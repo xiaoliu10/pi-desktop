@@ -78,7 +78,7 @@ export class TunnelService {
     if (next.relayUrl) {
       new TunnelClient({
         relayUrl: next.relayUrl, key: 'validate-only', deviceMid: 'validate',
-        localBase: this.deps.localBase(), localToken: this.deps.localToken,
+        localBase: () => this.deps.localBase(), localToken: () => this.deps.localToken(),
       }).stop();
     }
     this.config = next;
@@ -97,8 +97,8 @@ export class TunnelService {
         relayUrl: this.config.relayUrl,
         key,
         deviceMid: this.config.deviceName || 'pi-desktop',
-        localBase: this.deps.localBase(),
-        localToken: this.deps.localToken,
+        localBase: () => this.deps.localBase(),
+        localToken: () => this.deps.localToken(),
       });
       this.client.on('state', (s: TunnelState) => {
         this.deps.log?.(`[tunnel] state → ${s}`);

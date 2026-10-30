@@ -17,7 +17,7 @@ describe('tunnel-client relay URL path handling', () => {
       relayUrl: 'https://www.huimengwangluo.cn/tunnel',
       key: 'k',
       deviceMid: 'm',
-      localBase: 'http://127.0.0.1:1',
+      localBase: () => 'http://127.0.0.1:1',
       localToken: () => 't',
       relayFetch: relayFetch as unknown as typeof fetch,
       wsFactory: () => ({
@@ -42,7 +42,7 @@ describe('tunnel-client relay URL path handling', () => {
       relayUrl: 'https://relay.example.com',
       key: 'k',
       deviceMid: 'm',
-      localBase: 'http://127.0.0.1:1',
+      localBase: () => 'http://127.0.0.1:1',
       localToken: () => 't',
       relayFetch: relayFetch as unknown as typeof fetch,
       wsFactory: () => ({ send: () => {}, close: () => {}, on: () => {} }) as never,

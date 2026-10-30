@@ -27,7 +27,7 @@ function makeClient(over: Partial<ConstructorParameters<typeof TunnelClient>[0]>
     relayUrl: 'https://relay.example.com:8443',
     key: 'k-test',
     deviceMid: 'mbp',
-    localBase: 'http://127.0.0.1:3123',
+    localBase: () => 'http://127.0.0.1:3123',
     localToken: () => 'local-token',
     relayFetch: okFetch as unknown as typeof fetch,
     fetchImpl: okFetch as unknown as typeof fetch,
