@@ -86,6 +86,8 @@ const tunnel = new TunnelService(path.join(app.getPath('userData'), 'tunnel.json
     return remote.lanEndpoint()!.base;
   },
   localToken: () => remote.lanEndpoint()!.token,
+  // 启动恢复用：隧道启用后重启 app，自动补启 LAN remote（转发目标）
+  ensureLocal: async () => { if (!remote.status().running) await remote.start(); },
   log: msg => console.log(msg),
 });
 
@@ -743,6 +745,11 @@ setInterval(() => {
 
 void app.whenReady().then(async () => {
   if(!primaryInstance)return;
+  // 启动恢复：上次启用了隧道 → 自动补启 LAN 并重连 relay，重启后无需手动再点。
+  // 冒烟测试不恢复（CI 不应外连真实 relay）；失败不阻断启动。
+  if (!process.env.PI_SMOKE && !process.env.PI_SMOKE_SETTINGS && !process.env.PI_SMOKE_REMOTE) {
+    void tunnel.startup().catch(e => console.error('[tunnel] startup failed:', e));
+  }
   const policy = app.isPackaged ? path.join(process.resourcesPath, 'desktop-policy/index.mjs') : path.join(app.getAppPath(), 'extensions/desktop-policy/index.mjs');
   host = new PiHost(app.getPath('userData'), policy, broadcast, process.env.PI_SMOKE_SETTINGS ? path.join(app.getPath('userData'), 'shared-skills') : undefined, app.getVersion());
   // 内置资源：办公技能（pptx/docx/xlsx/pdf）+ 提示词模板（/周报、/报错定位等，

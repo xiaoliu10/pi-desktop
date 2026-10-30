@@ -38,6 +38,8 @@ export class TunnelService {
     private readonly deps: {
       localBase: () => string;
       localToken: () => string;
+      /** 启动恢复用：确保 LAN remote-server 在跑（tunnel 转发的目标）。 */
+      ensureLocal?: () => unknown;
       log?: (msg: string) => void;
     },
   ) {
@@ -85,6 +87,19 @@ export class TunnelService {
     this.persist();
     await this.sync();
     return this.current;
+  }
+
+  /**
+   * app 启动恢复：配置里 enabled=true → 自动拉起 LAN 并重连 relay。
+   * 此前 sync() 只在点按钮（save）时被调用，重启后配置永远躺在文件里，
+   * 状态停在 stopped 而按钮却是「关闭隧道」——用户实测（2026-10-30）。
+   * LAN 拉起失败不阻断 relay 连接（localBase 惰性，只影响转发时刻）。
+   */
+  async startup(): Promise<void> {
+    if (!this.config.enabled) return;
+    try { await this.deps.ensureLocal?.(); }
+    catch (e) { this.lastError = `LAN 启动失败：${String((e as Error).message ?? e)}`; this.deps.log?.(`[tunnel] ${this.lastError}`); }
+    await this.sync();
   }
 
   /** 让运行中的 client 与配置一致（enable→start，disable→stop）。 */
