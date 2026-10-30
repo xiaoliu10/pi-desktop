@@ -52,7 +52,7 @@ describe('tunnel-client ↔ go relay end-to-end', () => {
         relayUrl: 'https://relay.local', // 被 relayFetch 重写，不走真网络
         key: KEY,
         deviceMid: 'e2e-mbp',
-        localBase: 'http://local.invalid',
+        localBase: () => 'http://local.invalid',
         localToken: () => 'local-secret',
         relayFetch,
         fetchImpl: localFetch,

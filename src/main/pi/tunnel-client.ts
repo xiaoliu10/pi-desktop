@@ -23,8 +23,8 @@ export interface TunnelClientOptions {
   key: string;
   /** 本机标识（device_mid），一般用 hostname */
   deviceMid: string;
-  /** 本地 remote-server 的 base，如 http://127.0.0.1:3123 */
-  localBase: string;
+  /** 本地 remote-server 的 base（惰性取：LAN 未启动时不阻塞保存/连接建立） */
+  localBase: () => string;
   /** 本地 token（调 localBase 时用 Authorization: Bearer 传） */
   localToken: () => string;
   /** relay HTTP 注入口（测试用）；不设则用全局 fetch */
@@ -214,7 +214,9 @@ export class TunnelClient extends EventEmitter {
       this.sendFrame({ type: 'error', code: 'WRONG_PARAM' });
       return;
     }
-    const url = new URL(req.path, this.opts.localBase);
+    // 只有真正要转发时才要求 LAN remote-server 在跑：提前求值会让「保存配置」
+    // 都依赖 LAN 状态，用户没开 LAN 就存不了 relay 地址（实测报「LAN 远控未运行」）。
+    const url = new URL(req.path, this.opts.localBase());
     const headers: Record<string, string> = {
       'content-type': 'application/json',
       authorization: `Bearer ${this.opts.localToken()}`,
