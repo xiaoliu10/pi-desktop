@@ -124,8 +124,9 @@ export class TunnelClient extends EventEmitter {
       this.sid = reg.device_sid;
       // 2) 一次性 token（60s）
       const tok = await this.api<{ token: string; expires_in: number }>('/api/v1/remote/token', { role: 'device' });
-      // 3) WS upgrade（relay 原子消费 token）
-      const wsUrl = new URL('/api/v1/remote/ws2', this.opts.relayUrl.replace(/^http/, 'ws'));
+      // 3) WS upgrade（relay 原子消费 token）。ws:// 串手工拼，避免 URL 二次解析丢路径。
+      const wsBase = this.opts.relayUrl.replace(/^http/, 'ws').replace(/\/$/, '');
+      const wsUrl = new URL(wsBase + '/api/v1/remote/ws2');
       wsUrl.searchParams.set('role', 'device');
       wsUrl.searchParams.set('token', tok.token);
       wsUrl.searchParams.set('sid', this.sid);
@@ -239,9 +240,20 @@ export class TunnelClient extends EventEmitter {
     try { this.ws.send(JSON.stringify(obj)); } catch { /* closing */ }
   }
 
+  /**
+   * 拼接 relay API 绝对路径，保留 base 的 pathname。
+   * 不能用 new URL(path, base)：JS URL 解析对以 / 开头的 path 会重置 pathname，
+   * 把 base 的路径前缀（如 /tunnel）丢掉 → 405/404。
+   */
+  private relayApiUrl(path: string): string {
+    const base = new URL(this.opts.relayUrl);
+    const prefix = base.pathname.replace(/\/$/, '');
+    return base.origin + prefix + path;
+  }
+
   private async api<T>(path: string, body: unknown): Promise<T> {
     const doFetch = this.opts.relayFetch ?? fetch;
-    const res = await doFetch(new URL(path, this.opts.relayUrl).toString(), {
+    const res = await doFetch(this.relayApiUrl(path), {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-relay-key': this.opts.key },
       body: JSON.stringify(body),
