@@ -50,9 +50,14 @@ describe('TunnelService 保存配置不依赖 LAN 状态', () => {
   it('启用时若 LAN 未运行，状态反映 error 但不丢配置', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tunnel-svc-'));
     tmpDirs.push(dir);
+    // relay 调用必须 stub：否则真实 fetch 去连 relay.example.com，超时时序不稳定，
+    // 全量并发下会偶发失败（不是 flake 可豁免，是测试本身依赖了外网）。
+    const okFetch = async () => new Response(JSON.stringify({ code: 0, data: { device_sid: 'sid', token: 'tok', expires_in: 60 } }), { status: 200 });
     const service = new TunnelService(path.join(dir, 'tunnel.json'), {
       localBase: () => { throw new Error('LAN 远控未运行'); },
       localToken: () => { throw new Error('LAN 远控未运行'); },
+      relayFetch: okFetch as unknown as typeof fetch,
+      wsFactory: () => ({ send: () => {}, close: () => {}, on: () => {} }) as never,
     });
     // enabled:true 但 localBase 抛：sync 里 client.start() 的 catch 会兜住，配置已存
     const saved = await service.save({
