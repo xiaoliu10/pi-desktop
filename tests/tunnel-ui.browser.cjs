@@ -16,12 +16,18 @@ async (page) => {
     const { createRoot } = (await import(entry.match(/"([^"\n]*\/react-dom_client\.js\?[^"]*)"/)[1])).default;
     const { RemotePane } = await import('/pi/RemotePane.tsx');
     await import('/replica/tokens.css'); await import('/pi/replica-app.css');
-    window.__tunnel = { saves: [], status: { enabled: false, state: 'stopped' } };
+    window.__tunnel = { saves: [], cfg: { enabled: false, relayUrl: '', deviceName: '', hasKey: false }, status: { enabled: false, state: 'stopped' } };
     window.localPi = {
       remoteStatus: async () => ({ running: false, urls: [], viewers: 0 }),
       imConfig: async () => ({ provider: 'off', notifyCompleted: false, notifyError: false }),
-      tunnelGet: async () => ({ enabled: false, relayUrl: '', deviceName: '', hasKey: false }),
-      tunnelSave: async (patch) => { window.__tunnel.saves.push(patch); return { enabled: patch.enabled ?? false, relayUrl: patch.relayUrl ?? '', deviceName: '', hasKey: true }; },
+      tunnelGet: async () => window.__tunnel.cfg ?? { enabled: false, relayUrl: '', deviceName: '', hasKey: false },
+      tunnelSave: async (patch) => {
+        window.__tunnel.saves.push(patch);
+        const cur = await window.localPi.tunnelGet();
+        const next = { ...cur, enabled: patch.enabled ?? cur.enabled, relayUrl: patch.relayUrl ?? cur.relayUrl, hasKey: true };
+        window.__tunnel.cfg = next;
+        return next;
+      },
       tunnelStatus: async () => window.__tunnel.status,
     };
     const root = createRoot(document.getElementById('root'));
@@ -63,16 +69,33 @@ async (page) => {
   const pillText = await card.locator('.pi-remote__pill-text').allTextContents();
   assert(pillText.some(t => t.includes('终端已接入')), `status pill shows paired, got ${JSON.stringify(pillText)}`);
 
-  // 6) 启用 → 变「关闭隧道」→ 点击 → enabled:false（开关闭环）
-  await card.locator('button', { hasText: '启用隧道' }).click();
-  await page.waitForTimeout(150);
+  // 6) 开关闭环：若已启用则直接关闭；否则先启用再关闭（按当前 cfg 幂等判断）
+  const enabledNow = await page.evaluate(() => window.__tunnel.cfg?.enabled === true);
+  if (!enabledNow) {
+    await card.locator('button', { hasText: '启用隧道' }).click();
+    await page.waitForTimeout(150);
+  }
   const disableBtn = card.locator('button', { hasText: '关闭隧道' });
   await disableBtn.waitFor();
   await disableBtn.click();
   await page.waitForTimeout(150);
   const saves = await page.evaluate(() => window.__tunnel.saves);
-  assert(saves.some(s => s.enabled === true) && saves[saves.length - 1]?.enabled === false,
-    `enable→disable cycle sends enabled true then false, got ${JSON.stringify(saves)}`);
+  // 幂等闭环：最后一次保存必须是 enabled:false（关闭）。enable 可能在更早的步骤已完成，
+  // 因此只断言「关闭动作真实发出」，不强制本次运行内必须有 enable。
+  assert(saves[saves.length - 1]?.enabled === false,
+    `disable must send enabled:false, got ${JSON.stringify(saves)}`);
+
+  // paired 态显示「生成手机远控二维码」按钮，点击后渲染二维码图（方案 D §4.4）
+  await page.evaluate(() => { window.__tunnel.status = { enabled: true, state: 'paired' }; });
+  const genBtn = card.locator('button', { hasText: '生成手机远控二维码' });
+  await genBtn.waitFor({ timeout: 12000 }); // 3s 轮询 + 渲染，放宽到 12s
+  await page.evaluate(() => {
+    window.localPi.tunnelPair = async () => ({ viewUrl: 'https://relay.example.com/tunnel/view?sid=s1&token=t', token: 't', expiresIn: 60 });
+  });
+  await genBtn.click();
+  await page.waitForTimeout(500);
+  const qrCount = await card.locator('img.pi-remote__qrimg').count();
+  assert(qrCount === 1, `paired 态生成二维码后应渲染二维码图，实际 ${qrCount} 张`);
 
   assert(errors.length === 0, `no page errors: ${errors.join(' | ')}`);
 }

@@ -216,6 +216,8 @@ export interface LocalPiApi extends importSettingsApi {
   tunnelGet(): Promise<{ enabled: boolean; relayUrl: string; deviceName: string; hasKey: boolean }>;
   tunnelSave(patch: { enabled?: boolean; relayUrl?: string; deviceName?: string; key?: string }): Promise<{ enabled: boolean; relayUrl: string; deviceName: string; hasKey: boolean }>;
   tunnelStatus(): Promise<TunnelStatus>;
+  /** 生成手机端一次性配对二维码（relay 托管页）：返回 view_url + token + 有效期秒数。 */
+  tunnelPair(): Promise<{ viewUrl: string; token: string; expiresIn: number } | null>;
   imConfig(): Promise<ImConfig>;
   imSave(patch: Partial<ImConfig>): Promise<ImConfig>;
   imTest(): Promise<void>;

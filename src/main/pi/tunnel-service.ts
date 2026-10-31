@@ -40,6 +40,10 @@ export class TunnelService {
       localToken: () => string;
       /** 启动恢复用：确保 LAN remote-server 在跑（tunnel 转发的目标）。 */
       ensureLocal?: () => unknown;
+      /** relay HTTP 注入口（测试用）；不设则用全局 fetch */
+      relayFetch?: typeof fetch;
+      /** WS 工厂注入口（测试用）；不设则用真实 WebSocket */
+      wsFactory?: (url: string) => never;
       log?: (msg: string) => void;
     },
   ) {
@@ -114,6 +118,10 @@ export class TunnelService {
         deviceMid: this.config.deviceName || 'pi-desktop',
         localBase: () => this.deps.localBase(),
         localToken: () => this.deps.localToken(),
+        // 注入口必须透传：否则测试 stub 失效，client 会用全局 fetch 连真实网络
+        //（表现为 stub 0 次调用 + 状态停在 connecting）。
+        ...(this.deps.relayFetch ? { relayFetch: this.deps.relayFetch } : {}),
+        ...(this.deps.wsFactory ? { wsFactory: this.deps.wsFactory } : {}),
       });
       this.client.on('state', (s: TunnelState) => {
         this.deps.log?.(`[tunnel] state → ${s}`);
@@ -128,6 +136,31 @@ export class TunnelService {
       this.client?.stop();
       this.client = null;
     }
+  }
+
+  /**
+   * 生成手机端一次性配对二维码（relay 托管页，方案 D §4.4）。
+   * 调 relay 的 /api/v1/remote/pair 换 60s 一次性 token + view_url；
+   * 手机扫码打开该 URL，页面 JS 随即以 terminal 角色连同一 relay。
+   * 隧道未启用/未连接时返回 null（UI 隐藏二维码区）。
+   */
+  async pair(): Promise<{ viewUrl: string; token: string; expiresIn: number } | null> {
+    if (!this.client || this.client.state() !== 'paired') return null;
+    const key = decryptSecret(this.config.keyEncrypted) ?? '';
+    const base = new URL(this.config.relayUrl);
+    const prefix = base.pathname.replace(/\/$/, '');
+    const url = base.origin + prefix + '/api/v1/remote/pair';
+    const doFetch = this.deps.relayFetch ?? fetch;
+    const res = await doFetch(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-relay-key': key },
+      body: JSON.stringify({ device_sid: this.client.deviceSid() }),
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!res.ok) throw new Error(`relay /api/v1/remote/pair → HTTP ${res.status}`);
+    const json = await res.json() as { code: number; data?: { token: string; expires_in: number; view_url: string } };
+    if (json.code !== 0 || !json.data) throw new Error('relay 配对失败');
+    return { viewUrl: json.data.view_url, token: json.data.token, expiresIn: json.data.expires_in };
   }
 
   async status(): Promise<TunnelStatus> {

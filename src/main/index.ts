@@ -476,6 +476,8 @@ function registerIpc() {
     return { enabled: c.enabled, relayUrl: c.relayUrl, deviceName: c.deviceName, hasKey: !!c.keyEncrypted };
   });
   handle('tunnelStatus', () => tunnel.status());
+  // 手机端配对二维码：桌面调 relay 换 60s 一次性 token + view_url（relay 托管页）
+  handle('tunnelPair', () => tunnel.pair());
   handle('imConfig', () => imBot.current);
   // 钉钉扫码一键配置：应用注册 device flow（init→begin 出二维码，poll 出凭据）。
   handle('dingtalkRegister:start', () => startDingTalkRegistration());

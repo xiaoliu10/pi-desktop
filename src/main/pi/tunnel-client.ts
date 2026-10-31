@@ -222,6 +222,7 @@ export class TunnelClient extends EventEmitter {
       authorization: `Bearer ${this.opts.localToken()}`,
       ...(req.headers ?? {}),
     };
+    const isEventStream = url.pathname === '/api/events';
     let status = 502;
     let body: unknown = { error: 'upstream unavailable' };
     try {
@@ -230,6 +231,21 @@ export class TunnelClient extends EventEmitter {
       const doFetch = this.opts.fetchImpl ?? fetch;
       const res = await doFetch(url.toString(), init);
       status = res.status;
+      if (isEventStream && res.ok && res.body) {
+        // SSE：一个 id 对应一组长帧（chunk）加一帧 stream-end，手机端据此重建事件流。
+        // 不缓冲整段：逐 chunk 转发，保证实时性（心跳/消息增量即到即走）。
+        this.sendFrame({ type: 'data', payload: { id: req.id, status, stream: 'start', contentType: res.headers.get('content-type') ?? '' }, server_ts: Math.floor(Date.now() / 1000) });
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          const text = decoder.decode(value, { stream: true });
+          if (text) this.sendFrame({ type: 'data', payload: { id: req.id, status, stream: 'chunk', data: text }, server_ts: Math.floor(Date.now() / 1000) });
+        }
+        this.sendFrame({ type: 'data', payload: { id: req.id, status, stream: 'end' }, server_ts: Math.floor(Date.now() / 1000) });
+        return;
+      }
       body = await res.json().catch(() => ({}));
     } catch (e) {
       body = { error: String((e as Error).message || e) };

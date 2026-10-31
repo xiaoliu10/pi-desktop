@@ -26,6 +26,8 @@ function TunnelCard({ zh, say }: { zh: boolean; say: (t: string) => void }) {
   const [relayUrl, setRelayUrl] = useState('');
   const [key, setKey] = useState('');
   const [busy, setBusy] = useState(false);
+  const [qr, setQr] = useState<string | null>(null);
+  const [pairInfo, setPairInfo] = useState<{ expiresIn: number } | null>(null);
 
   useEffect(() => {
     void api().tunnelGet().then((c) => { setCfg(c); setRelayUrl(c.relayUrl); }).catch(() => undefined);
@@ -54,6 +56,25 @@ function TunnelCard({ zh, say }: { zh: boolean; say: (t: string) => void }) {
     error: { text: zh ? '连接失败（自动重试）' : 'Error (retrying)', color: 'var(--pi-red)' },
   };
   const st = stateLabel[status?.state ?? 'stopped'] ?? stateLabel.stopped;
+
+  // 配对二维码（relay 托管页）：只在「已接入」态可生成；token 60s 一次性，
+  // 到期自动清空（不清就是给用户一个扫了也打不开的码）。
+  const genQr = async () => {
+    setBusy(true);
+    try {
+      const p = await api().tunnelPair();
+      if (!p) { say(zh ? '隧道尚未连接，无法生成二维码' : 'Tunnel not connected'); return; }
+      setPairInfo({ expiresIn: p.expiresIn });
+      setQr(await qrToDataURL(p.viewUrl, { width: 256, margin: 1 }));
+      say(zh ? `二维码已生成，${p.expiresIn} 秒内有效` : `QR ready, valid for ${p.expiresIn}s`);
+    } catch (e) { say(String((e as Error).message || e)); }
+    finally { setBusy(false); }
+  };
+  useEffect(() => {
+    if (status?.state !== 'paired') { setQr(null); setPairInfo(null); return; }
+    const timer = pairInfo ? window.setTimeout(() => { setQr(null); setPairInfo(null); }, pairInfo.expiresIn * 1000) : null;
+    return () => { if (timer) window.clearTimeout(timer); };
+  }, [status?.state, pairInfo]);
 
   return (
     <section className="pi-remote__botcard" style={{ marginTop: 14 }}>
@@ -85,6 +106,23 @@ function TunnelCard({ zh, say }: { zh: boolean; say: (t: string) => void }) {
           </button>
         )}
       </div>
+      {status?.state === 'paired' && (
+        <div style={{ display: 'grid', justifyItems: 'center', gap: 8, margin: '10px 0 4px' }}>
+          {qr ? (
+            <>
+              <img className="pi-remote__qrimg" src={qr} alt={zh ? '手机远控二维码' : 'Mobile remote QR'} />
+              <span style={{ fontSize: 12, color: 'var(--pi-text-tertiary)' }}>
+                {zh ? '手机扫码打开远控页（一次性，60 秒有效）' : 'Scan to open the remote page (one-time, 60s)'}
+              </span>
+            </>
+          ) : (
+            <button className="pi-btn pi-btn--outline" disabled={busy} onClick={() => void genQr()}>
+              <Icon name="smartphone" size={14} />{zh ? '生成手机远控二维码' : 'Generate mobile QR'}
+            </button>
+          )}
+        </div>
+      )}
+
       <div style={{ display: 'grid', gap: 8, marginTop: 10 }}>
         <label style={{ display: 'grid', gap: 4 }}>
           <span style={{ fontSize: 12, color: 'var(--pi-text-secondary)' }}>{zh ? 'Relay 地址' : 'Relay address'}</span>
