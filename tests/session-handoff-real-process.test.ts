@@ -7,12 +7,18 @@ import {spawn, spawnSync} from 'node:child_process';
 import {PiBackend} from '../src/main/pi/backend';
 import {PiRpcClient} from '../src/main/pi/rpc-client';
 import {SessionIndex} from '../src/main/pi/session-index';
-import {sessionKey} from '../extensions/session-handoff/index.mjs';
+import {sessionKey} from '../node_modules/@wengine-ai/pi-session-handoff/index.mjs';
 
 const root = process.cwd();
 const cli = process.env.PI_HANDOFF_TEST_CLI || path.join(root, 'resources/pi-runtime/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js');
 const extensions = process.env.PI_HANDOFF_TEST_EXTENSIONS || path.join(root, 'extensions');
-const plugin = path.join(extensions, 'session-handoff');
+// 插件从 npm 依赖取（#183 起 extensions/ 内不再随仓库分发插件本体）
+const plugin = path.join(root, 'node_modules/@wengine-ai/pi-session-handoff');
+// 本测试依赖 #183：extensions/ 下的旧副本（desktop-handoff / session-handoff）删除后，
+// backend 才只经 settings packages 加载 npm 包。若旧副本仍在，同名工具冲突会让 pi
+// 启动即退出（Tool "session_handoff" conflicts with extensions/session-handoff/index.mjs）。
+const legacyPlugin = path.join(root, 'extensions', 'session-handoff');
+const legacyHandoff = path.join(root, 'extensions', 'desktop-handoff');
 const cleanEnv = extra => {const env = {...process.env, ...extra}; delete env.PI_PACKAGE_DIR; delete env.PI_SUBAGENTS_PI_CODING_AGENT_PACKAGE_ROOT; return env;};
 async function until(fn, message = 'condition', timeout = 15000) {
   const end = Date.now() + timeout;
@@ -45,7 +51,7 @@ function rpc(args, cwd, agent) {
   };
 }
 
-it('real pi model tool calls deliver both ways through Desktop backend, queue while busy, dedupe and retire on reload/close', async () => {
+it.skipIf(fs.existsSync(legacyPlugin) || fs.existsSync(legacyHandoff))('real pi model tool calls deliver both ways through Desktop backend, queue while busy, dedupe and retire on reload/close', async () => {
   const version = spawnSync(process.execPath, [cli, '--version'], {env: cleanEnv({}), encoding: 'utf8'});
   expect(version.status).toBe(0); expect(version.stdout.trim()).toBe('1.4.0');
   const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'handoff-e2e-')));
