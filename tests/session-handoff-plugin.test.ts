@@ -4,19 +4,21 @@ import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-const entry = path.resolve('extensions/session-handoff/index.mjs');
+const entry = path.resolve('node_modules/@wengine-ai/pi-session-handoff/index.mjs');
 async function fixture(opts: { mode?: string; busy?: boolean; desktop?: boolean; sidecar?: boolean } = {}) {
   const handlers = new Map<string, Function[]>();
   const tools = new Map<string, any>();
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'handoff-plugin-')));
-  const file = path.join(root, 'session.jsonl');
+  // Desktop 侧车会话以 sidecar_ 前缀创建（backend.ts connect()），header 不带
+  // parentSession；header.parentSession 是 pi 的分支/fork 语义，不用于识别侧车。
+  const file = path.join(root, opts.sidecar ? 'sidecar_session.jsonl' : 'session.jsonl');
   fs.writeFileSync(file, '{}\n');
   let busy = !!opts.busy;
   let autoEmit = true;
   const ctx: any = {
     mode: opts.mode ?? 'tui', cwd: root, hasUI: true,
     isIdle: () => !busy,
-    sessionManager: {getSessionFile: () => file, getSessionId: () => 'session-id', getHeader: () => opts.sidecar ? {parentSession: 'parent'} : {}},
+    sessionManager: {getSessionFile: () => file, getSessionId: () => 'session-id', getHeader: () => {}},
     ui: {notify: vi.fn(), input: vi.fn(async () => JSON.stringify({ok: true, sessions: []}))},
   };
   let receive: Function | undefined;

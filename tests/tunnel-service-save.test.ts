@@ -68,10 +68,15 @@ describe('TunnelService 保存配置不依赖 LAN 状态', () => {
     // 保存本身不应抛（抛了说明仍是提前求值）
     if (saved) {
       expect(saved.enabled).toBe(true);
-      const status = await service.status();
-      expect(status.enabled).toBe(true);
-      // LAN 未起 → 连接建不起来，状态停在 connecting/stopped，但不得抛异常
-      expect(['connecting', 'stopped', 'error']).toContain(status.state);
+      // LAN 未起 → 连接建不起来，状态停在 connecting/stopped/error，但不得抛异常。
+      // 轮询而非一次性快照：connecting 是异步中间态，并发下快照可能早于它到达。
+      let state = '';
+      for (let i = 0; i < 20; i++) {
+        state = (await service.status()).state;
+        if (['connecting', 'stopped', 'error'].includes(state)) break;
+        await new Promise(r => setTimeout(r, 25));
+      }
+      expect(['connecting', 'stopped', 'error']).toContain(state);
     }
     const persisted = JSON.parse(fs.readFileSync(path.join(dir, 'tunnel.json'), 'utf8')) as { enabled: boolean; relayUrl: string };
     expect(persisted.enabled).toBe(true);
