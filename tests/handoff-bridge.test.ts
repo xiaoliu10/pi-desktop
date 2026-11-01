@@ -87,6 +87,16 @@ describe('handoff dispatch', () => {
     const result = await runHandoffBridge(service, ctx, JSON.stringify({ projectPath: B, message: '排队等处理' })) as any;
     expect(result.target.disposition).toBe('queued');
     expect(prompt).toHaveBeenCalledTimes(1);
+    // queued 不等于送达：必须回传 queued-not-delivered，否则模型会把 queued 当
+    // completed 汇报（2026-11-01 VE 实测两条交接报告已排队，目标会话里一条都没有）。
+    expect(result.status).toBe('queued-not-delivered');
+    expect(result.hint).toContain('尚未送达');
+  });
+
+  it('started 必须是 delivered，不能和 queued 混为一谈', async () => {
+    const { service, ctx } = setup([session({ key: 'b1', cwd: B, updatedAt: 1 })], { runs: [{ key: 'b1', cwd: B, status: 'idle' }] });
+    const result = await runHandoffBridge(service, ctx, JSON.stringify({ projectPath: B, message: '空闲目标' })) as any;
+    expect(result.status).toBe('delivered');
   });
 
   it('disconnected target: reconnects via sourceKey (remembered access mode wins), then prompts', async () => {

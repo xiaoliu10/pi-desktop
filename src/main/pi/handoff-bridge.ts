@@ -206,7 +206,17 @@ export async function runHandoffBridge(service: HandoffService | undefined, cont
     const sessionKey = payload.sessionKey !== undefined ? String(payload.sessionKey) : undefined;
     const idempotencyKey = payload.idempotencyKey !== undefined ? String(payload.idempotencyKey) : undefined;
     const { target, duplicated } = await service.deliver({ projectPath, sessionKey, message, idempotencyKey, context });
-    return { ok: true, action: 'send', target, duplicate: duplicated };
+    // queued 不等于送达：它只表示目标会话忙、内容进了收件方插件的排队。
+    // 必须把这条差异明确回给模型，否则模型会把 queued 当 completed 汇报给用户
+    // （2026-11-01 VE 实测：两条交接报告 queued，用户在目标会话队列里一条都看不到）。
+    const status = duplicated ? 'duplicate'
+      : target.disposition === 'queued' ? 'queued-not-delivered'
+      : 'delivered';
+    const hint = status === 'queued-not-delivered'
+      ? '目标会话正在运行，交接已排队但尚未送达；空闲后自动投递。目标会话重启也会恢复。'
+      : status === 'duplicate' ? '该 idempotencyKey 已受理过，本次未重复投递。'
+      : '目标会话已开始处理。';
+    return { ok: true, action: 'send', target, duplicate: duplicated, status, hint };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : String(e) };
   }
