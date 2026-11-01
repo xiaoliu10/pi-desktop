@@ -8,12 +8,9 @@ importers:
 
   .:
     dependencies:
-<<<<<<< ours
-=======
       '@wengine-ai/pi-session-handoff':
-        specifier: 0.1.3
-        version: 0.1.3
->>>>>>> theirs
+        specifier: 0.1.4
+        version: 0.1.4
       '@xterm/addon-fit':
         specifier: ^0.11.0
         version: 0.11.0
@@ -1033,6 +1030,10 @@ packages:
 
   '@vitest/utils@2.1.9':
     resolution: {integrity: sha512-v0psaMSkNJ3A2NMrUEHFRzJtDPFn+/VWZ5WxImB21T9fjucJRmS7xCS3ppEnARb9y11OAzaD+P2Ps+b+BGX5iQ==}
+
+  '@wengine-ai/pi-session-handoff@0.1.4':
+    resolution: {integrity: sha512-WtU8WiCVN9ptI+oUDaHHUZIfnF7EvPwRPVDYhFUlGawJGBkKd0TmpjUvS3zduLRFIXnBD2WkMk6E9IWCWkqa9A==}
+    engines: {node: '>=20'}
 
   '@xmldom/xmldom@0.8.15':
     resolution: {integrity: sha512-/5NV/vDALVFDXgLmfsy9TRCBlKwO2LNBFzpzvb9iIj+jR+eSc6DLYYvVOdivT/jm7MtU6TebYuRmzEOI7w40UA==}
@@ -3171,7 +3172,7 @@ snapshots:
 
   '@electron/osx-sign@1.3.3':
     dependencies:
-      compare-version: 0.1.3
+      compare-version: 0.1.2
       debug: 4.4.3
       fs-extra: 10.1.0
       isbinaryfile: 4.0.10
@@ -3774,6 +3775,8 @@ snapshots:
       '@vitest/pretty-format': 2.1.9
       loupe: 3.2.1
       tinyrainbow: 1.2.0
+
+  '@wengine-ai/pi-session-handoff@0.1.4': {}
 
   '@xmldom/xmldom@0.8.15': {}
 

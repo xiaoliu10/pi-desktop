@@ -174,31 +174,38 @@ describe('handoff dispatch', () => {
   });
 });
 
-describe('desktop_handoff extension wiring', () => {
-  it('loads the portable session_handoff plugin and packages it, with the Desktop bridge gated by env', () => {
-    expect(fs.existsSync('extensions/session-handoff/index.mjs')).toBe(true);
-    const backend = fs.readFileSync('src/main/pi/backend.ts', 'utf8');
-    // Both extensions load: the legacy desktop_handoff bridge and the portable plugin.
-    expect(backend).toContain("'..', 'desktop-handoff', 'index.mjs'");
-    expect(backend).toContain("'..', 'session-handoff', 'index.mjs'");
-    // The bridge is opt-in for the portable plugin: pure TUI sessions must not get it.
-    expect(backend).toContain('PI_DESKTOP_HANDOFF_BRIDGE');
-    expect(backend).toMatch(/if \(sessionHandoffArgs\.length && handoffArgs\.length\) env\.PI_DESKTOP_HANDOFF_BRIDGE/);
+describe('handoff extension wiring', () => {
+  it('loads the portable session_handoff plugin from the published package', () => {
+    // The plugin lives in its own repository (xiaoliu10/pi-session-handoff) and ships
+    // as an npm dependency; the Desktop build copies it into Resources/session-handoff.
+    expect(fs.existsSync('extensions/session-handoff')).toBe(false);
     const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
-    const resources = JSON.stringify(pkg.build.extraResources);
-    expect(resources).toContain('extensions/session-handoff');
-    expect(resources).toContain('extensions/desktop-handoff');
+    expect(pkg.dependencies['@wengine-ai/pi-session-handoff']).toBeTruthy();
+    expect(JSON.stringify(pkg.build.extraResources)).toContain(
+      'node_modules/@wengine-ai/pi-session-handoff'
+    );
+    // #183 之后不要再从 extensions/ 加载插件本体（旧副本会与 npm 包同名工具冲突）。
+    const backend = fs.readFileSync('src/main/pi/backend.ts', 'utf8');
+    expect(backend).not.toContain("'..', 'session-handoff', 'index.mjs'");
   });
 
-  it('shipped as an extension with the reserved ui.input channel and packaged as extraResource', () => {
-    expect(fs.existsSync('extensions/desktop-handoff/index.mjs')).toBe(true);
-    const ext = fs.readFileSync('extensions/desktop-handoff/index.mjs', 'utf8');
-    expect(ext).toContain("name: 'desktop_handoff'");
-    expect(ext).toContain("ctx.ui.input('desktop-handoff'");
+  it('gates the Desktop bridge on the portable plugin alone, never on a second tool', () => {
     const backend = fs.readFileSync('src/main/pi/backend.ts', 'utf8');
-    expect(backend).toContain("title === 'desktop-handoff'");
-    expect(backend).toContain('desktop-handoff');
+    expect(backend).toContain('PI_DESKTOP_HANDOFF_BRIDGE');
+    // 插件本体来自 npm 包，Desktop 只负责打开桥开关（不再判 sessionHandoffArgs）。
+    expect(backend).toMatch(/if \(handoffArgs\.length\) env\.PI_DESKTOP_HANDOFF_BRIDGE/);
+    expect(backend).not.toContain('sessionHandoffArgs');
     const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
-    expect(JSON.stringify(pkg.build.extraResources)).toContain('extensions/desktop-handoff');
+    const resources = JSON.stringify(pkg.build.extraResources);
+    expect(resources).toContain('node_modules/@wengine-ai/pi-session-handoff');
+    expect(resources).not.toContain('extensions/session-handoff');
+  });
+
+  it('plugin talks to the reserved desktop-handoff ui.input channel', () => {
+    const ext = fs.readFileSync(
+      'node_modules/@wengine-ai/pi-session-handoff/index.mjs',
+      'utf8'
+    );
+    expect(ext).toContain("ctx.ui.input('desktop-handoff'");
   });
 });

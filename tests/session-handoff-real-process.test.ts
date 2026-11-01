@@ -12,11 +12,9 @@ import {sessionKey} from '../node_modules/@wengine-ai/pi-session-handoff/index.m
 const root = process.cwd();
 const cli = process.env.PI_HANDOFF_TEST_CLI || path.join(root, 'resources/pi-runtime/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js');
 const extensions = process.env.PI_HANDOFF_TEST_EXTENSIONS || path.join(root, 'extensions');
-// 插件从 npm 依赖取（#183 起 extensions/ 内不再随仓库分发插件本体）
 const plugin = path.join(root, 'node_modules/@wengine-ai/pi-session-handoff');
-// 本测试依赖 #183：extensions/ 下的旧副本（desktop-handoff / session-handoff）删除后，
-// backend 才只经 settings packages 加载 npm 包。若旧副本仍在，同名工具冲突会让 pi
-// 启动即退出（Tool "session_handoff" conflicts with extensions/session-handoff/index.mjs）。
+// #183 起 extensions/ 内不再分发插件本体；若旧副本又出现，同名工具会让 pi 启动即退出，
+// 因此下面用 skipIf 守卫（真出现时是环境问题，不是本测试的断言对象）。
 const legacyPlugin = path.join(root, 'extensions', 'session-handoff');
 const legacyHandoff = path.join(root, 'extensions', 'desktop-handoff');
 const cleanEnv = extra => {const env = {...process.env, ...extra}; delete env.PI_PACKAGE_DIR; delete env.PI_SUBAGENTS_PI_CODING_AGENT_PACKAGE_ROOT; return env;};
