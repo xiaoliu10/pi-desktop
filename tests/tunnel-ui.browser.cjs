@@ -85,17 +85,23 @@ async (page) => {
   assert(saves[saves.length - 1]?.enabled === false,
     `disable must send enabled:false, got ${JSON.stringify(saves)}`);
 
-  // paired 态显示「生成手机远控二维码」按钮，点击后渲染二维码图（方案 D §4.4）
-  await page.evaluate(() => { window.__tunnel.status = { enabled: true, state: 'paired' }; });
-  const genBtn = card.locator('button', { hasText: '生成手机远控二维码' });
-  await genBtn.waitFor({ timeout: 12000 }); // 3s 轮询 + 渲染，放宽到 12s
+  // 隧道 paired → 主扫码卡二维码自动切公网（R-remote-02：配了隧道扫码即公网）。
+  // 主组件 3s 轮询 tunnelStatus + tunnelPair（节流在 main 进程 pair() 缓存），
+  // 设置 paired 后 3s 内 tunnelPair 被调、公网码渲染。
   await page.evaluate(() => {
-    window.localPi.tunnelPair = async () => ({ viewUrl: 'https://relay.example.com/tunnel/view?sid=s1&token=t', token: 't', expiresIn: 60 });
+    window.__tunnel.pairCalls = 0;
+    window.localPi.tunnelPair = async () => {
+      window.__tunnel.pairCalls += 1;
+      return { viewUrl: 'https://relay.example.com/tunnel/view?sid=s1&token=t', token: 't', expiresIn: 60 };
+    };
+    window.__tunnel.status = { enabled: true, state: 'paired' };
   });
-  await genBtn.click();
-  await page.waitForTimeout(500);
-  const qrCount = await card.locator('img.pi-remote__qrimg').count();
-  assert(qrCount === 1, `paired 态生成二维码后应渲染二维码图，实际 ${qrCount} 张`);
+  await page.waitForFunction(() => (window.__tunnel.pairCalls ?? 0) >= 1, null, { timeout: 10000 });
+  await page.waitForTimeout(300);
+  const pubImg = await page.locator('img.pi-remote__qrimg').count();
+  assert(pubImg >= 1, `paired 后主卡应渲染公网二维码，实际 ${pubImg} 张`);
+
+  assert(errors.length === 0, `no page errors: ${errors.join(' | ')}`);
 
   assert(errors.length === 0, `no page errors: ${errors.join(' | ')}`);
 }

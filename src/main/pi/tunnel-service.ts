@@ -144,8 +144,12 @@ export class TunnelService {
    * 手机扫码打开该 URL，页面 JS 随即以 terminal 角色连同一 relay。
    * 隧道未启用/未连接时返回 null（UI 隐藏二维码区）。
    */
+  /** pair 结果 50s 缓存：token 60s 有效，设置页 3s 轮询每次调用也不能频繁换码。 */
+  private pairCache: { at: number; data: { viewUrl: string; token: string; expiresIn: number } } | null = null;
+
   async pair(): Promise<{ viewUrl: string; token: string; expiresIn: number } | null> {
-    if (!this.client || this.client.state() !== 'paired') return null;
+    if (!this.client || this.client.state() !== 'paired') { this.pairCache = null; return null; }
+    if (this.pairCache && Date.now() - this.pairCache.at < 50_000) return this.pairCache.data;
     const key = decryptSecret(this.config.keyEncrypted) ?? '';
     const base = new URL(this.config.relayUrl);
     const prefix = base.pathname.replace(/\/$/, '');
@@ -165,7 +169,9 @@ export class TunnelService {
     const view = new URL(json.data.view_url);
     view.protocol = base.protocol;
     view.pathname = prefix + view.pathname;
-    return { viewUrl: view.toString(), token: json.data.token, expiresIn: json.data.expires_in };
+    const result = { viewUrl: view.toString(), token: json.data.token, expiresIn: json.data.expires_in };
+    this.pairCache = { at: Date.now(), data: result };
+    return result;
   }
 
   async status(): Promise<TunnelStatus> {

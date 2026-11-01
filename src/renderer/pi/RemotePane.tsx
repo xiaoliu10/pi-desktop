@@ -26,8 +26,7 @@ function TunnelCard({ zh, say }: { zh: boolean; say: (t: string) => void }) {
   const [relayUrl, setRelayUrl] = useState('');
   const [key, setKey] = useState('');
   const [busy, setBusy] = useState(false);
-  const [qr, setQr] = useState<string | null>(null);
-  const [pairInfo, setPairInfo] = useState<{ expiresIn: number } | null>(null);
+
 
   useEffect(() => {
     void api().tunnelGet().then((c) => { setCfg(c); setRelayUrl(c.relayUrl); }).catch(() => undefined);
@@ -56,25 +55,6 @@ function TunnelCard({ zh, say }: { zh: boolean; say: (t: string) => void }) {
     error: { text: zh ? '连接失败（自动重试）' : 'Error (retrying)', color: 'var(--pi-red)' },
   };
   const st = stateLabel[status?.state ?? 'stopped'] ?? stateLabel.stopped;
-
-  // 配对二维码（relay 托管页）：只在「已接入」态可生成；token 60s 一次性，
-  // 到期自动清空（不清就是给用户一个扫了也打不开的码）。
-  const genQr = async () => {
-    setBusy(true);
-    try {
-      const p = await api().tunnelPair();
-      if (!p) { say(zh ? '隧道尚未连接，无法生成二维码' : 'Tunnel not connected'); return; }
-      setPairInfo({ expiresIn: p.expiresIn });
-      setQr(await qrToDataURL(p.viewUrl, { width: 256, margin: 1 }));
-      say(zh ? `二维码已生成，${p.expiresIn} 秒内有效` : `QR ready, valid for ${p.expiresIn}s`);
-    } catch (e) { say(String((e as Error).message || e)); }
-    finally { setBusy(false); }
-  };
-  useEffect(() => {
-    if (status?.state !== 'paired') { setQr(null); setPairInfo(null); return; }
-    const timer = pairInfo ? window.setTimeout(() => { setQr(null); setPairInfo(null); }, pairInfo.expiresIn * 1000) : null;
-    return () => { if (timer) window.clearTimeout(timer); };
-  }, [status?.state, pairInfo]);
 
   return (
     <section className="pi-remote__botcard" style={{ marginTop: 14 }}>
@@ -106,23 +86,6 @@ function TunnelCard({ zh, say }: { zh: boolean; say: (t: string) => void }) {
           </button>
         )}
       </div>
-      {status?.state === 'paired' && (
-        <div style={{ display: 'grid', justifyItems: 'center', gap: 8, margin: '10px 0 4px' }}>
-          {qr ? (
-            <>
-              <img className="pi-remote__qrimg" src={qr} alt={zh ? '手机远控二维码' : 'Mobile remote QR'} />
-              <span style={{ fontSize: 12, color: 'var(--pi-text-tertiary)' }}>
-                {zh ? '手机扫码打开远控页（一次性，60 秒有效）' : 'Scan to open the remote page (one-time, 60s)'}
-              </span>
-            </>
-          ) : (
-            <button className="pi-btn pi-btn--outline" disabled={busy} onClick={() => void genQr()}>
-              <Icon name="smartphone" size={14} />{zh ? '生成手机远控二维码' : 'Generate mobile QR'}
-            </button>
-          )}
-        </div>
-      )}
-
       <div style={{ display: 'grid', gap: 8, marginTop: 10 }}>
         <label style={{ display: 'grid', gap: 4 }}>
           <span style={{ fontSize: 12, color: 'var(--pi-text-secondary)' }}>{zh ? 'Relay 地址' : 'Relay address'}</span>
@@ -201,6 +164,29 @@ export function RemotePane() {
   // effect 生成：running 且有链接时自动出码（覆盖挂载、开启、刷新），停止或无
   // 链接时清空。依赖用 url 字符串值，3s 轮询的新数组引用不会重复触发；失败时
   // 清掉 qrBusy，交给渲染层失败分支提示，不停留在「正在准备」。
+  // 公网二维码（隧道在线时优先）：60s 一次性 token，每 50s 自动续期，
+  // 保证用户任何时刻扫到的码都是新鲜的。隧道断开则回落局域网码。
+  const [tunnelPaired, setTunnelPaired] = useState(false);
+  const [tunnelQr, setTunnelQr] = useState<string | null>(null);
+  useEffect(() => {
+    let alive = true;
+    let lastUrl = ''; // viewUrl 不变则不重绘（mint 节流在 main 进程 pair() 缓存里）
+    const tick = async () => {
+      try {
+        const [st, p] = await Promise.all([api().tunnelStatus(), api().tunnelPair().catch(() => null)]);
+        if (!alive) return;
+        setTunnelPaired(st.state === 'paired');
+        if (st.state !== 'paired' || !p) { setTunnelQr(null); return; }
+        if (p.viewUrl === lastUrl) return;
+        lastUrl = p.viewUrl;
+        setTunnelQr(await qrToDataURL(p.viewUrl, { width: 256, margin: 1 }));
+      } catch { /* 轮询失败下轮再试 */ }
+    };
+    void tick();
+    const timer = window.setInterval(tick, 3000);
+    return () => { alive = false; window.clearInterval(timer); };
+  }, []);
+
   const qrUrl = remote.running ? remote.urls[0] : undefined;
   useEffect(() => {
     if (!qrUrl) { setQr(null); setQrBusy(false); return; }
@@ -338,10 +324,22 @@ export function RemotePane() {
             </div>
           )}
 
-          {/* QR 区 */}
+          {/* QR 区：隧道在线时优先公网码（任意网络可扫），否则局域网码 */}
           <div className="pi-remote__qrarea">
-            {qr ? (
-              <img className="pi-remote__qrimg" src={qr} alt={zh ? 'Web 远程控制二维码' : 'Web remote control QR code'} />
+            {tunnelQr ? (
+              <>
+                <img className="pi-remote__qrimg" src={tunnelQr} alt={zh ? '公网远控二维码' : 'Public remote QR code'} />
+                <span style={{ fontSize: 12, color: 'var(--pi-text-tertiary)', marginTop: 6 }}>
+                  {zh ? '🌐 公网二维码 · 任意网络可扫（自动刷新）' : '🌐 Public QR · works on any network (auto-refreshed)'}
+                </span>
+              </>
+            ) : qr ? (
+              <>
+                <img className="pi-remote__qrimg" src={qr} alt={zh ? 'Web 远程控制二维码' : 'Web remote control QR code'} />
+                <span style={{ fontSize: 12, color: 'var(--pi-text-tertiary)', marginTop: 6 }}>
+                  {zh ? '局域网二维码 · 手机需与电脑同一 WiFi' : 'LAN QR · phone must share this Wi-Fi'}
+                </span>
+              </>
             ) : qrBusy && remote.running ? (
               <div className="pi-remote__qrgenerating">
                 <Icon name="loader" size={20} />
