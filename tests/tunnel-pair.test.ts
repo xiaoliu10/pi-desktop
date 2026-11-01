@@ -54,7 +54,7 @@ describe('TunnelService.pair 配对二维码', () => {
         return new Response(JSON.stringify({ code: 0, data: { device_sid: 'sid-1', token: 'tok', expires_in: 60 } }), { status: 200 });
       }
       calls.push({ url, key: headers['x-relay-key'] ?? '', body: JSON.parse(String(init?.body ?? '{}')) });
-      return new Response(JSON.stringify({ code: 0, data: { token: 'pt', expires_in: 60, view_url: 'https://relay.example.com/tunnel/view?sid=sid-1&token=pt' } }), { status: 200 });
+      return new Response(JSON.stringify({ code: 0, data: { token: 'pt', expires_in: 60, view_url: 'http://relay.example.com/view?sid=sid-1&token=pt' } }), { status: 200 });
     });
     let emitOpen: (() => void) | undefined;
     let emitMsg: ((d: string) => void) | undefined;
@@ -79,7 +79,8 @@ describe('TunnelService.pair 配对二维码', () => {
     expect((await service.status()).state).toBe('paired');
     const p = await service.pair();
     expect(p).toMatchObject({ token: 'pt', expiresIn: 60 });
-    expect(p?.viewUrl).toContain('/tunnel/view?sid=sid-1');
+    // relay 在 nginx 后输出无前缀 http URL；pair() 必须用配置的协议+路径前缀重写
+    expect(p?.viewUrl).toBe('https://relay.example.com/tunnel/view?sid=sid-1&token=pt');
     const pairCall = calls.filter(c => c.url.includes('/api/v1/remote/pair'));
     expect(pairCall.length).toBe(1);
     expect(pairCall[0].url).toBe('https://relay.example.com/tunnel/api/v1/remote/pair');

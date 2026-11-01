@@ -160,7 +160,12 @@ export class TunnelService {
     if (!res.ok) throw new Error(`relay /api/v1/remote/pair → HTTP ${res.status}`);
     const json = await res.json() as { code: number; data?: { token: string; expires_in: number; view_url: string } };
     if (json.code !== 0 || !json.data) throw new Error('relay 配对失败');
-    return { viewUrl: json.data.view_url, token: json.data.token, expiresIn: json.data.expires_in };
+    // relay 在 nginx 反代后面：它看到的 Host 不含路径前缀、协议是明文 http。
+    // view_url 必须用「配置的 relayUrl」的协议+路径前缀重写，否则二维码扫出来 404。
+    const view = new URL(json.data.view_url);
+    view.protocol = base.protocol;
+    view.pathname = prefix + view.pathname;
+    return { viewUrl: view.toString(), token: json.data.token, expiresIn: json.data.expires_in };
   }
 
   async status(): Promise<TunnelStatus> {
