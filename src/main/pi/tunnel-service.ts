@@ -148,7 +148,10 @@ export class TunnelService {
   private pairCache: { at: number; data: { viewUrl: string; token: string; expiresIn: number } } | null = null;
 
   async pair(): Promise<{ viewUrl: string; token: string; expiresIn: number } | null> {
-    if (!this.client || this.client.state() !== 'paired') { this.pairCache = null; return null; }
+    // waiting/paired 都算「relay 已连上」：手机本身就是终端，从扫这个码开始，
+    // 要求先 paired 才给码是鸡生蛋（用户实测：状态「等待终端」时扫不到公网码）。
+    const st = this.client?.state();
+    if (!this.client || (st !== 'paired' && st !== 'waiting')) { this.pairCache = null; return null; }
     if (this.pairCache && Date.now() - this.pairCache.at < 50_000) return this.pairCache.data;
     const key = decryptSecret(this.config.keyEncrypted) ?? '';
     const base = new URL(this.config.relayUrl);

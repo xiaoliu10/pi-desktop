@@ -175,8 +175,11 @@ export function RemotePane() {
       try {
         const [st, p] = await Promise.all([api().tunnelStatus(), api().tunnelPair().catch(() => null)]);
         if (!alive) return;
-        setTunnelPaired(st.state === 'paired');
-        if (st.state !== 'paired' || !p) { setTunnelQr(null); return; }
+        // 只要 relay 连上了（waiting/paired）就给公网码：手机本身就是「终端」，
+        // 要求先有终端连着才出码是鸡生蛋——真实用户正是从扫这个码开始。
+        const viaRelay = st.state === 'waiting' || st.state === 'paired';
+        setTunnelPaired(viaRelay);
+        if (!viaRelay || !p) { setTunnelQr(null); return; }
         if (p.viewUrl === lastUrl) return;
         lastUrl = p.viewUrl;
         setTunnelQr(await qrToDataURL(p.viewUrl, { width: 256, margin: 1 }));

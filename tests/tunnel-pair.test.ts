@@ -88,6 +88,32 @@ describe('TunnelService.pair 配对二维码', () => {
     expect(pairCall[0].body).toMatchObject({ device_sid: 'sid-1' });
   });
 
+  it('waiting（已连 relay 等终端）也能出码——手机本身是终端，不能鸡生蛋', async () => {
+    const urls: string[] = [];
+    const relayFetch = vi.fn(async (input: any) => {
+      urls.push(String(input));
+      const u = String(input);
+      if (u.endsWith('/api/v1/remote/device')) return new Response(JSON.stringify({ code: 0, data: { device_sid: 'sid-w', token: 'tk', expires_in: 60 } }), { status: 200 });
+      return new Response(JSON.stringify({ code: 0, data: { token: 'pt', expires_in: 60, view_url: 'http://h/view?sid=sid-w&token=pt' } }), { status: 200 });
+    });
+    let emitOpen: (() => void) | undefined;
+    let emitMsg: ((d: string) => void) | undefined;
+    const ws = { send: vi.fn(), close: vi.fn(), on: (ev: string, cb: (...a: never[]) => void) => {
+      if (ev === 'open') emitOpen = () => cb();
+      if (ev === 'message') emitMsg = (d: string) => (cb as (x: string) => void)(d);
+    } };
+    const service = makeService({ relayFetch: relayFetch as unknown as typeof fetch, wsFactory: () => ws as never });
+    await service.save({ relayUrl: 'https://relay.example.com', key: 'k', enabled: true });
+    for (let i = 0; i < 40 && !emitOpen; i++) await new Promise(r => setTimeout(r, 25));
+    emitOpen!();
+    emitMsg?.(JSON.stringify({ type: 'auth_ack', device_sid: 'sid-w', pair_status: 'waiting' }));
+    for (let i = 0; i < 40 && (await service.status()).state !== 'waiting'; i++) await new Promise(r => setTimeout(r, 25));
+    expect((await service.status()).state).toBe('waiting');
+    const p = await service.pair();
+    expect(p, 'waiting 状态必须能生成配对码').toBeTruthy();
+    expect(p?.token).toBe('pt');
+  });
+
   it('未连接（非 paired）时返回 null，且不发起 pair 请求', async () => {
     // 注意：relayFetch 会被 client 的连接流程调用（device/token），这是预期的；
     // 要断言的是 pair 端点不被调用。
