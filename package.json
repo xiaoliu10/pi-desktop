@@ -41,6 +41,7 @@
     "prune:dist": "node scripts/prune-dist.mjs"
   },
   "dependencies": {
+    "@wengine-ai/pi-session-handoff": "0.1.0",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",
     "croner": "^9.1.0",
@@ -136,11 +137,7 @@
         "to": "builtin-prompts"
       },
       {
-        "from": "extensions/desktop-handoff",
-        "to": "desktop-handoff"
-      },
-      {
-        "from": "extensions/session-handoff",
+        "from": "node_modules/@wengine-ai/pi-session-handoff",
         "to": "session-handoff"
       }
     ],

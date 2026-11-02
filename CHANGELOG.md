@@ -3,6 +3,20 @@
 所有重要变更记录在本文件。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 README 只保留最近版本摘要；本文件为完整记录。
 
+## [Unreleased]
+
+### English
+
+#### Changed
+
+- **One handoff tool instead of two**: `desktop_handoff` and `session_handoff` did the same job through the same reserved channel — `session_handoff` was a strict superset (it also reaches plain-conversation sessions, deduplicates candidates and enforces idempotency). With both registered, the model had two nearly identical tools to pick from and could choose the weaker one. The duplicate `desktop_handoff` tool is removed; Desktop keeps its full reach, including reconnecting a disconnected session, because `session_handoff` uses the same main-process bridge.
+
+### 中文
+
+#### 变更
+
+- **交接工具从两个收敛为一个**：`desktop_handoff` 与 `session_handoff` 走同一条保留通道做同一件事，后者是严格超集（还能触达普通对话会话、消重候选、强制幂等）。两个都注册时，模型面对两个几乎同名的工具容易选到能力更弱的那个。现已删除重复的 `desktop_handoff` 工具；Desktop 端能力不减，包括重连已断开的会话，因为 `session_handoff` 用的是同一个主进程桥。
+
 ## [0.1.39] - 2026-10-29
 
 ### English

@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { startPeer, discoverPeers, sessionKey } from '../extensions/session-handoff/transport.mjs';
+import { startPeer, discoverPeers, sessionKey } from '../node_modules/@wengine-ai/pi-session-handoff/transport.mjs';
 
 // The registry is machine-wide by design: peers only find each other when they
 // share one location. Point PI_CODING_AGENT_DIR at a temp dir per test so these

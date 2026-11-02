@@ -8,7 +8,9 @@
 
 现有路径：desktop_handoff → RPC ui.input → HandoffService → backend.prompt(followUp)。
 
-新增独立插件位于 extensions/session-handoff/，自带 package.json、零运行时依赖。session_handoff 使用本机按会话注册的通信端点发送到既有进程，接收方用 pi.sendUserMessage(..., {deliverAs:'followUp', expandPromptTemplates:false}) 保持自身项目、模型、权限。GUI 未连接目标仍可经现有 Desktop bridge 重连。desktop_handoff 保留兼容。
+新增独立插件位于 extensions/session-handoff/，自带 package.json、零运行时依赖。session_handoff 使用本机按会话注册的通信端点发送到既有进程，接收方用 pi.sendUserMessage(..., {deliverAs:'followUp', expandPromptTemplates:false}) 保持自身项目、模型、权限。GUI 未连接目标仍可经现有 Desktop bridge 重连。
+
+> **v0.1.40 更新**：`desktop_handoff` 工具已删除并完全并入本插件（严格超集）。主进程桥与保留通道 `desktop-handoff` 保留不变；`PI_DESKTOP_HANDOFF_BRIDGE` 的开关条件只依赖本插件是否加载，不得再引入第二个扩展作为与条件（否则该扩展一移除，Desktop 断线重连会静默失效）。回归见 `tests/handoff-bridge.test.ts`。
 
 契约：新增 session_handoff 工具（list/send）；不改现有 IPC、权限和 sidecar 规则。Desktop 启动参数按安装状态选择全局插件或随包插件，避免重复注册；electron-builder 打包整个插件目录。
 

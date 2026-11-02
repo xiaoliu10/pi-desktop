@@ -8,6 +8,9 @@ importers:
 
   .:
     dependencies:
+      '@wengine-ai/pi-session-handoff':
+        specifier: 0.1.0
+        version: 0.1.0
       '@xterm/addon-fit':
         specifier: ^0.11.0
         version: 0.11.0
@@ -1027,6 +1030,10 @@ packages:
 
   '@vitest/utils@2.1.9':
     resolution: {integrity: sha512-v0psaMSkNJ3A2NMrUEHFRzJtDPFn+/VWZ5WxImB21T9fjucJRmS7xCS3ppEnARb9y11OAzaD+P2Ps+b+BGX5iQ==}
+
+  '@wengine-ai/pi-session-handoff@0.1.0':
+    resolution: {integrity: sha512-9FWK/fPSi8gK9ELkgpApMa5Fy7JZ4d2zIimhXKNAVvp+Z8Np++g4tBf+DY63gMRd2RbAKnRh/LWXqe/A+pduTw==}
+    engines: {node: '>=20'}
 
   '@xmldom/xmldom@0.8.15':
     resolution: {integrity: sha512-/5NV/vDALVFDXgLmfsy9TRCBlKwO2LNBFzpzvb9iIj+jR+eSc6DLYYvVOdivT/jm7MtU6TebYuRmzEOI7w40UA==}
@@ -3768,6 +3775,8 @@ snapshots:
       '@vitest/pretty-format': 2.1.9
       loupe: 3.2.1
       tinyrainbow: 1.2.0
+
+  '@wengine-ai/pi-session-handoff@0.1.0': {}
 
   '@xmldom/xmldom@0.8.15': {}
 
