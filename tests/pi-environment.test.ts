@@ -46,25 +46,25 @@ it('accepts pi 0.85.1 and 0.87.0 as supported, rejects 0.84.0',()=>{
   expect(piVersionSupported(null)).toBe(false);
 });
 it('accepts pi 0.99.x–1.4.x (native MCP era) and keeps 1.5.0 as the exclusive bound',()=>{
-  expect(piVersionSupported('0.90.0')).toBe(process.platform !== 'win32');
-  expect(piVersionSupported('0.99.0')).toBe(process.platform !== 'win32');
-  expect(piVersionSupported('0.99.1')).toBe(process.platform !== 'win32');
-  expect(piVersionSupported('1.0.0')).toBe(process.platform !== 'win32');
-  expect(piVersionSupported('1.0.1')).toBe(process.platform !== 'win32');
-  expect(piVersionSupported('1.1.0')).toBe(process.platform !== 'win32');
-  expect(piVersionSupported('1.2.0')).toBe(process.platform !== 'win32');
-  expect(piVersionSupported('1.2.1')).toBe(process.platform !== 'win32');
-  expect(piVersionSupported('1.3.0')).toBe(process.platform !== 'win32');
-  expect(piVersionSupported('1.3.1')).toBe(process.platform !== 'win32');
-  expect(piVersionSupported('1.3.5')).toBe(process.platform !== 'win32');
-  expect(piVersionSupported('1.4.0')).toBe(process.platform !== 'win32');
-  expect(piVersionSupported('1.4.1')).toBe(process.platform !== 'win32');
+  expect(piVersionSupported('0.90.0')).toBe(true);
+  expect(piVersionSupported('0.99.0')).toBe(true);
+  expect(piVersionSupported('0.99.1')).toBe(true);
+  expect(piVersionSupported('1.0.0')).toBe(true);
+  expect(piVersionSupported('1.0.1')).toBe(true);
+  expect(piVersionSupported('1.1.0')).toBe(true);
+  expect(piVersionSupported('1.2.0')).toBe(true);
+  expect(piVersionSupported('1.2.1')).toBe(true);
+  expect(piVersionSupported('1.3.0')).toBe(true);
+  expect(piVersionSupported('1.3.1')).toBe(true);
+  expect(piVersionSupported('1.3.5')).toBe(true);
+  expect(piVersionSupported('1.4.0')).toBe(true);
+  expect(piVersionSupported('1.4.1')).toBe(true);
   expect(piVersionSupported('1.5.0')).toBe(false);
   expect(piVersionSupported('2.0.0')).toBe(false);
   // Pin the exclusive-bound invariant itself, not just the literal: the bound must reject
   // its own value and accept the patch level just below it.
   expect(piVersionSupported(PI_MAX_TESTED)).toBe(false);
-  expect(piVersionSupported(PI_MAX_TESTED.replace(/(\d+)\.(\d+)\.(\d+)/, (_, a, b, c) => `${a}.${b}.${Number(c) - 1}`))).toBe(process.platform !== 'win32');
+  expect(piVersionSupported(PI_MAX_TESTED.replace(/(\d+)\.(\d+)\.(\d+)/, (_, a, b, c) => `${a}.${b}.${Number(c) - 1}`))).toBe(true);
   expect(piHasNativeMcp('0.99.0')).toBe(true);
   expect(piHasNativeMcp('1.0.0')).toBe(true);
   expect(piHasNativeMcp('1.2.0')).toBe(true);

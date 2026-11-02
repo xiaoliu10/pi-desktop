@@ -13,8 +13,13 @@ export interface PiEnvironment {
   executable: string | null; version: string | null; supported: boolean; agentDir: string; sessionDirs: string[]; diagnostics: string[];
   /** The local CLI pi version (PATH discovery), even when desktop runs the bundled copy. Drives the sync banner. */
   systemVersion?: string | null;
-  /** The local CLI pi path, used to run `pi update self` from the sync banner. */
+  /** The local CLI pi path, used to run `pi update self` from the sync banner.
+   *  Windows npm 安装时这是 node（不是 .cmd），配合 systemLaunchArgs 拼出完整命令。 */
   systemExecutable?: string | null;
+  /** 本地 CLI 的参数前缀（Windows .cmd shim → [cli.js]）；调用方必须在子命令前拼接：
+   *  `spawn(systemExecutable, [...systemLaunchArgs, 'update', 'self'])`。缺了它会把
+   *  `install`/`update` 当成脚本路径传给 node。 */
+  systemLaunchArgs?: string[];
   /** Whether the discovered local CLI is in the supported compatibility range. */
   systemSupported?: boolean;
   /** The bundled runtime's pi version (resources/pi-runtime), even when desktop runs the local CLI. */

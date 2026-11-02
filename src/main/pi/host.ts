@@ -132,7 +132,9 @@ export class PiHost {
     if (!target) throw new Error('未找到本地 pi 可执行文件，无法升级。请先安装 pi CLI。');
     const { spawn } = await import('node:child_process');
     return new Promise((resolve) => {
-      const child = spawn(target, ['update', 'self'], { cwd: os.homedir(), env: process.env });
+      // Windows npm 安装时 target 是 node、systemLaunchArgs 是 [cli.js]；漏了前缀会
+      // 把 update 当成脚本路径传给 node。
+      const child = spawn(target, [...(this.environment.systemLaunchArgs ?? []), 'update', 'self'], { cwd: os.homedir(), env: process.env });
       let stdout = '', stderr = '';
       child.stdout?.on('data', (d: Buffer) => { stdout += d.toString(); if (stdout.length > 1 << 19) stdout = stdout.slice(-1 << 19); });
       child.stderr?.on('data', (d: Buffer) => { stderr += d.toString(); if (stderr.length > 1 << 19) stderr = stderr.slice(-1 << 19); });
@@ -146,7 +148,7 @@ export class PiHost {
   /** README 封面候选 URL，进程内缓存一天；纯网络查询，不依赖 pi 可执行文件。 */
   packageCovers(names: string[]) { return packageCoversImpl(names); }
   /** Install/remove runs the official `pi install|remove <source>` CLI. */
-  packageInstall(source: string, action: 'install' | 'remove' = 'install') { if (!this.environment.executable) return Promise.reject(new Error('pi 内核不可用')); return installPackage(this.environment.executable, source, this.dataDir, action).then(async (output) => { this.scanNotify(); return output; }); }
+  packageInstall(source: string, action: 'install' | 'remove' = 'install') { if (!this.environment.executable) return Promise.reject(new Error('pi 内核不可用')); return installPackage(this.environment.executable, source, this.dataDir, action, this.environment.launchArgs ?? []).then(async (output) => { this.scanNotify(); return output; }); }
   /** Enable a package that exists on disk but is missing from settings.packages. */
   packageRegister(spec: string) {
     return registerPackage(this.environment.agentDir, spec).then(() => {

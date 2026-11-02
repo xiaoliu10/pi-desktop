@@ -223,9 +223,11 @@ export async function packageCovers(names: readonly string[], fetchImpl: typeof 
 }
 
 /** Run `pi install <source>` (user scope). pi writes settings.packages itself. */
-export async function installPackage(piExecutable: string, source: string, cwd: string, action: 'install' | 'remove' = 'install'): Promise<string> {
+export async function installPackage(piExecutable: string, source: string, cwd: string, action: 'install' | 'remove' = 'install', launchArgs: string[] = []): Promise<string> {
   if (!isValidSource(source)) throw new Error('包来源格式无效（支持 npm:name / git:url / https://…）');
-  const { stdout, stderr } = await exec(piExecutable, [action, source], { cwd, timeout: 300_000, maxBuffer: 1024 * 1024, env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } });
+  // launchArgs 是 Windows npm 安装的参数前缀（node <cli.js>）：漏了它会把 install/remove
+  // 当成 node 的脚本路径，报 ENOENT / 语法错误。
+  const { stdout, stderr } = await exec(piExecutable, [...launchArgs, action, source], { cwd, timeout: 300_000, maxBuffer: 1024 * 1024, env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } });
   return `${stdout}\n${stderr}`.trim().slice(-2000);
 }
 

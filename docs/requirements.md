@@ -122,7 +122,7 @@
 
 **上游依赖**：pi 内核 `ModelRuntime.refresh({allowNetwork:false})` 可重读配置；`setModel` 重绑；`getSupportedThinkingLevels`（`@earendil-works/pi-ai`）。
 
-**pi 版本适配**：v0.1.37 已验证 **1.4.0**（2026-10-27）：相对 1.3.0，`modes/rpc/rpc-mode.js`、`rpc-types.d.ts`、`model-registry.js`、`extensions/runner.js`、`extensions/types.d.ts` 相同；SDK 改用 client identity，`before_provider_headers` 不再看到部分 attribution 头，Desktop 自带扩展未使用该 hook。内置 pi 固定 1.4.0，本机兼容排他上界为 1.5.0；Windows 本机 CLI 仍不启用。两项 RPC 冒烟、typecheck、全量 1866 tests 通过。R-model-01/03、R-render-01、R-subagent-02、R-sidecar-01 的已有回归继续通过，原有部分满足项不提升状态。验证边界与证据见 [pi 1.4 适配记录](pi-1.4-adaptation.md)。上游 #11062/#11075 可能覆盖旧会话新增工具未激活问题，但不据 changelog 宣称 R-collab-01 现场问题已解决。
+**pi 版本适配**：v0.1.37 已验证 **1.4.0**（2026-10-27）：相对 1.3.0，`modes/rpc/rpc-mode.js`、`rpc-types.d.ts`、`model-registry.js`、`extensions/runner.js`、`extensions/types.d.ts` 相同；SDK 改用 client identity，`before_provider_headers` 不再看到部分 attribution 头，Desktop 自带扩展未使用该 hook。内置 pi 固定 1.4.0，本机兼容排他上界为 1.5.0；**Windows 本机 npm CLI 自 #168 起启用**（2026-11-02 真机验证：`.cmd` shim 受 CVE-2024-27980 限制不能直接 spawn（EINVAL），改为解析出 node + cli.js 后 `shell:false` 直启，空格路径同样通过；回归 `tests/pi-windows-shim.test.ts`）。两项 RPC 冒烟、typecheck、全量 1866 tests 通过。R-model-01/03、R-render-01、R-subagent-02、R-sidecar-01 的已有回归继续通过，原有部分满足项不提升状态。验证边界与证据见 [pi 1.4 适配记录](pi-1.4-adaptation.md)。上游 #11062/#11075 可能覆盖旧会话新增工具未激活问题，但不据 changelog 宣称 R-collab-01 现场问题已解决。
 
 **冒烟（每次 pi 升级必跑，两条命令）**：
 - `pnpm smoke:rpc`：裸 CLI + RPC，8 个命令（get_state / get_available_models / get_available_thinking_levels / set_model / set_thinking_level / get_entries / get_session_stats / set_session_name）+ 事件面。
