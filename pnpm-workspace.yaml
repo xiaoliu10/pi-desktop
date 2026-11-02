@@ -3,3 +3,9 @@ allowBuilds:
   esbuild: true
   node-pty: true
   electron-winstaller: true
+
+# 供应链冷却期白名单：pnpm 默认要求 npm 包发布满 24h 才允许安装，
+# 但 @wengine-ai/* 是我们自己刚发布的包，等冷却期只会拖慢发版。
+# 只放行自家 scope —— 第三方依赖仍受完整冷却期保护（不放松外部供应链风险）。
+minimumReleaseAgeExclude:
+  - '@wengine-ai/*'
