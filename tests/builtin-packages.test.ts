@@ -23,13 +23,22 @@ const readPackages = (agentDir: string) => JSON.parse(fs.readFileSync(path.join(
 const readDesired = (dataDir: string) => JSON.parse(fs.readFileSync(path.join(dataDir, 'pi-desktop.json'), 'utf8')).piPackages ?? [];
 
 describe('BUILTIN_PACKAGES manifest', () => {
-  it('lists the four desktop-owned packages with version ranges', () => {
+  it('lists the desktop-owned packages with version ranges', () => {
     const names = BUILTIN_PACKAGES.map(p => p.spec);
     expect(names).toContain('npm:@wengine-ai/pi-subagents@^0.79.1');
     expect(names).toContain('npm:@wengine-ai/pi-scoped-memory');
     expect(names).toContain('npm:@wengine-ai/pi-quality-prompt');
     expect(names).toContain('npm:@wengine-ai/pi-quality-gates@^0.1.0');
     expect(BUILTIN_PACKAGES.every(p => p.purpose.length > 0)).toBe(true);
+  });
+
+  // #183 把交接插件迁到 npm 包并删掉 extensions/session-handoff 的 -e 注入后，
+  // 没有任何地方再保证它被注册：pi 会话退出写回旧 settings 副本会把它抹掉，
+  // 抹掉后 session_handoff 工具整个消失（2026-11-02 实测：VE 会话与发件会话都失去该工具，
+  // 交接直接无法发起）。内置包清单是唯一的出厂保证，缺一条就有功能整块失灵。
+  it('includes the session-handoff plugin so the tool survives settings write-back', () => {
+    const names = BUILTIN_PACKAGES.map(p => p.spec);
+    expect(names.some(n => n.startsWith('npm:@wengine-ai/pi-session-handoff@'))).toBe(true);
   });
 });
 
@@ -50,6 +59,7 @@ describe('ensureBuiltinPackages', () => {
       '@wengine-ai/pi-scoped-memory': '^0.1.0',
       '@wengine-ai/pi-quality-prompt': '^0.1.0',
       '@wengine-ai/pi-quality-gates': '^0.1.0',
+      '@wengine-ai/pi-session-handoff': '^0.1.4',
     });
     const report = await ensureBuiltinPackages('/fake/pi', agentDir, dataDir);
     expect(report.failed).toEqual([]);
@@ -79,6 +89,7 @@ describe('ensureBuiltinPackages', () => {
       '@wengine-ai/pi-scoped-memory': '^0.1.0',
       '@wengine-ai/pi-quality-prompt': '^0.1.0',
       '@wengine-ai/pi-quality-gates': '^0.1.0',
+      '@wengine-ai/pi-session-handoff': '^0.1.4',
     });
     const report = await ensureBuiltinPackages('/fake/pi', agentDir, dataDir);
     expect(report.conflicts).toHaveLength(1);
@@ -87,10 +98,11 @@ describe('ensureBuiltinPackages', () => {
     // 用户的选择原样保留，builtin 没被塞进去
     expect(readPackages(agentDir)).toContain('npm:pi-subagents');
     expect(readPackages(agentDir)).not.toContain('npm:@wengine-ai/pi-subagents@^0.79.1');
-    // 其余三个不冲突的照常补注册
-    expect(report.installed).toHaveLength(3);
+    // 其余不冲突的照常补注册（数量随内置清单变化，不写死）
+    const nonConflict = BUILTIN_PACKAGES.length - 1;
+    expect(report.installed).toHaveLength(nonConflict);
     expect(report.failed).toEqual([]);
-    expect(readPackages(agentDir)).toHaveLength(4);
+    expect(readPackages(agentDir)).toHaveLength(nonConflict + 1);
   });
 
   it('tolerates a missing settings.json (fresh agent dir)', async () => {
