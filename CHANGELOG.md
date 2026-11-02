@@ -7,15 +7,47 @@ README 只保留最近版本摘要；本文件为完整记录。
 
 ### English
 
+#### Added
+
+- **Remote control over the internet (public tunnel)**: control your desktop from anywhere, not just the same LAN. The desktop dials out to a self-hosted relay over WebSocket (no inbound ports, works behind NAT); a phone/terminal connects to the same relay and traffic is forwarded bidirectionally. Relay is a small Go service ([pi-tunnel-relay](https://github.com/xiaoliu10/pi-tunnel-relay), port 8443, single-user self-hosted). Setup is two fields in Settings → Remote: relay address + key. Status badge shows connecting / waiting / connected; enabling the tunnel auto-starts the LAN remote server it forwards to. The relay key is encrypted with the OS keychain (Electron safeStorage) and never stored in plaintext.
+
+- **One-time pairing codes for LAN remote control**: connecting a phone now uses a 6-digit pairing code (120 s TTL, single use) that exchanges for a 12-hour session, instead of a permanent 32-hex token living in the QR URL. Five wrong attempts lock pairing for 5 minutes; codes rotate on restart. The long-lived token still works during the migration window.
+
+- **Phone remote page with a QR code**: once the tunnel is connected, the main pairing card shows a public QR code (auto-refreshed every 50 s) that works on any network — no need to find a second card. The relay serves a self-contained mobile page (embedded in the Go binary, no extra hosting), so a phone browser can list sessions, open one, stream replies live, send messages and stop a running task.
+
 #### Changed
 
 - **One handoff tool instead of two**: `desktop_handoff` and `session_handoff` did the same job through the same reserved channel — `session_handoff` was a strict superset (it also reaches plain-conversation sessions, deduplicates candidates and enforces idempotency). With both registered, the model had two nearly identical tools to pick from and could choose the weaker one. The duplicate `desktop_handoff` tool is removed; Desktop keeps its full reach, including reconnecting a disconnected session, because `session_handoff` uses the same main-process bridge.
 
+#### Fixed
+
+- **Queued handoffs were silently lost**: when the target session was busy, a handoff reported `queued` but only lived in the recipient plugin's memory — invisible in any UI, discarded on restart, and never delivered if the session stayed busy. Queued items are now persisted immediately (`session-handoff-queued`), restored and retried on the next session start, deduplicated by `idempotencyKey`, and surfaced with a notification. The sender now reports `delivered` / `queued-not-delivered` / `duplicate` instead of a bare `queued`.
+
+- **The handoff plugin could disappear entirely**: a `pi` process writing back a stale settings snapshot could drop the plugin registration, leaving sessions with no `session_handoff` tool at all. It is now part of the built-in package list, so it is restored on every launch.
+
+- **Windows: a locally installed `pi` (npm) is now detected and launched**: Desktop previously rejected every Windows local CLI outright. Root cause (verified on real Windows, Node v22.11.0): npm installs a `.cmd` wrapper and Node refuses to spawn a `.cmd` without a shell since CVE-2024-27980 (`EINVAL`). Desktop now resolves the wrapper to its real `node.exe` + `cli.js` pair and launches that directly with `shell: false`, which also handles paths with spaces such as `C:\Program Files\nodejs`.
+
 ### 中文
+
+#### 新增
+
+- **公网远程控制（隧道中转）**：不在同一局域网也能用手机控制桌面。桌面主动外连自建 relay（WebSocket 出站连接，零入站端口，NAT 后可用）；手机/终端连同一 relay，流量双向转发。relay 是一个小型 Go 服务（[pi-tunnel-relay](https://github.com/xiaoliu10/pi-tunnel-relay)，端口 8443，单人自托管）。设置 → 远程控制只需填两个字段：relay 地址 + key。状态徽标显示连接中/等待终端/已接入；启用隧道会自动拉起它转发所用的 LAN 远控服务。relay key 经系统钥匙串（Electron safeStorage）加密落盘，不存明文。
+
+- **LAN 远控改用一次性配对码**：手机接入改为 6 位数字配对码（120 秒有效、用后即焚）换 12 小时会话，不再是二维码 URL 里长驻的 32 位 hex 永久 token。错 5 次锁 5 分钟；重启换码。长期 token 迁移期仍可用。
+
+- **手机远控页 + 二维码**：隧道连上后，主扫码卡直接显示公网二维码（每 50 秒自动续期），任意网络都能扫，不用再找第二张卡。远控页由 relay 自托管（内嵌在 Go 二进制里，无需额外部署），手机浏览器打开即可查看会话列表、进入会话看实时回复、发消息、停止运行中的任务。
 
 #### 变更
 
 - **交接工具从两个收敛为一个**：`desktop_handoff` 与 `session_handoff` 走同一条保留通道做同一件事，后者是严格超集（还能触达普通对话会话、消重候选、强制幂等）。两个都注册时，模型面对两个几乎同名的工具容易选到能力更弱的那个。现已删除重复的 `desktop_handoff` 工具；Desktop 端能力不减，包括重连已断开的会话，因为 `session_handoff` 用的是同一个主进程桥。
+
+#### 修复
+
+- **排队的交接会静默丢失**：目标会话忙时，交接虽然报 `queued`，实际只存在于收件方插件的内存里——任何界面都看不到，重启即丢，会话一直忙就永远不投递。现在排队项会立即落盘（`session-handoff-queued`），下次会话启动自动恢复重投，按 `idempotencyKey` 去重，并给出通知提示；发送方也会明确区分「已送达 / 已排队但未送达 / 重复」。
+
+- **交接插件可能整个消失**：某个 `pi` 进程用旧快照写回设置时会把插件注册抹掉，导致会话里连 `session_handoff` 工具都没有。现已纳入内置包清单，每次启动都会自动补回。
+
+- **Windows 下本机安装的 `pi`（npm）现在能被检测并启动**：此前 Desktop 直接判定 Windows 本地 CLI 一律不支持。根因已在真实 Windows（Node v22.11.0）实测确认：npm 装的是 `.cmd` 包装器，而 Node 自 CVE-2024-27980 起禁止在不带 shell 的情况下启动 `.cmd`（`EINVAL`）。现在会把包装器解析出真实的 `node.exe` + `cli.js` 并直接启动（`shell: false`），`C:\Program Files\nodejs` 这类含空格路径同样可用。
 
 ## [0.1.39] - 2026-10-29
 

@@ -87,6 +87,16 @@ describe('handoff dispatch', () => {
     const result = await runHandoffBridge(service, ctx, JSON.stringify({ projectPath: B, message: '排队等处理' })) as any;
     expect(result.target.disposition).toBe('queued');
     expect(prompt).toHaveBeenCalledTimes(1);
+    // queued 不等于送达：必须回传 queued-not-delivered，否则模型会把 queued 当
+    // completed 汇报（2026-11-01 VE 实测两条交接报告已排队，目标会话里一条都没有）。
+    expect(result.status).toBe('queued-not-delivered');
+    expect(result.hint).toContain('尚未送达');
+  });
+
+  it('started 必须是 delivered，不能和 queued 混为一谈', async () => {
+    const { service, ctx } = setup([session({ key: 'b1', cwd: B, updatedAt: 1 })], { runs: [{ key: 'b1', cwd: B, status: 'idle' }] });
+    const result = await runHandoffBridge(service, ctx, JSON.stringify({ projectPath: B, message: '空闲目标' })) as any;
+    expect(result.status).toBe('delivered');
   });
 
   it('disconnected target: reconnects via sourceKey (remembered access mode wins), then prompts', async () => {
@@ -174,36 +184,25 @@ describe('handoff extension wiring', () => {
     expect(JSON.stringify(pkg.build.extraResources)).toContain(
       'node_modules/@wengine-ai/pi-session-handoff'
     );
+    // #183 之后不要再从 extensions/ 加载插件本体（旧副本会与 npm 包同名工具冲突）。
     const backend = fs.readFileSync('src/main/pi/backend.ts', 'utf8');
-    expect(backend).toContain("'..', 'session-handoff', 'index.mjs'");
+    expect(backend).not.toContain("'..', 'session-handoff', 'index.mjs'");
   });
 
   it('gates the Desktop bridge on the portable plugin alone, never on a second tool', () => {
     const backend = fs.readFileSync('src/main/pi/backend.ts', 'utf8');
     expect(backend).toContain('PI_DESKTOP_HANDOFF_BRIDGE');
-    // The bridge must be enabled whenever the portable plugin loads. Gating it on a
-    // second extension silently disables Desktop reconnect for good once that
-    // extension is gone — the exact regression this test exists to catch.
-    expect(backend).toMatch(/if \(sessionHandoffArgs\.length\) env\.PI_DESKTOP_HANDOFF_BRIDGE = '1'/);
-    // No second extension may gate the bridge: the removed desktop_handoff tool
-    // must leave no loadable arguments behind.
+    // 插件本体来自 npm 包，由 settings packages 决定加载；Desktop 只无条件打开桥开关。
+    expect(backend).toMatch(/env\.PI_DESKTOP_HANDOFF_BRIDGE = '1'/);
+    expect(backend).not.toContain('sessionHandoffArgs');
     expect(backend).not.toMatch(/const handoffArgs/);
-    expect(backend).not.toMatch(/&& handoffArgs\.length/);
-  });
-
-  it('no longer ships a duplicate desktop_handoff tool', () => {
-    // session_handoff is a strict superset (it reaches the same main-process bridge
-    // through the reserved channel). Keeping both leaves the model two near-identical
-    // tools to choose between.
-    expect(fs.existsSync('extensions/desktop-handoff')).toBe(false);
     const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
-    expect(JSON.stringify(pkg.build.extraResources)).not.toContain('desktop-handoff');
+    const resources = JSON.stringify(pkg.build.extraResources);
+    expect(resources).toContain('node_modules/@wengine-ai/pi-session-handoff');
+    expect(resources).not.toContain('extensions/session-handoff');
   });
 
-  it('keeps the reserved ui.input channel handled by the main process', () => {
-    const backend = fs.readFileSync('src/main/pi/backend.ts', 'utf8');
-    expect(backend).toContain("title === 'desktop-handoff'");
-    // The Desktop bridge branch inside the plugin talks to that reserved channel.
+  it('plugin talks to the reserved desktop-handoff ui.input channel', () => {
     const ext = fs.readFileSync(
       'node_modules/@wengine-ai/pi-session-handoff/index.mjs',
       'utf8'
