@@ -61,7 +61,7 @@ export async function ensureBuiltinPackages(
   piExecutable: string | undefined,
   agentDir: string,
   dataDir: string,
-  opts: { log?: (line: string) => void; installTimeoutMs?: number } = {},
+  opts: { log?: (line: string) => void; installTimeoutMs?: number; /** Windows npm 安装的 CLI 参数前缀（node <cli.js>）。 */ launchArgs?: string[] } = {},
 ): Promise<BuiltinPackageReport> {
   const report: BuiltinPackageReport = { installed: [], alreadyRegistered: [], failed: [], conflicts: [] };
   const settingsPath = path.join(agentDir, 'settings.json');
@@ -88,7 +88,7 @@ export async function ensureBuiltinPackages(
     if (piExecutable && !alreadyInstalled) {
       try {
         opts.log?.(`[builtin-packages] installing ${builtin.spec}`);
-        await installPackage(piExecutable, builtin.spec, dataDir, 'install');
+        await installPackage(piExecutable, builtin.spec, dataDir, 'install', opts.launchArgs ?? []);
         report.installed.push(builtin.spec);
       } catch (error) {
         report.failed.push(builtin.spec);

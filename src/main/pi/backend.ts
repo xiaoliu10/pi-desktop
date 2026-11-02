@@ -309,7 +309,7 @@ export class PiBackend {
     this.builtinsInFlight = true;
     try {
       const seeded = builtinPackagesSeeded(this.dataDir);
-      const report = await ensureBuiltinPackages(this.env.executable ?? undefined, this.env.agentDir, this.dataDir, { log: line => console.warn(line) });
+      const report = await ensureBuiltinPackages(this.env.executable ?? undefined, this.env.agentDir, this.dataDir, { log: line => console.warn(line), launchArgs: this.env.launchArgs ?? [] });
       // 没有变化就不广播（避免每次 launch 都打扰渲染层）。
       if (report.installed.length || report.failed.length || report.conflicts.length || !seeded) {
         if (!seeded && !report.installed.length && !report.conflicts.length && !report.failed.length) markBuiltinPackagesSeeded(this.dataDir);
