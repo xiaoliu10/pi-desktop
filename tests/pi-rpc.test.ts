@@ -194,3 +194,29 @@ describe('third-party ask coexistence RPC bridge', () => {
   expect(send).toHaveBeenCalledWith({ type: 'extension_ui_response', id: 'other-ui', value: 'native-answer' });
  });
 });
+
+describe('third-party ask: unbridged native input must not leak to viewers', () => {
+  // 2026-11-02 用户实测：手机远控页 CCR 会话里反复弹「需要你的确认」+ 空白输入框。
+  // 根因：第三方 ask 插件发了原生 input 请求，但 Desktop 没收到配套的
+  // tool_execution_start（run.pendingAskArgs 为空）→ bridgeAskUiRequest 返回 false
+  // → 请求落到通用分支进 dialogs 并 emit 原样 UI → 手机端 renderDialog 只认识
+  // desktop-ask，其余按通用卡片渲染，placeholder 里是内部协议，用户看到空白框。
+  // 这类「桥接失败的原生 ask 请求」是插件内部协议，不是用户交互，绝不能外泄。
+  it('cancels a native ask input that has no matching stash instead of showing a blank card', async () => {
+    const b = await askBackend();
+    const before = b.dialogs().length;
+    // 不经 ask_scenario 直接发原生 input（模拟 stash 缺失/丢失）
+    await b.rpc.request('emit_events', { events: [
+      { type: 'extension_ui_request', id: 'orphan-ask', method: 'input', title: 'Which env?\nType your answer:', placeholder: '' },
+    ] });
+    await vi.waitFor(() => b.dialogs().length > before, { timeout: 3000 }).catch(() => undefined);
+    await new Promise(r => setTimeout(r, 150));
+    expect(b.dialogs()).toHaveLength(before); // 不得出现在 emit 的 ui 事件里
+    expect(b.backend.pendingDialogs(b.run.key)).toEqual([]);
+    // 必须宣告终结（ui-resolved），让已连上的远端把这个 id 从本地 dialogs 里清掉，
+    // 否则断线期间发过卡片的手机端会一直留着它。
+    expect(b.events.some(e => e.type === 'rpc' && e.event.type === 'ui-resolved' && e.event.id === 'orphan-ask')).toBe(true);
+    // 应答已发给插件：fake-pi 只记录 askScenario 内的 id，这里直接断言客户端真的发过帧
+    expect(await b.rpc.request('sent_ui_responses')).toEqual([expect.objectContaining({ id: 'orphan-ask', cancelled: true })]);
+  });
+});

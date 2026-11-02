@@ -434,6 +434,11 @@
 
 **回归触发**：改 `remote-server.ts` 的 `renderDialog`/`respondDialog`/`seedDialogs`、`PiUiRequest` 的 `title` 约定、backend 对保留通道的提前 return 清单；新增任何 `ctx.ui.input` 保留通道时必须同步此处。
 
+**补 2026-11-02（第三类泄漏：桥接失败的原生 ask 请求）**：除两个保留通道外，第三方 ask 插件的**原生问卷请求**也是内部协议。装了 `rpiv-ask-user-question` 时 `run.thirdPartyAsk` 为真，`bridgeAskUiRequest` 需要配套的 `tool_execution_start`（`run.pendingAskArgs`）才能合成 `desktop-ask` 卡片；用户 2026-11-02 实测 CCR 会话反复弹「需要你的确认」+ 空白框——根因就是 Desktop 没收到配套 start，`stash` 为空，桥接返回 false 后请求落进通用 dialogs 并原样 emit 到手机端。
+- 验收补充：**无 stash 且形态上是原生问卷自由文本收尾（`title` 形如 `<问题>\nType your answer:`）时，必须取消并给插件答复，不得进 dialogs、不得 emit 原样 UI**。
+- 边界（刻意保守，防吞真实交互）：带 `options` 的 `select` **不取消**——超大问卷（问题/选项数超桥接上限）本来就要原样透传给用户；`title` 带 `desktop-` 前缀的保留通道不归此判据；认不出的一律走通用对话框。
+- 回归：`tests/pi-rpc.test.ts`「unbridged native input must not leak to viewers」（断言无 `ui` emit、`pendingDialogs` 为空、发出 `ui-resolved` 与 cancelled 应答；改坏即红）。
+
 ### R-remote-01　远控配对用短时效配对码，不靠长驻 token 二维码
 
 **需求**：LAN 远控的手机接入凭证改为「6 位数字配对码（120s TTL、一次性）→ 换 12h 短时效 session」，避免 URL 里长驻 32 位 hex token（= 永久钥匙）。配对码在 `POST /api/pair` 鉴权前拦截验证；5 次失败锁 5 分钟；比较用 `timingSafeEqual` 定长比较。长期 token 仅迁移期保留。

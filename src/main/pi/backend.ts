@@ -46,6 +46,25 @@ const STUCK_WATCHDOG_INTERVAL_MS = 30_000;
 const MAX_SESSIONS = 12;
 type QueuedInput = NonNullable<PiRun['queue']>[number];
 interface ModelRefreshWork { token: string; finish: (result: { status: string; code?: string }) => void }
+/**
+ * 第三方 ask 插件的原生问卷请求识别：方法为 input/select、且 title/placeholder 带
+ * 问卷特征（选项编号、问题文字），而**不是** Desktop 的保留通道（desktop-ask 已由
+ * 上面的桥接路径处理，desktop-handoff/desktop-automation 在主进程更早分支已应答）。
+ *
+ * 判据刻意保守：只有确定是问卷形态才取消。认不出的请求继续走通用对话框，
+ * 宁可多弹一次也不要吞掉真实交互。
+ */
+function isThirdPartyAskNative(req: PiUiRequest): boolean {
+  if (req.method !== 'input' && req.method !== 'select') return false;
+  const title = String(req.title ?? '');
+  if (title.startsWith('desktop-')) return false; // 保留通道不归这里管
+  // 只认「自由文本收尾」形态：title 形如「<问题>\nType your answer:」。
+  // 带 options 的 select **不**在这里取消：超大问卷（问题/选项数超桥接上限）本来就要
+  // 原样透传给用户（既有契约，tests/pi-rpc.test.ts oversized 用例），
+  // 把它们一并取消等于把真实交互吞掉。
+  return /\nType your answer:\s*$/i.test(title) || /\n请输入|\n作答/i.test(title);
+}
+
 interface Running { modelRefreshReady?: boolean; modelRefreshRevision?: number; modelRefreshDone?: number; modelRefreshTask?: Promise<PiModelRefresh>; modelRefreshWork?: ModelRefreshWork; modelRefreshUncertain?: boolean; modelSwitching?: number; recheckTimer?: ReturnType<typeof setTimeout>; stopQueueSnapshot?: QueuedInput[]; settlement?: { token: string; timer: ReturnType<typeof setTimeout> }; activity: number; /** 假 running 自愈用：全部 pi 事件计数与最近事件时刻 */ eventCount: number; lastEventAt: number; verifying?: boolean; promptSequence: number; retryUncertain: boolean; stopUnconfirmed: boolean; retry: RetryGroups; retryReady: boolean; retryEntryId?: string; deferredQueue: QueuedInput[]; stopEpoch: number; policyReady: boolean; client: PiRpcClient; view: PiRun; input: { cwd: string; trustProject: boolean; permission: AccessMode; executionMode?: Exclude<AccessMode, 'plan'>; file: string; origin: string; sidecarOf?: string; systemPrompt?: string; tools?: string[]; model?: string }; dialogs: Map<string, { timer?: ReturnType<typeof setTimeout>; method: string; request: PiUiRequest }>; /** 第三方 ask 插件在供题（desktop-ask 未随会话加载）——事件层把其原生问卷桥接成桌面卡片。 */ thirdPartyAsk: boolean; /** 输出速度采样器（当前连接内有效完成调用；launch 新建 → 断开/重连从零，历史不回推）。 */ outputPerformance: OutputPerformanceTracker; /** tool_execution_start 暂存的问卷入参：首个原生 UI 请求到达即消费；校验失败直接 end 时由 end 清理。 */ pendingAskArgs?: { toolCallId: string; questions: AskBridgeQuestion[] }; /** 活动问卷桥：卡片已下发，后续原生请求按 plan 自动应答。 */ askBridge?: AskBridgeState; queueImages: StagedQueueImage[] }
 export class PiBackend {
   private active = new Map<string, Running>();
@@ -1561,7 +1580,21 @@ export class PiBackend {
     // Never consume a second stash while another questionnaire bridge is active.
     if (bridge) return false;
     const stash = run.pendingAskArgs;
-    if (!stash) return false;
+    // 有 stash → 正常建桥（下面的合成逻辑）。
+    // 无 stash 且形态上是第三方 ask 的原生问卷（options 编号列表 / 自由文本收尾）：
+    // 插件内部协议，不是用户交互。放进通用 dialogs 会被手机远控页渲染成「需要你的
+    // 确认」+ 空白输入框（placeholder 里是内部 JSON，2026-11-02 CCR 会话反复弹），
+    // 且点了也没用——主进程不会真的应答它。明确取消，让插件的 input 立刻返回。
+    // 判据刻意保守：认不出的一律继续走通用对话框，宁可多弹也不吞真实交互
+    // （既有测试 Native input 无 options 必须仍走通用对话框）。
+    if (!stash) {
+      if (isThirdPartyAskNative(req)) {
+        run.client.send({ type: 'extension_ui_response', id: req.id, cancelled: true });
+        this.emit({ type: 'rpc', key: run.view.key, generation: run.view.generation, event: { type: 'ui-resolved', id: req.id } });
+        return true;
+      }
+      return false;
+    }
     run.pendingAskArgs = undefined;
     run.askBridge = { questions: stash.questions, requestId: req.id, toolCallId: stash.toolCallId, plan: [], answered: false, cancelled: false, currentQuestionIndex: 0, awaitingSentinelInput: false };
     const timeout = typeof req.timeout === 'number' && Number.isFinite(req.timeout) && req.timeout > 0 ? req.timeout : undefined;
