@@ -3,6 +3,20 @@
 所有重要变更记录在本文件。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 README 只保留最近版本摘要；本文件为完整记录。
 
+## [Unreleased]
+
+### English
+
+#### Fixed
+
+- **Windows: a locally installed `pi` (npm) is now detected and launched.** Desktop previously rejected every Windows local CLI outright, so users who had `pi` installed globally were stuck on the bundled runtime. Root cause, verified on a real Windows machine (Node v22.11.0): npm installs a `.cmd` wrapper, and Node refuses to `spawn` a `.cmd` without a shell since CVE-2024-27980 — the call fails with `EINVAL`, while `spawn`ning the shim with a shell is unreliable. Desktop now resolves the wrapper to its real `node.exe` + `cli.js` pair and launches that directly with `shell: false`, which also handles paths with spaces such as `C:\Program Files\nodejs`. If the wrapper cannot be resolved, it reports a clear diagnostic and falls back to the bundled runtime instead of pretending the CLI is unknown.
+
+### 中文
+
+#### 修复
+
+- **Windows 下本机安装的 `pi`（npm）现在能被检测并启动。** 此前 Desktop 直接判定 Windows 本地 CLI 一律不支持，装了全局 `pi` 的用户只能一直用内置运行时。根因已在真实 Windows 机器（Node v22.11.0）实测确认：npm 安装的是 `.cmd` 包装器，而 Node 自 CVE-2024-27980 起禁止在不带 shell 的情况下 `spawn` `.cmd`，调用直接报 `EINVAL`；带 shell 又不可靠。现在 Desktop 会把包装器解析出真实的 `node.exe` + `cli.js` 并直接启动（`shell: false`），`C:\Program Files\nodejs` 这类含空格路径同样可用。解析失败时给出明确诊断并回退内置运行时，不再把本地 CLI 报成「版本未知」。
+
 ## [0.1.39] - 2026-10-29
 
 ### English
