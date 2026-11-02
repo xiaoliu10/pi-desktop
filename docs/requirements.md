@@ -462,6 +462,8 @@
 
 **边界（明确不做）**：不做端到端加密（ZCode/Harness 均不做，靠 WSS + 预共享 key + 一次性 token）；relay 不做多 terminal 隔离（单人自托管场景）；`docs/design/remote-tunnel.md` §5 记录了完整盲区。
 
+**可见性口径（2026-11-02 补）**：手机端会话列表必须与桌面侧栏一致。过滤只看**真 subagent 标记**（`subagentOf`，索引从嵌套布局 `…/<主会话>/<childId>/run-N/session.jsonl` 推断）与副驾 `sidecarOf`；**`parentSession`（pi 的分支/fork 语义，编辑重发/compact/fork）不参与过滤**——混同会把用户正在用的会话从手机端与侧栏一起抹掉（实测 VE 会话）。回归：`tests/remote-visibility.test.ts`、`tests/project-order.test.ts`、`tests/remote-server.test.ts`。
+
 **状态**：已实现（含 Go relay 仓库），随远程隧道 PR 发版；ECS 部署后需真机验证。
 
 **回归触发**：改 `tunnel-client.ts` 帧协议、`tunnel-service.ts` 存储结构（keyEncrypted 语义）、`pi-tunnel-relay` 契约（路由/token 形状）；改 `remote-server.ts` 的 `lanEndpoint`。

@@ -18,13 +18,14 @@ function source(overrides: Partial<VisibilitySource> & { sessions: VisibilitySou
 }
 
 describe('RemoteVisibility (mobile visibility = desktop sidebar)', () => {
-  it('filters archived sessions, hidden projects, subagent-internal and sidecar sessions', () => {
+  it('filters archived sessions, hidden projects, subagent-internal and sidecar sessions, but keeps fork sessions', () => {
     const visibility = new RemoteVisibility(source({
       sessions: () => [
         session({ key: 'k-live', cwd: '/proj' }),
         session({ key: 'k-arch', cwd: '/proj' }),
         session({ key: 'k-hidden', cwd: '/gone' }),
-        session({ key: 'k-sub', cwd: '/proj', parentSession: '/proj/a.jsonl' }),
+        session({ key: 'k-fork', cwd: '/proj', parentSession: '/proj/a.jsonl' }),
+        session({ key: 'k-sub', cwd: '/proj', subagentOf: '/proj/a.jsonl' }),
         session({ key: 'k-side', cwd: '/proj', sidecarOf: '' }),
       ],
       archivedSessions: () => ['k-arch'],
@@ -34,8 +35,11 @@ describe('RemoteVisibility (mobile visibility = desktop sidebar)', () => {
     expect(snap.sessionVisible(session({ key: 'k-live', cwd: '/proj' }))).toBe(true);
     expect(snap.sessionVisible(session({ key: 'k-arch', cwd: '/proj' }))).toBe(false);
     expect(snap.sessionVisible(session({ key: 'k-hidden', cwd: '/gone' }))).toBe(false);
-    expect(snap.sessionVisible(session({ key: 'k-sub', cwd: '/proj', parentSession: '/x.jsonl' }))).toBe(false);
+    expect(snap.sessionVisible(session({ key: 'k-sub', cwd: '/proj', subagentOf: '/x.jsonl' }))).toBe(false);
     expect(snap.sessionVisible(session({ key: 'k-side', cwd: '/proj', sidecarOf: '' }))).toBe(false);
+    // 分支/fork 会话（header.parentSession）是用户自己的会话，必须可见。
+    // 2026-11-02 实测 VE 会话带 parentSession，桌面侧栏与手机远控同时把它吞掉。
+    expect(snap.sessionVisible(session({ key: 'k-fork', cwd: '/proj', parentSession: '/x.jsonl' }))).toBe(true);
   });
 
   it('matches hidden projects recorded under a symlink alias (canonical cwd, both directions)', () => {
@@ -123,7 +127,7 @@ describe('RemoteVisibility (mobile visibility = desktop sidebar)', () => {
       fs.mkdirSync(realDir);
       fs.symlinkSync(realDir, aliasDir, 'dir');
       const visibility = new RemoteVisibility(source({
-        sessions: () => [session({ key: 'k-sub', cwd: realDir, parentSession: '/x.jsonl' })],
+        sessions: () => [session({ key: 'k-sub', cwd: realDir, subagentOf: '/x.jsonl' })],
         runs: () => [],
         archivedSessions: () => ['k-arch'],
         hiddenProjects: () => [aliasDir], // 偏好记别名

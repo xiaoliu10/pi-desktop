@@ -104,15 +104,22 @@ describe('stable sidebar project order', () => {
     expect(JSON.stringify(prefs)).toBe(before);
   });
 
-  it('hides subagent/fork internal sessions (parentSession) from the sidebar', () => {
-    // pi 的 subagent 子会话与父会话同目录（带 parentSession），不能伪装成新会话出现在列表里。
+  it('hides subagent internal sessions but keeps fork/edits (parentSession) visible', () => {
+    // pi 的 subagent 子会话与父会话同目录，不能伪装成新会话出现在列表里。
+    // 但 parentSession 同时是 pi 的分支/fork 语义（编辑重发/compact/fork）——那是
+    // 用户自己的会话，必须留在列表里。判据必须是 subagentOf（索引从嵌套路径推断）。
     const parent = session('/w/z-work', 'main', 100);
-    const subagent: PiSession = { ...session('/w/z-work', 'sub', 200), parentSession: parent.path };
+    const subagent: PiSession = { ...session('/w/z-work', 'sub', 200), subagentOf: parent.path };
     const forkCopy: PiSession = { ...session('/w/a/z', 'fork', 300), parentSession: '/external/orig.jsonl' };
     const sidebar = buildPiSidebar([parent, subagent, forkCopy], [], [], {});
     const listed = sidebar.projects.flatMap(p => p.sessions.map(s => s.id));
-    expect(listed).toEqual(['main']);
-    // fork 副本所在项目无其余用户会话时不残留空项目行（发现型项目随会话消失）。
-    expect(sidebar.projects.map(p => p.path)).toEqual(['/w/z-work']);
+    expect(listed).toEqual(['fork', 'main']);
+  });
+
+  it('fork-only project row disappears when its fork is gone (discovered projects follow sessions)', () => {
+    const forkCopy: PiSession = { ...session('/w/a/z', 'fork', 300), parentSession: '/external/orig.jsonl' };
+    const sidebar = buildPiSidebar([forkCopy], [], [], {});
+    expect(sidebar.projects.flatMap(p => p.sessions.map(s => s.id))).toEqual(['fork']);
+    expect(buildPiSidebar([], [], [], {}).projects.map(p => p.path)).toEqual([]);
   });
 });

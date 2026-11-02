@@ -21,6 +21,8 @@ README 只保留最近版本摘要；本文件为完整记录。
 
 #### Fixed
 
+- **A session is no longer hidden from the mobile remote control just because it was branched**: editing/retrying or compacting a conversation creates a new session file whose header records the original as `parentSession` — the same field pi's subagents use. Desktop treated both as "internal", so such sessions vanished from the phone list (and from the sidebar when no run was attached) even though you were actively using them. The filter now keys on the real subagent marker (inferred from the nested `…/<session>/<childId>/run-N/` layout), keeping your own branched sessions visible.
+
 - **Queued handoffs were silently lost**: when the target session was busy, a handoff reported `queued` but only lived in the recipient plugin's memory — invisible in any UI, discarded on restart, and never delivered if the session stayed busy. Queued items are now persisted immediately (`session-handoff-queued`), restored and retried on the next session start, deduplicated by `idempotencyKey`, and surfaced with a notification. The sender now reports `delivered` / `queued-not-delivered` / `duplicate` instead of a bare `queued`.
 
 - **The handoff plugin could disappear entirely**: a `pi` process writing back a stale settings snapshot could drop the plugin registration, leaving sessions with no `session_handoff` tool at all. It is now part of the built-in package list, so it is restored on every launch.
@@ -42,6 +44,8 @@ README 只保留最近版本摘要；本文件为完整记录。
 - **交接工具从两个收敛为一个**：`desktop_handoff` 与 `session_handoff` 走同一条保留通道做同一件事，后者是严格超集（还能触达普通对话会话、消重候选、强制幂等）。两个都注册时，模型面对两个几乎同名的工具容易选到能力更弱的那个。现已删除重复的 `desktop_handoff` 工具；Desktop 端能力不减，包括重连已断开的会话，因为 `session_handoff` 用的是同一个主进程桥。
 
 #### 修复
+
+- **手机远控不再因为「分支」把会话藏起来**：在会话里编辑重发或压缩上下文，pi 会生成一个带 `parentSession` 的新会话文件——这和子代理内部会话用的是同一个字段。此前 Desktop 把两者都当「内部会话」过滤，导致你正在用的会话从手机列表里消失（没有活跃 run 时侧栏也会看不到）。现在过滤只看真正的子代理标记（从嵌套目录 `…/<会话>/<childId>/run-N/` 推断），你自己分叉出来的会话正常显示。
 
 - **排队的交接会静默丢失**：目标会话忙时，交接虽然报 `queued`，实际只存在于收件方插件的内存里——任何界面都看不到，重启即丢，会话一直忙就永远不投递。现在排队项会立即落盘（`session-handoff-queued`），下次会话启动自动恢复重投，按 `idempotencyKey` 去重，并给出通知提示；发送方也会明确区分「已送达 / 已排队但未送达 / 重复」。
 

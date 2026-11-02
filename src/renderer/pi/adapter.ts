@@ -573,9 +573,11 @@ export function buildPiSidebar(
   const runByKey = new Map(runs.flatMap(r => [[r.key, r] as const, ...(r.historyKey ? [[r.historyKey, r] as const] : [])]));
   const byCwd = new Map<string, PiSession[]>();
   for (const s of sessions) {
-    // Subagent / fork 内部会话（parentSession 非空）不进用户会话列表：
-    // pi 的 subagent 子会话与父会话同目录，会被索引扫出并伪装成新会话。
-    if (s.parentSession || s.sidecarOf !== undefined) continue;
+    // Subagent 内部会话不进用户会话列表。判据必须是 subagentOf（索引从嵌套路径推断），
+    // 不能用 parentSession —— 那是 pi 的分支/fork 语义（编辑重发/compact/fork 都写它），
+    // 用户在那些会话里做的事跟主会话一样，过滤掉就等于把用户的正常会话藏起来。
+    // 2026-11-02 实测：VE 会话带 header.parentSession，桌面侧栏与手机远控同时看不到。
+    if (s.subagentOf || s.sidecarOf !== undefined) continue;
     const list = byCwd.get(s.cwd) ?? [];
     // Archive-only discovered projects still belong in the sidebar.
     if (!archived.has(s.key)) list.push(s);
