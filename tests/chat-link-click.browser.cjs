@@ -1,4 +1,5 @@
-// 聊天消息外链点击：GFM autolink 的裸 URL <a> 必须走 window.open（系统浏览器），
+// 聊天消息外链点击：GFM autolink 的裸 URL <a> 不得触发主窗口顶层导航。
+// 2026-11-03 起默认目标改为侧栏浏览器（主断言见 chat-link-sidebar.browser.cjs），
 // 绝不允许主窗口顶层导航（旧缺陷：点击 → will-navigate 拦截 → about:blank#blocked
 // → did-navigate 防护重载入口 → 整个 app 重置回首页）。
 // 跑法：playwright-cli -s=chatlink run-code --filename tests/chat-link-click.browser.cjs
@@ -45,7 +46,7 @@ async (page) => {
   assert(probe.firstHref === 'https://example.com/docs', `autolink href 正确（实际 ${probe.firstHref}）`);
   assert(probe.underline, `链接有下划线（可见可点，text-decoration-color=${probe.underlineColor}）`);
 
-  // 真实点击裸 URL 链接：不允许顶层导航，必须走 window.open
+  // 真实点击裸 URL 链接：不允许顶层导航（默认去侧栏浏览器，见 chat-link-sidebar.browser.cjs）
   await page.evaluate(() => document.querySelector('.pi-md a').click());
   await page.waitForTimeout(300);
 
@@ -54,12 +55,13 @@ async (page) => {
     stillRendered: document.querySelectorAll('.pi-md a').length,
     targetBlank: document.querySelector('.pi-md a')?.getAttribute('target') === '_blank',
   }));
-  assert(after.opens.length === 1 && after.opens[0] === 'https://example.com/docs',
-    `点击走 window.open（实际 ${JSON.stringify(after.opens)}）`);
+  // 2026-11-03 起默认在侧栏浏览器打开；此 harness 无 BrowserPanel，退化为 window.open。
+  // 「默认侧栏」的主断言见 chat-link-sidebar.browser.cjs。
+  assert(after.opens.length <= 1, `至多一次 window.open（实际 ${JSON.stringify(after.opens)}）`);
   assert(after.stillRendered === 2, `点击后消息仍在（无顶层导航/重置，实际 ${after.stillRendered} 个 a）`);
   assert(page.url().includes('chat-link-harness'), `页面 URL 未被导航（实际 ${page.url()}）`);
   assert(after.targetBlank, 'a 带 target=_blank（兜底，即使 onClick 失效也走 setWindowOpenHandler）');
 
-  console.log(`PASS (${checks} checks): 外链点击走系统浏览器通道，无顶层导航，链接有可见样式`);
+  console.log(`PASS (${checks} checks): 外链点击不触发顶层导航，链接有可见样式`);
   return { checks };
 }

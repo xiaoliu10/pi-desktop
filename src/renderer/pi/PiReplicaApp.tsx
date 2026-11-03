@@ -54,6 +54,7 @@ import { SettingsPage } from '../replica/settings/SettingsPage';
 import { isDefaultModel } from '../replica/settings/helpers';
 import { WorkbenchPanel } from '../replica/workbench/WorkbenchPanel';
 import { BrowserPanel } from './BrowserPanel';
+import { setBrowserHost } from '../replica/workbench/browser-events';
 import { GlobalSearch, Notifications } from '../replica/overlays/Overlays';
 import type {
   SearchItem,
@@ -171,6 +172,17 @@ const noop = () => undefined;
 
 export default function PiReplicaApp() {
   const s = usePiStore();
+  // 聊天链接 → 工作台浏览器（R-render-10）：点链接时工作台可能还没打开过，
+  // BrowserPanel 尚未挂载。这里同步切到 browser tab（并打开工作台），
+  // 保证随后分发的事件有人接；没人接时 ChatMarkdown 退回系统浏览器。
+  useEffect(() => {
+    setBrowserHost(() => {
+      const st = usePiStore.getState();
+      if (st.view !== 'chat' && st.view !== 'home') return;
+      usePiStore.setState({ workbenchOpen: true, workbenchTab: 'browser' });
+    });
+    return () => setBrowserHost(null);
+  }, []);
   const [attachmentLoading, setAttachmentLoading] = useState(false);
   const attachmentBusy = useRef(false);
   const pasteAttachments: import('react').ClipboardEventHandler<HTMLTextAreaElement> = event => {

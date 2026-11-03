@@ -19,6 +19,7 @@ import type { WebviewTag } from 'electron';
 import { Icon } from '../replica/Icons';
 import type { BrowserLabels } from '../replica/contracts';
 import { normalizeUrl, VIEWPORTS, viewportById } from '../replica/workbench/browser-utils';
+import { onOpenInBrowser } from '../replica/workbench/browser-events';
 import '../replica/workbench/workbench.css';
 
 interface BrowserTab {
@@ -137,15 +138,30 @@ export function BrowserPanel({ labels }: { labels: BrowserLabels }) {
     return cb;
   };
 
-  const newTab = useCallback(() => {
+  /** 新开一个标签并（可选）立即导航到 url。聊天链接默认走这里，每次新增不覆盖已有页。 */
+  const openTab = useCallback((raw?: string) => {
     const id = `tab-${++seq.current}`;
+    const target = raw ? normalizeUrl(raw) : null;
     setTabs((prev) => [
       ...prev,
-      { id, srcUrl: null, url: null, input: '', title: '', favicon: null, loading: false, canBack: false, canForward: false, error: null, notice: null },
+      {
+        id,
+        srcUrl: target?.ok ? target.url : null,
+        url: target?.ok ? target.url : null,
+        input: target?.ok ? target.url : '',
+        title: '', favicon: null, loading: Boolean(target?.ok), canBack: false, canForward: false, error: null,
+        notice: target && !target.ok ? (target.reason === 'protocol' ? labels.blockedProtocol : labels.invalidUrl) : null,
+      },
     ]);
     setActiveId(id);
-    window.setTimeout(() => inputRef.current?.focus(), 30);
-  }, []);
+    if (!raw) window.setTimeout(() => inputRef.current?.focus(), 30);
+  }, [labels.blockedProtocol, labels.invalidUrl]);
+
+  const newTab = useCallback(() => openTab(), [openTab]);
+
+  // 聊天里的 http 链接默认在侧栏打开（R-render-10）。面板一旦挂载就常驻
+  // （WorkbenchPanel 用 display:none 保活），所以订阅期 = 应用整个生命周期。
+  useEffect(() => onOpenInBrowser((url) => openTab(url)), [openTab]);
 
   const closeTab = useCallback((id: string) => {
     refCbs.current.delete(id);

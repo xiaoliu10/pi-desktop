@@ -1517,3 +1517,33 @@
 }
 
 .pireplica .pi-sessionmap__empty { padding: 16px 12px; font-size: var(--pi-font-size-sm); color: var(--pi-text-tertiary); text-align: center; }
+
+/* ---- 外链右键菜单（ChatMarkdown 的 a[href] → 侧栏/系统浏览器）---- */
+.pi-linkmenu {
+  position: fixed;
+  z-index: 70;
+  min-width: 200px;
+  padding: 4px;
+  border-radius: 10px;
+  border: 1px solid var(--pi-border, rgba(0,0,0,.12));
+  background: var(--pi-surface, #fff);
+  box-shadow: 0 8px 24px rgba(0,0,0,.16);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.pi-linkmenu__item {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  padding: 7px 10px;
+  border-radius: 7px;
+  font: inherit;
+  font-size: 13px;
+  color: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.pi-linkmenu__item:hover { background: var(--pi-hover, rgba(0,0,0,.06)); }
+.pi-linkmenu__item--primary { font-weight: 500; }
