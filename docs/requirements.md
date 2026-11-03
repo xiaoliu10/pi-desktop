@@ -381,7 +381,20 @@
 
 **回归触发**：改 `confirmSends` 认领匹配、`sentConversationMessages` 确认气泡渲染分支、pi 侧 skill 展开落盘格式时必须同步本条。
 
-### R-ui-01　错误提示是输入框上方的小横幅，且会话恢复后自动消失
+### R-session-07　手动压缩结束后会话必须回到空闲（不得假转圈 / 计时永续）
+
+**需求**：手动 `/compact` 是一次原子操作，`compaction_end` 到达即代表内核侧结束。无论压缩成功、失败还是 RPC 超时，会话都必须回到 `idle` 且写入 `timing.endedAt`（用户 2026-11-03 实报：518MB 会话压缩 143 秒后失败，UI 永久停在「已工作 9:55」+ 转圈，停止按钮也解不开）。
+
+**验收**：
+- `compaction_start` 把 `status` 置 `running` 后，`compaction_end` 必须收口为 `idle` 并写 `timing.endedAt`——即使没有 `agent_settled`（手动压缩从不发）。
+- RPC `compact` 超时时 `settleAfterCompact` 故意不提前收口（避免与内核中仍在跑的压缩并发），此时 `compaction_end` 是唯一兜底点，不得只清 `compacting`。
+- 收口后计时条从「已工作 X」切为「用时 X」，不再每秒增长；发送/重试/重载的 guard 不再被挡。
+- 排队输入不被误清（`settleAfterCompact` 仅在 `pending === 0 && !queue.length` 时改状态）。
+- 回归：`tests/compact-settle.test.ts`（compaction_end 无 agent_settled → idle + endedAt；排队场景不误清）；`tests/compact-command.test.ts` / `compaction-record.test.ts` / `compaction-inline.test.ts` 保持绿。
+
+**状态**：已修复，单测红→绿 + 破坏性验证通过，待发版验收。
+
+**回归触发**：改 `backend.ts` 的 `compaction_start`/`compaction_end` 分支、`settleAfterCompact`、`compact()` 的异常分支；pi 改为手动压缩也发 `agent_settled` 时可简化但不得删除收口。### R-ui-01　错误提示是输入框上方的小横幅，且会话恢复后自动消失
 
 **需求**：错误提示不得使用高饱和「大红横幅」且不得依赖手点关闭（用户 2026-10-28 反馈「很 low、必须要手点才消失、应该能自动恢复」）。形态：输入框上方的低对比小横幅；会话恢复（`agent_start` / `compaction_end` / `turn_start`）时同会话错误自动清除，手点关闭保留为兜底。
 

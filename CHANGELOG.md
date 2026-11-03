@@ -3,6 +3,20 @@
 所有重要变更记录在本文件。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 README 只保留最近版本摘要；本文件为完整记录。
 
+## [Unreleased]
+
+### English
+
+#### Fixed
+
+- **Manual context compaction could leave the session stuck on "Working for 9:55" with no way out**: on large sessions compaction is slow (a 518 MB session took over two minutes) and the request often times out or fails. Desktop marked the session as running when compaction *started*, but the end event only cleared the "compacting" flag — it never restored the idle state. The elapsed timer kept counting, sending/retry/reload were all blocked, and Stop could not break out. Now the session returns to idle the moment compaction ends, success or failure, and the timer freezes as "Took X".
+
+### 中文
+
+#### 修复
+
+- **手动压缩上下文后不再永久卡在「已工作 X」且关不掉**：在大会话上压缩耗时很长（实测 518 MB 会话要 2 分多钟）时，压缩请求容易超时或失败，而 Desktop 只有在压缩「开始」时把会话标成运行中、结束事件到达时却只清掉「正在压缩」的标记，没有把运行状态收回来。结果是计时条一路涨、发送/重试/重载全被挡住、点停止也解不开。现在压缩一结束（无论成功失败），会话立刻回到空闲并把计时定格为「用时 X」。
+
 ## [0.1.40] - 2026-11-02
 
 ### English
