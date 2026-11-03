@@ -12,6 +12,8 @@ import { officialSubagentDetails, SubagentNavigation } from '../../pi/subagents'
 
 import { createContext, memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
+import { requestOpenInBrowser } from '../workbench/browser-events';
+import { openLinkMenu } from './link-menu';
 import { navigatePromptHistory } from '../prompt-history';
 import { registerComposerFlush } from '../../pi/adapter';
 import { onCloseTransientPopovers } from '../popovers';
@@ -104,11 +106,19 @@ export const ChatMarkdown = memo(function ChatMarkdown({ text, zh }: { text: str
         href={href}
         target="_blank"
         rel="noreferrer noopener"
+        onContextMenu={(e) => {
+          // 可选入口：右键「用系统浏览器打开」。只对 http(s) 外链提供。
+          if (!href || !/^https?:\/\//.test(href)) return;
+          e.preventDefault();
+          openLinkMenu({ x: e.clientX, y: e.clientY, url: href, zh: Boolean(zh) });
+        }}
         onClick={(e) => {
           if (!href) { e.preventDefault(); return; }
           if (/^https?:\/\//.test(href)) {
             e.preventDefault();
-            window.open(href, '_blank');
+            // 默认在右侧工作台浏览器打开（R-render-10）。没有接收方（工作台从未
+            // 挂载、replica 单独渲染）时退回系统浏览器，避免「点了没反应」。
+            if (!requestOpenInBrowser(href)) window.open(href, '_blank');
             return;
           }
           // file:// 交付文件链接：主进程用系统默认应用打开文档、其他类型在 Finder 显示。

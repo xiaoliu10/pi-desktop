@@ -21,6 +21,20 @@ README 只保留最近版本摘要；本文件为完整记录。
 
 - **手动压缩上下文后不再永久卡在「已工作 X」且关不掉**：在大会话上压缩耗时很长（实测 518 MB 会话要 2 分多钟）时，压缩请求容易超时或失败，而 Desktop 只有在压缩「开始」时把会话标成运行中、结束事件到达时却只清掉「正在压缩」的标记，没有把运行状态收回来。结果是计时条一路涨、发送/重试/重载全被挡住、点停止也解不开。现在压缩一结束（无论成功失败），会话立刻回到空闲并把计时定格为「用时 X」。
 
+## [Unreleased]
+
+### English
+
+#### Changed
+
+- **Web links in a conversation now open in the sidebar browser instead of kicking you out to Chrome/Safari**: clicking an `http(s)` link — in replies, tool output, thinking blocks or plan documents — opens a new tab in the right-hand Workbench browser (the panel pops open automatically the first time). Each click gets its own tab, so the page you were reading stays put. Right-click any link for a menu with "Open in sidebar browser" (default) and **"Open in system browser"** when you actually want the full browser. Links still fall back to the system browser whenever the sidebar panel is not available, so nothing ever becomes a dead link. Non-web links (`file://` deliverables etc.) behave exactly as before.
+
+### 中文
+
+#### 变更
+
+- **对话里的网页链接改为在右侧工作台浏览器打开，不再直接甩给系统浏览器**：点击回复、工具输出、思考块或计划文档里的 `http(s)` 链接，会在右侧工作台的浏览器里新增一个标签页（第一次点击时工作台会自动弹出）。每次点击各开一个标签，正在看的页面不会被顶掉。右键任意链接可用菜单选择「在侧栏浏览器中打开」（默认）或**「用系统浏览器打开」**（确实想用 Chrome/Safari 时）。侧栏面板不可用时仍会退回系统浏览器，链接不会变成死链。非网页链接（`file://` 交付文件等）行为完全不变。
+
 ## [0.1.40] - 2026-11-02
 
 ### English
