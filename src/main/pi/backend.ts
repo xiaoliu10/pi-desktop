@@ -722,6 +722,12 @@ export class PiBackend {
     }
     if (event.type === 'compaction_end') {
       run.view.compacting = false;
+      // 手动 /compact 不发 agent_settled，而 compaction_start 已把 status 置 running。
+      // RPC 超时（大会话常态：实测 518MB 会话压缩 143s 后失败）时 settleAfterCompact
+      // 故意不收口、等本事件——若这里只清 compacting 不改 status，会话永久停在 running：
+      // 计时条「已工作」无限增长、发送/重试/重载全被 guard 拒绝、停止也解不开
+      // （2026-11-03 用户实报）。压缩是原子操作，end 到达即代表内核侧结束，必须收口。
+      this.settleAfterCompact(key, run);
       // 压缩后 tokens 直接取 result.estimatedTokensAfter（与 tokensBefore 同一投影估算口径；
       // 留痕时 getContextUsage 为 null，stats 轮询拿不到）。失败/中止压缩 result 为 undefined，
       // 不发记录（desktop-policy 也没写留痕，无锚点可匹配）。

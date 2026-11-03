@@ -11,11 +11,15 @@ README 只保留最近版本摘要；本文件为完整记录。
 
 - **The phone remote page no longer shows a blank "needs your confirmation" box that cannot be answered**: with a third-party `ask_user_question` plugin installed, Desktop needs the plugin's `tool_execution_start` to turn its native questionnaire into a proper card. When that start never arrived (session started before the plugin was installed, or the tool call was interrupted), the raw request fell through to the generic dialog path and was pushed to the phone as an empty card whose placeholder held the plugin's internal protocol — clicking it did nothing, because Desktop never really answers it. Such requests are now recognised and cancelled with an explicit reply to the plugin, so its prompt returns immediately instead of hanging. The check is deliberately conservative: oversized questionnaires (which must be shown to you as-is) and anything not clearly a questionnaire keep the old behaviour of going through the generic dialog.
 
+- **Manual context compaction could leave the session stuck on "Working for 9:55" with no way out**: on large sessions compaction is slow (a 518 MB session took over two minutes) and the request often times out or fails. Desktop marked the session as running when compaction *started*, but the end event only cleared the "compacting" flag — it never restored the idle state. The elapsed timer kept counting, sending/retry/reload were all blocked, and Stop could not break out. Now the session returns to idle the moment compaction ends, success or failure, and the timer freezes as "Took X".
+
 ### 中文
 
 #### 修复
 
 - **手机远控页不再弹出「需要你的确认」+ 空白输入框且点了没反应**：装有第三方 `ask_user_question` 插件时，Desktop 需要该插件的 `tool_execution_start` 才能把原生问卷转成正常卡片。当这个 start 没到（会话早于插件启动、或工具调用被中断），原始请求会落到通用对话框分支，并被原样推到手机端——占位符里装的是插件内部协议，用户只看到空白框，而点了也没用，因为 Desktop 根本不会真的应答它。这类请求现在会被识别并取消，同时给插件明确答复，让它的提问立刻返回而不是一直挂着。判定刻意保守：超大问卷（本就该原样给用户看）与认不出形态的请求，仍走通用对话框原样透传。
+
+- **手动压缩上下文后不再永久卡在「已工作 X」且关不掉**：在大会话上压缩耗时很长（实测 518 MB 会话要 2 分多钟）时，压缩请求容易超时或失败，而 Desktop 只有在压缩「开始」时把会话标成运行中、结束事件到达时却只清掉「正在压缩」的标记，没有把运行状态收回来。结果是计时条一路涨、发送/重试/重载全被挡住、点停止也解不开。现在压缩一结束（无论成功失败），会话立刻回到空闲并把计时定格为「用时 X」。
 
 ## [0.1.40] - 2026-11-02
 
