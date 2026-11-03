@@ -434,6 +434,11 @@
 
 **回归触发**：改 `remote-server.ts` 的 `renderDialog`/`respondDialog`/`seedDialogs`、`PiUiRequest` 的 `title` 约定、backend 对保留通道的提前 return 清单；新增任何 `ctx.ui.input` 保留通道时必须同步此处。
 
+**补 2026-11-02（第三类泄漏：桥接失败的原生 ask 请求）**：除两个保留通道外，第三方 ask 插件的**原生问卷请求**也是内部协议。装了 `rpiv-ask-user-question` 时 `run.thirdPartyAsk` 为真，`bridgeAskUiRequest` 需要配套的 `tool_execution_start`（`run.pendingAskArgs`）才能合成 `desktop-ask` 卡片；用户 2026-11-02 实测 CCR 会话反复弹「需要你的确认」+ 空白框——根因就是 Desktop 没收到配套 start，`stash` 为空，桥接返回 false 后请求落进通用 dialogs 并原样 emit 到手机端。
+- 验收补充：**无 stash 且形态上是原生问卷自由文本收尾（`title` 形如 `<问题>\nType your answer:`）时，必须取消并给插件答复，不得进 dialogs、不得 emit 原样 UI**。
+- 边界（刻意保守，防吞真实交互）：带 `options` 的 `select` **不取消**——超大问卷（问题/选项数超桥接上限）本来就要原样透传给用户；`title` 带 `desktop-` 前缀的保留通道不归此判据；认不出的一律走通用对话框。
+- 回归：`tests/pi-rpc.test.ts`「unbridged native input must not leak to viewers」（断言无 `ui` emit、`pendingDialogs` 为空、发出 `ui-resolved` 与 cancelled 应答；改坏即红）。
+
 ### R-remote-01　远控配对用短时效配对码，不靠长驻 token 二维码
 
 **需求**：LAN 远控的手机接入凭证改为「6 位数字配对码（120s TTL、一次性）→ 换 12h 短时效 session」，避免 URL 里长驻 32 位 hex token（= 永久钥匙）。配对码在 `POST /api/pair` 鉴权前拦截验证；5 次失败锁 5 分钟；比较用 `timingSafeEqual` 定长比较。长期 token 仅迁移期保留。
@@ -461,6 +466,8 @@
 - 回归：`pi-tunnel-relay` Go 测试 3 条（注册/token/握手、配对双向透传、超限断连）；`tests/tunnel-client.test.ts` 4 条；`tests/tunnel-e2e.test.ts`（真 Go relay 进程 + 真 WS + 假 terminal 端到端）；`tests/tunnel-ui.browser.cjs`（真实浏览器：卡片渲染/保存/开关闭环/状态徽标）。
 
 **边界（明确不做）**：不做端到端加密（ZCode/Harness 均不做，靠 WSS + 预共享 key + 一次性 token）；relay 不做多 terminal 隔离（单人自托管场景）；`docs/design/remote-tunnel.md` §5 记录了完整盲区。
+
+**可见性口径（2026-11-02 补）**：手机端会话列表必须与桌面侧栏一致。过滤只看**真 subagent 标记**（`subagentOf`，索引从嵌套布局 `…/<主会话>/<childId>/run-N/session.jsonl` 推断）与副驾 `sidecarOf`；**`parentSession`（pi 的分支/fork 语义，编辑重发/compact/fork）不参与过滤**——混同会把用户正在用的会话从手机端与侧栏一起抹掉（实测 VE 会话）。回归：`tests/remote-visibility.test.ts`、`tests/project-order.test.ts`、`tests/remote-server.test.ts`。
 
 **状态**：已实现（含 Go relay 仓库），随远程隧道 PR 发版；ECS 部署后需真机验证。
 

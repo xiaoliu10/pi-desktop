@@ -235,7 +235,17 @@ export class SessionIndex {
     const title = typeof first === 'string' ? first : Array.isArray(first) ? first.filter(b => b.type === 'text').map(b => b.text).join(' ') : '';
     const name = [...entries].reverse().find(e => e.type === 'session_info' && typeof e.name === 'string')?.name;
     const parents = new Set(entries.map(e => e.parentId));
-    const session: PiSession = { key, id: header.id, path: file, cwd: header.cwd, name: String(name || title || '未命名 pi 会话').slice(0, 180), updatedAt: stat.mtimeMs, size: stat.size, warnings, owned: file.startsWith(canonical(this.ownedRoot) + path.sep), parentSession: typeof header.parentSession === 'string' ? header.parentSession : this.nestedParents.get(file), sidecarOf: path.basename(file).startsWith('sidecar_') ? '' : undefined };
+    // parentSession 有两种来源，语义完全不同（混为一谈会把用户的正常会话从侧栏/远控里抹掉）：
+    //  a) header 里本来就带 —— pi 的分支/fork 语义（createBranchedSession / fork /
+    //     编辑重发都会写它），是**用户自己的会话**，侧栏与远控都必须可见。
+    //  b) 索引从嵌套路径推断（nestedParents）—— pi-subagents async 布局
+    //     (<root>/<主会话>/<childId>/run-N/session.jsonl)，是**子代理内部会话**，
+    //     不进用户列表。这类才用 subagentOf 标记。
+    // 2026-11-02 实测：VE 会话因编辑重发带上 header.parentSession，被侧栏与远控同时
+    // 过滤掉，用户在手机上完全看不到它（而桌面侧栏靠活跃 run 的别名还能显示，口径不一致）。
+    const headerParent = typeof header.parentSession === 'string' ? header.parentSession : undefined;
+    const nestedParent = this.nestedParents.get(file);
+    const session: PiSession = { key, id: header.id, path: file, cwd: header.cwd, name: String(name || title || '未命名 pi 会话').slice(0, 180), updatedAt: stat.mtimeMs, size: stat.size, warnings, owned: file.startsWith(canonical(this.ownedRoot) + path.sep), parentSession: headerParent ?? nestedParent, subagentOf: headerParent ? undefined : nestedParent, sidecarOf: path.basename(file).startsWith('sidecar_') ? '' : undefined };
     // parsedBytes = buf.length：全部字节已读；尾部未成行字节保存在 pendingTail（原始
     // Buffer，解码无损），增量时与新 chunk 拼接后再统一解码——撕裂多字节在字节层面
     // 补齐后才能正确解码，任何字符串层面的提前处理都会经 U+FFFD 永久丢字节。

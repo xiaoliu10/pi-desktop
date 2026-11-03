@@ -3,6 +3,20 @@
 所有重要变更记录在本文件。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 README 只保留最近版本摘要；本文件为完整记录。
 
+## [Unreleased]
+
+### English
+
+#### Fixed
+
+- **The phone remote page no longer shows a blank "needs your confirmation" box that cannot be answered**: with a third-party `ask_user_question` plugin installed, Desktop needs the plugin's `tool_execution_start` to turn its native questionnaire into a proper card. When that start never arrived (session started before the plugin was installed, or the tool call was interrupted), the raw request fell through to the generic dialog path and was pushed to the phone as an empty card whose placeholder held the plugin's internal protocol — clicking it did nothing, because Desktop never really answers it. Such requests are now recognised and cancelled with an explicit reply to the plugin, so its prompt returns immediately instead of hanging. The check is deliberately conservative: oversized questionnaires (which must be shown to you as-is) and anything not clearly a questionnaire keep the old behaviour of going through the generic dialog.
+
+### 中文
+
+#### 修复
+
+- **手机远控页不再弹出「需要你的确认」+ 空白输入框且点了没反应**：装有第三方 `ask_user_question` 插件时，Desktop 需要该插件的 `tool_execution_start` 才能把原生问卷转成正常卡片。当这个 start 没到（会话早于插件启动、或工具调用被中断），原始请求会落到通用对话框分支，并被原样推到手机端——占位符里装的是插件内部协议，用户只看到空白框，而点了也没用，因为 Desktop 根本不会真的应答它。这类请求现在会被识别并取消，同时给插件明确答复，让它的提问立刻返回而不是一直挂着。判定刻意保守：超大问卷（本就该原样给用户看）与认不出形态的请求，仍走通用对话框原样透传。
+
 ## [0.1.40] - 2026-11-02
 
 ### English
@@ -20,6 +34,8 @@ README 只保留最近版本摘要；本文件为完整记录。
 - **One handoff tool instead of two**: `desktop_handoff` and `session_handoff` did the same job through the same reserved channel — `session_handoff` was a strict superset (it also reaches plain-conversation sessions, deduplicates candidates and enforces idempotency). With both registered, the model had two nearly identical tools to pick from and could choose the weaker one. The duplicate `desktop_handoff` tool is removed; Desktop keeps its full reach, including reconnecting a disconnected session, because `session_handoff` uses the same main-process bridge.
 
 #### Fixed
+
+- **A session is no longer hidden from the mobile remote control just because it was branched**: editing/retrying or compacting a conversation creates a new session file whose header records the original as `parentSession` — the same field pi's subagents use. Desktop treated both as "internal", so such sessions vanished from the phone list (and from the sidebar when no run was attached) even though you were actively using them. The filter now keys on the real subagent marker (inferred from the nested `…/<session>/<childId>/run-N/` layout), keeping your own branched sessions visible.
 
 - **Queued handoffs were silently lost**: when the target session was busy, a handoff reported `queued` but only lived in the recipient plugin's memory — invisible in any UI, discarded on restart, and never delivered if the session stayed busy. Queued items are now persisted immediately (`session-handoff-queued`), restored and retried on the next session start, deduplicated by `idempotencyKey`, and surfaced with a notification. The sender now reports `delivered` / `queued-not-delivered` / `duplicate` instead of a bare `queued`.
 
@@ -42,6 +58,8 @@ README 只保留最近版本摘要；本文件为完整记录。
 - **交接工具从两个收敛为一个**：`desktop_handoff` 与 `session_handoff` 走同一条保留通道做同一件事，后者是严格超集（还能触达普通对话会话、消重候选、强制幂等）。两个都注册时，模型面对两个几乎同名的工具容易选到能力更弱的那个。现已删除重复的 `desktop_handoff` 工具；Desktop 端能力不减，包括重连已断开的会话，因为 `session_handoff` 用的是同一个主进程桥。
 
 #### 修复
+
+- **手机远控不再因为「分支」把会话藏起来**：在会话里编辑重发或压缩上下文，pi 会生成一个带 `parentSession` 的新会话文件——这和子代理内部会话用的是同一个字段。此前 Desktop 把两者都当「内部会话」过滤，导致你正在用的会话从手机列表里消失（没有活跃 run 时侧栏也会看不到）。现在过滤只看真正的子代理标记（从嵌套目录 `…/<会话>/<childId>/run-N/` 推断），你自己分叉出来的会话正常显示。
 
 - **排队的交接会静默丢失**：目标会话忙时，交接虽然报 `queued`，实际只存在于收件方插件的内存里——任何界面都看不到，重启即丢，会话一直忙就永远不投递。现在排队项会立即落盘（`session-handoff-queued`），下次会话启动自动恢复重投，按 `idempotencyKey` 去重，并给出通知提示；发送方也会明确区分「已送达 / 已排队但未送达 / 重复」。
 

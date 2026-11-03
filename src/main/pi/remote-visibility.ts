@@ -1,7 +1,8 @@
 /**
  * 手机端（LAN 远程控制）的会话可见性口径 —— 与桌面侧栏保持一致：
- * 已归档会话、已移除/隐藏项目、subagent 内部会话（parentSession）与
- * 副驾会话（sidecarOf）一律不可见。
+ * 已归档会话、已移除/隐藏项目、subagent 内部会话（subagentOf）与
+ * 副驾会话（sidecarOf）一律不可见。parentSession（pi 的分支/fork 语义）不参与
+ * 过滤——那是用户自己的会话。
  *
  * 关键口径：
  * - 「已移除项目」比对用 session-index.canonical 归一化两侧路径：偏好里存的
@@ -28,7 +29,7 @@ export interface VisibilitySource {
 
 export interface VisibilitySnapshot {
   /** 会话记录本身是否可见（/api/state 列表口径）。 */
-  sessionVisible(session: Pick<PiSession, 'key' | 'cwd' | 'parentSession' | 'sidecarOf'>): boolean;
+  sessionVisible(session: Pick<PiSession, 'key' | 'cwd' | 'subagentOf' | 'sidecarOf'>): boolean;
   /** 只有一个 key（SSE 的 ui/rpc/closed/compaction-record 事件）时判断可见。 */
   keyVisible(key: string | undefined): boolean;
   /** run 记录是否可见（run 自带 cwd/sidecarOf，key 对应会话尚未落盘也能判）。 */
@@ -71,7 +72,10 @@ export class RemoteVisibility {
     const sessionVisible: VisibilitySnapshot['sessionVisible'] = (s) => {
       if (archived.has(s.key)) return false;
       if (s.sidecarOf !== undefined) return false; // 副驾（辅助对话）不进手机端
-      if (s.parentSession !== undefined) return false; // subagent 内部会话不进手机端
+      if (s.subagentOf !== undefined) return false; // subagent 内部会话不进手机端
+      // parentSession 不参与过滤：那是 pi 的分支/fork 语义（编辑重发/compact/fork），
+      // 是用户自己的会话。桌面侧栏靠活跃 run 别名能看到，手机端被这条规则吞掉会造成
+      // 口径不一致——用户实测 VE 会话在手机上完全看不到（2026-11-02）。
       if (hidden.has(canonical(s.cwd))) return false; // 已移除项目：cwd 可能是别名，canonical 后比对
       return true;
     };
@@ -94,7 +98,7 @@ export class RemoteVisibility {
       if (archived.has(run.key)) return false;
       if (hidden.has(canonical(run.cwd))) return false;
       const s = byKey.get(run.key);
-      if (s && !sessionVisible(s)) return false; // key 落盘后按会话口径补判（parentSession 等）
+      if (s && !sessionVisible(s)) return false; // key 落盘后按会话口径补判（subagentOf 等）
       return true;
     };
     return { sessionVisible, keyVisible, runVisible };

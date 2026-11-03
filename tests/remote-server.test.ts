@@ -297,7 +297,8 @@ describe('RemoteServer visibility & image uploads', () => {
     (provider as unknown as { archivedSessions: () => string[] }).archivedSessions = () => ['k1'];
     (provider as unknown as { desktopVersion: () => string }).desktopVersion = () => '0.1.18-test';
     const withInternal = [...provider.sessions(),
-      { key: 'k-sub', id: '3', path: '/tmp/sub.jsonl', cwd: '/tmp', name: 'subagent 内部会话', updatedAt: 40, size: 1, warnings: [], owned: false, parentSession: '/tmp/a.jsonl' },
+      { key: 'k-sub', id: '3', path: '/tmp/sub.jsonl', cwd: '/tmp', name: 'subagent 内部会话', updatedAt: 40, size: 1, warnings: [], owned: false, subagentOf: '/tmp/a.jsonl' },
+      { key: 'k-fork', id: '4', path: '/tmp/fork.jsonl', cwd: '/tmp', name: '编辑重发分支', updatedAt: 41, size: 1, warnings: [], owned: false, parentSession: '/tmp/a.jsonl' },
       { key: 'k-side', id: '4', path: '/tmp/side.jsonl', cwd: '/tmp', name: '副驾', updatedAt: 41, size: 1, warnings: [], owned: false, sidecarOf: '' },
     ];
     provider.sessions = () => withInternal;
@@ -310,7 +311,9 @@ describe('RemoteServer visibility & image uploads', () => {
     provider.runs = () => staleRuns;
     const state = await getState(base, status.token);
     expect(state.desktopVersion).toBe('0.1.18-test');
-    expect(state.sessions.map((s) => s.key)).toEqual(['k2', 'k1'].filter(k => k !== 'k1'));
+    // fork 会话（header.parentSession）是用户自己的会话，必须出现在手机端。
+    // 2026-11-02 实测 VE 会话因此被过滤掉，用户在手机上完全看不到。
+    expect(state.sessions.map((s) => s.key)).toEqual(['k-fork', 'k2']);
     expect(state.runs.map((r) => r.key)).toEqual(['k2']);
   });
 
@@ -346,7 +349,8 @@ describe('RemoteServer visibility & image uploads', () => {
     (provider as unknown as { hiddenProjects: () => string[] }).hiddenProjects = () => ['/hidden'];
     const withHidden = [...provider.sessions(),
       { key: 'k-hid', id: '6', path: '/tmp/h.jsonl', cwd: '/hidden', name: '已移除项目会话', updatedAt: 60, size: 1, warnings: [], owned: false },
-      { key: 'k-sub', id: '7', path: '/tmp/s.jsonl', cwd: '/tmp', name: '内部', updatedAt: 61, size: 1, warnings: [], owned: false, parentSession: '/tmp/a.jsonl' },
+      { key: 'k-sub', id: '7', path: '/tmp/s.jsonl', cwd: '/tmp', name: '内部', updatedAt: 61, size: 1, warnings: [], owned: false, subagentOf: '/tmp/a.jsonl' },
+      { key: 'k-fork', id: '8', path: '/tmp/f.jsonl', cwd: '/tmp', name: 'fork', updatedAt: 62, size: 1, warnings: [], owned: false, parentSession: '/tmp/a.jsonl' },
     ];
     provider.sessions = () => withHidden;
     const runsWithHidden = [...provider.runs(),

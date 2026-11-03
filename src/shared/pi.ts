@@ -26,7 +26,13 @@ export interface PiEnvironment {
   bundledVersion?: string | null;
 }
 export interface PiUpgradeResult { exitCode: number; stdout: string; stderr: string }
-export interface PiSession { key: string; id: string; path: string; cwd: string; name: string; updatedAt: number; size: number; warnings: string[]; owned: boolean; parentSession?: string; sidecarOf?: string; /** 超限降级（只有元数据，无 entries）：消费方据此 fail-closed，不得靠 warnings 文案正则猜（文案一改就静默失效）。 */ oversized?: true }
+export interface PiSession { key: string; id: string; path: string; cwd: string; name: string; updatedAt: number; size: number; warnings: string[]; owned: boolean;
+  /** pi 的分支/fork 来源（编辑重发/compact 分支/fork），**用户自己的会话**——侧栏与远控必须可见。
+   *  与 subagentOf 是互斥来源：header 里带了它就不是子代理。 */
+  parentSession?: string;
+  /** 仅真 subagent 内部会话（索引从嵌套路径推断，header 无 parentSession）：不进用户列表。 */
+  subagentOf?: string;
+  sidecarOf?: string; /** 超限降级（只有元数据，无 entries）：消费方据此 fail-closed，不得靠 warnings 文案正则猜（文案一改就静默失效）。 */ oversized?: true }
 export interface PiEntry { type: string; id?: string; parentId?: string | null; timestamp?: string; message?: Record<string, unknown>; [key: string]: unknown }
 /** 会话内搜索命中：只回定位信息（entryId + 预览），全文由 history(before) 取回。
  *  索引=entry 链表本身（稳定 id + parentId），摘要=user 消息/工具 summary，零额外结构。 */

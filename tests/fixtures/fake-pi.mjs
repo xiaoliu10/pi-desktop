@@ -5,7 +5,7 @@ if (process.argv.includes('--session') && !fs.existsSync(file)) fs.writeFileSync
 const send = obj => process.stdout.write(JSON.stringify(obj)+'\n');
 let pendingUi, queue = {steering:[],followUp:[]};
 // Native questionnaire RPC fixture: one request at a time, with sentinel follow-ups.
-let askScenario, askResponses = [];
+let askScenario, askResponses = [], allUiResponses = [];
 function nextAskRequest() {
  const q = askScenario.questions[askScenario.index];
  const id = `ask-${askScenario.callId}-${askScenario.index}${askScenario.custom ? '-custom' : ''}`;
@@ -106,7 +106,9 @@ function handle(r) {
   }
   ok({}); send({type:'agent_start'}); send({type:'agent_end',willRetry:true});
   setTimeout(()=>send({type:'agent_settled'}), 80); return;
+ case 'sent_ui_responses': return ok(allUiResponses);
  case 'extension_ui_response':
+  allUiResponses.push(r);
   if (askScenario && r.id === askScenario.requestId) {
    askResponses.push(r);
    if (r.cancelled) { finishAsk(); return; }
