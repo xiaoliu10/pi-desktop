@@ -77,3 +77,65 @@ export function openLinkMenu({ x, y, url, zh }: MenuOptions): void {
     window.removeEventListener('scroll', closeLinkMenu, true);
   };
 }
+
+interface FileMenuOptions {
+  x: number;
+  y: number;
+  /** file:// 链接解析出的本地绝对路径。 */
+  path: string;
+  zh: boolean;
+  /** 有预览通道时提供「在侧栏预览」（默认项）；无通道时（replica 单独渲染）不显示。 */
+  openInPreview?: ((path: string) => void) | undefined;
+}
+
+/**
+ * `file://` 交付链接的右键菜单：侧栏预览（默认）/ 用系统默认应用打开。
+ * 与 openLinkMenu 同一套浮层实现（点击外部 / Esc / 切视图统一关闭）。
+ */
+export function openFileLinkMenu({ x, y, path, zh, openInPreview }: FileMenuOptions): void {
+  closeLinkMenu();
+  const menu = document.createElement('div');
+  menu.className = 'pi-linkmenu';
+  menu.setAttribute('role', 'menu');
+
+  const mk = (label: string, action: () => void, primary: boolean) => {
+    const item = document.createElement('button');
+    item.type = 'button';
+    item.className = `pi-linkmenu__item${primary ? ' pi-linkmenu__item--primary' : ''}`;
+    item.setAttribute('role', 'menuitem');
+    item.textContent = label;
+    item.addEventListener('click', () => { closeLinkMenu(); action(); });
+    return item;
+  };
+
+  if (openInPreview) {
+    menu.appendChild(mk(zh ? '在侧栏预览' : 'Preview in sidebar', () => openInPreview(path), true));
+  }
+  menu.appendChild(mk(zh ? '用系统默认应用打开' : 'Open in default app', () => {
+    void (window as unknown as { localPi?: { openLocalFile(p: string): Promise<unknown> } })
+      .localPi?.openLocalFile(path).catch(() => undefined);
+  }, !openInPreview));
+  document.body.appendChild(menu);
+
+  const rect = menu.getBoundingClientRect();
+  menu.style.left = `${Math.max(8, Math.min(x, window.innerWidth - rect.width - 8))}px`;
+  menu.style.top = `${Math.max(8, Math.min(y, window.innerHeight - rect.height - 8))}px`;
+
+  closeTransientPopovers();
+
+  const onPointer = (event: MouseEvent) => { if (!menu.contains(event.target as Node)) closeLinkMenu(); };
+  const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') { event.stopPropagation(); closeLinkMenu(); } };
+  const offPopovers = onCloseTransientPopovers(closeLinkMenu);
+  window.addEventListener('mousedown', onPointer, true);
+  window.addEventListener('keydown', onKey, true);
+  window.addEventListener('resize', closeLinkMenu);
+  window.addEventListener('scroll', closeLinkMenu, true);
+  cleanup = () => {
+    menu.remove();
+    offPopovers();
+    window.removeEventListener('mousedown', onPointer, true);
+    window.removeEventListener('keydown', onKey, true);
+    window.removeEventListener('resize', closeLinkMenu);
+    window.removeEventListener('scroll', closeLinkMenu, true);
+  };
+}

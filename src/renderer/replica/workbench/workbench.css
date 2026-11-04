@@ -572,3 +572,16 @@
    预览只剩一条邮票高）。用 auto 基准 + min-height:0 撑满 body，并沿用 .pi-file-code 的
    max-height 约定。背景色只给「透明文档」兜底，深色主题下交付 HTML 通常自带背景。 */
 .pireplica .pi-workbench__htmlframe { flex: 1 1 auto; min-height: 420px; max-height: calc(100vh - 230px); width: 100%; border: 0; background: #fff; }
+
+/* ---- Markdown 交付文件预览（复用 .pi-md 排版，容器负责滚动）---- */
+.pi-workbench__mdframe {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 20px 24px 40px;
+}
+.pi-workbench__mdframe .pi-md {
+  max-width: 860px;
+  margin: 0 auto;
+  user-select: text;
+}

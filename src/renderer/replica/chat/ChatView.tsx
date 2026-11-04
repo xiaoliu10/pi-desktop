@@ -13,7 +13,7 @@ import { officialSubagentDetails, SubagentNavigation } from '../../pi/subagents'
 import { createContext, memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { requestOpenInBrowser } from '../workbench/browser-events';
-import { openLinkMenu } from './link-menu';
+import { openLinkMenu, openFileLinkMenu } from './link-menu';
 import { navigatePromptHistory } from '../prompt-history';
 import { registerComposerFlush } from '../../pi/adapter';
 import { onCloseTransientPopovers } from '../popovers';
@@ -51,6 +51,11 @@ import { remarkFileReferences } from './file-references';
 import { fileUrlToPath, markdownUrlTransform } from './file-url';
 
 const FilePreviewAvailable = createContext(false);
+/**
+ * `file://` 链接的侧栏预览通道（2026-11-04 用户要求：md 文档点击不应交给系统应用，
+ * 应在右侧工作台渲染并支持预览模式）。与工具卡文件名点击共用 ChatView.onOpenFile。
+ */
+const OpenFileInPreview = createContext<((path: string) => void) | undefined>(undefined);
 const remarkGfmPlugins = [remarkGfm];
 const remarkFilePlugins = [remarkGfm, remarkFileReferences];
 
@@ -90,8 +95,14 @@ function CodeBlockPre({ children, zh, node: _node, ...rest }: React.ComponentPro
 }
 
 /** 记忆化：文本不变时不重新解析 markdown（避免每次按键/流式更新都重解析全部消息）。 */
+/** 测试与复用入口：给 ChatMarkdown 注入侧栏预览通道（生产路径由 ChatView 统一提供）。 */
+export function MarkdownWithPreview({ text, zh, onOpenFile }: { text: string; zh?: boolean; onOpenFile: (path: string) => void }) {
+  return <OpenFileInPreview.Provider value={onOpenFile}><ChatMarkdown text={text} zh={zh} /></OpenFileInPreview.Provider>;
+}
+
 export const ChatMarkdown = memo(function ChatMarkdown({ text, zh }: { text: string; zh?: boolean }) {
   const filePreviewAvailable = useContext(FilePreviewAvailable);
+  const openFileInPreview = useContext(OpenFileInPreview);
   // pre 覆写在每次渲染按当前 zh 重建 components：语言切换时按钮文案随之变化。
   // a 覆写：GFM autolink 会把裸 URL 变成 <a href>（无链接样式时看起来像纯文本），
   // 点击默认触发主窗口顶层导航 → will-navigate 拦截后落到 about:blank#blocked →
@@ -107,10 +118,14 @@ export const ChatMarkdown = memo(function ChatMarkdown({ text, zh }: { text: str
         target="_blank"
         rel="noreferrer noopener"
         onContextMenu={(e) => {
-          // 可选入口：右键「用系统浏览器打开」。只对 http(s) 外链提供。
-          if (!href || !/^https?:\/\//.test(href)) return;
+          if (!href) return;
+          // http(s)：右键「用系统浏览器打开」。file://：右键「用系统默认应用打开」
+          // （侧栏预览之外的可选出口，2026-11-04 用户要求保留）。
           e.preventDefault();
-          openLinkMenu({ x: e.clientX, y: e.clientY, url: href, zh: Boolean(zh) });
+          if (/^https?:\/\//.test(href)) { openLinkMenu({ x: e.clientX, y: e.clientY, url: href, zh: Boolean(zh) }); return; }
+          const localPath = fileUrlToPath(href);
+          if (!localPath) return;
+          openFileLinkMenu({ x: e.clientX, y: e.clientY, path: localPath, zh: Boolean(zh), openInPreview: openFileInPreview });
         }}
         onClick={(e) => {
           if (!href) { e.preventDefault(); return; }
@@ -121,12 +136,15 @@ export const ChatMarkdown = memo(function ChatMarkdown({ text, zh }: { text: str
             if (!requestOpenInBrowser(href)) window.open(href, '_blank');
             return;
           }
-          // file:// 交付文件链接：主进程用系统默认应用打开文档、其他类型在 Finder 显示。
+          // file:// 交付文件链接：默认在右侧工作台打开预览（Markdown/HTML/文本/图片都支持，
+          // 2026-11-04 用户要求）。没有预览通道（无会话 cwd、replica 单独渲染）时才退回
+          // 主进程 openLocalFile —— 文档交给系统默认应用、其他类型在 Finder 显示。
           // 其余协议也必须 preventDefault——旧实现直接 return，默认 target=_blank 导航
           // 被主进程 setWindowOpenHandler deny，用户看到的是「有下划线却点了没反应」。
           e.preventDefault();
           const localPath = fileUrlToPath(href);
           if (!localPath) return;
+          if (openFileInPreview) { openFileInPreview(localPath); return; }
           const anchor = e.currentTarget;
           void window.localPi?.openLocalFile(localPath).catch(() => {
             // 文件已移动/不可访问时必须有可见反馈，不能再变回「点了没反应」的死链。
@@ -143,7 +161,7 @@ export const ChatMarkdown = memo(function ChatMarkdown({ text, zh }: { text: str
         {children}
       </a>
     ),
-  }), [zh]);
+  }), [zh, openFileInPreview]);
   const content = useMemo(() => <ReactMarkdown remarkPlugins={filePreviewAvailable ? remarkFilePlugins : remarkGfmPlugins} components={components} urlTransform={markdownUrlTransform}>{text}</ReactMarkdown>, [text, components, filePreviewAvailable]);
   return <div className="pi-md">{content}</div>;
 });
@@ -1035,6 +1053,7 @@ export const ChatView = memo(function ChatView(props: ChatViewProps) {
 
   return (
     <FilePreviewAvailable.Provider value={Boolean(props.onOpenFile)}>
+    <OpenFileInPreview.Provider value={props.onOpenFile}>
     <div className="pi-chat" onClick={event => {
       if (!(event.target instanceof Element)) return;
       const button = event.target.closest<HTMLButtonElement>('button[data-file-path]');
@@ -1120,6 +1139,7 @@ export const ChatView = memo(function ChatView(props: ChatViewProps) {
         </button>
       )}
     </div>
+    </OpenFileInPreview.Provider>
     </FilePreviewAvailable.Provider>
   );
 });

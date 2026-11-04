@@ -1,5 +1,6 @@
 import { FilePathMenu } from './FilePathMenu';
 import { FileCodeViewer } from './FileCodeViewer';
+import { ChatMarkdown } from '../chat/ChatView';
 /**
  * Workbench panel replica (U06): Review / Files / Browser tabs in a right
  * side panel. Review shows demo diffs, Files a demo file browser, Browser an
@@ -27,6 +28,8 @@ export function WorkbenchPanel(props: WorkbenchProps) {
   const [expanded, setExpanded] = useState<string | null>(props.selectedFile);
   // HTML 交付文件：默认渲染效果，可切源码；切换预览文件时回到渲染视图。
   const [htmlPreview, setHtmlPreview] = useState(true);
+  // Markdown 交付文件默认走渲染预览（用户 2026-11-04 要求）；切源码时复用语法高亮视图。
+  const [mdPreview, setMdPreview] = useState(true);
   // 图片灯箱：面板窄，点击放大到全屏（复用聊天的 pi-lightbox 样式，portal 到 body）。
   const [lightbox, setLightbox] = useState(false);
   // 「系统打开」失败反馈（路径被删/无权限）：按钮不能静默无反应。
@@ -44,6 +47,7 @@ export function WorkbenchPanel(props: WorkbenchProps) {
     lastFile.current = props.selectedFile;
     setExpanded(props.selectedFile);
     setHtmlPreview(true);
+    setMdPreview(true);
   }
   // 浏览器 tab 打开过一次后常挂载（display:none 隐藏），切换 tab / 收起面板都不销毁 webview。
   const browserStarted = useRef(false);
@@ -147,6 +151,27 @@ export function WorkbenchPanel(props: WorkbenchProps) {
                   ? <button type="button" className="pi-workbench__imgbtn" title="点击放大" onClick={() => setLightbox(true)}>
                       <img className="pi-workbench__img" src={`data:${props.image.mime};base64,${props.image.base64}`} alt={selected.path} />
                     </button>
+                  : /\.(md|markdown|mdx)$/i.test(selected.path) ? (() => {
+                      const content = selected.excerpt.join('\n');
+                      return (
+                        <>
+                          <div className="pi-workbench__filetoolbar pi-workbench__htmlbar">
+                            <div className="pi-workbench__htmlmodes" role="group" aria-label="Markdown 查看方式">
+                              <button type="button" className={`pi-workbench__htmlmode ${mdPreview ? 'is-active' : ''}`} aria-pressed={mdPreview} onClick={() => setMdPreview(true)}>预览</button>
+                              <button type="button" className={`pi-workbench__htmlmode ${!mdPreview ? 'is-active' : ''}`} aria-pressed={!mdPreview} onClick={() => setMdPreview(false)}>源码</button>
+                            </div>
+                            {openError && <span className="pi-workbench__htmlopenerr" role="alert">{openError}</span>}
+                            {canOpenLocalFile() && <button type="button" className="pi-workbench__htmlopen" title="用系统默认应用打开" onClick={() => { setOpenError(null); openLocalFileSafe(selected.path, setOpenError); }}>系统打开</button>}
+                          </div>
+                          {mdPreview
+                            // 复用 ChatMarkdown（与对话里同一渲染器、同一套 .pi-md 样式）：
+                            // 标题/表格/代码块/任务列表排版一致，不必维护第二套 Markdown 渲染。
+                            // 纯文档渲染不执行脚本，无 sandbox iframe 需求。
+                            ? <div className="pi-workbench__mdframe"><div className="pi-md"><ChatMarkdown text={content} /></div></div>
+                            : <FileCodeViewer path={selected.path} content={content} line={props.fileLine}/>}
+                        </>
+                      );
+                    })()
                   : /\.html?$/i.test(selected.path) ? (() => {
                       const content = selected.excerpt.join('\n');
                       return (

@@ -3,6 +3,20 @@
 所有重要变更记录在本文件。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 README 只保留最近版本摘要；本文件为完整记录。
 
+## [Unreleased]
+
+### English
+
+#### Fixed
+
+- **Markdown files open in the right-hand panel again, with a real preview**: clicking a delivered `.md` link used to hand the file to your default editor (Typora, VS Code, …) instead of showing it in the app. Markdown (`.md` / `.markdown` / `.mdx`) now renders in the Workbench with proper headings, tables and code blocks, and a "Preview / Source" toggle switches to the highlighted source view. "Open in default app" is still one right-click away. `file://` links in a conversation now default to this in-app preview too, falling back to the system app only when no preview is available — so a file link never becomes a dead link.
+
+### 中文
+
+#### 修复
+
+- **Markdown 文档重新在右侧面板显示，并且是真正的预览**：此前点击交付的 `.md` 链接会把文件交给系统默认编辑器（Typora、VS Code 等），而不是在应用内显示。现在 Markdown（`.md` / `.markdown` / `.mdx`）在工作台里渲染排版，标题、表格、代码块都是真实样式，顶部「预览 / 源码」可切到带语法高亮的源码视图。「用系统默认应用打开」仍可通过右键使用。对话里的 `file://` 链接也默认进这个应用内预览，只有无法预览时才退回系统应用——文件链接不会变成死链。
+
 ## [0.1.41] - 2026-11-03
 
 ### English
