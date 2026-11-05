@@ -51,7 +51,11 @@ function rpc(args, cwd, agent) {
 
 it.skipIf(fs.existsSync(legacyPlugin) || fs.existsSync(legacyHandoff))('real pi model tool calls deliver both ways through Desktop backend, queue while busy, dedupe and retire on reload/close', async () => {
   const version = spawnSync(process.execPath, [cli, '--version'], {env: cleanEnv({}), encoding: 'utf8'});
-  expect(version.status).toBe(0); expect(version.stdout.trim()).toBe('1.4.0');
+  // 断言「跑的是内置 runtime 的 pi 且版本自洽」，不写死具体版本——升级内置 pi 时
+  // 这条 E2E 不应因版本号变化而红（真实不兼容会由后续调用/断言暴露）。
+  expect(version.status).toBe(0);
+  const bundledPi = JSON.parse(fs.readFileSync(path.resolve('resources/pi-runtime/package.json'), 'utf8')).dependencies['@earendil-works/pi-coding-agent'];
+  expect(version.stdout.trim()).toBe(bundledPi);
   const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'handoff-e2e-')));
   const agent = path.join(tmp, 'agent'), a = path.join(tmp, 'project-a'), b = path.join(tmp, 'project-b');
   for (const dir of [agent, a, b]) fs.mkdirSync(dir);

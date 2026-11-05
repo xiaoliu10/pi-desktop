@@ -45,7 +45,7 @@ it('accepts pi 0.85.1 and 0.87.0 as supported, rejects 0.84.0',()=>{
   expect(piVersionSupported('0.84.0')).toBe(false);
   expect(piVersionSupported(null)).toBe(false);
 });
-it('accepts pi 0.99.x–1.4.x (native MCP era) and keeps 1.5.0 as the exclusive bound',()=>{
+it('accepts pi 0.99.x–1.5.x (native MCP era) and keeps 1.6.0 as the exclusive bound',()=>{
   expect(piVersionSupported('0.90.0')).toBe(true);
   expect(piVersionSupported('0.99.0')).toBe(true);
   expect(piVersionSupported('0.99.1')).toBe(true);
@@ -59,7 +59,10 @@ it('accepts pi 0.99.x–1.4.x (native MCP era) and keeps 1.5.0 as the exclusive 
   expect(piVersionSupported('1.3.5')).toBe(true);
   expect(piVersionSupported('1.4.0')).toBe(true);
   expect(piVersionSupported('1.4.1')).toBe(true);
-  expect(piVersionSupported('1.5.0')).toBe(false);
+  // 2026-11-05 内置 pi 升到 1.5.0，兼容上限同步放宽到 1.6.0（见 PI_MAX_TESTED）。
+  expect(piVersionSupported('1.5.0')).toBe(true);
+  expect(piVersionSupported('1.5.9')).toBe(true);
+  expect(piVersionSupported('1.6.0')).toBe(false);
   expect(piVersionSupported('2.0.0')).toBe(false);
   // Pin the exclusive-bound invariant itself, not just the literal: the bound must reject
   // its own value and accept the patch level just below it.

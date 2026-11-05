@@ -30,7 +30,7 @@ const PI_MIN_VERSION = '0.85.1';
  *  pnpm smoke:rpc 与 pnpm smoke:rpc-full 在内置 1.4.0 runtime 上全绿。
  *  **升级到新 pi 版本时必须同步**：跑 `pnpm smoke:rpc` + `pnpm smoke:rpc-full`（见
  *  docs/requirements.md R-model-01），两者都过再把这里 +1。 */
-export const PI_MAX_TESTED = '1.5.0';
+export const PI_MAX_TESTED = '1.6.0';
 
 /** pi ≥0.99 内置原生 MCP（builtin:mcp，读同一份 mcp.json）：desktop 的 mcp-bridge 必须
  *  让位，否则同一服务器双连接、工具双注册。backend 以 PI_DESKTOP_PI_VERSION 注入运行时版本。 */

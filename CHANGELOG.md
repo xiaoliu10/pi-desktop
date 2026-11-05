@@ -3,6 +3,24 @@
 所有重要变更记录在本文件。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 README 只保留最近版本摘要；本文件为完整记录。
 
+## [0.1.42] - 2026-11-05
+
+### English
+
+#### Changed
+
+- **Bundled pi upgraded to 1.5.0**: this release brings upstream's extension update changelogs (see what changed in your installed extensions on the next fresh launch), faster streaming for large tool calls and code-heavy answers, custom self-update commands (`PI_SELF_UPDATE_COMMAND`), and GPT-6.1 Terra support with a 500K Codex context window.
+
+  Upstream also changed how tool arguments are validated (now on `@earendil-works/pi-schema` instead of TypeBox). Desktop itself is unaffected — full test suite, RPC smoke against the bundled runtime, and the environment compatibility window all pass — but third-party extensions that rely on TypeBox-only features (such as `Type.Refine()`, `Type.BigInt()` or codecs) in their tool parameters may see validation changes after this update. The local-CLI compatibility window was widened to `[0.85.1, 1.6.0)` so a locally installed pi 1.5.x is accepted.
+
+### 中文
+
+#### 变更
+
+- **内置 pi 升级到 1.5.0**：本次带来上游的扩展更新日志（下次全新启动时可看到已装扩展改了什么）、大工具调用与代码密集回答的流式渲染加速、自定义自更新命令（`PI_SELF_UPDATE_COMMAND`），以及 GPT-6.1 Terra 支持（Codex 通道 500K 上下文）。
+
+  上游同时改了工具参数的校验方式（从 TypeBox 换成 `@earendil-works/pi-schema`）。Desktop 自身不受影响——全量测试、针对内置 runtime 的 RPC 冒烟、环境兼容窗口全部通过——但如果你装了依赖 TypeBox 专有特性（如 `Type.Refine()`、`Type.BigInt()`、codec）声明工具参数的第三方扩展，这次更新后可能看到校验行为变化。本机 CLI 兼容窗口已放宽到 `[0.85.1, 1.6.0)`，本机安装的 pi 1.5.x 现在也会被接受。
+
 ## [0.1.41] - 2026-11-03
 
 ### English
