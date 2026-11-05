@@ -13,7 +13,11 @@ module.exports = async context => {
   const src = path.join(context.packager.projectDir, 'resources/pi-runtime');
   const isWin = context.electronPlatformName === 'win32';
   const relCli = 'node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js';
-  const dest = path.join(context.appOutDir, context.packager.appInfo.productFilename + '.app', 'Contents', 'Resources', 'pi-runtime');
+  // mac：<app>.app/Contents/Resources/pi-runtime；win/linux：<out>/resources/pi-runtime
+  // （26.18 的 context.appOutDir 不含 .app 名；win/linux unpacked 目录 resources 为小写）
+  const dest = context.electronPlatformName === 'darwin'
+    ? path.join(context.appOutDir, context.packager.appInfo.productFilename + '.app', 'Contents', 'Resources', 'pi-runtime')
+    : path.join(context.appOutDir, 'resources', 'pi-runtime');
   if (!fs.existsSync(dest)) {
     console.log('[after-pack] ' + dest + ' 不存在，跳过（交由产物自检兜底）');
     return;

@@ -3,6 +3,20 @@
 所有重要变更记录在本文件。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 README 只保留最近版本摘要；本文件为完整记录。
 
+## [0.1.45] - 2026-11-05
+
+### English
+
+#### Fixed
+
+- **0.1.44's Windows installer was still missing the bundled pi runtime**: the packaging hooks placed the runtime at the macOS-only path (`<app>.app/Contents/Resources`), so the Windows NSIS installer — which packs from `win-unpacked/resources` — never saw it. The hooks now handle both layouts; this release's Windows installer was verified to contain the full bundled pi 1.5.0 runtime. 0.1.39–0.1.44 Windows installers are affected; mac installers from 0.1.44 onward are fine.
+
+### 中文
+
+#### 修复
+
+- **0.1.44 的 Windows 安装包仍然缺少内置 pi runtime**：打包 hook 把 runtime 放在了 macOS 专有路径（`<app>.app/Contents/Resources`），而 Windows NSIS 安装包从 `win-unpacked/resources` 取内容，从未看到它。hook 现在同时处理两种布局；本版本的 Windows 安装包已验证包含完整的内置 pi 1.5.0 runtime。0.1.39–0.1.44 的 Windows 安装包受影响；mac 安装包从 0.1.44 起已正常。
+
 ## [0.1.44] - 2026-11-05
 
 ### English

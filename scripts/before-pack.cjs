@@ -23,7 +23,11 @@ module.exports = async context => {
   }
   // 26.18 的 context.appOutDir 不含 .app 名（dist/mac-arm64），目标必须显式拼
   // <productName>.app/Contents/Resources；此时 electron 尚未解压，.app 目录由这里先建。
-  const dest = path.join(context.appOutDir, context.packager.appInfo.productFilename + '.app', 'Contents', 'Resources', 'pi-runtime');
+  // mac：<app>.app/Contents/Resources/pi-runtime；win/linux：<out>/resources/pi-runtime
+  // （26.18 的 context.appOutDir 不含 .app 名；win/linux unpacked 目录 resources 为小写）
+  const dest = context.electronPlatformName === 'darwin'
+    ? path.join(context.appOutDir, context.packager.appInfo.productFilename + '.app', 'Contents', 'Resources', 'pi-runtime')
+    : path.join(context.appOutDir, 'resources', 'pi-runtime');
   fs.rmSync(dest, { recursive: true, force: true });
   fs.cpSync(src, dest, { recursive: true });
   for (const file of checks) {
