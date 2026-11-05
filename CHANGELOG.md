@@ -3,6 +3,20 @@
 所有重要变更记录在本文件。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 README 只保留最近版本摘要；本文件为完整记录。
 
+## [0.1.44] - 2026-11-05
+
+### English
+
+#### Fixed
+
+- **0.1.43's installers were still missing the bundled pi runtime**: the first fix attempt appended a post-packaging sync step, but the mac zip/dmg and Windows installer are generated *inside* electron-builder — a step that runs afterwards can only repair the unpacked directory, not the installers. The runtime is now placed into the app before packaging (beforePack hook) and verified after it (afterPack hook), so the installer generation itself sees a complete runtime. This release's mac zip/dmg and Windows installer were verified to contain the full bundled pi 1.5.0 runtime. Versions 0.1.39–0.1.43 installers are affected and should not be used for fresh installs without a local pi CLI.
+
+### 中文
+
+#### 修复
+
+- **0.1.43 的安装包仍然缺少内置 pi runtime**：第一次修复在打包之后追加了同步步骤，但 mac zip/dmg 与 Windows 安装包是在 electron-builder **内部**生成的——之后跑的同步只能修复解包目录，救不了已封箱的安装包。现在改为：打包前（beforePack）把完整 runtime 预放进应用、打包收尾（afterPack）校验缺失即补齐，让安装包生成时看到的就是完整 runtime。本版本的 mac zip/dmg 与 Windows 安装包已验证包含完整的内置 pi 1.5.0 runtime。0.1.39–0.1.43 的安装包都有问题，本机没有 pi CLI 的全新安装请勿使用。
+
 ## [0.1.43] - 2026-11-05
 
 ### English
