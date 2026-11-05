@@ -1,7 +1,7 @@
 {
   "name": "pi-desktop",
   "productName": "PI Desktop",
-  "version": "0.1.42",
+  "version": "0.1.43",
   "description": "Local-first AI coding agent desktop: Electron host core + agent runtime + multi-provider models",
   "license": "Apache-2.0",
   "author": "xiaoliu10",
@@ -28,7 +28,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "smoke": "PI_SMOKE=1 electron .",
-    "dist": "pnpm runtime:prepare && pnpm build && electron-builder && node scripts/sync-release.mjs && node scripts/prune-dist.mjs",
+    "dist": "pnpm runtime:prepare && pnpm build && electron-builder && node scripts/sync-runtime.cjs dist && node scripts/sync-release.mjs && node scripts/prune-dist.mjs",
     "runtime:prepare": "node scripts/prepare-runtime.mjs",
     "smoke:rpc": "npx tsx tests/rpc-runtime-smoke.mjs",
     "smoke:csp-blob": "electron tests/csp-blob.electron.cjs",

@@ -3,6 +3,20 @@
 所有重要变更记录在本文件。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 README 只保留最近版本摘要；本文件为完整记录。
 
+## [0.1.43] - 2026-11-05
+
+### English
+
+#### Fixed
+
+- **Installers since 0.1.39 shipped without the bundled pi runtime**: a packaging regression introduced by the electron-builder 26.18 upgrade silently dropped the entire `pi-runtime/node_modules` directory from installers — the mac zip shrank from 228 MB to 124 MB and a bundled-pi launch failed with "runtime incomplete". Users who have a locally installed pi CLI never noticed, because Desktop prefers the local CLI when its version is supported; only fresh installs with no local pi were affected. 0.1.39–0.1.42 installers on the Releases page are affected; this release restores the runtime (the packaged app now self-checks the bundled pi after packing, and the packaging pipeline appends an explicit runtime sync step), so fresh installs get a working bundled pi again. If you installed 0.1.39–0.1.42 and pi fails to start inside Desktop, please update.
+
+### 中文
+
+#### 修复
+
+- **0.1.39 起的安装包没有内置 pi runtime**：electron-builder 升到 26.18 引入的打包回归，静默丢掉了整个 `pi-runtime/node_modules` 目录——mac zip 从 228 MB 缩到 124 MB，内置 pi 启动会报「运行时不完整」。本机装有 pi CLI 的用户不会察觉（Desktop 在版本兼容时优先用本机 CLI），只有全新安装、本机没有 pi 的用户受影响。Releases 页面上 0.1.39–0.1.42 的安装包都有此问题；本版本恢复了 runtime（打包后对内置 pi 做自检，打包流水线追加显式的 runtime 同步步骤），全新安装重新可用。如果你装的是 0.1.39–0.1.42 且 Desktop 里 pi 无法启动，请更新到本版本。
+
 ## [0.1.42] - 2026-11-05
 
 ### English

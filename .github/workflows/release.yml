@@ -59,7 +59,11 @@ jobs:
         if: runner.os == 'Windows'
 
       - name: Package
-        run: npx electron-builder ${{ matrix.targets }} --publish never
+        # electron-builder 26.18.0 的 extraResources 复制丢 node_modules（0.1.39-0.1.42
+        # Release 产物缺内置 runtime 的事故根因），打包后必须显式补齐并清理错误位置副本。
+        run: |
+          npx electron-builder ${{ matrix.targets }} --publish never
+          node scripts/sync-runtime.cjs dist
         env:
           npm_config_msvs_version: '2022'
           GYP_MSVS_VERSION: '2022'
