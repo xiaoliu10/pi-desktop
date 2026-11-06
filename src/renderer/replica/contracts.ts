@@ -509,7 +509,7 @@ export interface DemoFileDiff {
 // Workbench panel (U06)
 // ---------------------------------------------------------------------------
 
-export type WorkbenchTab = 'review' | 'files' | 'browser' | 'aux' | 'home';
+export type WorkbenchTab = 'review' | 'files' | 'browser' | 'aux' | 'meeting' | 'home';
 
 export interface DemoFileNode {
   path: string;
@@ -542,6 +542,8 @@ export interface WorkbenchProps {
    * no session is selected → the aux tab falls back to a hint empty state.
    */
   sidecarPanel?: ReactNode;
+  /** 会议录音插槽：打开过一次后 keep-alive，切 tab/收起不销毁 MediaRecorder。 */
+  meetingPanel?: ReactNode;
   onToggle: () => void;
   onSelectTab: (tab: WorkbenchTab) => void;
   onSelectFile: (path: string | null) => void;
@@ -576,11 +578,13 @@ export interface WorkbenchLabels {
   files: string;
   browser: string;
   auxiliary: string;
+  meeting: string;
   homeTitle: string;
   homeReview: string;
   homeFiles: string;
   homeBrowser: string;
   homeAuxiliary: string;
+  homeMeeting: string;
   close: string;
   emptyReview: string;
   emptyReviewHint: string;

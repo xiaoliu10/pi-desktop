@@ -54,6 +54,7 @@ import { SettingsPage } from '../replica/settings/SettingsPage';
 import { isDefaultModel } from '../replica/settings/helpers';
 import { WorkbenchPanel } from '../replica/workbench/WorkbenchPanel';
 import { BrowserPanel } from './BrowserPanel';
+import { MeetingPanel } from './MeetingPanel';
 import { setBrowserHost } from '../replica/workbench/browser-events';
 import { GlobalSearch, Notifications } from '../replica/overlays/Overlays';
 import type {
@@ -1140,6 +1141,7 @@ export default function PiReplicaApp() {
                 tab={s.workbenchTab}
                 // 不设 key：重挂载会销毁浏览器 webview；预览文件的展开重置由 WorkbenchPanel 内部比对 selectedFile 完成。
                 browserPanel={<BrowserPanel labels={t.browser} />}
+                meetingPanel={<MeetingPanel />}
                 sidecarPanel={s.selectedKey && s.view === 'chat'
                   ? <SidecarPanel key={`wb-${s.selectedKey}`} mainKey={s.selectedKey} autoStart={false} onClose={() => usePiStore.setState({ workbenchTab: 'home' })} />
                   : undefined}

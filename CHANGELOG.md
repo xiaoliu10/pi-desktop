@@ -3,6 +3,20 @@
 所有重要变更记录在本文件。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 README 只保留最近版本摘要；本文件为完整记录。
 
+## [Unreleased]
+
+### English
+
+#### Added
+
+- **Meeting recording mode**: a new "Meeting" tab in the work panel records the local microphone only, in 5-minute segments (8-hour session cap), with an explicit start button and a persistent recording badge. Segments are persisted before transcription; a main-process queue transcribes them through the configured voice model (2 concurrent, transient failures retried within a 120s budget, auth/format failures kept visible for manual retry). Coverage is tracked per segment, so missing or silent segments are shown instead of being silently folded into the minutes. Minutes are generated with map-reduce over segment IDs, require source anchors, leave unconfirmed owners as `null`, and can be exported as Markdown. The normal 5-minute voice input in the composer is unchanged.
+
+### 中文
+
+#### 新增
+
+- **会议录音模式**：工作面板新增「会议」页，只采集本机麦克风；显式点击开始，按 5 分钟分段（单次上限 8 小时），录音中显示常驻计时/状态徽标。分段先落盘再由主进程用已配置的语音模型转写（并发 2；临时错误按 120 秒预算重试，认证/格式失败保留并可手动重试）。逐段维护覆盖统计，缺失/静音段会明确展示，不会被悄悄混进纪要。纪要按 segmentIds 做 map-reduce，要求引用来源、无法确认的负责人写 `null`，并可导出 Markdown。输入框原有的 5 分钟语音不变。
+
 ## [0.1.45] - 2026-11-05
 
 ### English

@@ -58,6 +58,11 @@ export interface VoiceTranscribeResult {
   notice?: string;
 }
 
+/** meeting 队列可按音频长度放宽 timeout；普通输入框不传，行为不变。 */
+export interface VoiceTranscribeOptions {
+  timeoutMs?: number;
+}
+
 /** 单次录音的上限：本地缓冲后一次性上传，5 分钟 webm/opus 约 2-4 MiB。 */
 export const VOICE_MAX_RECORD_MS = 5 * 60_000;
 /** 上传音频大小硬上限（对齐 OpenAI 25 MB 的转写接口限制，留出表单开销）。 */

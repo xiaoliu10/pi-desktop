@@ -51,7 +51,10 @@ export function WorkbenchPanel(props: WorkbenchProps) {
   // 辅助对话插槽同款 keep-alive：对话状态（绑定/草稿/滚动）跨 tab 切换与面板收起保留。
   const auxStarted = useRef(false);
   if (props.open && props.tab === 'aux' && props.sidecarPanel) auxStarted.current = true;
-  if (!props.open && !browserStarted.current && !auxStarted.current) return null;
+  // 会议插槽同理：正在采集时切走/收起只隐藏，不重挂载 recorder。
+  const meetingStarted = useRef(false);
+  if (props.open && props.tab === 'meeting' && props.meetingPanel) meetingStarted.current = true;
+  if (!props.open && !browserStarted.current && !auxStarted.current && !meetingStarted.current) return null;
   const selected = props.files.find((f) => f.path === props.selectedFile) ?? null;
 
   return (
@@ -63,6 +66,7 @@ export function WorkbenchPanel(props: WorkbenchProps) {
             ['files', props.labels.files, 'folder'],
             ['browser', props.labels.browser, 'globe'],
             ['aux', props.labels.auxiliary, 'chat'],
+            ['meeting', props.labels.meeting, 'mic'],
           ] as const
         ).map(([tab, label, icon]) => (
           <button
@@ -81,8 +85,8 @@ export function WorkbenchPanel(props: WorkbenchProps) {
         </button>
       </header>
 
-      {props.tab === 'home' && <WorkbenchHome labels={props.labels} hasAuxiliary={Boolean(props.sidecarPanel)} onPick={props.onSelectTab} />}
-      <div className="pi-workbench__body" style={props.tab === 'browser' && props.browserPanel || props.tab === 'aux' && props.sidecarPanel || props.tab === 'home' ? { display: 'none' } : undefined}>
+      {props.tab === 'home' && <WorkbenchHome labels={props.labels} hasAuxiliary={Boolean(props.sidecarPanel)} hasMeeting={Boolean(props.meetingPanel)} onPick={props.onSelectTab} />}
+      <div className="pi-workbench__body" style={props.tab === 'browser' && props.browserPanel || props.tab === 'aux' && props.sidecarPanel || props.tab === 'meeting' && props.meetingPanel || props.tab === 'home' ? { display: 'none' } : undefined}>
         {props.note && <p className="pi-workbench__preview-note">{props.note}</p>}
         {props.tab === 'review' && (
           <>
@@ -194,6 +198,11 @@ export function WorkbenchPanel(props: WorkbenchProps) {
           {props.sidecarPanel}
         </div>
       )}
+      {meetingStarted.current && props.meetingPanel && (
+        <div className="pi-workbench__meetingslot" style={{ display: props.tab === 'meeting' ? 'flex' : 'none' }}>
+          {props.meetingPanel}
+        </div>
+      )}
       {lightbox && props.image && createPortal(
         <div className="pi-lightbox" role="dialog" aria-modal="true" aria-label={selected?.path} onClick={() => setLightbox(false)}>
           <div className="pi-lightbox__bar" onClick={e => e.stopPropagation()}>
@@ -208,9 +217,10 @@ export function WorkbenchPanel(props: WorkbenchProps) {
 }
 
 /** ZCode 式功能选择页：面板打开的默认落点，四张卡片进入各自 tab。 */
-function WorkbenchHome({ labels, hasAuxiliary, onPick }: {
+function WorkbenchHome({ labels, hasAuxiliary, hasMeeting, onPick }: {
   labels: WorkbenchProps['labels'];
   hasAuxiliary: boolean;
+  hasMeeting: boolean;
   onPick: (tab: WorkbenchTab) => void;
 }) {
   const cards = [
@@ -218,6 +228,7 @@ function WorkbenchHome({ labels, hasAuxiliary, onPick }: {
     { tab: 'files' as const, icon: 'folder' as const, title: labels.files, hint: labels.homeFiles },
     { tab: 'browser' as const, icon: 'globe' as const, title: labels.browser, hint: labels.homeBrowser },
     ...(hasAuxiliary ? [{ tab: 'aux' as const, icon: 'chat' as const, title: labels.auxiliary, hint: labels.homeAuxiliary }] : []),
+    ...(hasMeeting ? [{ tab: 'meeting' as const, icon: 'mic' as const, title: labels.meeting, hint: labels.homeMeeting }] : []),
   ];
   return <div className="pi-workbench__home" role="group" aria-label={labels.homeTitle}>
     <div className="pi-workbench__hometitle">{labels.homeTitle}</div>
