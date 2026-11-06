@@ -87,11 +87,25 @@ function parseMeeting(raw: string): MeetingInternal {
   return value;
 }
 
+/** IPC/事件只能拿可 structuredClone 的纯数据；timers/inflight 是调度私有。 */
+function snapshot(meeting: MeetingInternal): Meeting {
+  const copy = {
+    ...meeting,
+    segments: meeting.segments.map(segment => ({ ...segment })),
+    captureEpochs: meeting.captureEpochs.map(epoch => ({ ...epoch })),
+    coverage: { ...meeting.coverage },
+    minutes: { ...meeting.minutes },
+  } as Meeting & Partial<Pick<MeetingInternal, 'timers' | 'inflight'>>;
+  delete copy.timers;
+  delete copy.inflight;
+  return copy;
+}
+
 export class MeetingService {
   private index = new Map<string, MeetingInternal>();
   private indexLoaded = false;
   private queue = new Map<string, string[]>();
-  private active = new Map<string, number>();
+  private active = new Map<string, Set<string>>();
   /** transient 重试预算按整段累计：从第一次失败开始计时，不是每次失败重置。 */
   private retryStart = new Map<string, number>();
 
@@ -122,6 +136,24 @@ export class MeetingService {
       } catch { /* 损坏目录不影响应用启动与其他会议 */ }
     }
     this.indexLoaded = true;
+    this.recoverInterruptedMeetings();
+  }
+
+  /** 应用崩溃/重启后 recorder 已不存在：不能留下 recording/transcribing 假状态，也不能丢已落盘音频。 */
+  private recoverInterruptedMeetings(): void {
+    for (const meeting of this.index.values()) {
+      if (meeting.status !== 'recording' && meeting.status !== 'paused') continue;
+      meeting.status = 'processing';
+      const last = meeting.captureEpochs[meeting.captureEpochs.length - 1];
+      if (last && !last.endedAt) last.endedAt = nowIso();
+      meeting.captureEpochs.push({ epoch: meeting.captureEpochs.length + 1, startedAt: nowIso(), reason: 'error' });
+      for (const segment of meeting.segments) {
+        if (['queued', 'transcribing'].includes(segment.status)
+          || (segment.status === 'failed' && TRANSIENT.has(segment.failureKind))) this.enqueue(meeting.id, segment.id);
+      }
+      this.persist(meeting);
+      this.pump(meeting.id);
+    }
   }
 
   private persist(meeting: MeetingInternal): void {
@@ -132,10 +164,8 @@ export class MeetingService {
     const tmp = `${file}.${randomUUID()}.tmp`;
     fsSync.writeFileSync(tmp, JSON.stringify(meeting, null, 2) + '\n', { flag: 'wx', mode: 0o600 });
     fsSync.renameSync(tmp, file);
-    this.options.onChange?.(meeting);
+    this.options.onChange?.(snapshot(meeting));
   }
-
-  private broadcast(meeting: MeetingInternal): void { this.options.onChange?.(meeting); }
 
   private recomputeCoverage(meeting: MeetingInternal): void {
     const coverage: MeetingCoverage = { capturedMs: 0, transcribedMs: 0, emptyMs: 0, missingMs: 0 };
@@ -187,19 +217,19 @@ export class MeetingService {
     this.index.set(id, meeting);
     this.persist(meeting);
     this.options.power?.acquire?.();
-    return { ...meeting };
+    return snapshot(meeting);
   }
 
   list() {
     this.loadIndex();
-    return [...this.index.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    return [...this.index.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt)).map(snapshot);
   }
 
   get(id: string): Meeting {
     this.loadIndex();
     const meeting = this.index.get(id);
     if (!meeting) throw new Error('会议不存在');
-    return { ...meeting };
+    return snapshot(meeting);
   }
 
   private require(id: string): MeetingInternal {
@@ -259,6 +289,7 @@ export class MeetingService {
   }
 
   private enqueue(id: string, segmentId: string): void {
+    if (this.active.get(id)?.has(segmentId)) return;
     const queue = this.queue.get(id) ?? [];
     if (!queue.includes(segmentId)) queue.push(segmentId);
     this.queue.set(id, queue);
@@ -268,17 +299,19 @@ export class MeetingService {
   private pump(id: string): void {
     const meeting = this.require(id);
     const queue = this.queue.get(id) ?? [];
-    const active = this.active.get(id) ?? 0;
+    const activeSet = this.active.get(id) ?? new Set<string>();
+    const active = activeSet.size;
     if (!queue.length || active >= (this.options.concurrency ?? MEETING_CONCURRENCY)) {
-      if (!queue.length && !active && meeting.status === 'processing') this.finishProcessing(id);
+      if (!queue.length && !active && !(meeting.timers?.size) && meeting.status === 'processing') this.finishProcessing(id);
       return;
     }
     const segmentId = queue.shift()!;
     this.queue.set(id, queue);
-    this.active.set(id, active + 1);
+    activeSet.add(segmentId);
+    this.active.set(id, activeSet);
     const task = this.transcribeById(id, segmentId).finally(() => {
-      const current = (this.active.get(id) ?? 1) - 1;
-      if (current <= 0) this.active.delete(id); else this.active.set(id, current);
+      activeSet.delete(segmentId);
+      if (!activeSet.size) this.active.delete(id);
       if (meeting.timers?.size) return; // retry scheduled; pump again when timer fires
       this.pump(id);
     });
@@ -302,11 +335,25 @@ export class MeetingService {
     const segment = meeting.segments.find(s => s.id === segmentId);
     if (!segment || ['done', 'empty'].includes(segment.status)) return;
     const startedAt = Date.now();
+    const retryBudgetMs = this.options.retryBudgetMs ?? MEETING_RETRY_BUDGET_MS;
     if (!this.retryStart.has(segmentId)) this.retryStart.set(segmentId, startedAt);
-    const timeoutMs = Math.min(
+    const elapsedBeforeRequest = Date.now() - this.retryStart.get(segmentId)!;
+    if (elapsedBeforeRequest >= retryBudgetMs) {
+      segment.status = 'failed';
+      segment.failureKind = 'timeout';
+      segment.error = '转写重试预算已用尽';
+      this.retryStart.delete(segmentId);
+      this.setSegment(meeting, segment);
+      return;
+    }
+    const naturalTimeoutMs = Math.min(
       240_000,
       Math.max(60_000, 30_000 + ((segment.endOffsetMs - segment.startOffsetMs) / 1000) * 2000 + segment.bytes / (16 * 1024) * 1000),
     );
+    // 重试请求被预算截止；首次请求允许自然超时，失败后不再超过预算重试。
+    const timeoutMs = segment.attempt > 0
+      ? Math.max(1_000, Math.min(naturalTimeoutMs, retryBudgetMs - elapsedBeforeRequest))
+      : naturalTimeoutMs;
     segment.status = 'transcribing';
     segment.attempt += 1;
     segment.error = undefined;
@@ -349,7 +396,7 @@ export class MeetingService {
     meeting.captureEpochs.push({ epoch: meeting.captureEpochs.length + 1, startedAt: nowIso(), reason: 'pause' });
     this.persist(meeting);
     this.options.power?.release?.();
-    return { ...meeting };
+    return snapshot(meeting);
   }
 
   resume(id: string): Meeting {
@@ -359,7 +406,7 @@ export class MeetingService {
     meeting.captureEpochs.push({ epoch: meeting.captureEpochs.length + 1, startedAt: nowIso(), reason: 'resume' });
     this.persist(meeting);
     this.options.power?.acquire?.();
-    return { ...meeting };
+    return snapshot(meeting);
   }
 
   stop(id: string): Meeting {
@@ -370,13 +417,13 @@ export class MeetingService {
     if (lastEpoch && !lastEpoch.endedAt) lastEpoch.endedAt = nowIso();
     this.persist(meeting);
     this.options.power?.release?.();
-    const snapshot = { ...meeting, segments: meeting.segments.map(s => ({ ...s })) };
+    const snapshotValue = snapshot(meeting);
     // final pass：队列里的段会继续；failed 网络段也可在这个窗口做一次手动重试。
     for (const segment of meeting.segments) {
       if (segment.status === 'failed' && TRANSIENT.has(segment.failureKind)) this.enqueue(id, segment.id);
     }
     this.pump(id);
-    return snapshot;
+    return snapshotValue;
   }
 
   private finishProcessing(id: string): void {
@@ -394,9 +441,11 @@ export class MeetingService {
     const segment = meeting.segments.find(s => s.id === segmentId || s.clientSegmentId === segmentId);
     if (!segment) throw new Error('分段不存在');
     if (!fsSync.existsSync(segment.audioPath)) throw new Error('原始音频已删除，不能重试');
-    if (['done', 'empty'].includes(segment.status)) throw new Error('该分段已有转写结果');
+    if (this.active.get(id)?.has(segment.id)) throw new Error('分段正在转写，不能重复重试');
+    if ((this.queue.get(id) ?? []).includes(segment.id)) throw new Error('分段已排队，不能重复重试');
+    if (!['failed', 'missing'].includes(segment.status)) throw new Error('只有失败/缺失分段可以重试');
     this.enqueue(id, segment.id);
-    return { ...this.require(id) };
+    return snapshot(this.require(id));
   }
 
   delete(id: string): void {
@@ -409,10 +458,14 @@ export class MeetingService {
     fsSync.rmSync(path.join(this.root, id), { recursive: true, force: true });
   }
 
-  /** 测试/收尾用：等待当前 meeting 所有活动转写任务（含排队）完成。 */
-  waitForIdle(id: string): Promise<void> {
+  /** 测试/收尾用：等待当前 meeting 排队与活动转写任务结算。 */
+  async waitForIdle(id: string): Promise<void> {
     const meeting = this.require(id);
-    return Promise.all([...(meeting.inflight ?? [])]).then(() => new Promise(resolve => setTimeout(resolve, 0)));
+    while ((this.queue.get(id)?.length ?? 0) > 0 || (meeting.inflight?.size ?? 0) > 0) {
+      await Promise.all([...(meeting.inflight ?? [])]);
+      await new Promise(resolve => setTimeout(resolve, 0));
+    }
+    await new Promise(resolve => setTimeout(resolve, 0));
   }
 
   systemSuspend(): void {
@@ -446,6 +499,10 @@ export class MeetingService {
     const meeting = this.require(id);
     if (meeting.minutes.status === 'running') throw new Error('纪要正在生成');
     if (!['processing', 'ready', 'failed'].includes(meeting.status)) throw new Error('请先停止会议再生成纪要');
+    if ((this.queue.get(id)?.length ?? 0) > 0 || (this.active.get(id)?.size ?? 0) > 0
+      || meeting.segments.some(s => ['queued', 'transcribing'].includes(s.status))) {
+      throw new Error('还有分段正在转写，请等待全部结算后再生成纪要');
+    }
     if (typeof input.provider !== 'string' || !/^[a-z0-9][a-z0-9_-]*$/i.test(input.provider)) throw new Error('提供商无效');
     if (typeof input.model !== 'string' || !/^[A-Za-z0-9._:/-]{1,200}$/.test(input.model)) throw new Error('模型无效');
     if (!this.options.minutesCall) throw new Error('纪要模型不可用');
@@ -505,7 +562,7 @@ export class MeetingService {
         this.persist(current);
       }
     })();
-    return { ...this.require(id) };
+    return snapshot(this.require(id));
   }
 }
 

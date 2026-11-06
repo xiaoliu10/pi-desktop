@@ -12,7 +12,8 @@ const fs = require('node:fs');
 const { pathToFileURL } = require('node:url');
 let settled = false;
 let timer;
-function send(payload) { if (settled) return; settled = true; clearTimeout(timer); try { parentPort.postMessage(payload); } catch {} }
+let abortController;
+function send(payload) { if (settled) return; settled = true; clearTimeout(timer); abortController?.abort(); setTimeout(() => process.exit(0), 25).unref?.(); try { parentPort.postMessage(payload); } catch {} }
 function fail(message) { send({ ok: false, error: String(message || '纪要生成失败') }); }
 (async () => {
   const cli = workerData.cli;
@@ -27,7 +28,8 @@ function fail(message) { send({ ok: false, error: String(message || '纪要生�
   const model = runtime.getModel(workerData.provider, workerData.model);
   if (!model) throw new Error('模型 ' + workerData.provider + '/' + workerData.model + ' 不存在');
   const message = { role: 'user', content: [{ type: 'text', text: workerData.prompt }], timestamp: Date.now() };
-  const result = await runtime.completeSimple(model, { messages: [message] }, { maxTokens: 8192 });
+  abortController = new AbortController();
+  const result = await runtime.completeSimple(model, { messages: [message] }, { maxTokens: 8192, signal: abortController.signal });
   if (result.stopReason === 'error' || result.stopReason === 'aborted') throw new Error(result.errorMessage || '模型调用失败');
   const text = Array.isArray(result.content)
     ? result.content.filter(b => b && b.type === 'text').map(b => b.text || '').join('').trim()
@@ -59,7 +61,7 @@ export async function runMeetingLlm(input: MeetingLlmInput): Promise<string> {
       resourceLimits: { maxOldGenerationSizeMb: 768 },
     });
     let settled = false;
-    const finish = (fn: () => void) => { if (settled) return; settled = true; fn(); };
+    const finish = (fn: () => void) => { if (settled) return; settled = true; fn(); void worker.terminate().catch(() => undefined); };
     worker.once('message', (message: { ok?: boolean; text?: string; error?: string }) => {
       finish(() => {
         if (message?.ok && typeof message.text === 'string' && message.text.trim()) resolve(message.text.trim());

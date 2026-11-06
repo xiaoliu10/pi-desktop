@@ -22,6 +22,9 @@ interface ActiveSegment {
   stopping: boolean;
 }
 
+/** 每段的 WAV 转码 + IPC append 都要等完成；stop 不能越过旧段。 */
+type SegmentPersistence = Promise<void>;
+
 async function toWav16k(blob: Blob): Promise<Uint8Array | undefined> {
   const Ctx = (globalThis as { AudioContext?: typeof AudioContext }).AudioContext;
   if (!Ctx) return undefined;
@@ -74,6 +77,7 @@ export function MeetingPanel() {
   const startedAtRef = useRef(0);
   const desiredRecordingRef = useRef(false);
   const startingRef = useRef(false);
+  const pendingPersistenceRef = useRef(new Set<SegmentPersistence>());
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const updateMeeting = useCallback((next: Meeting) => {
@@ -132,7 +136,10 @@ export function MeetingPanel() {
     };
     activeRef.current = segment;
     recorder.ondataavailable = event => { if (event.data.size > 0) segment.chunks.push(event.data); };
-    recorder.onerror = () => setError('录音设备发生错误，当前分段会保留并停止后续采集');
+    recorder.onerror = () => {
+      setError('录音设备发生错误，已停止采集；已落盘分段会保留');
+      if (phaseRef.current === 'recording') void stop();
+    };
     recorder.onstop = () => {
       if (segment.stopping) return;
       segment.stopping = true;
@@ -141,25 +148,29 @@ export function MeetingPanel() {
         // 下一段立即启动，不等转写/上传，避免分段间隙。
         activeRef.current = null;
         if (desiredRecordingRef.current && meetingRef.current?.id === current.id) startSegment();
-        try {
-          const blob = new Blob(segment.chunks, { type: recorder.mimeType || 'audio/webm' });
-          const wav = await toWav16k(blob);
-          const bytes = wav ?? new Uint8Array(await blob.arrayBuffer());
-          const meta: Omit<MeetingSegmentInput, 'clientSegmentId'> = {
-            captureEpoch: captureEpochRef.current,
-            startOffsetMs: Math.floor(segment.startOffsetMs),
-            endOffsetMs: Math.floor(endOffsetMs),
-            wallStartedAt: segment.wallStartedAt,
-            wallEndedAt: new Date().toISOString(),
-            mime: wav ? 'audio/wav' : (recorder.mimeType || 'audio/webm'),
-          };
-          const ack = await api.meetingAppendSegment(current.id, segment.clientSegmentId, bytes, meta);
-          updateMeeting(ack.meeting);
-        } catch (e) {
-          setError(e instanceof Error ? e.message : String(e));
-        } finally {
-          segment.resolve();
-        }
+        const persistence = (async () => {
+          try {
+            const blob = new Blob(segment.chunks, { type: recorder.mimeType || 'audio/webm' });
+            const wav = await toWav16k(blob);
+            const bytes = wav ?? new Uint8Array(await blob.arrayBuffer());
+            const meta: Omit<MeetingSegmentInput, 'clientSegmentId'> = {
+              captureEpoch: captureEpochRef.current,
+              startOffsetMs: Math.floor(segment.startOffsetMs),
+              endOffsetMs: Math.floor(endOffsetMs),
+              wallStartedAt: segment.wallStartedAt,
+              wallEndedAt: new Date().toISOString(),
+              mime: wav ? 'audio/wav' : (recorder.mimeType || 'audio/webm'),
+            };
+            const ack = await api.meetingAppendSegment(current.id, segment.clientSegmentId, bytes, meta);
+            updateMeeting(ack.meeting);
+          } catch (e) {
+            setError(e instanceof Error ? e.message : String(e));
+          } finally {
+            segment.resolve();
+          }
+        })();
+        pendingPersistenceRef.current.add(persistence);
+        void persistence.finally(() => pendingPersistenceRef.current.delete(persistence));
       })();
     };
     // 不使用 timeslice 碎片：每段由一次完整 start/stop 生成独立可播放容器。
@@ -230,6 +241,8 @@ export function MeetingPanel() {
     desiredRecordingRef.current = false;
     const active = activeRef.current;
     if (active && active.recorder.state === 'recording') active.recorder.stop();
+    // 旧段的转码/append 可能还没结束；必须全部落盘后再 meetingStop，否则会被主进程拒绝。
+    await Promise.allSettled([...pendingPersistenceRef.current]);
     await active?.done;
   };
 
@@ -296,7 +309,24 @@ export function MeetingPanel() {
     } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
   };
 
+  const deleteMeeting = async (id: string) => {
+    if (typeof api.meetingDelete !== 'function') return;
+    if (meetingRef.current?.id === id && (desiredRecordingRef.current || phaseRef.current !== 'idle')) {
+      setError('录音中的会议不能删除，请先停止');
+      return;
+    }
+    try {
+      await api.meetingDelete(id);
+      if (meetingRef.current?.id === id) { meetingRef.current = null; setMeeting(null); setMinutesText(''); }
+      await refreshHistory();
+    } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+  };
+
   const openMeeting = async (id: string) => {
+    if (desiredRecordingRef.current || phaseRef.current !== 'idle') {
+      setError('录音中不能切换会议；请先停止，避免麦克风和分段丢失');
+      return;
+    }
     try {
       const found = await api.meetingGet(id);
       updateMeeting(found);
@@ -334,7 +364,7 @@ export function MeetingPanel() {
             <span>转写模型</span>
             <strong>{activeModel?.name || '未配置'}</strong>
           </div>
-          <div className="meeting-privacy">开始即表示你已获得参会者同意。录音和转写保存在本机应用数据目录；单次最长 8 小时。</div>
+          <div className="meeting-privacy">录音分段会上传到你配置的语音模型提供商；纪要会调用你选择的模型提供商。原始音频、转写和纪要保存在本机应用数据目录；单次最长 8 小时。开始即表示你已获得参会者同意。</div>
           <button className="meeting-primary" onClick={() => void start()} disabled={busy}>
             {phase === 'requesting' ? '正在请求麦克风…' : '开始录音'}
           </button>
@@ -352,7 +382,7 @@ export function MeetingPanel() {
             {phase === 'recording' && <button onClick={() => void pause()}>暂停</button>}
             {phase === 'paused' && <button onClick={() => void resume()}>继续录音</button>}
             {(phase === 'recording' || phase === 'paused') && <button className="meeting-danger" onClick={() => void stop()}>停止并生成纪要</button>}
-            {phase === 'stopping' && <span>正在保存最后一段…</span>}
+            {phase === 'stopping' && <span>正在保存全部分段…</span>}
           </div>
         </div>
       )}
@@ -401,9 +431,12 @@ export function MeetingPanel() {
         <section className="meeting-section meeting-history">
           <div className="meeting-section-title"><h3>最近会议</h3></div>
           {history.slice(0, 6).map(item => (
-            <button key={item.id} className={meeting?.id === item.id ? 'is-active' : ''} onClick={() => void openMeeting(item.id)}>
-              <span>{item.title}</span><small>{new Date(item.createdAt).toLocaleString()}</small>
-            </button>
+            <div key={item.id} className={`meeting-history-row ${meeting?.id === item.id ? 'is-active' : ''}`}>
+              <button onClick={() => void openMeeting(item.id)}>
+                <span>{item.title}</span><small>{new Date(item.createdAt).toLocaleString()}</small>
+              </button>
+              <button aria-label={`删除 ${item.title}`} title="删除音频、转写与纪要" onClick={() => void deleteMeeting(item.id)}>删除</button>
+            </div>
           ))}
         </section>
       )}

@@ -22,26 +22,45 @@ export function chunkTranscript(
   const usable = segments
     .filter(s => s.status === 'done' && typeof s.text === 'string' && s.text.trim())
     .sort((a, b) => a.index - b.index);
-  const chunks: MeetingTranscriptChunk[] = [];
-  let current: MeetingTranscriptChunk | undefined;
+  const chunks: Array<MeetingTranscriptChunk & { pieces: Array<{ id: string; text: string }> }> = [];
+  type Draft = MeetingTranscriptChunk & { pieces: Array<{ id: string; text: string }> };
+  let current: Draft | undefined;
 
-  const push = (text: string, segmentIds: string[], start: number, end: number) => {
+  const overlapSource = (draft: Draft): { text: string; ids: string[] } => {
+    const pieces = draft.pieces.slice().reverse();
+    const ids: string[] = [];
+    const parts: string[] = [];
+    let remaining = overlapChars;
+    for (const piece of pieces) {
+      if (remaining <= 0) break;
+      const length = piece.text.length + (parts.length ? 2 : 0);
+      parts.unshift(piece.text);
+      if (!ids.includes(piece.id)) ids.push(piece.id);
+      remaining -= length;
+    }
+    return { text: parts.join('\n\n').slice(-overlapChars), ids };
+  };
+
+  const push = (text: string, segmentIds: string[], start: number, end: number, reuseOverlapIds = false) => {
     const clean = text.trim();
     if (!clean) return;
     if (current && current.text.length + clean.length + 2 <= maxChars) {
       current.text += '\n\n' + clean;
+      current.pieces.push({ id: segmentIds[0]!, text: clean });
       for (const id of segmentIds) if (!current.segmentIds.includes(id)) current.segmentIds.push(id);
       current.startOffsetMs = Math.min(current.startOffsetMs, start);
       current.endOffsetMs = Math.max(current.endOffsetMs, end);
       return;
     }
     if (current) chunks.push(current);
+    const attribution = reuseOverlapIds && current ? [...new Set([...overlapSource(current).ids, ...segmentIds])] : segmentIds;
     current = {
       index: chunks.length,
       text: clean,
-      segmentIds: [...segmentIds],
+      segmentIds: [...attribution],
       startOffsetMs: start,
       endOffsetMs: end,
+      pieces: [{ id: segmentIds[0]!, text: clean }],
     };
   };
 
@@ -50,7 +69,7 @@ export function chunkTranscript(
     if (text.length <= maxChars) {
       const tail = current?.text.slice(-overlapChars) ?? '';
       const candidate = tail ? `${tail}\n\n${text}` : text;
-      push(candidate, [segment.id], segment.startOffsetMs, segment.endOffsetMs);
+      push(candidate, [segment.id], segment.startOffsetMs, segment.endOffsetMs, Boolean(tail));
       continue;
     }
     // 超大段按 maxChars-overlap 步进拆，每片前带 overlap；所有片共享段 ID。
@@ -65,7 +84,7 @@ export function chunkTranscript(
     }
   }
   if (current) chunks.push(current);
-  return chunks.map((chunk, index) => ({ ...chunk, index }));
+  return chunks.map(({ pieces: _pieces, ...chunk }, index) => ({ ...chunk, index }));
 }
 
 export function buildMapPrompt(chunk: MeetingTranscriptChunk): string {

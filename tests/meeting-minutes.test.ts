@@ -31,7 +31,7 @@ describe('meeting minutes chunking', () => {
     ], 200, 20);
     expect(chunks).toHaveLength(2);
     expect(chunks[0].segmentIds).toEqual(['seg-1']);
-    expect(chunks[1].segmentIds).toEqual(['seg-2']);
+    expect(chunks[1].segmentIds).toEqual(['seg-1', 'seg-2']);
     expect(chunks.reduce((n, c) => n + c.text.length, 0)).toBeGreaterThanOrEqual(240);
   });
 

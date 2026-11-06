@@ -15,7 +15,7 @@ async (page) => {
     const root = createRoot(document.getElementById('root'));
 
     // Tiny controllable MediaRecorder: every recorder auto-finishes after one tick.
-    window.calls = { media: 0, recorders: 0, appended: [], stop: 0, released: 0 };
+    window.calls = { media: 0, recorders: 0, appended: [], started: [], stop: 0, stopAfterAppends: null, released: 0 };
     window.MediaRecorder = class {
       static isTypeSupported() { return true; }
       constructor(stream) { this.stream = stream; this.state = 'inactive'; this.mimeType = 'audio/webm'; window.calls.recorders++; window.recorder = this; }
@@ -44,11 +44,14 @@ async (page) => {
       voiceConfig: async () => ({ activeId: 'asr', models: [{ id: 'asr', ready: true }] }),
       meetingCreate: async input => ({ ...baseMeeting, title: input.title }),
       meetingAppendSegment: async (id, clientSegmentId, bytes, meta) => {
+        window.calls.started.push(clientSegmentId);
+        // 第一段持久化慢、最后一段快：stop 必须等慢段，否则会被主进程拒绝。
+        await new Promise(resolve => setTimeout(resolve, clientSegmentId.includes('-client-2-') ? 0 : 5000));
         window.calls.appended.push({ id, clientSegmentId, bytes: bytes.length, meta });
         const index = window.calls.appended.length;
         return { meeting: meetingWith(index), segment: segment(index), duplicated: false };
       },
-      meetingStop: async id => { window.calls.stop++; return { ...meetingWith(window.calls.appended.length), status: 'processing' }; },
+      meetingStop: async id => { window.calls.stop++; window.calls.stopAfterAppends = window.calls.appended.length; return { ...meetingWith(window.calls.appended.length), status: 'processing' }; },
       meetingGet: async id => meetingWith(window.calls.appended.length),
       meetingGenerateMinutes: async (id, input) => ({ ...meetingWith(window.calls.appended.length), status: 'ready', minutes: { status: 'done', provider: input.provider, model: input.model, path: '/minutes.md', mappedChunks: 1, completedChunks: 1 } }),
     };
@@ -73,17 +76,22 @@ async (page) => {
   await start.click();
   await page.evaluate(() => window.stage = 'started');
   await page.getByText('00:00', { exact: false }).waitFor();
-  await page.waitForFunction(() => window.calls.appended.length >= 1 && window.calls.appended[0].clientSegmentId.includes('-client-1-'));
+  await page.waitForFunction(() => window.calls.started.length >= 1 && window.calls.recorders >= 2);
+  // 同步点击：第一段还在 persistence，第二段更快；验证 stop 不会越过旧段。
+  await page.evaluate(() => document.querySelector('.meeting-danger').click());
+  await page.waitForFunction(() => window.calls.stop === 1);
+  await page.waitForFunction(() => (
+    window.calls.appended.length >= 2
+    && window.calls.appended.length === window.calls.stopAfterAppends
+    && window.calls.released >= 1
+  ));
+  await page.evaluate(() => window.stage = 'final-segment-saved');
+  assert(await page.evaluate(() => window.calls.appended[0].meta.mime === 'audio/wav'), 'segment is normalized to wav');
   await page.getByText('分段1内容').waitFor();
   await page.evaluate(() => window.stage = 'transcript-visible');
-  assert(await page.evaluate(() => window.calls.appended[0].meta.mime === 'audio/wav'), 'segment is normalized to wav');
-  const beforeSegments = await page.evaluate(() => window.calls.appended.length);
-  await page.getByRole('button', { name: '停止并生成纪要', exact: true }).click();
-  await page.waitForFunction(n => window.calls.appended.length >= n + 1 && window.calls.released >= 1, beforeSegments);
-  await page.evaluate(() => window.stage = 'final-segment-saved');
   await page.getByText('正在整理', { exact: true }).waitFor();
   await page.evaluate(() => window.stage = 'stopped');
-  assert(await page.evaluate(() => window.calls.stop === 1), 'stop IPC called once');
+  assert(await page.evaluate(() => window.calls.stopAfterAppends === window.calls.appended.length), 'stop waits for every pending segment before meetingStop');
 
   // A second explicit click does not restart the same recording after stop.
   const recorderCount = await page.evaluate(() => window.calls.recorders);

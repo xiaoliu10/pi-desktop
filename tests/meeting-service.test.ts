@@ -122,7 +122,7 @@ describe('MeetingService', () => {
     expect(updated.status).toBe('recording');
   });
 
-  it('停止进入 processing；missing 段保留音频并可手动重试', async () => {
+  it('停止进入 processing；终态 missing 段保留音频并可手动重试', async () => {
     const meeting = new MeetingService(() => root, {
       transcribe: async () => {
         const error = new Error('network down') as Error & { kind: 'network' };
@@ -130,13 +130,20 @@ describe('MeetingService', () => {
         throw error;
       },
       retryDelayMs: 1,
+      retryBudgetMs: 20,
     });
     const created = meeting.create({});
     await meeting.appendSegment(created.id, wavLike('offline'), segmentInput({ clientSegmentId: 'offline' }));
     await meeting.waitForIdle(created.id);
     const stopped = meeting.stop(created.id);
     expect(stopped.status).toBe('processing');
-    const retrying = meeting.retrySegment(created.id, stopped.segments[0].id);
+    expect(fs.existsSync(stopped.segments[0].audioPath)).toBe(true);
+    for (let i = 0; i < 200 && meeting.get(created.id).segments[0].status !== 'missing'; i++) {
+      await new Promise(resolve => setTimeout(resolve, 5));
+    }
+    const final = meeting.get(created.id);
+    expect(final.segments[0].status).toBe('missing');
+    const retrying = meeting.retrySegment(created.id, final.segments[0].id);
     expect(retrying.segments[0].status).toBe('transcribing');
     expect(fs.existsSync(retrying.segments[0].audioPath)).toBe(true);
   });
@@ -180,6 +187,100 @@ describe('MeetingService', () => {
     expect(calls[1].prompt).toContain('纪要会议');
     expect(fs.readFileSync(path.join(root, 'meetings', created.id, 'minutes', 'map-0001.md'), 'utf8')).toContain('owner: null');
     expect(fs.readFileSync(path.join(root, 'meetings', created.id, 'minutes', 'minutes.md'), 'utf8')).toContain('# 纪要');
+  });
+
+  it('IPC 返回与事件快照可 structuredClone，不携带内部 Promise/Timer', async () => {
+    let release: ((text: string) => void) | undefined;
+    const gate = new Promise<string>(resolve => { release = resolve; });
+    let emitted: unknown;
+    const meeting = new MeetingService(() => root, {
+      transcribe: async () => gate,
+      retryDelayMs: 1,
+      onChange: value => { emitted = value; },
+    });
+    const created = meeting.create({});
+    await meeting.appendSegment(created.id, wavLike('clone'), segmentInput({ clientSegmentId: 'cloneable' }));
+    expect(() => structuredClone(meeting.get(created.id))).not.toThrow();
+    expect(() => structuredClone(emitted)).not.toThrow();
+    expect(JSON.stringify(emitted)).not.toContain('inflight');
+    release?.('ok');
+    await meeting.waitForIdle(created.id);
+  });
+
+  it('应用重启后把残留 recording/transcribing 恢复为 processing 并重排队列', async () => {
+    let release: ((text: string) => void) | undefined;
+    const gate = new Promise<string>(resolve => { release = resolve; });
+    const first = new MeetingService(() => root, { transcribe: async () => gate, retryDelayMs: 1 });
+    const created = first.create({ title: '重启' });
+    await first.appendSegment(created.id, wavLike('recover'), segmentInput({ clientSegmentId: 'restart-seg' }));
+    const resumed = new MeetingService(() => root, { transcribe: async () => '恢复转写', retryDelayMs: 1 });
+    const loaded = resumed.get(created.id);
+    expect(loaded.status).toBe('processing');
+    await resumed.waitForIdle(created.id);
+    for (let i = 0; i < 50 && resumed.get(created.id).status !== 'ready'; i++) {
+      await new Promise(resolve => setTimeout(resolve, 5));
+    }
+    expect(resumed.get(created.id)).toMatchObject({ status: 'ready' });
+    expect(resumed.get(created.id).segments[0]).toMatchObject({ status: 'done', text: '恢复转写' });
+    release?.('旧任务不再等待');
+  });
+
+  it('仍有分段转写中时拒绝生成纪要；全部结算后才生成', async () => {
+    const calls: Array<{ phase: string }> = [];
+    let release: ((text: string) => void) | undefined;
+    const gate = new Promise<string>(resolve => { release = resolve; });
+    let attempts = 0;
+    const meeting = new MeetingService(() => root, {
+      transcribe: async () => {
+        attempts++;
+        return attempts === 1 ? gate : 'b'.repeat(23_000);
+      },
+      retryDelayMs: 1,
+      minutesCall: async input => { calls.push({ phase: input.phase }); return 'minutes'; },
+    });
+    const created = meeting.create({ title: '活动纪要' });
+    await meeting.appendSegment(created.id, wavLike('one'), segmentInput({ clientSegmentId: 'active-minutes-1' }));
+    await meeting.appendSegment(created.id, wavLike('two'), segmentInput({ clientSegmentId: 'active-minutes-2', startOffsetMs: 300_000, endOffsetMs: 600_000 }));
+    meeting.stop(created.id);
+    expect(() => meeting.startMinutes(created.id, { provider: 'openai', model: 'gpt-test' })).toThrow(/转写/);
+    release?.('a'.repeat(23_000));
+    await meeting.waitForIdle(created.id);
+    for (let i = 0; i < 50 && meeting.get(created.id).status !== 'ready'; i++) await new Promise(resolve => setTimeout(resolve, 5));
+    meeting.startMinutes(created.id, { provider: 'openai', model: 'gpt-test' });
+    for (let i = 0; i < 100 && meeting.get(created.id).minutes.status !== 'done'; i++) await new Promise(resolve => setTimeout(resolve, 5));
+    expect(calls.map(c => c.phase)).toEqual(['map', 'map', 'reduce']);
+  });
+
+  it('active/queued 分段不能并发手动重试', async () => {
+    let release: ((text: string) => void) | undefined;
+    const gate = new Promise<string>(resolve => { release = resolve; });
+    let attempts = 0;
+    const meeting = new MeetingService(() => root, {
+      transcribe: async () => { attempts++; return gate; }, retryDelayMs: 1,
+    });
+    const created = meeting.create({});
+    const ack = await meeting.appendSegment(created.id, wavLike('busy'), segmentInput({ clientSegmentId: 'busy-retry' }));
+    expect(() => meeting.retrySegment(created.id, ack.segment.id)).toThrow(/正在转写/);
+    release?.('only once');
+    await meeting.waitForIdle(created.id);
+    expect(attempts).toBe(1);
+    expect(meeting.get(created.id).segments[0].status).toBe('done');
+  });
+
+  it('重试预算过期后不再发起新一次转写请求', async () => {
+    let attempts = 0;
+    const meeting = new MeetingService(() => root, {
+      transcribe: async () => { attempts++; const error = new Error('network down') as Error & { kind: 'network' }; error.kind = 'network'; throw error; },
+      retryDelayMs: 40,
+      retryBudgetMs: 20,
+    });
+    const created = meeting.create({});
+    await meeting.appendSegment(created.id, wavLike('budget'), segmentInput({ clientSegmentId: 'budget-seg' }));
+    await meeting.waitForIdle(created.id);
+    await new Promise(resolve => setTimeout(resolve, 80));
+    await meeting.waitForIdle(created.id);
+    expect(attempts).toBe(1);
+    expect(meeting.get(created.id).segments[0]).toMatchObject({ status: 'failed', failureKind: 'timeout' });
   });
 
   it('classifySegmentFailure 区分 transient 与 terminal', () => {
