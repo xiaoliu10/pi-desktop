@@ -19,8 +19,7 @@ module.exports = async context => {
     ? path.join(context.appOutDir, context.packager.appInfo.productFilename + '.app', 'Contents', 'Resources', 'pi-runtime')
     : path.join(context.appOutDir, 'resources', 'pi-runtime');
   if (!fs.existsSync(dest)) {
-    console.log('[after-pack] ' + dest + ' 不存在，跳过（交由产物自检兜底）');
-    return;
+    throw new Error('[after-pack] runtime 打包目标不存在：' + dest);
   }
   if (fs.existsSync(path.join(dest, relCli))) {
     console.log('[after-pack] 内置 pi runtime 完整，无需补齐');

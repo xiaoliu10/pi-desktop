@@ -9,13 +9,13 @@ README 只保留最近版本摘要；本文件为完整记录。
 
 #### Fixed
 
-- **0.1.44's Windows installer was still missing the bundled pi runtime**: the packaging hooks placed the runtime at the macOS-only path (`<app>.app/Contents/Resources`), so the Windows NSIS installer — which packs from `win-unpacked/resources` — never saw it. The hooks now handle both layouts; this release's Windows installer was verified to contain the full bundled pi 1.5.0 runtime. 0.1.39–0.1.44 Windows installers are affected; mac installers from 0.1.44 onward are fine.
+- **0.1.44's Windows installer was still missing the bundled pi runtime**: the packaging hooks placed the runtime at the macOS-only path (`<app>.app/Contents/Resources`), so the Windows NSIS installer — which packs from `win-unpacked/resources` — never saw it. The hooks now handle both layouts; the Windows CI log recorded runtime restoration before installer generation; installer extraction and installed startup remain unverified. 0.1.39–0.1.44 Windows installers are affected; mac installers from 0.1.44 onward are fine.
 
 ### 中文
 
 #### 修复
 
-- **0.1.44 的 Windows 安装包仍然缺少内置 pi runtime**：打包 hook 把 runtime 放在了 macOS 专有路径（`<app>.app/Contents/Resources`），而 Windows NSIS 安装包从 `win-unpacked/resources` 取内容，从未看到它。hook 现在同时处理两种布局；本版本的 Windows 安装包已验证包含完整的内置 pi 1.5.0 runtime。0.1.39–0.1.44 的 Windows 安装包受影响；mac 安装包从 0.1.44 起已正常。
+- **0.1.44 的 Windows 安装包仍然缺少内置 pi runtime**：打包 hook 把 runtime 放在了 macOS 专有路径（`<app>.app/Contents/Resources`），而 Windows NSIS 安装包从 `win-unpacked/resources` 取内容，从未看到它。hook 现在同时处理两种布局；Windows CI 记录到封装前恢复 runtime；安装包解包与安装后启动尚未验证。0.1.39–0.1.44 的 Windows 安装包受影响；mac 安装包从 0.1.44 起已正常。
 
 ## [0.1.44] - 2026-11-05
 
@@ -23,13 +23,13 @@ README 只保留最近版本摘要；本文件为完整记录。
 
 #### Fixed
 
-- **0.1.43's installers were still missing the bundled pi runtime**: the first fix attempt appended a post-packaging sync step, but the mac zip/dmg and Windows installer are generated *inside* electron-builder — a step that runs afterwards can only repair the unpacked directory, not the installers. The runtime is now placed into the app before packaging (beforePack hook) and verified after it (afterPack hook), so the installer generation itself sees a complete runtime. This release's mac zip/dmg and Windows installer were verified to contain the full bundled pi 1.5.0 runtime. Versions 0.1.39–0.1.43 installers are affected and should not be used for fresh installs without a local pi CLI.
+- **0.1.43's installers were still missing the bundled pi runtime**: the first fix attempt appended a post-packaging sync step, but the mac zip/dmg and Windows installer are generated *inside* electron-builder — a step that runs afterwards can only repair the unpacked directory, not the installers. The runtime is now placed into the app before packaging (beforePack hook) and verified after it (afterPack hook), so the installer generation itself sees a complete runtime. Local macOS packaging verified the runtime; Windows CI recorded restoration before installer generation, but installer extraction and installed startup remain unverified. Versions 0.1.39–0.1.43 installers are affected and should not be used for fresh installs without a local pi CLI.
 
 ### 中文
 
 #### 修复
 
-- **0.1.43 的安装包仍然缺少内置 pi runtime**：第一次修复在打包之后追加了同步步骤，但 mac zip/dmg 与 Windows 安装包是在 electron-builder **内部**生成的——之后跑的同步只能修复解包目录，救不了已封箱的安装包。现在改为：打包前（beforePack）把完整 runtime 预放进应用、打包收尾（afterPack）校验缺失即补齐，让安装包生成时看到的就是完整 runtime。本版本的 mac zip/dmg 与 Windows 安装包已验证包含完整的内置 pi 1.5.0 runtime。0.1.39–0.1.43 的安装包都有问题，本机没有 pi CLI 的全新安装请勿使用。
+- **0.1.43 的安装包仍然缺少内置 pi runtime**：第一次修复在打包之后追加了同步步骤，但 mac zip/dmg 与 Windows 安装包是在 electron-builder **内部**生成的——之后跑的同步只能修复解包目录，救不了已封箱的安装包。现在改为：打包前（beforePack）把完整 runtime 预放进应用、打包收尾（afterPack）校验缺失即补齐，让安装包生成时看到的就是完整 runtime。本地 macOS 打包验证了 runtime；Windows CI 记录到封装前恢复 runtime，但安装包解包与安装后启动尚未验证。0.1.39–0.1.43 的安装包都有问题，本机没有 pi CLI 的全新安装请勿使用。
 
 ## [0.1.43] - 2026-11-05
 
