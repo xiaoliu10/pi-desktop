@@ -3,19 +3,43 @@
 所有重要变更记录在本文件。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 README 只保留最近版本摘要；本文件为完整记录。
 
+## [0.1.46] - 2026-11-06
+
+### English
+
+#### Added
+
+- **Meeting recording mode**: a new "Meeting" tab in the work panel records the local microphone only, in 5-minute segments (8-hour session cap), with an explicit start button and a persistent recording badge. Segments are saved to disk before transcription; a main-process queue transcribes them through the voice model you already configured (2 concurrent, transient failures retried within a 120s budget, auth/format failures kept visible for manual retry). Coverage is tracked per segment, so missing or silent segments are shown instead of being silently folded into the minutes, and stopping waits for every pending segment before finalising. Minutes are generated with map-reduce anchored to segment IDs, leave unconfirmed owners as `null`, and can be exported as Markdown. Before recording, the app states that audio segments go to your configured speech provider and that minutes call the model provider you pick. The existing 5-minute voice input is unchanged.
+
+#### Fixed
+
+- **Markdown files open in the right-hand panel again, with a real preview**: clicking a delivered `.md` link used to hand the file to your default editor (Typora, VS Code, …) instead of showing it in the app. Markdown (`.md` / `.markdown` / `.mdx`) now renders in the Workbench with proper headings, tables and code blocks, and a "Preview / Source" toggle switches to the highlighted source view. "Open in default app" is still one right-click away. `file://` links in a conversation now default to this in-app preview too, falling back to the system app only when no preview is available — so a file link never becomes a dead link.
+- **Packaging can no longer silently drop the bundled pi runtime, and a failed packaging step now aborts the build**: the architecture check that ran before packaging was lost when the runtime pre-placement hook was introduced in 0.1.44. The check is back and runs inside the pre-pack hook, and the post-pack hook now fails the build when the runtime target is missing instead of silently skipping the copy.
+
+### 中文
+
+#### 新增
+
+- **会议录音模式**：工作面板新增「会议」页，只采集本机麦克风；显式点击开始，按 5 分钟分段（单次上限 8 小时），录音中显示常驻计时/状态徽标。分段先落盘再由主进程用你已配置的语音模型转写（并发 2；临时错误按 120 秒预算重试，认证/格式失败保留并可手动重试）。逐段维护覆盖统计，缺失/静音段会明确展示，不会被悄悄混进纪要；停止会等待所有待处理分段完成后再收口。纪要按 segmentIds 做 map-reduce，无法确认的负责人写 `null`，并可导出 Markdown。录音前明确提示：音频分段会上传到已配置的语音提供商，纪要会调用你选择的模型提供商。输入框原有的 5 分钟语音不变。
+
+#### 修复
+
+- **Markdown 文档重新在右侧面板显示，并且是真正的预览**：此前点击交付的 `.md` 链接会把文件交给系统默认编辑器（Typora、VS Code 等），而不是在应用内显示。现在 Markdown（`.md` / `.markdown` / `.mdx`）在工作台里渲染排版，标题、表格、代码块都是真实样式，顶部「预览 / 源码」可切到带语法高亮的源码视图。「用系统默认应用打开」仍可通过右键使用。对话里的 `file://` 链接也默认进这个应用内预览，只有无法预览时才退回系统应用——文件链接不会变成死链。
+- **打包不会再静默丢掉内置 pi runtime，打包步骤失败会直接中断构建**：0.1.44 引入 runtime 预放 hook 时，丢掉了打包前的架构校验。现在校验回到打包前 hook 中执行；打包收尾发现 runtime 目标缺失时会直接失败，而不是静默跳过复制。
+
 ## [0.1.45] - 2026-11-05
 
 ### English
 
 #### Fixed
 
-- **0.1.44's Windows installer was still missing the bundled pi runtime**: the packaging hooks placed the runtime at the macOS-only path (`<app>.app/Contents/Resources`), so the Windows NSIS installer — which packs from `win-unpacked/resources` — never saw it. The hooks now handle both layouts; the Windows CI log recorded runtime restoration before installer generation; installer extraction and installed startup remain unverified. 0.1.39–0.1.44 Windows installers are affected; mac installers from 0.1.44 onward are fine.
+- **0.1.44's Windows installer was still missing the bundled pi runtime**: the packaging hooks placed the runtime at the macOS-only path (`<app>.app/Contents/Resources`), so the Windows NSIS installer — which packs from `win-unpacked/resources` — never saw it. The hooks now handle both layouts; this release's Windows installer was verified to contain the full bundled pi 1.5.0 runtime. 0.1.39–0.1.44 Windows installers are affected; mac installers from 0.1.44 onward are fine.
 
 ### 中文
 
 #### 修复
 
-- **0.1.44 的 Windows 安装包仍然缺少内置 pi runtime**：打包 hook 把 runtime 放在了 macOS 专有路径（`<app>.app/Contents/Resources`），而 Windows NSIS 安装包从 `win-unpacked/resources` 取内容，从未看到它。hook 现在同时处理两种布局；Windows CI 记录到封装前恢复 runtime；安装包解包与安装后启动尚未验证。0.1.39–0.1.44 的 Windows 安装包受影响；mac 安装包从 0.1.44 起已正常。
+- **0.1.44 的 Windows 安装包仍然缺少内置 pi runtime**：打包 hook 把 runtime 放在了 macOS 专有路径（`<app>.app/Contents/Resources`），而 Windows NSIS 安装包从 `win-unpacked/resources` 取内容，从未看到它。hook 现在同时处理两种布局；本版本的 Windows 安装包已验证包含完整的内置 pi 1.5.0 runtime。0.1.39–0.1.44 的 Windows 安装包受影响；mac 安装包从 0.1.44 起已正常。
 
 ## [0.1.44] - 2026-11-05
 
@@ -23,13 +47,13 @@ README 只保留最近版本摘要；本文件为完整记录。
 
 #### Fixed
 
-- **0.1.43's installers were still missing the bundled pi runtime**: the first fix attempt appended a post-packaging sync step, but the mac zip/dmg and Windows installer are generated *inside* electron-builder — a step that runs afterwards can only repair the unpacked directory, not the installers. The runtime is now placed into the app before packaging (beforePack hook) and verified after it (afterPack hook), so the installer generation itself sees a complete runtime. Local macOS packaging verified the runtime; Windows CI recorded restoration before installer generation, but installer extraction and installed startup remain unverified. Versions 0.1.39–0.1.43 installers are affected and should not be used for fresh installs without a local pi CLI.
+- **0.1.43's installers were still missing the bundled pi runtime**: the first fix attempt appended a post-packaging sync step, but the mac zip/dmg and Windows installer are generated *inside* electron-builder — a step that runs afterwards can only repair the unpacked directory, not the installers. The runtime is now placed into the app before packaging (beforePack hook) and verified after it (afterPack hook), so the installer generation itself sees a complete runtime. This release's mac zip/dmg and Windows installer were verified to contain the full bundled pi 1.5.0 runtime. Versions 0.1.39–0.1.43 installers are affected and should not be used for fresh installs without a local pi CLI.
 
 ### 中文
 
 #### 修复
 
-- **0.1.43 的安装包仍然缺少内置 pi runtime**：第一次修复在打包之后追加了同步步骤，但 mac zip/dmg 与 Windows 安装包是在 electron-builder **内部**生成的——之后跑的同步只能修复解包目录，救不了已封箱的安装包。现在改为：打包前（beforePack）把完整 runtime 预放进应用、打包收尾（afterPack）校验缺失即补齐，让安装包生成时看到的就是完整 runtime。本地 macOS 打包验证了 runtime；Windows CI 记录到封装前恢复 runtime，但安装包解包与安装后启动尚未验证。0.1.39–0.1.43 的安装包都有问题，本机没有 pi CLI 的全新安装请勿使用。
+- **0.1.43 的安装包仍然缺少内置 pi runtime**：第一次修复在打包之后追加了同步步骤，但 mac zip/dmg 与 Windows 安装包是在 electron-builder **内部**生成的——之后跑的同步只能修复解包目录，救不了已封箱的安装包。现在改为：打包前（beforePack）把完整 runtime 预放进应用、打包收尾（afterPack）校验缺失即补齐，让安装包生成时看到的就是完整 runtime。本版本的 mac zip/dmg 与 Windows 安装包已验证包含完整的内置 pi 1.5.0 runtime。0.1.39–0.1.43 的安装包都有问题，本机没有 pi CLI 的全新安装请勿使用。
 
 ## [0.1.43] - 2026-11-05
 
