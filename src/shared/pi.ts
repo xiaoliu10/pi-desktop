@@ -131,6 +131,20 @@ export interface LocalPiApi extends importSettingsApi {
   voiceRemoveModel(id: string): Promise<import('./voice').VoiceConfig>;
   voiceSetActive(id: string): Promise<import('./voice').VoiceConfig>;
   voiceTranscribe(bytes: Uint8Array, mime: string): Promise<import('./voice').VoiceTranscribeResult>;
+  /** 会议录音：renderer 采集分段，main 持久化/ASR 队列/纪要。 */
+  meetingList(): Promise<import('./meeting').MeetingSummary[]>;
+  meetingCreate(input: { title?: string }): Promise<import('./meeting').Meeting>;
+  meetingGet(id: string): Promise<import('./meeting').Meeting>;
+  meetingPause(id: string): Promise<import('./meeting').Meeting>;
+  meetingResume(id: string): Promise<import('./meeting').Meeting>;
+  meetingStop(id: string): Promise<import('./meeting').Meeting>;
+  meetingAppendSegment(id: string, clientSegmentId: string, bytes: Uint8Array, meta: Omit<import('./meeting').MeetingSegmentInput, 'clientSegmentId'>): Promise<import('./meeting').MeetingSegmentAck>;
+  meetingRetrySegment(id: string, segmentId: string): Promise<import('./meeting').Meeting>;
+  meetingGenerateMinutes(id: string, input: import('./meeting').MeetingMinutesInput): Promise<import('./meeting').Meeting>;
+  meetingMinutesText(id: string): Promise<string | null>;
+  meetingExport(id: string): Promise<import('./meeting').MeetingExportResult | null>;
+  meetingDelete(id: string): Promise<void>;
+  onMeetingChanged(listener: (meeting: import('./meeting').Meeting) => void): () => void;
   projectFiles(cwd: string): Promise<string[]>;
   projectContext(cwd: string, relative: string): Promise<ContextItem>;
   importAttachments(files: AttachmentInput[]): Promise<ContextItem[]>;

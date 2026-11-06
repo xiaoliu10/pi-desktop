@@ -952,7 +952,7 @@ export interface PiReplicaState {
   paths: { runtime: 'auto' | 'bundled' | 'system' | 'custom'; executable: string; agentDir: string; sessionDirs: string };
 
   workbenchOpen: boolean;
-  workbenchTab: 'review' | 'files' | 'browser' | 'aux' | 'home';
+  workbenchTab: 'review' | 'files' | 'browser' | 'aux' | 'meeting' | 'home';
   review?: PiReview;
   reviewLoading: boolean;
 
@@ -1040,7 +1040,7 @@ export interface PiReplicaActions {
   setFontScale: (n: number) => void;
   setFont: (f: string) => void;
   toggleWorkbench: () => void;
-  selectWorkbenchTab: (tab: 'review' | 'files' | 'browser' | 'aux' | 'home') => void;
+  selectWorkbenchTab: (tab: 'review' | 'files' | 'browser' | 'aux' | 'meeting' | 'home') => void;
   setSearchOpen: (open: boolean) => void;
   jumpToMessage: (entryId: string) => void;
   setSessionMapOpen: (open: boolean) => void;

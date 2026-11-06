@@ -26,13 +26,15 @@ import { autoDeleteArchivedKeys, deleteArchivedSession } from './pi/auto-delete'
 import { projectFiles, projectContext, readContext, projectBranch, skillChoices } from './pi/composer-service';
 import { createIpcHandle, type IpcEntryEvent } from './ipc-entry';
 import { isAccessMode } from '../shared/access-mode';
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, shell } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, shell, powerMonitor, powerSaveBlocker } from 'electron';
 import path from 'node:path';
 import nodePath from 'node:path';
 import nodeOs from 'node:os';
 import { spawn } from 'node:child_process';
 import { SettingsService } from './pi/settings-service';
 import { VoiceService } from './pi/voice-service';
+import { MeetingService } from './pi/meeting-service';
+import { runMeetingLlm } from './pi/meeting-llm';
 import { PiHost } from './pi/host';
 import { RemoteServer } from './pi/remote-server';
 import { HISTORY_PAGE_SIZE } from './pi/history-window';
@@ -98,6 +100,8 @@ let archive: SessionArchive;
 let automations: AutomationService | undefined;
 let terminals: TerminalService;
 let voice: VoiceService;
+let meetings: MeetingService;
+let meetingPowerBlocker: number | null = null;
 // Dock 角标：后台任务完成时显示累计数字（ZCode 式提示），用户回到窗口自动清零。
 const dockBadge = createDockBadge(text => {
   try { app.setBadgeCount(text ? Number(text) : 0); } catch { /* 未 ready 或平台不支持时忽略 */ }
@@ -487,6 +491,29 @@ function registerIpc() {
   handle('composerSkills', cwd => skillChoices(settings.resources(cwd)));
   // 语音输入：ASR 模型列表（密钥只留主进程）+ 云端转写。
   voice = new VoiceService(() => app.getPath('userData'));
+  meetings = new MeetingService(() => app.getPath('userData'), {
+    transcribe: (bytes, mime, options) => voice.transcribe(bytes, mime, options),
+    onChange: meeting => { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('local-pi:meeting-changed', meeting); },
+    power: {
+      acquire: () => {
+        if (meetingPowerBlocker === null || !powerSaveBlocker.isStarted(meetingPowerBlocker)) {
+          meetingPowerBlocker = powerSaveBlocker.start('prevent-app-suspension');
+        }
+      },
+      release: () => {
+        if (meetingPowerBlocker !== null && powerSaveBlocker.isStarted(meetingPowerBlocker)) powerSaveBlocker.stop(meetingPowerBlocker);
+        meetingPowerBlocker = null;
+      },
+    },
+    minutesCall: async input => {
+      const runtime = host.environment;
+      let cli = runtime.launchArgs?.[0] || runtime.executable || '';
+      try { cli = fsSync.realpathSync(cli); } catch { /* 保持原路径，worker 会给出明确错误 */ }
+      return await runMeetingLlm({ ...input, cli, agentDir: runtime.agentDir });
+    },
+  });
+  powerMonitor.on('suspend', () => meetings.systemSuspend());
+  powerMonitor.on('resume', () => meetings.systemResume());
   handle('voiceConfig', () => voice.config());
   handle('voiceSaveModel', input => voice.saveModel(input ?? {}));
   handle('voiceRemoveModel', id => voice.removeModel(String(id)));
@@ -496,6 +523,30 @@ function registerIpc() {
     if (typeof mime !== 'string' || mime.length > 100) throw new Error('音频类型无效');
     return voice.transcribe(bytes, mime);
   });
+  handle('meetingList', () => meetings.list());
+  handle('meetingCreate', (input: { title?: string }) => meetings.create(input || {}));
+  handle('meetingGet', (id: string) => meetings.get(id));
+  handle('meetingPause', (id: string) => meetings.pause(id));
+  handle('meetingResume', (id: string) => meetings.resume(id));
+  handle('meetingStop', (id: string) => meetings.stop(id));
+  handle('meetingAppendSegment', async (id: string, clientSegmentId: string, bytes: Uint8Array, meta: Record<string, unknown>) =>
+    await meetings.appendSegment(id, bytes, { ...meta, clientSegmentId } as import('../shared/meeting').MeetingSegmentInput));
+  handle('meetingRetrySegment', (id: string, segmentId: string) => meetings.retrySegment(id, segmentId));
+  handle('meetingGenerateMinutes', (id: string, input: import('../shared/meeting').MeetingMinutesInput) => meetings.startMinutes(id, input));
+  handle('meetingMinutesText', async (id: string) => {
+    const file = meetings.get(id).minutes.path;
+    if (!file || !fsSync.existsSync(file)) return null;
+    return await fs.readFile(file, 'utf8');
+  });
+  handle('meetingExport', async (id: string) => {
+    const file = meetings.get(id).minutes.path;
+    if (!file || !fsSync.existsSync(file)) return null;
+    const picked = await dialog.showSaveDialog(mainWindow!, { title: '导出会议纪要', defaultPath: `${meetings.get(id).title.replace(/[\\/:*?"<>|]/g, '-')}.md`, filters: [{ name: 'Markdown', extensions: ['md'] }] });
+    if (picked.canceled || !picked.filePath) return null;
+    await fs.copyFile(file, picked.filePath);
+    return { path: picked.filePath };
+  });
+  handle('meetingDelete', (id: string) => meetings.delete(id));
   handle('projectFiles', cwd => projectFiles(cwd));
   handle('projectContext', (cwd, relative) => projectContext(cwd, relative));
   handle('projectBranch', cwd => projectBranch(cwd));
@@ -896,6 +947,7 @@ void app.whenReady().then(async () => {
 });
 app.on('before-quit', () => {
   automations?.dispose();
+  meetings?.dispose();
   host?.dispose();
   terminals?.dispose();
   updateChecker?.dispose();

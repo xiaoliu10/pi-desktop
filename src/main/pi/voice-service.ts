@@ -173,7 +173,7 @@ export class VoiceService {
    * style=chat（MiMo 等）：POST {base}/chat/completions，input_audio 走 base64 data URL，
    * 文本取 choices[0].message.content；style=transcriptions（默认）：POST {base}/audio/transcriptions。
    */
-  async transcribe(bytes: Uint8Array, mime: string): Promise<VoiceTranscribeResult> {
+  async transcribe(bytes: Uint8Array, mime: string, options?: import('../../shared/voice').VoiceTranscribeOptions): Promise<VoiceTranscribeResult> {
     const active = this.activeStored();
     if (!active) throw new Error('尚未配置 ASR 模型，请到设置 → 语音输入至少添加一个模型');
     const cfg = this.viewModel(active);
@@ -185,7 +185,9 @@ export class VoiceService {
     const base = cfg.endpoint.replace(/\/+$/, '');
     const cleanMime = (mime || 'audio/wav').split(';')[0].trim().toLowerCase();
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), TRANSCRIBE_TIMEOUT_MS);
+    const timeoutMs = Number.isFinite(options?.timeoutMs) && (options?.timeoutMs ?? 0) > 0
+      ? Math.min(600_000, Math.floor(options!.timeoutMs!)) : TRANSCRIBE_TIMEOUT_MS;
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
     const redact = (message: string) => message.split(apiKey).join('[REDACTED]');
     let fallbackStatus: number | undefined;
     let chatStatus: number | undefined;

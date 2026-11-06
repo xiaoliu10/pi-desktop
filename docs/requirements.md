@@ -525,6 +525,30 @@
 
 ---
 
+## 会议域（meeting）
+
+### R-meeting-01　会议录音分段持久化，缺段不被伪装成完整纪要
+
+**需求**：工作台新增「会议」tab，用户显式点击开始后只采集本机麦克风；renderer 按“完整 MediaRecorder 生命周期”切段（默认 5 分钟，上限 5 分 20 秒，总上限 8 小时），每段先落盘再交给主进程 ASR 队列（并发 2）。主进程维护 manifest/覆盖统计；纪要只能由已转写段生成，failed/missing 段在“待澄清”中明示，不臆测内容。普通输入框 5 分钟语音不变。
+
+**验收**：
+- `clientSegmentId` 幂等：重复 ACK 不重复落盘、不重复转写；音频先写盘再进入队列。
+- IPC/事件快照可 structuredClone：`timers`/`inflight` 是调度私有，不出主进程边界。
+- 应用重启后残留 recording/paused 与 queued/transcribing 恢复为 processing 并从已落盘音频重排队列；recorder 不复活，用户重开新会议。
+- ASR 错误分 transient（network/rate_limited/timeout/provider，120s 时间预算重试）与 terminal（auth/bad_request/too_large，不自动重试）；终态 failed 保留音频，可手动重试。
+- 覆盖口径：done 计 transcribed，empty 计 empty，failed/missing 计 missing；停止后队列耗尽才 ready；pending retry timer 存在时不提前 ready。
+- UI 停止必须等全部 pending persistence（WAV 转码 + append）完成再 meetingStop；录音中禁止切换/删除会议，设备错误 fail-closed 停止采集。
+- 录音开始前必须披露音频会上传到已配置 ASR 提供商、纪要会调用模型提供商；本机存储提供删除入口。
+- 纪要 map-reduce 按 segmentIds 分块，map/reduce prompt 要求引用来源；owner 无法确认时为 null；最终 Markdown 可导出。
+- 工作台会议 tab 打开后 keep-alive：切 tab/收起面板不停止采集；停止后不再生成 recorder；浏览器 mock 回归验证分段 WAV 上传与停止。
+- 回归：`tests/meeting-service.test.ts`（落盘/幂等/重试/覆盖/纪要/IPC 可序列化/重启恢复）、`tests/meeting-minutes.test.ts`（分块/prompt/overlap 来源）、`tests/meeting-panel.browser.cjs`（真实浏览器 mock 采集/慢段停止 drain/入口）。
+
+**状态**：已实现（PR 待发版）；真实 ASR/纪要模型需要用户配置后手工验证。
+
+**回归触发**：改 `meeting-service.ts` 状态机/覆盖口径、`meeting-minutes.ts` 分块/prompt、`MeetingPanel.tsx` 采集生命周期、`shared/meeting.ts` 契约、`voice-service.ts` 转写超时。
+
+---
+
 ## 升级回归总表
 
 升级 pi / pi-subagents / CCR / Electron 前，按下表核对相关需求：
@@ -537,5 +561,6 @@
 | CCR | R-model-02, R-model-03 | provider 生命周期、思考等级字段 |
 | Electron | 全部渲染/IO 需求 | 进程模型、IPC 行为 |
 | Electron / 改 CSP | R-render-02, R-render-01 | webSecurity 与 img-src 处理变化（blob URL 图片会静默裂图） |
+| Electron / 改 getUserMedia/权限 | R-meeting-01 | MediaRecorder、麦克风权限与 keep-alive 插槽行为 |
 
 **升级前必做**：读本文 → 对照"上游依赖"列出的 issue 状态 → 若上游已发新版，先在本机隔离测相关需求 → 通过才合并到 Desktop。
