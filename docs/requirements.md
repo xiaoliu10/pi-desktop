@@ -543,7 +543,7 @@
 - 工作台会议 tab 打开后 keep-alive：切 tab/收起面板不停止采集；停止后不再生成 recorder；浏览器 mock 回归验证分段 WAV 上传与停止。
 - 回归：`tests/meeting-service.test.ts`（落盘/幂等/重试/覆盖/纪要/IPC 可序列化/重启恢复）、`tests/meeting-minutes.test.ts`（分块/prompt/overlap 来源）、`tests/meeting-panel.browser.cjs`（真实浏览器 mock 采集/慢段停止 drain/入口）。
 
-**状态**：已实现（PR 待发版）；真实 ASR/纪要模型需要用户配置后手工验证。
+**状态**：已随 v0.1.46 发版（PR #191）；真实 ASR/纪要模型、真机 sleep/wake 仍需用户配置后手工验证。
 
 **回归触发**：改 `meeting-service.ts` 状态机/覆盖口径、`meeting-minutes.ts` 分块/prompt、`MeetingPanel.tsx` 采集生命周期、`shared/meeting.ts` 契约、`voice-service.ts` 转写超时。
 
