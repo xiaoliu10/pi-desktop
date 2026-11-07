@@ -523,6 +523,19 @@
 
 **回归触发**：改 `tunnel-client.ts` 帧协议、`tunnel-service.ts` 存储结构（keyEncrypted 语义）、`pi-tunnel-relay` 契约（路由/token 形状）；改 `remote-server.ts` 的 `lanEndpoint`。
 
+### R-remote-03　移动端项目列表：有运行中任务的项目置顶
+
+**需求**：远控页项目卡片列表不能只按最近更新时间排序。任一会话 `running`/`starting` 的项目必须置顶（live 内部仍按最近更新排序），其余项目保持原口径；SSE run 状态变化后列表实时重排，状态徽标/高亮逻辑不变。
+
+**验收**：
+- 更新的空闲项目不能压过正在运行的项目；`starting` 与 `running` 同等置顶。
+- SSE 从 idle→running 后无需手动刷新即重排；回到 idle 后按最近更新时间归位。
+- 回归：`tests/remote-projects-live-order.browser.cjs`（真实浏览器加载 `viewerPage()` fixture，mock transport，断言初始置顶 + SSE 实时重排 + live 徽标）；`tests/remote-server.test.ts` fixture 字节一致性守卫（改坏即红）。
+
+**状态**：已实现，真实浏览器红→绿验证通过，待发版验收。
+
+**回归触发**：改 `remote-server.ts` 内嵌 viewer 的 `projects()`/`renderProjects()`/SSE `run` 事件处理；改 run status 枚举或 live 口径（`running`/`starting`）时必须同步此处。
+
 ---
 
 ## 会议域（meeting）

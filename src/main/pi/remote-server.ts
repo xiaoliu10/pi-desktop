@@ -696,7 +696,11 @@ function projects() {
     g.sessions.push(s);
     g.latest = Math.max(g.latest, s.updatedAt || 0);
   }
-  return [...map.values()].sort((a, b) => b.latest - a.latest);
+  const live = g => g.sessions.some(s => { const r = runs.get(s.key); return r && (r.status === 'running' || r.status === 'starting'); });
+  // 运行中的项目必须置顶；live 内部和非 live 内部仍按最近更新排序，SSE 更新后重排。
+  return [...map.values()]
+    .map(g => ({ ...g, live: live(g) }))
+    .sort((a, b) => (b.live - a.live) || (b.latest - a.latest));
 }
 let stateLoaded = false;
 function renderProjects() {
@@ -712,7 +716,7 @@ function renderProjects() {
   const visible = groups.filter(g => !q || g.name.toLowerCase().includes(q) || g.cwd.toLowerCase().includes(q) || g.sessions.some(s => (s.name || '').toLowerCase().includes(q)));
   if (!visible.length) { list.innerHTML = '<div class="empty">没有匹配的项目</div>'; return; }
   list.innerHTML = visible.map(g => {
-    const live = g.sessions.some(s => { const r = runs.get(s.key); return r && (r.status === 'running' || r.status === 'starting'); });
+    const live = g.live;
     const keys = new Set(g.sessions.map(x => x.key));
     const pending = [...dialogs.values()].filter(d => keys.has(d.key)).length;
     return '<div class="proj' + (live ? ' go-live' : '') + '" data-open="' + encodeURIComponent(g.cwd) + '">'

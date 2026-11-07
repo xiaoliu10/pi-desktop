@@ -112,12 +112,14 @@ README 只保留最近版本摘要；本文件为完整记录。
 #### Changed
 
 - **Web links in a conversation now open in the sidebar browser instead of kicking you out to Chrome/Safari**: clicking an `http(s)` link — in replies, tool output, thinking blocks or plan documents — opens a new tab in the right-hand Workbench browser (the panel pops open automatically the first time). Each click gets its own tab, so the page you were reading stays put. Right-click any link for a menu with "Open in sidebar browser" (default) and **"Open in system browser"** when you actually want the full browser. Links still fall back to the system browser whenever the sidebar panel is not available, so nothing ever becomes a dead link. Non-web links (`file://` deliverables etc.) behave exactly as before.
+- **Projects with running tasks are pinned to the top of the mobile remote page**: the project list used to be sorted only by most-recent activity, so a busy project could hide below newer idle ones. Any project with a running/starting task now stays above idle projects (recent activity still orders items inside each group), and the list re-sorts live when a task starts or stops.
 
 ### 中文
 
 #### 变更
 
 - **对话里的网页链接改为在右侧工作台浏览器打开，不再直接甩给系统浏览器**：点击回复、工具输出、思考块或计划文档里的 `http(s)` 链接，会在右侧工作台的浏览器里新增一个标签页（第一次点击时工作台会自动弹出）。每次点击各开一个标签，正在看的页面不会被顶掉。右键任意链接可用菜单选择「在侧栏浏览器中打开」（默认）或**「用系统浏览器打开」**（确实想用 Chrome/Safari 时）。侧栏面板不可用时仍会退回系统浏览器，链接不会变成死链。非网页链接（`file://` 交付文件等）行为完全不变。
+- **手机远控页项目列表：有运行中任务的项目置顶**：项目列表此前只按最近活动排序，正在干活的项目可能被新的空闲项目压到下面。现在任一项目里有 running/starting 任务就排在空闲项目之前（组内仍按最近活动排序），任务开始/结束时列表实时重排。
 
 ## [0.1.40] - 2026-11-02
 
