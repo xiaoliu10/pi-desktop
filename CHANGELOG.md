@@ -3,7 +3,7 @@
 所有重要变更记录在本文件。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 README 只保留最近版本摘要；本文件为完整记录。
 
-## [Unreleased]
+## [0.1.47] - 2026-11-09
 
 ### English
 
@@ -11,10 +11,13 @@ README 只保留最近版本摘要；本文件为完整记录。
 
 - **Subagent thinking is now readable on demand**: in the subagent detail panel, omitted thinking blocks (previously always shown as the placeholder “[子代理详情省略思考内容]”) can be clicked to load the real reasoning text for that single block. The default collapsed view and transcript payload are unchanged — content is fetched per block only when you expand it (bounded, with a truncation notice for very long thinking), cached for the block, and a readable error is shown if the fetch fails.
 
+#### Changed
+
+- **Projects with running tasks are pinned to the top of the mobile remote page**: the project list used to be sorted only by most-recent activity, so a busy project could hide below newer idle ones. Any project with a running/starting task now stays above idle projects (recent activity still orders items inside each group), and the list re-sorts live when a task starts or stops.
+
 #### Fixed
 
 - **Required plugins survive session restarts and are checked at every launch**: the task-checklist plugin (`pi-plan-tool`, the `desktop_update_plan` tool) is now part of the built-in required package list, and Desktop checks and auto-installs/registers the required list right at startup instead of waiting for the first session. Previously a running pi session could erase your package registrations when it exited (each session writes back its in-memory copy of settings), which made freshly registered plugins vanish minutes later — Desktop now re-registers anything missing immediately after a session process exits, so your plugins stay installed.
-- **Mobile remote page keeps running projects on top**: the project list used to sort purely by last activity, so a project with a running task could sink below idle ones. Projects that contain any running/starting session are now pinned to the top (most recent first within each group), and the list re-orders live as task state changes.
 
 ### 中文
 
@@ -22,10 +25,13 @@ README 只保留最近版本摘要；本文件为完整记录。
 
 - **子代理思考内容可按需查看**：子代理详情面板里被省略的思考块（此前只显示占位文案「[子代理详情省略思考内容]」）现在可以点开，单独拉取并展示该块的真实思考内容。默认折叠态与转录载荷完全不变——只有点开时才按块拉取（有界返回，超长会截断并提示），结果缓存在块内，读取失败显示可读错误。
 
+#### 变更
+
+- **手机远控页项目列表：有运行中任务的项目置顶**：项目列表此前只按最近活动排序，正在干活的项目可能被新的空闲项目压到下面。现在任一项目里有 running/starting 任务就排在空闲项目之前（组内仍按最近活动排序），任务开始/结束时列表实时重排。
+
 #### 修复
 
 - **必选插件在会话重启后不再丢失，并且每次启动都会检查**：任务清单插件（`pi-plan-tool`，即 `desktop_update_plan` 工具）现在列入必选内置包；Desktop 在启动时就检查并自动补装/补注册必选清单，不再等第一次会话启动才处理。此前运行中的 pi 会话退出时会把它内存里的旧设置副本整包写回，可能抹掉你的包注册——刚注册的插件几分钟后就消失。现在每个会话进程退出后立即补回缺失注册，插件不会再丢。
-- **移动端远控页让正在运行的项目置顶**：项目列表此前只按最近活动排序，有任务在跑的项目可能沉到空闲项目下面。现在组内只要有 running/starting 会话，该项目就固定排在最前（组内仍按最近优先），并随任务状态变化实时重排。
 
 ## [0.1.46] - 2026-11-06
 
@@ -121,6 +127,10 @@ README 只保留最近版本摘要；本文件为完整记录。
 
 - **Manual context compaction could leave the session stuck on "Working for 9:55" with no way out**: on large sessions compaction is slow (a 518 MB session took over two minutes) and the request often times out or fails. Desktop marked the session as running when compaction *started*, but the end event only cleared the "compacting" flag — it never restored the idle state. The elapsed timer kept counting, sending/retry/reload were all blocked, and Stop could not break out. Now the session returns to idle the moment compaction ends, success or failure, and the timer freezes as "Took X".
 
+#### Changed
+
+- **Web links in a conversation now open in the sidebar browser instead of kicking you out to Chrome/Safari**: clicking an `http(s)` link — in replies, tool output, thinking blocks or plan documents — opens a new tab in the right-hand Workbench browser (the panel pops open automatically the first time). Each click gets its own tab, so the page you were reading stays put. Right-click any link for a menu with "Open in sidebar browser" (default) and **"Open in system browser"** when you actually want the full browser. Links still fall back to the system browser whenever the sidebar panel is not available, so nothing ever becomes a dead link. Non-web links (`file://` deliverables etc.) behave exactly as before.
+
 ### 中文
 
 #### 修复
@@ -129,21 +139,9 @@ README 只保留最近版本摘要；本文件为完整记录。
 
 - **手动压缩上下文后不再永久卡在「已工作 X」且关不掉**：在大会话上压缩耗时很长（实测 518 MB 会话要 2 分多钟）时，压缩请求容易超时或失败，而 Desktop 只有在压缩「开始」时把会话标成运行中、结束事件到达时却只清掉「正在压缩」的标记，没有把运行状态收回来。结果是计时条一路涨、发送/重试/重载全被挡住、点停止也解不开。现在压缩一结束（无论成功失败），会话立刻回到空闲并把计时定格为「用时 X」。
 
-## [Unreleased]
-
-### English
-
-#### Changed
-
-- **Web links in a conversation now open in the sidebar browser instead of kicking you out to Chrome/Safari**: clicking an `http(s)` link — in replies, tool output, thinking blocks or plan documents — opens a new tab in the right-hand Workbench browser (the panel pops open automatically the first time). Each click gets its own tab, so the page you were reading stays put. Right-click any link for a menu with "Open in sidebar browser" (default) and **"Open in system browser"** when you actually want the full browser. Links still fall back to the system browser whenever the sidebar panel is not available, so nothing ever becomes a dead link. Non-web links (`file://` deliverables etc.) behave exactly as before.
-- **Projects with running tasks are pinned to the top of the mobile remote page**: the project list used to be sorted only by most-recent activity, so a busy project could hide below newer idle ones. Any project with a running/starting task now stays above idle projects (recent activity still orders items inside each group), and the list re-sorts live when a task starts or stops.
-
-### 中文
-
 #### 变更
 
 - **对话里的网页链接改为在右侧工作台浏览器打开，不再直接甩给系统浏览器**：点击回复、工具输出、思考块或计划文档里的 `http(s)` 链接，会在右侧工作台的浏览器里新增一个标签页（第一次点击时工作台会自动弹出）。每次点击各开一个标签，正在看的页面不会被顶掉。右键任意链接可用菜单选择「在侧栏浏览器中打开」（默认）或**「用系统浏览器打开」**（确实想用 Chrome/Safari 时）。侧栏面板不可用时仍会退回系统浏览器，链接不会变成死链。非网页链接（`file://` 交付文件等）行为完全不变。
-- **手机远控页项目列表：有运行中任务的项目置顶**：项目列表此前只按最近活动排序，正在干活的项目可能被新的空闲项目压到下面。现在任一项目里有 running/starting 任务就排在空闲项目之前（组内仍按最近活动排序），任务开始/结束时列表实时重排。
 
 ## [0.1.40] - 2026-11-02
 
