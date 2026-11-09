@@ -465,102 +465,18 @@
 - **TUI ↔ TUI / TUI ↔ GUI**：满足（v0.1.39 起 `extensions/session-handoff/` 可移植插件，GUI 与 TUI 共用同一实现；目标会话忙碌时排队，不打断当前回合）。Desktop 侧由 backend 随会话加载该插件，目标未连接时经 `PI_DESKTOP_HANDOFF_BRIDGE=1` 复用主进程桥重连续聊会话；纯 TUI 场景不设该 env，只走本机活跃会话互通。
 - **单一工具入口**（v0.1.40，2026-10-29）：满足。旧的 `extensions/desktop-handoff/`（56 行、只注册 `desktop_handoff` 一个 tool）已删除，其能力是 `session_handoff` 的严格子集。关键约束：桥的开关 `PI_DESKTOP_HANDOFF_BRIDGE` 只能依赖 `session_handoff` 自身是否加载，**不得再引入第二个扩展作为与条件**——否则那个扩展一旦移除，Desktop 的断线重连会静默失效且无任何报错。
 
-**回归触发**：改 `handoff-bridge.ts`、`extensions/session-handoff/`、backend 的 `desktop-handoff` 拦截与扩展加载、`PI_DESKTOP_HANDOFF_BRIDGE` 注入条件、打包 extraResources。测试：`tests/handoff-bridge.test.ts`（含「桥开关不得依赖第二个扩展」与「不再随包分发重复工具」两条回归）、`tests/session-handoff-plugin.test.ts`、`tests/session-handoff-transport.test.ts`、`tests/session-handoff-real-process.test.ts`（真实 pi 进程断言工具进入 active 集合并发布可发现描述符）。
 
-**回归触发**：改 `handoff-bridge.ts`、backend 的 `desktop-handoff` 拦截与扩展加载、打包 extraResources。测试：`tests/handoff-bridge.test.ts`。
+[Showing lines 1-467 of 567 (50.0KB limit). Use offset=468 to continue.]
+### R-pkg-01　必选内置包：出厂即注册，会话退出不被抹
 
-### R-collab-02　远控页不渲染内部协议通道，死卡片不得关不掉
-
-**需求**：手机端远程控制页只展示**面向用户的**交互。`desktop-handoff`、`desktop-automation` 是主进程程序化应答的保留通道（`backend.ts` 对这两个 title 提前 return，从不发给桌面端 UI），其 `placeholder` 装的是内部 JSON 协议，不是给用户看的文字。
+**需求**：Desktop 功能硬依赖的包（子代理、项目记忆、质量提示词/闸门、跨会话交接、任务清单）属于**必选内置包**：启动即检查并自动安装/注册（幂等、用户已装同域冲突包时不擅自动）；pi 会话进程退出时会把内存旧副本整包写回 `settings.json` 抹掉注册——进程退出事件（pi 落盘之后触发）必须补一次按 `pi-desktop.json` 期望列表的注册修复，关掉「注册 → 退出 → 被抹」循环。
 
 **验收**：
-- 内部通道请求**不得**在远控页渲染成弹窗（用户 2026-10-28 反馈：每个项目进去都弹「需要你的确认」+ 空白输入框，与项目无关，由模型调用 `desktop_handoff`/`desktop_schedule` 触发）。
-- 选取待渲染 dialog 时跳过内部通道，而不是让它占位——同会话同时存在内部通道与真实审批时，真实审批必须照常显示。
-- `desktop-ask`（`title === 'desktop-ask'`）仍是合法用户交互，走 `renderAsk` 分支，不受影响。
-- 应答失败且桌面端权威快照已无该 id（他端已处理或已过期）时：**明确告知后消失**，不得留死卡片让用户重复点击一个永不可能成功的操作。
-- 回归：`tests/remote-server.test.ts`（内部通道守卫位置与声明、死卡片措辞）、真实浏览器（内部通道 + 真实审批共存时只渲染后者，且无 `input` 泄漏）。
+- `BUILTIN_PACKAGES` 含 `pi-subagents`、`pi-scoped-memory`、`pi-quality-prompt`、`pi-quality-gates`、`pi-session-handoff`、`pi-plan-tool` 六条，每条带用途说明。
+- Desktop 构造（启动）即触发一次幂等检查，不等第一次会话启动。
+- 任一会话进程退出（自主退出 / Desktop 主动断开两条路径）后，被写回抹掉的期望列表注册自动补回。
+- 用户已装同能力域冲突包（如上游 `pi-subagents`）时按用户优先跳过并报告，不替换。
 
-**状态**：已修复，单测 + 真实浏览器验证通过，待发版验收。
+**状态**：满足（2026-11-09 起：构造即检查 + 退出补注册；`pi-plan-tool` 补入清单）。
 
-**回归触发**：改 `remote-server.ts` 的 `renderDialog`/`respondDialog`/`seedDialogs`、`PiUiRequest` 的 `title` 约定、backend 对保留通道的提前 return 清单；新增任何 `ctx.ui.input` 保留通道时必须同步此处。
-
-**补 2026-11-02（第三类泄漏：桥接失败的原生 ask 请求）**：除两个保留通道外，第三方 ask 插件的**原生问卷请求**也是内部协议。装了 `rpiv-ask-user-question` 时 `run.thirdPartyAsk` 为真，`bridgeAskUiRequest` 需要配套的 `tool_execution_start`（`run.pendingAskArgs`）才能合成 `desktop-ask` 卡片；用户 2026-11-02 实测 CCR 会话反复弹「需要你的确认」+ 空白框——根因就是 Desktop 没收到配套 start，`stash` 为空，桥接返回 false 后请求落进通用 dialogs 并原样 emit 到手机端。
-- 验收补充：**无 stash 且形态上是原生问卷自由文本收尾（`title` 形如 `<问题>\nType your answer:`）时，必须取消并给插件答复，不得进 dialogs、不得 emit 原样 UI**。
-- 边界（刻意保守，防吞真实交互）：带 `options` 的 `select` **不取消**——超大问卷（问题/选项数超桥接上限）本来就要原样透传给用户；`title` 带 `desktop-` 前缀的保留通道不归此判据；认不出的一律走通用对话框。
-- 回归：`tests/pi-rpc.test.ts`「unbridged native input must not leak to viewers」（断言无 `ui` emit、`pendingDialogs` 为空、发出 `ui-resolved` 与 cancelled 应答；改坏即红）。
-
-### R-remote-01　远控配对用短时效配对码，不靠长驻 token 二维码
-
-**需求**：LAN 远控的手机接入凭证改为「6 位数字配对码（120s TTL、一次性）→ 换 12h 短时效 session」，避免 URL 里长驻 32 位 hex token（= 永久钥匙）。配对码在 `POST /api/pair` 鉴权前拦截验证；5 次失败锁 5 分钟；比较用 `timingSafeEqual` 定长比较。长期 token 仅迁移期保留。
-
-**验收**：
-- 配对码 120s 过期、用后即焚、重启换新；过期/错码/重放均拒绝且计入失败锁定。
-- session 12h TTL 过期即删；`authorize()` 同时认 session 与长期 token（迁移期）。
-- 回归：`tests/remote-pairing.test.ts`（7 条：过期/错码/重放/锁定/timingSafe）。
-
-**状态**：已实现，随远程隧道 PR 发版。
-
-**回归触发**：改 `remote-server.ts` 的 `rotatePairingCode`/`authorize`/`/api/pair` 路由、session TTL 常量；改远控二维码 payload 结构。
-
-### R-remote-02　公网隧道：桌面主动外连 relay，终端侧只需「地址 + key」
-
-**需求**：不在同一局域网也能手机/终端远程控制。拓扑对齐 ZCode Relay V2：桌面（device）主动外连 relay WSS（零入站端口，NAT 后可用），终端（terminal）也连 relay，relay 只按 sid 双向转发 JSON 帧、不解析 payload。韧性对齐 Harness：未知帧明确回 `WRONG_PARAM` 不静默；relay URL 拒绝内嵌凭据；能力外请求 fail-closed。relay 用 Go 独立仓库（`xiaoliu10/pi-tunnel-relay`，端口 8443）。
-
-**验收**：
-- 身份链：`POST /device` 注册 → `POST /token` 一次性 token（60s TTL、22 字符 base64url、原子消费不可重放）→ WS upgrade；token 重放拒绝。
-- 心跳 5s±1s；15s 无任何帧视为断线，指数退避重连（含重新注册）；同 sid 新连接踢旧（KICKED）。
-- 单帧上限 1MiB，超限断连；relay 不持业务状态（重启不丢消息是预期行为，客户端有重试）。
-- 桌面侧 `tunnel-client.ts`：terminal 的 HTTP 请求帧还原为对本地 remote-server 的调用（带 `Authorization: Bearer`），响应/事件封 data 帧回传；`relayFetch`/`fetchImpl` 分离注入（两者不得共用一个注入口，否则测试里 relay 与本地 mock 互相污染）。
-- relay key 经 Electron safeStorage 加密落盘（`tunnel.json`），永不明文；保存后输入框清空。
-- 设置 → 远程控制页新增「公网隧道」卡：只填 relay 地址 + key 两个字段；状态徽标（未开启/连接中/等待终端/已接入/失败重试）；启用时自动拉起 LAN remote-server（隧道转发目标是它）。
-- 回归：`pi-tunnel-relay` Go 测试 3 条（注册/token/握手、配对双向透传、超限断连）；`tests/tunnel-client.test.ts` 4 条；`tests/tunnel-e2e.test.ts`（真 Go relay 进程 + 真 WS + 假 terminal 端到端）；`tests/tunnel-ui.browser.cjs`（真实浏览器：卡片渲染/保存/开关闭环/状态徽标）。
-
-**边界（明确不做）**：不做端到端加密（ZCode/Harness 均不做，靠 WSS + 预共享 key + 一次性 token）；relay 不做多 terminal 隔离（单人自托管场景）；`docs/design/remote-tunnel.md` §5 记录了完整盲区。
-
-**可见性口径（2026-11-02 补）**：手机端会话列表必须与桌面侧栏一致。过滤只看**真 subagent 标记**（`subagentOf`，索引从嵌套布局 `…/<主会话>/<childId>/run-N/session.jsonl` 推断）与副驾 `sidecarOf`；**`parentSession`（pi 的分支/fork 语义，编辑重发/compact/fork）不参与过滤**——混同会把用户正在用的会话从手机端与侧栏一起抹掉（实测 VE 会话）。回归：`tests/remote-visibility.test.ts`、`tests/project-order.test.ts`、`tests/remote-server.test.ts`。
-
-**状态**：已实现（含 Go relay 仓库），随远程隧道 PR 发版；ECS 部署后需真机验证。
-
-**回归触发**：改 `tunnel-client.ts` 帧协议、`tunnel-service.ts` 存储结构（keyEncrypted 语义）、`pi-tunnel-relay` 契约（路由/token 形状）；改 `remote-server.ts` 的 `lanEndpoint`。
-
----
-
-## 会议域（meeting）
-
-### R-meeting-01　会议录音分段持久化，缺段不被伪装成完整纪要
-
-**需求**：工作台新增「会议」tab，用户显式点击开始后只采集本机麦克风；renderer 按“完整 MediaRecorder 生命周期”切段（默认 5 分钟，上限 5 分 20 秒，总上限 8 小时），每段先落盘再交给主进程 ASR 队列（并发 2）。主进程维护 manifest/覆盖统计；纪要只能由已转写段生成，failed/missing 段在“待澄清”中明示，不臆测内容。普通输入框 5 分钟语音不变。
-
-**验收**：
-- `clientSegmentId` 幂等：重复 ACK 不重复落盘、不重复转写；音频先写盘再进入队列。
-- IPC/事件快照可 structuredClone：`timers`/`inflight` 是调度私有，不出主进程边界。
-- 应用重启后残留 recording/paused 与 queued/transcribing 恢复为 processing 并从已落盘音频重排队列；recorder 不复活，用户重开新会议。
-- ASR 错误分 transient（network/rate_limited/timeout/provider，120s 时间预算重试）与 terminal（auth/bad_request/too_large，不自动重试）；终态 failed 保留音频，可手动重试。
-- 覆盖口径：done 计 transcribed，empty 计 empty，failed/missing 计 missing；停止后队列耗尽才 ready；pending retry timer 存在时不提前 ready。
-- UI 停止必须等全部 pending persistence（WAV 转码 + append）完成再 meetingStop；录音中禁止切换/删除会议，设备错误 fail-closed 停止采集。
-- 录音开始前必须披露音频会上传到已配置 ASR 提供商、纪要会调用模型提供商；本机存储提供删除入口。
-- 纪要 map-reduce 按 segmentIds 分块，map/reduce prompt 要求引用来源；owner 无法确认时为 null；最终 Markdown 可导出。
-- 工作台会议 tab 打开后 keep-alive：切 tab/收起面板不停止采集；停止后不再生成 recorder；浏览器 mock 回归验证分段 WAV 上传与停止。
-- 回归：`tests/meeting-service.test.ts`（落盘/幂等/重试/覆盖/纪要/IPC 可序列化/重启恢复）、`tests/meeting-minutes.test.ts`（分块/prompt/overlap 来源）、`tests/meeting-panel.browser.cjs`（真实浏览器 mock 采集/慢段停止 drain/入口）。
-
-**状态**：已随 v0.1.46 发版（PR #191）；真实 ASR/纪要模型、真机 sleep/wake 仍需用户配置后手工验证。
-
-**回归触发**：改 `meeting-service.ts` 状态机/覆盖口径、`meeting-minutes.ts` 分块/prompt、`MeetingPanel.tsx` 采集生命周期、`shared/meeting.ts` 契约、`voice-service.ts` 转写超时。
-
----
-
-## 升级回归总表
-
-升级 pi / pi-subagents / CCR / Electron 前，按下表核对相关需求：
-
-| 升级项 | 必须回归的需求 | 原因 |
-|---|---|---|
-| pi-subagents | R-subagent-02, R-subagent-01 | async 路径 status/sessionFile 形态可能变 |
-| pi 内核（fork/会话条目） | R-sidecar-01 | message 条目形状、parentId 链/branch 语义、--append-system-prompt |
-| pi 内核 | R-model-01, R-model-03, R-render-01, R-subagent-02 | refresh/setModel 契约、get_entries 增量、subagent 事件。**必跑 `pnpm smoke:rpc`** |
-| CCR | R-model-02, R-model-03 | provider 生命周期、思考等级字段 |
-| Electron | 全部渲染/IO 需求 | 进程模型、IPC 行为 |
-| Electron / 改 CSP | R-render-02, R-render-01 | webSecurity 与 img-src 处理变化（blob URL 图片会静默裂图） |
-| Electron / 改 getUserMedia/权限 | R-meeting-01 | MediaRecorder、麦克风权限与 keep-alive 插槽行为 |
-
-**升级前必做**：读本文 → 对照"上游依赖"列出的 issue 状态 → 若上游已发新版，先在本机隔离测相关需求 → 通过才合并到 Desktop。
+**回归触发**：改 `builtin-packages.ts`、`packages-repair.ts`、backend 的 `client.on('closed')` 与构造函数。测试：`tests/builtin-packages.test.ts`（清单断言）、`tests/pi-backend.test.ts`「退出后补注册」（模拟写回旧副本 + close，断言注册恢复）、`tests/repair-codemode.test.ts`。

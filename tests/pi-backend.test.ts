@@ -467,3 +467,29 @@ it('P0-2 拿不到留痕条目就不发 compaction-record（不伪造 at/context
  expect(events.some(e=>e.type==='compaction-record')).toBe(false);
  void run;
 });
+
+/** 退出补注册：pi 进程退出（含 Desktop 主动断开）时会把它内存里的旧 settings.json 副本
+ *  整包写回，抹掉之后发生的包注册（2026-11-09 实测：用户手动注册 11 个包，15:28:52 被退出的
+ *  长跑会话整包写回抹成 0）。child exit（-> closed）在 pi 落盘之后才触发——此刻必须补一次
+ *  repairPackages 关掉「退出后窗口」，否则「注册→退出→被抹」循环往复。 */
+it('re-registers wiped package registrations after the pi process exits', async () => {
+ const root=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'pi-backend-exit-'))); roots.push(root);
+ const owned=path.join(root,'desktop'); fs.mkdirSync(owned,{recursive:true});
+ const dataDir=path.join(root,'data'); fs.mkdirSync(dataDir,{recursive:true});
+ // 期望列表 + npm 依赖齐全（register-only 路径，不触发 pi install spawn）
+ const required=['npm:pi-web-access','npm:@wengine-ai/pi-subagents@^0.79.1','npm:@wengine-ai/pi-scoped-memory','npm:@wengine-ai/pi-quality-prompt','npm:@wengine-ai/pi-quality-gates@^0.1.0','npm:@wengine-ai/pi-session-handoff@^0.1.4','npm:@wengine-ai/pi-plan-tool@^0.0.1'];
+ fs.writeFileSync(path.join(dataDir,'pi-desktop.json'),JSON.stringify({piPackages:required}));
+ fs.mkdirSync(path.join(root,'npm'),{recursive:true});
+ fs.writeFileSync(path.join(root,'npm','package.json'),JSON.stringify({dependencies:{'pi-web-access':'^1.0.0','@wengine-ai/pi-subagents':'^0.79.1','@wengine-ai/pi-scoped-memory':'^0.1.0','@wengine-ai/pi-quality-prompt':'^0.1.0','@wengine-ai/pi-quality-gates':'^0.1.0','@wengine-ai/pi-session-handoff':'^0.1.4','@wengine-ai/pi-plan-tool':'^0.0.1'}}));
+ fs.writeFileSync(path.join(root,'settings.json'),JSON.stringify({packages:required}));
+ const index=new SessionIndex([root,owned],owned);
+ const events:PiEvent[]=[];
+ const backend=new PiBackend({executable:path.resolve('tests/fixtures/fake-pi.mjs'),version:'0.85.1',supported:true,agentDir:root,sessionDirs:[root],diagnostics:[]},index,owned,path.resolve('extensions/desktop-policy/index.mjs'),e=>events.push(structuredClone(e)),dataDir);
+ backends.push(backend);
+ const view=await backend.connect({cwd:root,trustProject:false,permission:'ask'});
+ // 模拟 pi 退出时整包写回旧副本（packages 丢失）
+ fs.writeFileSync(path.join(root,'settings.json'),JSON.stringify({theme:'light'}));
+ backend.close(view.key);
+ // child exit -> closed -> repairPackages 必须把注册补回
+ await vi.waitFor(()=>{const s=JSON.parse(fs.readFileSync(path.join(root,'settings.json'),'utf8'));expect(s.packages).toContain('npm:pi-web-access');},{timeout:5000,interval:100});
+});

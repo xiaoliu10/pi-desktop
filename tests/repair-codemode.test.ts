@@ -200,7 +200,9 @@ describe('host.configure corrupt-document protection (review #2)', () => {
     await host.configure({ runtime: 'bundled', agentDir: path.join(root, 'agent') });
     const doc = JSON.parse(fs.readFileSync(path.join(data, 'pi-desktop.json'), 'utf8'));
     expect(doc.codemode).toBe(true);
-    expect(doc.piPackages).toEqual(['npm:pi-memory']);
+    // 保留性断言：既有条目必须原样保留；backend 构造即触发的必选包检查（启动即检查）
+    // 会在合并后追记内置包，属预期新行为，不逐字比对全表。
+    expect(doc.piPackages).toContain('npm:pi-memory');
     expect(doc.agentDir).toBe(path.join(root, 'agent'));
     host.dispose();
   });

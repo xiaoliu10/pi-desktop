@@ -40,6 +40,12 @@ describe('BUILTIN_PACKAGES manifest', () => {
     const names = BUILTIN_PACKAGES.map(p => p.spec);
     expect(names.some(n => n.startsWith('npm:@wengine-ai/pi-session-handoff@'))).toBe(true);
   });
+
+  // 任务清单（desktop_update_plan）全模式可用，是桌面核心体验：同样必须出厂即内置。
+  it('includes the plan-tool plugin so desktop_update_plan survives settings write-back', () => {
+    const names = BUILTIN_PACKAGES.map(p => p.spec);
+    expect(names.some(n => n.startsWith('npm:@wengine-ai/pi-plan-tool@'))).toBe(true);
+  });
 });
 
 describe('ensureBuiltinPackages', () => {
@@ -60,6 +66,7 @@ describe('ensureBuiltinPackages', () => {
       '@wengine-ai/pi-quality-prompt': '^0.1.0',
       '@wengine-ai/pi-quality-gates': '^0.1.0',
       '@wengine-ai/pi-session-handoff': '^0.1.4',
+      '@wengine-ai/pi-plan-tool': '^0.0.1',
     });
     const report = await ensureBuiltinPackages('/fake/pi', agentDir, dataDir);
     expect(report.failed).toEqual([]);
@@ -90,6 +97,7 @@ describe('ensureBuiltinPackages', () => {
       '@wengine-ai/pi-quality-prompt': '^0.1.0',
       '@wengine-ai/pi-quality-gates': '^0.1.0',
       '@wengine-ai/pi-session-handoff': '^0.1.4',
+      '@wengine-ai/pi-plan-tool': '^0.0.1',
     });
     const report = await ensureBuiltinPackages('/fake/pi', agentDir, dataDir);
     expect(report.conflicts).toHaveLength(1);

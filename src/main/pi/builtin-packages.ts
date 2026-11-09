@@ -18,6 +18,7 @@ export const BUILTIN_PACKAGES: ReadonlyArray<{ spec: string; /** 简短用途，
   { spec: 'npm:@wengine-ai/pi-quality-prompt', purpose: '质量提示词' },
   { spec: 'npm:@wengine-ai/pi-quality-gates@^0.1.0', purpose: 'settle 返工闸 + edit 即时 lint' },
   { spec: 'npm:@wengine-ai/pi-session-handoff@^0.1.4', purpose: '跨会话交接（session_handoff）' },
+  { spec: 'npm:@wengine-ai/pi-plan-tool@^0.0.1', purpose: '任务清单（desktop_update_plan，全模式可用）' },
 ];
 
 export interface BuiltinPackageReport {
