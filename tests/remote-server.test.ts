@@ -1,4 +1,5 @@
 import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
 import { RemoteServer, type RemoteDataProvider, historyWindow, viewerPage } from '../src/main/pi/remote-server';
 
 type TestEntry = { type: 'message'; id: string; message: { role: string; content: unknown } };
@@ -209,6 +210,11 @@ describe('RemoteServer (LAN remote control)', () => {
     expect(html).toContain('EDIT_RESEND_SEND_FAILED_AFTER_FORK');
     expect(html).toContain('已回退到该消息，但发送失败');
     expect(html).toContain('直接发送即可继续');
+  });
+
+  it('viewer page fixture stays byte-identical to the emitted mobile UI', () => {
+    // 浏览器排序回归跑 tests/fixtures/remote-viewer.html；这里锁住 fixture 不漂移。
+    expect(viewerPage()).toBe(readFileSync(new URL('./fixtures/remote-viewer.html', import.meta.url), 'utf8'));
   });
 
   it('rejects oversized request bodies', async () => {
