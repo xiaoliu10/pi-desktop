@@ -3,6 +3,20 @@
 所有重要变更记录在本文件。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 README 只保留最近版本摘要；本文件为完整记录。
 
+## [Unreleased]
+
+### English
+
+#### Fixed
+
+- **Required plugins survive session restarts and are checked at every launch**: the task-checklist plugin (`pi-plan-tool`, the `desktop_update_plan` tool) is now part of the built-in required package list, and Desktop checks and auto-installs/registers the required list right at startup instead of waiting for the first session. Previously a running pi session could erase your package registrations when it exited (each session writes back its in-memory copy of settings), which made freshly registered plugins vanish minutes later — Desktop now re-registers anything missing immediately after a session process exits, so your plugins stay installed.
+
+### 中文
+
+#### 修复
+
+- **必选插件在会话重启后不再丢失，并且每次启动都会检查**：任务清单插件（`pi-plan-tool`，即 `desktop_update_plan` 工具）现在列入必选内置包；Desktop 在启动时就检查并自动补装/补注册必选清单，不再等第一次会话启动才处理。此前运行中的 pi 会话退出时会把它内存里的旧设置副本整包写回，可能抹掉你的包注册——刚注册的插件几分钟后就消失。现在每个会话进程退出后立即补回缺失注册，插件不会再丢。
+
 ## [0.1.46] - 2026-11-06
 
 ### English

@@ -577,3 +577,17 @@
 | Electron / 改 getUserMedia/权限 | R-meeting-01 | MediaRecorder、麦克风权限与 keep-alive 插槽行为 |
 
 **升级前必做**：读本文 → 对照"上游依赖"列出的 issue 状态 → 若上游已发新版，先在本机隔离测相关需求 → 通过才合并到 Desktop。
+
+### R-pkg-01　必选内置包：出厂即注册，会话退出不被抹
+
+**需求**：Desktop 功能硬依赖的包（子代理、项目记忆、质量提示词/闸门、跨会话交接、任务清单）属于**必选内置包**：启动即检查并自动安装/注册（幂等；用户已装同域冲突包时按用户优先跳过并报告，不擅自动）；pi 会话进程退出时会把内存旧副本整包写回 `settings.json` 抹掉注册——进程退出事件（pi 落盘之后触发）必须补一次按 `pi-desktop.json` 期望列表的注册修复，关掉「注册 → 退出 → 被抹」循环。
+
+**验收**：
+- `BUILTIN_PACKAGES` 含 `pi-subagents`、`pi-scoped-memory`、`pi-quality-prompt`、`pi-quality-gates`、`pi-session-handoff`、`pi-plan-tool` 六条，每条带用途说明。
+- Desktop 构造（启动）即触发一次幂等检查，不等第一次会话启动。
+- 任一会话进程退出（自主退出 / Desktop 主动断开两条路径）后，被写回抹掉的期望列表注册自动补回。
+- 用户已装同能力域冲突包（如上游 `pi-subagents`）时按用户优先跳过并报告，不替换。
+
+**状态**：满足（2026-11-09 起：构造即检查 + 退出补注册；`pi-plan-tool` 补入清单）。
+
+**回归触发**：改 `builtin-packages.ts`、`packages-repair.ts`、backend 的 `client.on('closed')` 与构造函数。测试：`tests/builtin-packages.test.ts`（清单断言）、`tests/pi-backend.test.ts`「退出后补注册」（模拟写回旧副本 + close，断言注册恢复）、`tests/repair-codemode.test.ts`。

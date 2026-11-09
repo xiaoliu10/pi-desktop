@@ -86,7 +86,11 @@ export class PiBackend {
   onContinuation?: (fromKey: string, toKey: string) => void;
   /** 测试注入点：替换 PiRpcClient 构造（生产不设）。 */
   clientFactory?: (command: string, args: string[], cwd: string, env: NodeJS.ProcessEnv) => PiRpcClient;
-  constructor(private env: PiEnvironment, private index: IndexPort, private ownedRoot: string, private policyPath: string, private emit: (e: PiEvent) => void, private dataDir?: string) {}
+  constructor(private env: PiEnvironment, private index: IndexPort, private ownedRoot: string, private policyPath: string, private emit: (e: PiEvent) => void, private dataDir?: string) {
+    // Desktop 启动即检查必选内置包（用户 2026-11-09：不等第一次会话启动，构造后立刻
+    // 幂等补装/补注册）。launch 前的那次调用保留：覆盖「启动后从未发过会话就手动装包」等时序。
+    if (this.dataDir) void this.ensureBuiltins();
+  }
   hasPendingDialogs(key: string) { return (this.active.get(key)?.dialogs.size ?? 0) > 0; }
   /** 待处理的 UI 审批快照（远控页刷新后据此恢复审批卡片）。 */
   pendingDialogs(key: string): Array<{ generation: string; request: PiUiRequest }> {
@@ -489,6 +493,12 @@ export class PiBackend {
       // sidecarOf 随事件带出：active 已 delete，消费端事后查 runs() 会漏（时序盲区）。
       this.emit({ type: 'closed', key, generation, ...(run.input.sidecarOf !== undefined ? { sidecarOf: run.input.sidecarOf } : {}) });
     });
+    // pi 进程退出（含 Desktop 主动断开）时会把它内存里的旧 settings.json 副本整包写回，
+    // 抹掉之后发生的包注册——「手动注册又被抹掉」的根因（2026-11-09 实测：注册 11 个包
+    // 后被退出的长跑会话写回抹成 0）。child 'exit' 在 pi 落盘之后才触发，此刻补一次注册
+    // 修复即可关掉「退出后窗口」。独立监听器：上面的主处理器在 close() 已把 run 摘出
+    // active 时会早退，修复必须两条退出路径（自主退出 / 主动断开）都生效。
+    client.on('closed', () => { if (this.dataDir) repairPackages(this.dataDir, this.env.agentDir); });
     let firstFrameScope = true; // get_state 阶段标记：超时 append 只贴在首帧阶段
     // 镜像尾窗订阅：compaction_end / agent_settled / 重试定时器的事件时刻读取都走
     // branchTailAsync（owner 内增量解析，读到刚落盘真值——事件时刻镜像必然落后，
