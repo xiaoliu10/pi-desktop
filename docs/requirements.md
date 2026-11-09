@@ -39,16 +39,18 @@
 - single 与 workflow 两种模式、running/queued/completed/failed/interrupted 各状态，卡片都出现且状态正确刷新。
 - 完成态点详情能读转录尾部；路径与身份校验通过才读，不读则明确提示，不假报"不可用"而实为解析失败。
 - 第三形态（completions 结果）同样识别并读子会话，不因形态切换而卡片永久转圈。
+- **省略思考块可按需展开**（2026-11-09）：子代理思考内容默认折叠为占位（IPC 载荷护栏，与历史行为一致）；点击该思考块按稳定 entryId+块下标单独拉取真实内容展示（上限 100K 字符，超出截断并提示）；拉取失败显示可读错误；结果缓存在块内，收起再开不重复请求；未点开时不传输任何思考正文。
 - **计时真实**：详情面板的「已工作 / 用时」只用真实时间。子代理转录消息经脱敏后本身不带时间戳，但主进程从 status.json 快照读出的真实 `startedAt`（及终态 `updatedAt`）会经 recoverSubagents 轮询到达：运行中用它显示「已工作」，已结束用它显示「用时」。拿不到合法快照时间就不计时，**绝不把内部缓存版本号/当前时间/轮询时刻/工具调用时刻当起始或结束时间**（曾出现「已工作 497889 小时」；修那个 bug 时一度把时间戳整个留空导致计时条消失）。live 路径状态以会话文件 adapter 为准，磁盘仍 running 时其 lastUpdate 不是结束时刻、不得当 endedAt；**只有已验证 child 终态的真实 lastUpdate 才能当结束时刻**。PR #149 独立审查后补齐三条数据链缺陷（2026-10-20）：① 指针路径 async 单跑/工作流 record 通过身份/时间校验后必须透传真实 `startedAt`（否则主修复路径不显示计时）；② orphan 顶层 status 与指针路径同口径（已验证规范化状态，不再恒 unknown；幽灵降级仍不算完成），终态 orphan 才有真实用时；③ workflow 每个 child 只用自己 status.json 的已验证时钟（startedAt/终态 lastUpdate 附在 child 行上、adapter 透传），**无 child 时间就不显示，绝不拿父工作流时间兑底**；④ 逆序消息的非法 endedAt（< startedAt）显式移除而非原样渲染，且不 mutate executionTurns 共享 turnCache（epoch 只进 id）。零 assistant 消息时不声称已恢复计时（无 elapsed DOM，不造虚拟消息）。回归：`tests/subagent-elapsed-ssr.test.ts`（真实 recoverSubagents→projectSubagents→Transcript SSR 计时 DOM）、`tests/subagent-transcript-timing.test.ts`、`tests/subagents.test.ts`、`tests/subagent-snapshots.test.ts`。
 
 **状态**：部分满足。
 - single/workflow 转录：部分满足。2026-10-19 现场确认 async single 运行中转录路径发布在 `steps[0].sessionFile`，顶层 `sessionFile` 常在结束后才出现；Desktop 原来只读顶层，造成“有 tokens/轮次但看不到过程”。修复分支按通过身份校验的唯一 step 回读，保留 containment/时间/调用身份约束；运行中、追加消息和完成态待发版验收。回归 `tests/subagent-snapshots.test.ts` 与 `tests/subagent-live-transcript.browser.cjs`。
 - completions 形态卡片恢复：满足（v0.1.24 #121）。
+- 省略思考块按需展开：满足（2026-11-09，`subagentChildThinking` IPC + ExecutionNote 点开加载；回归 `tests/subagent-snapshots.test.ts`「subagentChildThinking」、`tests/subagent-thinking-expand.browser.cjs` 真实浏览器红→绿）。
 - **子会话 `sessionFile` 读取**：待上游。上游 `pi-subagents@0.78.0` async 路径不写子运行 `status.sessionFile`（`sessionFilesByFlatIndex` 全包无生产者，`async-execution.js:1079` 读空值）。Desktop 用父 workflow `steps[].sessionFile` 回退（v0.1.24 #122），治标。上游 main 今日（2026-10-16）在修同簇问题（#2915–#2920）但未发版。
 
 **上游依赖**：`pi-subagents`（repo `nicobailon/pi-subagents`）。已提 issue #2921（2026-10-16，带 `sessionFilesByFlatIndex` 无生产者的代码证据）。相关 issue：#1441（fleet 转录读不到，信任根问题，CLOSED 2026-08-24，另一根因）、#2916（更新后 bg_wait 失效，CLOSED 2026-10-16，不覆盖本根因）、#1124（承诺的 output 日志从不写，CLOSED，同形态）。
 
-**回归触发**：pi-subagents 升级（重点：async 路径是否开始写 sessionFile）；改 `subagent-snapshots.ts`（childSessionPointer、recoverSubagents 记录是否仍带真实 startedAt/updatedAt）、`src/renderer/pi/subagents.ts` 的 `subagentTranscriptTurns`/`projectSubagents`（entry 时间戳只能取消息真实时间或 status.json 快照真实 startedAt/endedAt，缓存 epoch 只允许进 id）。
+**回归触发**：pi-subagents 升级（重点：async 路径是否开始写 sessionFile）；改 `subagent-snapshots.ts`（childSessionPointer、recoverSubagents 记录是否仍带真实 startedAt/updatedAt）、`src/renderer/pi/subagents.ts` 的 `subagentTranscriptTurns`/`projectSubagents`（entry 时间戳只能取消息真实时间或 status.json 快照真实 startedAt/endedAt，缓存 epoch 只允许进 id）；改 `official-subagent.ts` 的 `readChildSessionTail`/`subagentChildThinking`（读纪律与占位常量 `OMITTED_THINKING_TEXT` 主进程/渲染层必须同源）、ChatView 的 `ExecutionNote`/`OmittedThinkingLoaderContext`。
 
 ### R-subagent-03　断开会话必须确认；切换会话不拦
 

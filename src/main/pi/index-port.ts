@@ -51,6 +51,8 @@ export interface IndexPort {
    *  it runs in the owner and only bounded display snapshots come back. */
   recoverSubagents(agentDir: string, key: string, leaf?: string, pinned?: string[], knownSignature?: string): Promise<SubagentSnapshot[] | { unchanged: true }>;
   subagentChildTranscript(agentDir: string, key: string, callId: string, childId: string): Promise<{ messages: Record<string, unknown>[]; truncated: boolean } | { error: string }>;
+  /** 单条「省略思考」按需拉取：entryId+blockIndex 寻址，有界返回（子代理思考详情）。 */
+  subagentChildThinking(agentDir: string, key: string, callId: string, childId: string, entryId: string, blockIndex: number): Promise<{ thinking: string; truncated: boolean } | { error: string }>;
   /** 在 worker 内把外部 CLI 会话的无损全量条目复制成 Desktop 副本（fork-to-continue）。
    *  全量 entries 绝不跨进程回主进程（最大实测 200MB 级）：worker 直接用缓存里的
    *  无损条目按既有逐行 JSON 规则写盘，只回条目数。原子写（tmp+rename），失败不留半文件。 */

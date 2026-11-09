@@ -7,15 +7,25 @@ README 只保留最近版本摘要；本文件为完整记录。
 
 ### English
 
+#### Added
+
+- **Subagent thinking is now readable on demand**: in the subagent detail panel, omitted thinking blocks (previously always shown as the placeholder “[子代理详情省略思考内容]”) can be clicked to load the real reasoning text for that single block. The default collapsed view and transcript payload are unchanged — content is fetched per block only when you expand it (bounded, with a truncation notice for very long thinking), cached for the block, and a readable error is shown if the fetch fails.
+
 #### Fixed
 
 - **Required plugins survive session restarts and are checked at every launch**: the task-checklist plugin (`pi-plan-tool`, the `desktop_update_plan` tool) is now part of the built-in required package list, and Desktop checks and auto-installs/registers the required list right at startup instead of waiting for the first session. Previously a running pi session could erase your package registrations when it exited (each session writes back its in-memory copy of settings), which made freshly registered plugins vanish minutes later — Desktop now re-registers anything missing immediately after a session process exits, so your plugins stay installed.
+- **Mobile remote page keeps running projects on top**: the project list used to sort purely by last activity, so a project with a running task could sink below idle ones. Projects that contain any running/starting session are now pinned to the top (most recent first within each group), and the list re-orders live as task state changes.
 
 ### 中文
+
+#### 新增
+
+- **子代理思考内容可按需查看**：子代理详情面板里被省略的思考块（此前只显示占位文案「[子代理详情省略思考内容]」）现在可以点开，单独拉取并展示该块的真实思考内容。默认折叠态与转录载荷完全不变——只有点开时才按块拉取（有界返回，超长会截断并提示），结果缓存在块内，读取失败显示可读错误。
 
 #### 修复
 
 - **必选插件在会话重启后不再丢失，并且每次启动都会检查**：任务清单插件（`pi-plan-tool`，即 `desktop_update_plan` 工具）现在列入必选内置包；Desktop 在启动时就检查并自动补装/补注册必选清单，不再等第一次会话启动才处理。此前运行中的 pi 会话退出时会把它内存里的旧设置副本整包写回，可能抹掉你的包注册——刚注册的插件几分钟后就消失。现在每个会话进程退出后立即补回缺失注册，插件不会再丢。
+- **移动端远控页让正在运行的项目置顶**：项目列表此前只按最近活动排序，有任务在跑的项目可能沉到空闲项目下面。现在组内只要有 running/starting 会话，该项目就固定排在最前（组内仍按最近优先），并随任务状态变化实时重排。
 
 ## [0.1.46] - 2026-11-06
 

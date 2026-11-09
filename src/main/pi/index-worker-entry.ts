@@ -1,7 +1,7 @@
 import { SessionIndex } from './session-index';
 import { OutlineCache } from './outline-cache';
 import { SessionMetaCache } from './session-meta-cache';
-import { recoverSubagents, subagentChildTranscript } from './official-subagent';
+import { recoverSubagents, subagentChildTranscript, subagentChildThinking } from './official-subagent';
 import { RendererHistory } from './renderer-history';
 import type { PiEntry, PiSession } from '../../shared/pi';
 import type { WorkerConfig, WorkerEvent, WorkerReply, WorkerRequest } from './index-worker-protocol';
@@ -135,6 +135,8 @@ export function createIndexWorkerRuntime(config: WorkerConfig, emit: (event: Wor
           return recoverSubagents(config.agentDir, req.key, index, req.leaf, req.pinned, req.knownSignature);
         case 'subagentChildTranscript':
           return subagentChildTranscript(config.agentDir, req.key, index, req.callId, req.childId);
+        case 'subagentChildThinking':
+          return subagentChildThinking(config.agentDir, req.key, index, req.callId, req.childId, req.entryId, req.blockIndex);
         case 'subscribe':
           subscribed.add(req.key);
           pushTail(req.key);
