@@ -3,6 +3,7 @@ import path from 'node:path';
 import type { SessionIndex } from './session-index';
 import { childSessionPointer, readSnapshotJson, STALE_MS, subagentAsyncRoot, workflowSnapshots, type SubagentSnapshot } from './subagent-snapshots';
 import { singleAsyncDetails, workflowDetails, workflowId, workflowState } from '../../shared/subagent-workflow';
+import { OMITTED_THINKING_TEXT } from '../../shared/subagent-transcript';
 
 /** recoverSubagents 的输入签名：会话身份 + 分支尖端 + pinned + async/persisted 目录
  *  的 (名字, mtime) 清单 + 30s 量化的时钟。输入不变 → 输出不变（STALE/幽灵降级等
@@ -156,6 +157,9 @@ async function readPersistedSnapshots(agentDir: string, sessionKey: string): Pro
 const TRANSCRIPT_TAIL_BYTES = 1536 * 1024;
 const TRANSCRIPT_MESSAGES = 60;
 const TRANSCRIPT_TEXT_CAP = 6000;
+/** 单条 thinking 按需拉取的上限（字符）：点开才跨 IPC，但仍要有界（实测单块最大 37KB+，
+ *  给足余量到 100K；超出截断并标记 truncated）。 */
+const THINKING_DETAIL_CAP = 100_000;
 const boundedStr = (value: unknown, max: number): string => typeof value === 'string' ? value.slice(0, max) : '';
 
 /** Display-only sanitization. Strictly typed: non-string text/content never crosses
@@ -170,7 +174,7 @@ function sanitizeTranscriptMessage(message: any): Record<string, unknown> {
     return blocks.map((block: any) => {
       if (!block || typeof block !== 'object') return { type: 'text', text: '' };
       if (block.type === 'text') return { type: 'text', text: capText(block.text) };
-      if (block.type === 'thinking') return { type: 'thinking', thinking: '[子代理详情省略思考内容]' };
+      if (block.type === 'thinking') return { type: 'thinking', thinking: OMITTED_THINKING_TEXT };
       if (block.type === 'image') return { type: 'text', text: '[image]' };
       if (block.type === 'toolCall') {
         let args = block.arguments;
@@ -200,7 +204,10 @@ function sanitizeTranscriptMessage(message: any): Record<string, unknown> {
  *  open, fd-fstat identity match, post-open re-verification. Only a bounded,
  *  sanitized tail crosses IPC; every failure becomes a fixed error code (never a
  *  Node error carrying absolute paths). */
-export async function subagentChildTranscript(agentDir: string, sessionKey: string, index: Pick<SessionIndex, 'subagentHistory'>, callId: string, childId: string): Promise<{ messages: Record<string, unknown>[]; truncated: boolean } | { error: string }> {
+/** 受控读取子会话尾部（指针链解析 + 符号链接/身份校验 + 有界尾窗）。
+ *  subagentChildTranscript 与 subagentChildThinking 共用同一读纪律：任何失败都变成
+ *  固定错误码（不带绝对路径），只有有界文本跨 IPC。 */
+async function readChildSessionTail(agentDir: string, sessionKey: string, index: Pick<SessionIndex, 'subagentHistory'>, callId: string, childId: string): Promise<{ text: string; windowTruncated: boolean } | { error: string }> {
   if (!/^[a-f0-9]{64}$/.test(sessionKey) || !workflowId(callId) || !workflowId(childId)) return { error: 'bad-args' };
   let history;
   try { history = index.subagentHistory(sessionKey); } catch { return { error: 'no-history' }; }
@@ -246,18 +253,55 @@ export async function subagentChildTranscript(agentDir: string, sessionKey: stri
     const { bytesRead } = await handle.read(buffer, 0, tail, stat.size - tail);
     let text = buffer.subarray(0, bytesRead).toString('utf8');
     if (tail < stat.size) text = text.slice(text.indexOf('\n') + 1); // drop partial line
-    const messages: Record<string, unknown>[] = [];
-    let total = 0;
-    for (const line of text.split('\n')) {
-      if (!line) continue;
-      let entry: any;
-      try { entry = JSON.parse(line); } catch { continue; }
-      if (entry?.type === 'message' && entry.message && typeof entry.message.role === 'string') { total++; messages.push(sanitizeTranscriptMessage(entry.message)); }
-    }
-    const out = messages.slice(-TRANSCRIPT_MESSAGES);
-    return { messages: out, truncated: total > out.length || tail < stat.size };
+    return { text, windowTruncated: tail < stat.size };
   } catch { return { error: 'read-failed' }; }
   finally { if (handle) await handle.close().catch(() => undefined); }
+}
+
+export async function subagentChildTranscript(agentDir: string, sessionKey: string, index: Pick<SessionIndex, 'subagentHistory'>, callId: string, childId: string): Promise<{ messages: Record<string, unknown>[]; truncated: boolean } | { error: string }> {
+  const tail = await readChildSessionTail(agentDir, sessionKey, index, callId, childId);
+  if ('error' in tail) return { error: tail.error };
+  const messages: Record<string, unknown>[] = [];
+  let total = 0;
+  for (const line of tail.text.split('\n')) {
+    if (!line) continue;
+    let entry: any;
+    try { entry = JSON.parse(line); } catch { continue; }
+    if (entry?.type === 'message' && entry.message && typeof entry.message.role === 'string') {
+      total++;
+      const sanitized = sanitizeTranscriptMessage(entry.message);
+      // 稳定 entry id 随消息过 IPC：渲染层点开「省略思考」块时按 id+块下标按需拉取
+      // 真实内容（append-only jsonl，历史条目 id 不漂移）。
+      const entryId = boundedStr(entry.id, 80);
+      messages.push(entryId ? { ...sanitized, id: entryId } : sanitized);
+    }
+  }
+  const out = messages.slice(-TRANSCRIPT_MESSAGES);
+  return { messages: out, truncated: total > out.length || tail.windowTruncated };
+}
+
+/** 单条 thinking 的按需拉取（详情面板点开省略块时触发；默认转录载荷与现状一致）。
+ *  寻址用稳定 entry id + 内容块下标；复用 readChildSessionTail 的全部读纪律；
+ *  超过 THINKING_DETAIL_CAP 截断并标记 truncated；非 thinking 块/未知条目一律 not-found。 */
+export async function subagentChildThinking(agentDir: string, sessionKey: string, index: Pick<SessionIndex, 'subagentHistory'>, callId: string, childId: string, entryId: string, blockIndex: number): Promise<{ thinking: string; truncated: boolean } | { error: string }> {
+  if (!/^[A-Za-z0-9_-]{1,80}$/.test(entryId) || !Number.isInteger(blockIndex) || blockIndex < 0 || blockIndex > 1000) return { error: 'bad-args' };
+  const tail = await readChildSessionTail(agentDir, sessionKey, index, callId, childId);
+  if ('error' in tail) return { error: tail.error };
+  for (const line of tail.text.split('\n')) {
+    if (!line) continue;
+    let entry: any;
+    try { entry = JSON.parse(line); } catch { continue; }
+    if (entry?.type !== 'message' || entry.id !== entryId) continue;
+    const content = entry.message?.content;
+    if (!Array.isArray(content)) return { error: 'not-found' };
+    const block = content[blockIndex];
+    if (!block || typeof block !== 'object' || block.type !== 'thinking' || typeof block.thinking !== 'string') return { error: 'not-found' };
+    const thinking: string = block.thinking;
+    return thinking.length > THINKING_DETAIL_CAP
+      ? { thinking: thinking.slice(0, THINKING_DETAIL_CAP), truncated: true }
+      : { thinking, truncated: false };
+  }
+  return { error: 'not-found' };
 }
 
 /** Clean up all persisted subagent files for a session (on disconnect/close). */

@@ -3,7 +3,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { childSessionPointer, readSnapshotJson, subagentAsyncRoot, workflowSnapshots, type SubagentSnapshot } from '../src/main/pi/subagent-snapshots';
-import { recoverSubagents, subagentChildTranscript } from '../src/main/pi/official-subagent';
+import { recoverSubagents, subagentChildTranscript, subagentChildThinking } from '../src/main/pi/official-subagent';
+import { OMITTED_THINKING_TEXT } from '../src/shared/subagent-transcript';
 import { workflowDetails } from '../src/shared/subagent-workflow';
 import type { PiHistory } from '../src/shared/pi';
 
@@ -280,11 +281,11 @@ describe('childSessionPointer + subagentChildTranscript', () => {
     const childSessionFile = path.join(childSessionDir, 'session.jsonl');
     const lines = [
       JSON.stringify({ type: 'session', id: 'child-1', cwd: '/x' }),
-      JSON.stringify({ type: 'message', message: { role: 'user', content: 'review the diff' } }),
-      JSON.stringify({ type: 'message', message: { role: 'assistant', content: [{ type: 'thinking', thinking: 'secret chain of thought' }, { type: 'text', text: 'first finding' }] } }),
-      JSON.stringify({ type: 'message', message: { role: 'toolResult', toolCallId: 't1', toolName: 'read', isError: true, content: [{ type: 'text', text: 'permission denied' }] } }),
-      JSON.stringify({ type: 'message', message: { role: 'assistant', content: [{ type: 'toolCall', id: 't1', name: 'read', arguments: { path: '/a'.repeat(5000) } }] } }),
-      JSON.stringify({ type: 'message', message: { role: 'assistant', content: [{ type: 'text', text: { type: 'thinking', thinking: 'smuggled via non-string text' } }, { type: 'text', text: 'x'.repeat(9000) }, { type: 'image', data: 'AAAA' }] } }),
+      JSON.stringify({ type: 'message', id: 'e-user', message: { role: 'user', content: 'review the diff' } }),
+      JSON.stringify({ type: 'message', id: 'e-think', message: { role: 'assistant', content: [{ type: 'thinking', thinking: 'secret chain of thought' }, { type: 'text', text: 'first finding' }] } }),
+      JSON.stringify({ type: 'message', id: 'e-tool', message: { role: 'toolResult', toolCallId: 't1', toolName: 'read', isError: true, content: [{ type: 'text', text: 'permission denied' }] } }),
+      JSON.stringify({ type: 'message', id: 'e-call', message: { role: 'assistant', content: [{ type: 'toolCall', id: 't1', name: 'read', arguments: { path: '/a'.repeat(5000) } }] } }),
+      JSON.stringify({ type: 'message', id: 'e-mixed', message: { role: 'assistant', content: [{ type: 'text', text: { type: 'thinking', thinking: 'smuggled via non-string text' } }, { type: 'text', text: 'x'.repeat(9000) }, { type: 'image', data: 'AAAA' }] } }),
     ].join('\n') + '\n';
     fs.writeFileSync(childSessionFile, lines);
     let details: any;
@@ -776,5 +777,79 @@ describe('计时透传（PR#149 审查：真实时间只经身份/时间校验�
     expect(ok.updatedAt).toBe(NOW - 80000);
     expect(live.status).toBe('running'); // 幽灵降级才 unknown；真实 running 保持 running
     expect(live.updatedAt).toBe(NOW - 1000); // 不是 endedAt，渲染层只在终态取它
+  });
+});
+
+describe('subagentChildThinking（省略思考按需拉取）', () => {
+  // 独立 fixture：带 entry id 的子会话（pi 真实 jsonl 的 message 条目都带稳定 id）。
+  let root: string, tempBase: string, agentDir: string, savedEnv: string | undefined;
+  beforeEach(() => {
+    tempBase = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-thinking-test-'));
+    root = path.join(tempBase, 'async-subagent-runs');
+    fs.mkdirSync(root, { recursive: true });
+    agentDir = path.join(tempBase, 'agent');
+    fs.mkdirSync(agentDir, { recursive: true });
+    savedEnv = process.env.PI_SUBAGENTS_TEMP_ROOT;
+    process.env.PI_SUBAGENTS_TEMP_ROOT = tempBase;
+  });
+  afterEach(() => {
+    if (savedEnv === undefined) delete process.env.PI_SUBAGENTS_TEMP_ROOT; else process.env.PI_SUBAGENTS_TEMP_ROOT = savedEnv;
+    try { fs.rmSync(tempBase, { recursive: true, force: true }); } catch {}
+  });
+  function fixture(thinking: string = 'secret chain of thought') {
+    const now = Date.now();
+    const callId = 'call-th';
+    const childRunId = 'eeeeeeee-2222-4222-8222-000000000009';
+    const parentDir = path.join(tempBase, 'parent');
+    fs.mkdirSync(parentDir, { recursive: true });
+    const parentPath = path.join(parentDir, 'parent.jsonl');
+    const childDir = path.join(parentDir, 'child-th', 'run-0');
+    fs.mkdirSync(childDir, { recursive: true });
+    const childSessionFile = path.join(childDir, 'session.jsonl');
+    fs.writeFileSync(childSessionFile, [
+      JSON.stringify({ type: 'session', id: 'child-th', cwd: '/x' }),
+      JSON.stringify({ type: 'message', id: 'e-u', message: { role: 'user', content: 'task' } }),
+      JSON.stringify({ type: 'message', id: 'e-t', message: { role: 'assistant', content: [{ type: 'thinking', thinking }, { type: 'text', text: 'finding' }] } }),
+    ].join('\n') + '\n');
+    const statusDir = path.join(root, childRunId);
+    fs.mkdirSync(statusDir, { recursive: true });
+    fs.writeFileSync(path.join(statusDir, 'status.json'), JSON.stringify({ runId: childRunId, toolCallId: callId, sessionId: parentPath, mode: 'single', state: 'complete', startedAt: now - 9000, lastUpdate: now - 400, sessionFile: childSessionFile }));
+    const toolCall = { type: 'message', id: 'm1', message: { role: 'assistant', content: [{ type: 'toolCall', id: callId, name: 'subagent', arguments: { agent: 'code-reviewer' } }] }, timestamp: new Date().toISOString() };
+    const toolResult = { type: 'message', id: 'm2', message: { role: 'toolResult', toolCallId: callId, toolName: 'subagent', content: [], details: { mode: 'single', runId: childRunId, asyncId: childRunId, asyncDir: statusDir, results: [] } } };
+    const history = makeHistory(parentPath, [toolCall, toolResult]);
+    return { callId, childSessionFile, history, childRunId };
+  }
+
+  it('transcript default stays placeholder but carries stable entry ids', async () => {
+    const { callId, history } = fixture();
+    const index = { subagentHistory: () => history } as any;
+    const res = await subagentChildTranscript(agentDir, 'a'.repeat(64), index, callId, 'single');
+    expect('messages' in res).toBe(true);
+    const think = res.messages.find((m: any) => m.id === 'e-t') as any;
+    expect(think).toBeTruthy();
+    const block = think.content.find((c: any) => c.type === 'thinking');
+    expect(block.thinking).toBe(OMITTED_THINKING_TEXT); // 默认仍是占位符（与现状一致）
+  });
+
+  it('fetches one thinking block on demand with the same read discipline', async () => {
+    const { callId, history } = fixture();
+    const index = { subagentHistory: () => history } as any;
+    const res = await subagentChildThinking(agentDir, 'a'.repeat(64), index, callId, 'single', 'e-t', 0);
+    expect(res).toEqual({ thinking: 'secret chain of thought', truncated: false });
+    // 错误入口：块越界 / 条目不存在 / 非法 id / 非法下标 / 非思考块
+    expect(await subagentChildThinking(agentDir, 'a'.repeat(64), index, callId, 'single', 'e-t', 9)).toMatchObject({ error: 'not-found' });
+    expect(await subagentChildThinking(agentDir, 'a'.repeat(64), index, callId, 'single', 'e-missing', 0)).toMatchObject({ error: 'not-found' });
+    expect(await subagentChildThinking(agentDir, 'a'.repeat(64), index, callId, 'single', '../etc', 0)).toMatchObject({ error: 'bad-args' });
+    expect(await subagentChildThinking(agentDir, 'a'.repeat(64), index, callId, 'single', 'e-t', -1)).toMatchObject({ error: 'bad-args' });
+    expect(await subagentChildThinking(agentDir, 'a'.repeat(64), index, callId, 'single', 'e-t', 1)).toMatchObject({ error: 'not-found' });
+  });
+
+  it('caps oversized thinking and flags truncation', async () => {
+    const huge = 'y'.repeat(120_000);
+    const { callId, history } = fixture(huge);
+    const index = { subagentHistory: () => history } as any;
+    const res = await subagentChildThinking(agentDir, 'a'.repeat(64), index, callId, 'single', 'e-t', 0);
+    expect('thinking' in res).toBe(true);
+    if ('thinking' in res) { expect(res.truncated).toBe(true); expect(res.thinking.length).toBe(100_000); }
   });
 });

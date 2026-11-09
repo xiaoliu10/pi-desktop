@@ -401,6 +401,7 @@ function registerIpc() {
   // history.session.path）与 containment 校验都在归一后的链尾上原样执行，不放松。
   handle('recoverSubagents', (key: string, leaf?: string, pinned?: string[], knownSignature?: string) => host.index.recoverSubagents(host.environment.agentDir, host.backend.resolveHistoryKey(key), leaf, pinned, knownSignature));
   handle('subagentChildTranscript', (key: string, callId: string, childId: string) => host.index.subagentChildTranscript(host.environment.agentDir, host.backend.resolveHistoryKey(key), callId, childId));
+  handle('subagentChildThinking', (key: string, callId: string, childId: string, entryId: string, blockIndex: number) => host.index.subagentChildThinking(host.environment.agentDir, host.backend.resolveHistoryKey(key), callId, childId, entryId, blockIndex));
   handle('cleanupSubagents', (key: string) => cleanupSubagents(host.environment.agentDir, key));
   // 记忆衔接层：探测 CLI 记忆插件（如 pi-memory），未启用时回退 Desktop 内置桥
   const memoryProject = (cwd: unknown) => cwd === undefined || cwd === '' ? undefined : authorizeProjectCwd(cwd,

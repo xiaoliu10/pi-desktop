@@ -27,6 +27,7 @@ export type WorkerRequest =
   | { id: number; op: 'outline'; key: string }
   | { id: number; op: 'recoverSubagents'; key: string; leaf?: string; pinned?: string[]; knownSignature?: string }
   | { id: number; op: 'subagentChildTranscript'; key: string; callId: string; childId: string }
+  | { id: number; op: 'subagentChildThinking'; key: string; callId: string; childId: string; entryId: string; blockIndex: number }
   | { id: number; op: 'forkCopySource'; key: string; targetPath: string; header: { id: string; timestamp: string; parentSession: string } }
   | { id: number; op: 'subscribe'; key: string }
   | { id: number; op: 'unsubscribe'; key: string }

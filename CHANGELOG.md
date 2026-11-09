@@ -3,6 +3,20 @@
 所有重要变更记录在本文件。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 README 只保留最近版本摘要；本文件为完整记录。
 
+## [Unreleased]
+
+### English
+
+#### Added
+
+- **Subagent thinking is now readable on demand**: in the subagent detail panel, omitted thinking blocks (previously always shown as the placeholder “[子代理详情省略思考内容]”) can be clicked to load the real reasoning text for that single block. The default collapsed view and transcript payload are unchanged — content is fetched per block only when you expand it (bounded, with a truncation notice for very long thinking), cached for the block, and a readable error is shown if the fetch fails.
+
+### 中文
+
+#### 新增
+
+- **子代理思考内容可按需查看**：子代理详情面板里被省略的思考块（此前只显示占位文案「[子代理详情省略思考内容]」）现在可以点开，单独拉取并展示该块的真实思考内容。默认折叠态与转录载荷完全不变——只有点开时才按块拉取（有界返回，超长会截断并提示），结果缓存在块内，读取失败显示可读错误。
+
 ## [0.1.46] - 2026-11-06
 
 ### English

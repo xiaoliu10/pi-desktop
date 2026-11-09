@@ -375,7 +375,7 @@ export interface SkillPart {
 export type MessagePart =
   | { kind: 'image'; id: string; data: string; mimeType: string }
   | { kind: 'text'; id: string; text: string }
-  | { kind: 'thinking'; id: string; text: string; durationMs?: number }
+  | { kind: 'thinking'; id: string; text: string; durationMs?: number; /** 子代理详情「省略思考」块的按需加载寻址（entryId+块下标）；仅省略占位块携带。 */ thinkingRef?: { entryId: string; blockIndex: number } }
   | ToolPart
   | ErrorPart
   | NoticePart

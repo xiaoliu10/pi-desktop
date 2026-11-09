@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useCallback, useMemo, useRef, useState } from 'react';
 import type { SubagentChild, ChildState } from './subagents';
 import { subagentTranscriptTurns } from './subagents';
-import { Spinner, TurnArticle } from '../replica/chat/ChatView';
+import { Spinner, TurnArticle, OmittedThinkingLoaderContext, type OmittedThinkingLoader } from '../replica/chat/ChatView';
 import { replicaLabels } from '../replica/i18n';
 import { usePiStore } from './adapter';
 import { Icon } from '../replica/Icons';
@@ -29,10 +29,14 @@ function StatusIcon({ status }: { status: ChildState }) {
 }
 
 /** 转录直接复用主对话的轮次 UI（ToolCard 工具行 / ExecutionNote 思考行 / 执行过程折叠）。 */
-export function Transcript({ messages, turnKey, live, epoch, startedAt, endedAt }: { messages: SubagentChild['messages']; turnKey: string; live: boolean; epoch?: number; startedAt?: number; endedAt?: number }) {
+export function Transcript({ messages, turnKey, live, epoch, startedAt, endedAt, onLoadOmittedThinking }: { messages: SubagentChild['messages']; turnKey: string; live: boolean; epoch?: number; startedAt?: number; endedAt?: number; onLoadOmittedThinking?: OmittedThinkingLoader | null }) {
   const turns = useMemo(() => subagentTranscriptTurns(messages, turnKey, epoch, startedAt, endedAt), [messages, turnKey, epoch, startedAt, endedAt]);
   const chatLabels = usePiStore(s => replicaLabels(s.lang).chat);
-  return <>{turns.map((turn, i) => <TurnArticle key={turn.id} m={turn} liveTurn={live && i === turns.length - 1} labels={chatLabels} />)}</>;
+  // 省略思考块的按需加载器经 context 下发（避免穿透 TurnArticle→ExecutionGroup→
+  // renderSteps→MessageParts 四层 prop）；主对话不提供，行为与历史一致。
+  return <OmittedThinkingLoaderContext.Provider value={onLoadOmittedThinking ?? null}>
+    {turns.map((turn, i) => <TurnArticle key={turn.id} m={turn} liveTurn={live && i === turns.length - 1} labels={chatLabels} />)}
+  </OmittedThinkingLoaderContext.Provider>;
 }
 
 export function SubagentPanel({ children, initialCall, onClose, onStop, parentRunning }: {
@@ -77,6 +81,16 @@ export function SubagentPanel({ children, initialCall, onClose, onStop, parentRu
   }, [activeId, activeChildKey, activeCallId, activeStatus, pluginMessages, s.selectedKey]);
   const shown = active ? (active.messages.length ? active.messages : fetched[active.id]?.messages ?? []) : [];
   const fetchedState = active ? fetched[active.id] : undefined;
+  // 「省略思考」块点开时才单独 IPC 拉真实内容（默认折叠态与占位行为不变）。
+  // useCallback 稳定身份：TurnArticle 是 memo 组件，回调每渲染新建会击穿缓存。
+  const loadOmittedThinking = useCallback(async (ref: { entryId: string; blockIndex: number }) => {
+    if (!s.selectedKey || !activeCallId || !activeChildKey) return { error: 'unavailable' };
+    try {
+      const res = await window.localPi?.subagentChildThinking(s.selectedKey, activeCallId, activeChildKey, ref.entryId, ref.blockIndex);
+      if (!res) return { error: 'request-failed' };
+      return 'error' in res ? { error: res.error } : { text: res.thinking, truncated: res.truncated };
+    } catch { return { error: 'request-failed' }; }
+  }, [s.selectedKey, activeCallId, activeChildKey]);
   useEffect(() => { if (follow.current && transcript.current) transcript.current.scrollTop = transcript.current.scrollHeight; }, [selected, shown, active?.status]);
 
   const running = children.filter(c => ['running', 'queued'].includes(c.status));
@@ -110,7 +124,7 @@ export function SubagentPanel({ children, initialCall, onClose, onStop, parentRu
       </div>
       <div className="pi-subagents__transcript" ref={transcript} onScroll={e => { const el = e.currentTarget; follow.current = el.scrollHeight - el.clientHeight - el.scrollTop < 48; }}>
         {active.error && <p className="pi-subagents__error" role="alert">{active.error}</p>}
-        <Transcript messages={shown} turnKey={active.id} epoch={fetchedState?.epoch} startedAt={active.startedAt} endedAt={active.endedAt} live={['running', 'queued'].includes(active.status)} />
+        <Transcript messages={shown} turnKey={active.id} epoch={fetchedState?.epoch} startedAt={active.startedAt} endedAt={active.endedAt} live={['running', 'queued'].includes(active.status)} onLoadOmittedThinking={loadOmittedThinking} />
         {!shown.length && (active.childKey
           ? <p className="pi-subagents__empty">{fetchedState?.state === 'error' ? transcriptErrorMessage(fetchedState.error, zh) : fetchedState?.state === 'ok' ? (zh ? '子会话暂无消息。' : 'No messages in this child session.') : (zh ? '正在读取子会话转录…' : 'Loading child transcript…')}</p>
           : <p className="pi-subagents__empty">{zh ? '插件尚未报告消息。' : 'No messages reported yet.'}</p>)}

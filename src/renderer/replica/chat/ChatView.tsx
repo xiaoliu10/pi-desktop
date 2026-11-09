@@ -3,6 +3,7 @@ import { ChatError } from './ChatError';
 import { RetryStatus } from './RetryStatus';
 import { retryPresentation } from '../../pi/model-retry';
 import { retryErrorIds } from './error-groups';
+import { OMITTED_THINKING_TEXT } from '../../../shared/subagent-transcript';
 import { WaitingProcess } from './WaitingProcess';
 import { officialSubagentDetails, SubagentNavigation } from '../../pi/subagents';
 /**
@@ -271,7 +272,14 @@ export const ToolCard = memo(function ToolCard({ part, labels, onOpenToolFile, l
   );
 });
 
+/** 「省略思考」按需加载器（子代理详情专用）：SubagentPanel 在转录外层提供，
+ *  MessageParts 里的思考块直接消费——避免穿透 ExecutionGroup→renderSteps→
+ *  ToolGroupBlock→MessageParts 四层 prop。主对话不提供（null），行为与历史一致。 */
+export type OmittedThinkingLoader = (ref: { entryId: string; blockIndex: number }) => Promise<{ text: string; truncated?: boolean } | { error: string } | null>;
+export const OmittedThinkingLoaderContext = createContext<OmittedThinkingLoader | null>(null);
+
 function MessageParts({ parts, labels, onOpenToolFile, live, hiddenErrors }: { parts: MessagePart[]; labels: ChatViewProps['labels']; onOpenToolFile?: ChatViewProps['onOpenToolFile']; /** 组处于流式且这是最后一个 part：思考行滚动展示内容 */ live?: boolean; hiddenErrors?: Set<string> }) {
+  const loadOmittedThinking = useContext(OmittedThinkingLoaderContext);
   return (
     <>
       {parts.map((p) => {
@@ -286,7 +294,7 @@ function MessageParts({ parts, labels, onOpenToolFile, live, hiddenErrors }: { p
               ? <StreamMarkdown key={p.id} text={p.text} zh={labels.you === '你'} />
               : <ChatMarkdown key={p.id} text={p.text} zh={labels.you === '你'} />;
           case 'thinking':
-            return <ExecutionNote key={p.id} zh={labels.you === '你'} title={`${labels.you === '你' ? '思考' : 'Thought'}${p.durationMs !== undefined ? ` · ${labels.you === '你' ? `用时 ${Math.max(1, Math.ceil(p.durationMs / 1000))} 秒` : `took ${Math.max(1, Math.ceil(p.durationMs / 1000))}s`}` : ''}`} text={p.text} active={live} />;
+            return <ExecutionNote key={p.id} zh={labels.you === '你'} title={`${labels.you === '你' ? '思考' : 'Thought'}${p.durationMs !== undefined ? ` · ${labels.you === '你' ? `用时 ${Math.max(1, Math.ceil(p.durationMs / 1000))} 秒` : `took ${Math.max(1, Math.ceil(p.durationMs / 1000))}s`}` : ''}`} text={p.text} active={live} onLoadOmitted={p.thinkingRef && loadOmittedThinking ? () => loadOmittedThinking(p.thinkingRef!) : undefined} />;
           case 'tool':
             return <ToolCard key={p.id} part={p} labels={labels} onOpenToolFile={onOpenToolFile} live={live} />;
           case 'skill':
@@ -424,7 +432,7 @@ function UserMessageParts({ parts, labels, onOpenToolFile, onDownloadImage }: { 
   );
 }
 
-export function ExecutionNote({ title, text, active, zh, defaultOpen }: { title: string; text: string; /** 这条思考正在流式输出：行内滚动展示内容尾部，完成后恢复计时标题 */ active?: boolean; zh?: boolean; /** 初始展开（测试口子；生产路径不传） */ defaultOpen?: boolean }) {
+export function ExecutionNote({ title, text, active, zh, defaultOpen, onLoadOmitted }: { title: string; text: string; /** 这条思考正在流式输出：行内滚动展示内容尾部，完成后恢复计时标题 */ active?: boolean; zh?: boolean; /** 初始展开（测试口子；生产路径不传） */ defaultOpen?: boolean; /** 「省略思考」块的按需加载（子代理详情）：点开才拉真实内容并缓存；不传时行为与历史完全一致。 */ onLoadOmitted?: () => Promise<{ text: string; truncated?: boolean } | { error: string } | null> }) {
   // 受控开合：流式渲染每 ~150ms 重渲染，非受控 details 的 open 会被 React 重置，
   // 用户点开后立即被关上 → 看不到正文。用 state 跟随 toggle。
   const [open, setOpen] = useState(defaultOpen ?? false);
@@ -435,13 +443,32 @@ export function ExecutionNote({ title, text, active, zh, defaultOpen }: { title:
   // 折叠态不渲染 markdown 正文：大会话实测 2414 个思考段，每段全文走 ChatMarkdown
   // 是打开会话与流式重渲的大头。与 ToolCard 同策略——summary（含流式滚动带）始终渲染，
   // 展开才付正文成本。运行中「过程段强制展开」的语义不受影响（open 时正文照常）。
-  return <details className="pi-execution__note" open={open} onToggle={(e) => setOpen(e.currentTarget.open)}>
+  // 省略思考块（子代理详情）：默认与历史一致；提供 onLoadOmitted 时点开才拉真实内容
+  // 并缓存在组件内（收起再开不重复请求）；未提供时正文照旧渲染占位文案。
+  const omitted = text === OMITTED_THINKING_TEXT;
+  const [detail, setDetail] = useState<{ text: string; truncated?: boolean } | { error: string } | null>(null);
+  const loadingRef = useRef(false);
+  const loadOmitted = () => {
+    if (!omitted || !onLoadOmitted || detail || loadingRef.current) return;
+    loadingRef.current = true;
+    onLoadOmitted()
+      .then(res => setDetail(res ?? { error: 'request-failed' }))
+      .catch(() => setDetail({ error: 'request-failed' }))
+      .finally(() => { loadingRef.current = false; });
+  };
+  const body = () => {
+    if (!omitted || !onLoadOmitted) return <ChatMarkdown text={text} zh={zh} />;
+    if (detail && 'error' in detail) return <p className="pi-execution__omitted-error">{zh ? '思考内容读取失败，请稍后重试。' : 'Failed to load thinking content; try again later.'}</p>;
+    if (detail && 'text' in detail) return <><ChatMarkdown text={detail.text} zh={zh} />{detail.truncated && <p className="pi-execution__omitted-truncated">{zh ? '思考内容过长，已截断显示。' : 'Thinking too long; truncated.'}</p>}</>;
+    return <p className="pi-execution__omitted-loading">{zh ? '正在读取思考内容…' : 'Loading thinking…'}</p>;
+  };
+  return <details className="pi-execution__note" open={open} onToggle={(e) => { setOpen(e.currentTarget.open); if (e.currentTarget.open) loadOmitted(); }}>
     <summary><Icon name="brain" size={17}/>
       {active
         ? <><strong className="pi-execution__thinking">正在思考</strong><span className="pi-execution__ticker"><span className="pi-execution__ticker-inner">{tail}</span></span></>
         : <span>{title}</span>}
       <Icon name="chevron-right" size={12} className="pi-execution__chevron" /></summary>
-    {open && <div className="pi-execution__note-body"><ChatMarkdown text={text} zh={zh} /></div>}
+    {open && <div className="pi-execution__note-body">{body()}</div>}
   </details>;
 }
 

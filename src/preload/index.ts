@@ -112,6 +112,7 @@ const localPi: LocalPiApi = {
   subagentCapabilityStatus: () => invoke('subagentCapabilityStatus'),
   recoverSubagents: (key: string, leaf?: string, pinned?: string[], knownSignature?: string) => invoke('recoverSubagents', key, leaf, pinned, knownSignature),
   subagentChildTranscript: (key: string, callId: string, childId: string) => invoke('subagentChildTranscript', key, callId, childId),
+  subagentChildThinking: (key: string, callId: string, childId: string, entryId: string, blockIndex: number) => invoke('subagentChildThinking', key, callId, childId, entryId, blockIndex),
   memoryAssistStatus: (enabled: boolean, cwd?: string) => invoke('memoryAssistStatus', enabled, cwd),
   memoryList: (cwd?: string) => invoke('memoryList', cwd),
   memoryRead: (rel: string, cwd?: string) => invoke('memoryRead', rel, cwd),

@@ -1,6 +1,7 @@
 import { singleAsyncDetails, workflowDetails } from '../../shared/subagent-workflow';
+import { OMITTED_THINKING_TEXT } from '../../shared/subagent-transcript';
 import { createContext } from 'react';
-import type { ChatMessage, ToolPart } from '../replica/contracts';
+import type { ChatMessage, MessagePart, ToolPart } from '../replica/contracts';
 import { executionTurns, type ChatTurn } from '../replica/chat/execution';
 import { historyToMessages } from './adapter';
 import type { PiEntry } from '../../shared/pi';
@@ -18,6 +19,25 @@ import { findAdapter } from './subagent-registry';
  * 里就看不到「已工作 X」——#147 把 epoch 这个假值从 timestamp 里去掉之后留下的缺口。
  * 这里用调用方传入的子代理**真实** startedAt 兜底（它来自主进程 status.json 快照），
  * 消息自身有真实时间时仍以消息为准。绝不拿版本号/当前时间编造。*/
+/** 给「省略思考」的 thinking part 挂上按需加载引用（entryId+块下标）。
+ *  part.id 形如 `${syntheticEntryId}-thinking-${blockIndex}`（historyToMessages 的稳定
+ *  命名，blockIndex=内容数组下标）；syntheticEntryId 再映射回真实 entry id。
+ *  识别不了就不挂——行为退回现状（只显示占位符），绝不猜。 */
+function attachOmittedThinkingRefs(messages: ChatMessage[], realIdBySynthetic: Map<string, string>): void {
+  for (const message of messages) {
+    for (const part of message.parts) {
+      if (part.kind !== 'thinking' || part.text !== OMITTED_THINKING_TEXT) continue;
+      const sep = part.id.lastIndexOf('-thinking-');
+      if (sep <= 0) continue;
+      const synthetic = part.id.slice(0, sep);
+      const blockIndex = Number(part.id.slice(sep + '-thinking-'.length));
+      const entryId = realIdBySynthetic.get(synthetic);
+      if (!entryId || !Number.isInteger(blockIndex) || blockIndex < 0) continue;
+      (part as Extract<MessagePart, { kind: 'thinking' }>).thinkingRef = { entryId, blockIndex };
+    }
+  }
+}
+
 export function subagentTranscriptTurns(messages: SubagentChild['messages'], turnKey: string, epoch?: number, startedAt?: number, endedAt?: number): ChatTurn[] {
   // epoch 是「同一下标内容变化时击穿 messageCache」的缓存版本号，绝不能放进 timestamp：
   // 渲染层把 timestamp 当 Unix 毫秒与 Date.now() 相减，epoch=1 会显示成「已工作 49 万小时」。
@@ -33,7 +53,16 @@ export function subagentTranscriptTurns(messages: SubagentChild['messages'], tur
       message,
     } as unknown as PiEntry;
   });
-  const turns = executionTurns(historyToMessages(entries));
+  // 省略思考块的按需加载引用：合成 entry id → 真实 entry id（主进程随转录带回），
+  // 供渲染层点开占位块时单独 IPC 拉取该条思考（默认折叠态与现状完全一致）。
+  const realIdBySynthetic = new Map<string, string>();
+  messages.forEach((message, i) => {
+    const real = message && typeof message === 'object' ? (message as Record<string, unknown>).id : undefined;
+    if (typeof real === 'string' && real) realIdBySynthetic.set(`${turnKey}${epochNs}:${i}`, real);
+  });
+  const chat = historyToMessages(entries);
+  attachOmittedThinkingRefs(chat, realIdBySynthetic);
+  const turns = executionTurns(chat);
   const validStart = Number.isFinite(startedAt) && (startedAt as number) > 0 ? startedAt : undefined;
   // endedAt 仅在子代理已结束（调用方传入真实 lastUpdate）且不早于起点时生效。
   const validEnd = validStart !== undefined && Number.isFinite(endedAt) && (endedAt as number) >= validStart ? endedAt : undefined;

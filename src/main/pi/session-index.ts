@@ -6,7 +6,7 @@ import { OutlineCache } from './outline-cache';
 import { SessionMetaCache } from './session-meta-cache';
 import { MAX_SESSION, OversizedSessionError, sessionStub } from './session-size';
 import { computeUsageStats, type UsageStats } from './usage-stats';
-import { recoverSubagents, subagentChildTranscript } from './official-subagent';
+import { recoverSubagents, subagentChildTranscript, subagentChildThinking as childThinkingImpl } from './official-subagent';
 import { historyWindow } from './history-window';
 /** 大于该值的会话文件变更时只更新元数据、延后全量解析：流式期间活动会话每个 delta
  * 都在追加，若每次 watch/轮询都重读重解析整个 MB 级文件，主进程会被持续拖死。 */
@@ -471,6 +471,7 @@ export class SessionIndex {
   }
   async recoverSubagents(agentDir: string, key: string, leaf?: string, pinned?: string[], knownSignature?: string) { return recoverSubagents(agentDir, key, this, leaf, pinned, knownSignature); }
   async subagentChildTranscript(agentDir: string, key: string, callId: string, childId: string) { return subagentChildTranscript(agentDir, key, this, callId, childId); }
+  async subagentChildThinking(agentDir: string, key: string, callId: string, childId: string, entryId: string, blockIndex: number) { return childThinkingImpl(agentDir, key, this, callId, childId, entryId, blockIndex); }
   async ready(): Promise<void> { /* 进程内：cache 在 start() 内同步就绪 */ }
   async subscribe(_key: string): Promise<void> { /* 进程内：无需镜像 */ }
   unsubscribe(_key: string): void { /* 进程内：无需镜像 */ }

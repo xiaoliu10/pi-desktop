@@ -199,6 +199,9 @@ export class IndexWorkerClient implements IndexPort {
   subagentChildTranscript(_agentDir: string, key: string, callId: string, childId: string): Promise<{ messages: Record<string, unknown>[]; truncated: boolean } | { error: string }> {
     return this.request({ op: 'subagentChildTranscript', key, callId, childId }) as Promise<{ messages: Record<string, unknown>[]; truncated: boolean } | { error: string }>;
   }
+  subagentChildThinking(_agentDir: string, key: string, callId: string, childId: string, entryId: string, blockIndex: number): Promise<{ thinking: string; truncated: boolean } | { error: string }> {
+    return this.request({ op: 'subagentChildThinking', key, callId, childId, entryId, blockIndex }) as Promise<{ thinking: string; truncated: boolean } | { error: string }>;
+  }
 
   forkCopySource(_key: string, targetPath: string, header: { id: string; timestamp: string; parentSession: string }): Promise<{ path: string; entries: number }> {
     // key 由 protocol 传输；参数顺序跟随 IndexPort（agentDir 不出现在此签名上）。
