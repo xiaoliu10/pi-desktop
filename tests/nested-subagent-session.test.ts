@@ -73,3 +73,45 @@ describe('嵌套子会话（pi-subagents async 布局）', () => {
     expect(s.parentSession).toBeUndefined();
   });
 });
+
+describe('嵌套子会话 header 自带 parentSession（2026-11-10 用户实测回归）', () => {
+  it('pi-subagents 子会话 header 带 parentSession 时仍按嵌套布局标 subagentOf（侧栏/远控隐藏）', () => {
+    const parent = path.join(root, '1794185132456_main.jsonl');
+    writeSession(parent, {});
+    writeSession(path.join(root, '1794185132456_main', 'c1', 'run-0', 'session.jsonl'), {
+      cwd: '/w', parentSession: fs.realpathSync(parent),
+    });
+    const idx = new SessionIndex([root], root);
+    const child = idx.scan(true).find(s => s.path.includes('run-0'))!;
+    expect(child).toBeTruthy();
+    // header 的 parentSession 保留（分支/fork 语义的展示口径不变）
+    expect(child.parentSession).toBe(fs.realpathSync(parent));
+    // 关键断言：嵌套布局必须无条件标记 subagentOf，否则 0.1.41 起侧栏/远控过滤失效
+    expect(child.subagentOf).toBe(fs.realpathSync(parent));
+  });
+  it('顶层的用户分支会话（header parentSession，无嵌套布局）不受影响、保持可见', () => {
+    const parent = path.join(root, 'main.jsonl');
+    writeSession(parent, {});
+    writeSession(path.join(root, 'branched.jsonl'), { cwd: '/w', parentSession: fs.realpathSync(parent) });
+    const idx = new SessionIndex([root], root);
+    const s = idx.scan().find(x => x.path.endsWith('branched.jsonl'))!;
+    expect(s.parentSession).toBe(fs.realpathSync(parent));
+    expect(s.subagentOf).toBeUndefined();
+  });
+});
+
+describe('CLI 项目目录布局的子会话（2026-11-10 真实数据补漏）', () => {
+  it('<root>/--项目--/<主会话>/<childId>/run-N 布局同样标 subagentOf（父文件在项目目录内）', () => {
+    const proj = path.join(root, '--Users-jason-projects-demo--');
+    const parent = path.join(proj, '2026-10-28T08-51-34-377Z_main.jsonl');
+    writeSession(parent, {});
+    writeSession(path.join(proj, '2026-10-28T08-51-34-377Z_main', 'c1', 'run-0', 'session.jsonl'), {
+      cwd: '/w', parentSession: fs.realpathSync(parent),
+    });
+    const idx = new SessionIndex([root], root);
+    const child = idx.scan(true).find(s => s.path.includes('run-0'))!;
+    expect(child).toBeTruthy();
+    expect(child.parentSession).toBe(fs.realpathSync(parent));
+    expect(child.subagentOf).toBe(fs.realpathSync(parent));
+  });
+});

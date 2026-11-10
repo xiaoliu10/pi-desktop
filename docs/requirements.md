@@ -519,7 +519,8 @@
 
 **边界（明确不做）**：不做端到端加密（ZCode/Harness 均不做，靠 WSS + 预共享 key + 一次性 token）；relay 不做多 terminal 隔离（单人自托管场景）；`docs/design/remote-tunnel.md` §5 记录了完整盲区。
 
-**可见性口径（2026-11-02 补）**：手机端会话列表必须与桌面侧栏一致。过滤只看**真 subagent 标记**（`subagentOf`，索引从嵌套布局 `…/<主会话>/<childId>/run-N/session.jsonl` 推断）与副驾 `sidecarOf`；**`parentSession`（pi 的分支/fork 语义，编辑重发/compact/fork）不参与过滤**——混同会把用户正在用的会话从手机端与侧栏一起抹掉（实测 VE 会话）。回归：`tests/remote-visibility.test.ts`、`tests/project-order.test.ts`、`tests/remote-server.test.ts`。
+**可见性口径（2026-11-02 补，2026-11-10 扩）**：手机端会话列表必须与桌面侧栏一致。过滤只看**真 subagent 标记**（`subagentOf`，索引从嵌套布局 `…/<主会话>/<childId>/run-N/session.jsonl` 推断）与副驾 `sidecarOf`；**`parentSession`（pi 的分支/fork 语义，编辑重发/compact/fork）不参与过滤**——混同会把用户正在用的会话从手机端与侧栏一起抹掉（实测 VE 会话）。
+**2026-11-10 回归（用户实测）**：pi-subagents 子会话的 header 同样带 `parentSession`（pi 的 branched-session 语义），v0.1.41–0.1.47 里 header 优先抹掉 `subagentOf`，数百个内部子会话（`subagent-code-reviewer-…` 等）漏进侧栏/远控成为假项目。修复后：嵌套布局是身份证据，无条件标 `subagentOf`，header 只保留 `parentSession` 的展示语义；推断同时逐级查「同名兄弟 .jsonl」覆盖 CLI 项目目录布局（`<sessions>/--项目--/<主会话>/<childId>/run-N/`）。顶层带 header `parentSession` 的用户分支会话不受影响。回归：`tests/remote-visibility.test.ts`、`tests/project-order.test.ts`、`tests/remote-server.test.ts`、`tests/nested-subagent-session.test.ts`（含 2026-11-10 新增 3 条，修前红）。
 
 **状态**：已实现（含 Go relay 仓库），随远程隧道 PR 发版；ECS 部署后需真机验证。
 
@@ -570,7 +571,7 @@
 
 | 升级项 | 必须回归的需求 | 原因 |
 |---|---|---|
-| pi-subagents | R-subagent-02, R-subagent-01 | async 路径 status/sessionFile 形态可能变 |
+| pi-subagents | R-subagent-02, R-subagent-01, R-remote-02 | async 路径 status/sessionFile 形态可能变；子会话 header 是否带 parentSession 会影响会话列表可见性口径 |
 | pi 内核（fork/会话条目） | R-sidecar-01 | message 条目形状、parentId 链/branch 语义、--append-system-prompt |
 | pi 内核 | R-model-01, R-model-03, R-render-01, R-subagent-02 | refresh/setModel 契约、get_entries 增量、subagent 事件。**必跑 `pnpm smoke:rpc`** |
 | CCR | R-model-02, R-model-03 | provider 生命周期、思考等级字段 |
