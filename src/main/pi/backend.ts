@@ -10,12 +10,13 @@ import { OversizedSessionError } from './session-size';
 import type { IndexPort } from './index-port';
 import { runAutomationBridge, SCHEDULE_GUIDANCE } from './automation-bridge';
 import { runHandoffBridge, HandoffService } from './handoff-bridge';
-import { cacheHitRateFromTotals, summarizeContext } from './context-details';
+import { cacheHitRateFromTotals } from './context-details';
 import { migrateOldSubagentExtension, persistSubagentEvent, runningSubagentCounts } from './official-subagent';
 import { detectThirdPartyAsk, bridgeableQuestions, planAnswer, type AskBridgeState, type AskBridgeQuestion } from './third-party-ask';
 import { clearMemoryEnv, memorySessionEnv } from './memory-bridge';
 import { repairPackages } from './packages-repair';
 import { ensureBuiltinPackages, builtinPackagesSeeded, markBuiltinPackagesSeeded } from './builtin-packages';
+import { detectPlanPackage } from './plan-package';
 import { repairCodemode } from './repair-codemode';
 import { RetryGroups } from './retry-groups';
 import { OutputPerformanceTracker } from './output-performance';
@@ -374,6 +375,13 @@ export class PiBackend {
     const thirdPartyAsk = detectThirdPartyAsk(this.env.agentDir);
     const askPath = path.join(path.dirname(this.policyPath), '..', 'desktop-ask', 'index.mjs');
     const askArgs = !thirdPartyAsk.detected && fs.existsSync(askPath) ? ['-e', askPath] : [];
+    // desktop_update_plan 的提供方在 launch 层判定：装了 TUI/GUI 共用的
+    // @wengine-ai/pi-plan-tool（#193 起属内置必装包）时，置标记让 desktop-policy 的
+    // 内置副本让位。不能让扩展自己探测「同名工具是否已注册」——desktop-policy 是
+    // 第一个 -e 扩展，它加载时 npm 包还没被 pi 装载，探测必然落空 → 双注册 → pi 在
+    // 扩展加载阶段抛同名冲突直接退出（v0.1.47 用户实测：每个会话都起不来）。
+    if (detectPlanPackage(this.env.agentDir).detected) env.PI_DESKTOP_PLAN_PACKAGE = '1';
+    else delete env.PI_DESKTOP_PLAN_PACKAGE; // env 从 process.env 展开：清掉继承来的陈旧标记
     // Desktop 定时任务工具：会话内可创建/管理 automations.json 调度任务（缺失不阻塞会话）。
     const schedulePath = path.join(path.dirname(this.policyPath), '..', 'desktop-schedule', 'index.mjs');
     const scheduleArgs = fs.existsSync(schedulePath) ? ['-e', schedulePath] : [];
@@ -633,6 +641,8 @@ export class PiBackend {
       if (outputPerformance) run.view.outputPerformance = outputPerformance;
     }
     if (event.type === 'extension_ui_request') {
+      // SAFETY: pi 的 RPC 帧是裸 JSON，没有编译期类型；上面的 event.type 判别式
+      // 已确定这是 extension_ui_request 帧，其 id/method/title 形状由 pi 1.4.0 契约保证。
       const req = event as unknown as PiUiRequest;
       if (req.method === 'input' && req.title === 'desktop-automation') {
         // desktop_schedule 工具的调度请求：主进程程序化应答，不进对话框 UI。

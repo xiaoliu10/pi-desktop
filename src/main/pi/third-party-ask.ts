@@ -14,7 +14,7 @@ const ASK_PLUGIN_PATTERN = /ask[-_.]?user[-_.]?question|rpiv-ask/i;
 /** 名字以 desktop 起段的是 Desktop 自带扩展（desktop-ask 等），不算第三方。
  *  锚定到末段段首而非裸 substring：第三方包名中段含 desktop（如 my-desktop-ask-user-question）
  *  不该被排除——漏检的代价是 pi 扩展加载冲突、会话起不来。 */
-function looksDesktopNamed(name: string): boolean {
+export function looksDesktopNamed(name: string): boolean {
   const last = name.replace(/^npm:/i, '').split('/').pop() ?? '';
   return /^desktop([_.-]|$)/i.test(last);
 }

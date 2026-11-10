@@ -122,4 +122,31 @@ describe('ensureBuiltinPackages', () => {
     expect(Array.isArray(report.failed)).toBe(true);
     expect(report.conflicts).toEqual([]);
   });
+
+  // v0.1.47 用户实测：settings.json 里同一个包出现两条（npm:X@^0.0.1 与 npm:X）。
+  // 精确字符串比对把「带版本范围」和「裸名」当成两个包，于是补注册又追加一条。
+  // 重复条目让「谁提供了 desktop_update_plan」无法判定，是双注册冲突难排查的一环。
+  it('treats a bare spec as already registered for the versioned builtin (no duplicate)', async () => {
+    const { agentDir, dataDir } = setup(
+      { packages: ['npm:@wengine-ai/pi-plan-tool'] },
+      { '@wengine-ai/pi-plan-tool': '^0.0.1' },
+    );
+    const report = await ensureBuiltinPackages('/fake/pi', agentDir, dataDir);
+    const planSpec = BUILTIN_PACKAGES.find(p => p.spec.includes('pi-plan-tool'))!.spec;
+    expect(report.alreadyRegistered).toContain(planSpec);
+    expect(report.installed).not.toContain(planSpec);
+    const registered = readPackages(agentDir).filter((s: string) => s.includes('pi-plan-tool'));
+    expect(registered).toEqual(['npm:@wengine-ai/pi-plan-tool']);
+  });
+
+  it('does not append a second spec with the same package name to the desired list', async () => {
+    const { agentDir, dataDir } = setup(
+      { packages: ['npm:@wengine-ai/pi-plan-tool'] },
+      { '@wengine-ai/pi-plan-tool': '^0.0.1' },
+    );
+    fs.writeFileSync(path.join(dataDir, 'pi-desktop.json'), JSON.stringify({ piPackages: ['npm:@wengine-ai/pi-plan-tool'] }, null, 2));
+    await ensureBuiltinPackages('/fake/pi', agentDir, dataDir);
+    const desired = readDesired(dataDir).filter((s: string) => s.includes('pi-plan-tool'));
+    expect(desired).toEqual(['npm:@wengine-ai/pi-plan-tool']);
+  });
 });

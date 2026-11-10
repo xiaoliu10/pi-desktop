@@ -5,8 +5,10 @@
  * 但原实现锁在 Desktop 内置扩展里，CLI 用不到。已拆成
  * npm:@wengine-ai/pi-plan-tool，本文件只做 re-export：
  *
- * - 装了包（settings.packages 声明，pi 自行加载）→ pi 对同名工具注册会抛错，
- *   所以 Desktop 检测到包已注册时**跳过**本文件注册（见 index.mjs 的探测）
+ * - 装了包（settings.packages 声明且已装，pi 自行加载）→ launch 层
+ *   detectPlanPackage 探测后置 PI_DESKTOP_PLAN_PACKAGE=1，本文件注册直接让位。
+ *   不能靠「运行时探测已注册」：desktop-policy 先于包加载，探测必然落空，
+ *   双注册会让 pi 扩展加载阶段抛同名冲突、会话起不来（2026-11-09 v0.1.47 实测）
  * - 没装包 → 本文件从 node_modules 解析包的实现；解析失败（离线/未安装）时
  *   回退到下方内置副本，保证 Desktop 永远能起会话（fail-open，与 ask/
  *   schedule/memory 的条件加载同模式）
@@ -36,8 +38,12 @@ export const PLAN_TOOL_NAME = 'desktop_update_plan';
 export const PLAN_CHECKLIST_GUIDELINE =
   'Task checklist (desktop_update_plan) is MANDATORY for any non-trivial task: each NEW user task gets its OWN checklist — do not assume an earlier checklist still applies. Before starting work, create a checklist of 3-10 steps covering the whole task. While working: keep exactly one step in_progress at a time; mark a step completed the moment it is done (never batch updates); add newly discovered steps as you go. Never mark anything completed that has not been verified.';
 
-/** 包优先注册：pi 已加载同名工具（用户装了 npm 包）时静默跳过。 */
+/** 包优先注册：launch 层判定 npm 包提供本工具（PI_DESKTOP_PLAN_PACKAGE=1）或
+ *  pi 已加载同名工具时静默跳过。 */
 export function registerDesktopPlan(pi) {
+  // launch 层已判定让位就直接返回。只靠下面的运行时探测不够：desktop-policy 是
+  // 第一个 -e 扩展，加载时包还没被 pi 装载，探测必然落空（详见 plan-package.ts）。
+  if (process.env.PI_DESKTOP_PLAN_PACKAGE === '1') return;
   try {
     const existing = typeof pi.getTools === 'function'
       ? pi.getTools().find(t => t.name === PLAN_TOOL_NAME)
