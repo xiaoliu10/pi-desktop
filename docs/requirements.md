@@ -594,3 +594,17 @@
 **状态**：满足（2026-11-09 起：构造即检查 + 退出补注册；`pi-plan-tool` 补入清单）。
 
 **回归触发**：改 `builtin-packages.ts`、`packages-repair.ts`、backend 的 `client.on('closed')` 与构造函数。测试：`tests/builtin-packages.test.ts`（清单断言）、`tests/pi-backend.test.ts`「退出后补注册」（模拟写回旧副本 + close，断言注册恢复）、`tests/repair-codemode.test.ts`。
+
+### R-pkg-02　desktop_update_plan 提供方唯一：共用包优先，内置副本让位
+
+**需求**：任务清单工具（`desktop_update_plan`）在任一时刻只能有一个提供方。装了 TUI/GUI 共用的 `@wengine-ai/pi-plan-tool`（#193 起属必选内置包，必定注册）时，desktop-policy 的内置副本必须在 launch 层让位；包声明了但没装上（离线/首启）时内置副本兜底（fail-open），工具永不缺席。配套地，包注册去重必须按包名判定：同一包「带版本范围」与「裸名」两种写法不得重复追加进 `settings.json` 或期望列表。
+
+**验收**：
+- 装了 `pi-plan-tool` 的会话里，`desktop_update_plan` 全局只注册一次，来源是 npm 包；pi 扩展加载阶段无同名冲突退出。
+- 未装包时内置副本正常注册，清单功能可用。
+- 同一包已注册（任一写法）时，`ensureBuiltinPackages` 不追加重复条目；`repairPackages` 写回时折叠已有重复（保留首次出现）。
+- 期望列表（`pi-desktop.json`）同一包名只保留一条（以 builtin spec 归一）。
+
+**状态**：满足（2026-11-09 修复 v0.1.47 双注册回归：launch 层探测 + 环境变量传递，与 `detectThirdPartyAsk` 同模式；真实 pi 进程探针验证修前冲突退出、修后 npm 包唯一注册）。
+
+**回归触发**：改 `plan-package.ts`、`extensions/desktop-policy/plan.mjs` 的 `registerDesktopPlan`、backend launch 的 env 注入、`package-spec.ts` 的 `packageNameOf`。测试：`tests/plan-tool-provider.test.ts`（探测/让位/env 传递）、`tests/packages-repair.test.ts`（按名去重/折叠）、`tests/builtin-packages.test.ts`（幂等去重）。

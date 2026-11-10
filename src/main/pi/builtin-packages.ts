@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { installPackage, registerPackage } from './pi-packages';
+import { packageNameOf } from './package-spec';
 
 /**
  * Desktop 内置默认包：首次启动（或用户卸载后重启）自动装进 pi 的 packages 注册。
@@ -30,13 +31,6 @@ export interface BuiltinPackageReport {
   conflicts: Array<{ builtin: string; purpose: string; existing: string }>;
 }
 
-function packageNameOf(spec: string): string {
-  // npm:@scope/name@^1.2.3 → @scope/name；npm:name → name。
-  const raw = spec.startsWith('npm:') ? spec.slice(4) : spec;
-  const at = raw.lastIndexOf('@');
-  return at > 0 ? raw.slice(0, at) : raw;
-}
-
 /** 功能域名：判定「用户已装的是不是同一能力的不同来源」。
  *  @wengine-ai/pi-subagents 与 pi-subagents 是不同 npm 名但同一功能（fork 关系）——
  *  这正是要提示用户的冲突：两个包都提供 subagent 工具，同时注册会双份工具/双份卡片。 */
@@ -46,7 +40,7 @@ function capabilityOf(spec: string): string {
   return bare.replace(/^pi-/, '').replace(/-desktop$/, '');
 }
 
-function registeredSpecsOf(settings: Record<string, any>): string[] {
+function registeredSpecsOf(settings: Record<string, unknown>): string[] {
   const list = settings.packages;
   if (!Array.isArray(list)) return [];
   return list
@@ -67,7 +61,7 @@ export async function ensureBuiltinPackages(
 ): Promise<BuiltinPackageReport> {
   const report: BuiltinPackageReport = { installed: [], alreadyRegistered: [], failed: [], conflicts: [] };
   const settingsPath = path.join(agentDir, 'settings.json');
-  let settings: Record<string, any> = {};
+  let settings: Record<string, unknown> = {};
   try { settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8')); if (!settings || typeof settings !== 'object' || Array.isArray(settings)) settings = {}; } catch { settings = {}; }
   const registered = registeredSpecsOf(settings);
   // 去重用完整 npm 名；冲突判定用功能域名（见 capabilityOf 注释）。
@@ -76,7 +70,9 @@ export async function ensureBuiltinPackages(
 
   for (const builtin of BUILTIN_PACKAGES) {
     const name = packageNameOf(builtin.spec);
-    if (registered.includes(builtin.spec)) { report.alreadyRegistered.push(builtin.spec); continue; }
+    // 按包名判定已注册（带不带版本范围都是同一个包）：精确 spec 比对会把「用户
+    // 已用裸名注册」误判成缺失，往 settings.json 追加重复条目（2026-11-09 实测 4 组）。
+    if (registered.includes(builtin.spec) || registeredNames.has(name)) { report.alreadyRegistered.push(builtin.spec); continue; }
     // 同一功能的不同来源：用户已装（上游 pi-subagents 或自选变体）——不碰，报告。
     const cap = capabilityOf(builtin.spec);
     const existing = registeredCaps.get(cap);
@@ -127,7 +123,14 @@ function recordDesired(dataDir: string, spec: string): void {
     const file = path.join(dataDir, 'pi-desktop.json');
     const prefs = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : {};
     const list = Array.isArray(prefs.piPackages) ? prefs.piPackages : [];
-    if (!list.includes(spec)) { prefs.piPackages = [...list, spec]; fs.writeFileSync(file, `${JSON.stringify(prefs, null, 2)}\n`); }
+    // 同一包名（带不带版本范围都算已记录）按 builtin spec 归一：期望列表里积累
+    // 两种写法时，repairPackages 会把同一个包往 settings.json 补两遍。
+    const name = packageNameOf(spec);
+    const normalized = list.filter((s: unknown) => typeof s !== 'string' || packageNameOf(s) !== name);
+    if (normalized.length !== list.length || normalized[normalized.length - 1] !== spec) {
+      prefs.piPackages = [...normalized, spec];
+      fs.writeFileSync(file, `${JSON.stringify(prefs, null, 2)}\n`);
+    }
   } catch { /* 记录失败不影响本次注册 */ }
 }
 

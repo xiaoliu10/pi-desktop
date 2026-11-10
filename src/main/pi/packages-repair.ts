@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { packageNameOf } from './package-spec';
 
 /**
  * pi 会话进程退出时会整包写回 settings.json 的内存旧副本，可能抹掉之后注册的包
@@ -22,22 +23,48 @@ export function repairPackages(dataDir: string, agentDir: string): string[] {
       const deps = readJson(npmPkg).dependencies ?? {};
       npmDeps = new Set(Object.keys(deps).map(n => `npm:${n}`));
     } catch { npmDeps = null; }
-    const wanted = npmDeps ? desired.filter(spec => !spec.startsWith('npm:') || npmDeps!.has(spec)) : desired;
+    // 按包名比对依赖清单：期望 spec 常带版本范围（npm:X@^1.0）而 deps 键是裸名
+    // （npm:X），精确字符串比对会把已安装的包误判为已卸载、拒绝补回。
+    const wanted = npmDeps ? desired.filter(spec => !spec.startsWith('npm:') || npmDeps!.has(`npm:${packageNameOf(spec)}`)) : desired;
     if (!wanted.length) return [];
     const settingsPath = path.join(agentDir, 'settings.json');
     const value = readJson(settingsPath);
     if (!value || typeof value !== 'object' || Array.isArray(value)) return [];
     const current = value.packages;
     const existing: string[] = Array.isArray(current) ? current.map((raw: unknown) => typeof raw === 'string' ? raw : typeof raw === 'object' && raw ? String((raw as { source?: unknown }).source ?? '') : '').filter(Boolean) : [];
-    const missing = wanted.filter(spec => !existing.includes(spec));
-    if (!missing.length) return [];
-    value.packages = [...existing, ...missing];
+    // 同一包名只算已注册一次、写回时折叠重复（保留首次出现的写法）：期望列表里
+    // 「带版本范围」与「裸名」并存时，精确字符串比对会把同一个包补两遍。
+    const deduped: string[] = [];
+    const registeredNames = new Set<string>();
+    for (const spec of existing) {
+      const name = packageNameOf(spec);
+      if (registeredNames.has(name)) continue;
+      registeredNames.add(name);
+      deduped.push(spec);
+    }
+    const missing: string[] = [];
+    const missingNames = new Set<string>();
+    for (const spec of wanted) {
+      const name = packageNameOf(spec);
+      if (registeredNames.has(name) || missingNames.has(name)) continue;
+      missingNames.add(name);
+      missing.push(spec);
+    }
+    if (!missing.length && deduped.length === existing.length) return [];
+    value.packages = [...deduped, ...missing];
     fs.writeFileSync(settingsPath, JSON.stringify(value, null, 2) + '\n');
     return missing;
   } catch { return []; }
 }
 
-function readJson(file: string): any {
+function readJson(file: string): Record<string, unknown> {
   if (!fs.existsSync(file)) return {};
-  return JSON.parse(fs.readFileSync(file, 'utf8'));
+  try {
+    return JSON.parse(fs.readFileSync(file, 'utf8'));
+  } catch (error) {
+    // 保留「损坏即抛」语义：调用方 repairPackages 的外层 try/catch 据此整体跳过修复。
+    // 绝不能把损坏的 settings.json 当空对象继续走写回分支——那会用只含 packages 的
+    // 新对象覆盖用户其余配置。这里只补文件名上下文，不改变抛出行为。
+    throw new Error(`无法解析 ${path.basename(file)}：${(error as Error).message}`);
+  }
 }

@@ -3,6 +3,20 @@
 所有重要变更记录在本文件。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 README 只保留最近版本摘要；本文件为完整记录。
 
+## [0.1.50] - 2026-11-10
+
+### English
+
+#### Fixed
+
+- **Desktop failed to start any session in v0.1.47 ("Cannot read properties of null (reading 'id')"): duplicate task-checklist tool registration**. v0.1.47 made the shared task-checklist plugin (`pi-plan-tool`) a required built-in package, but Desktop's bundled copy of the same tool (`desktop_update_plan`) is registered by the first-loaded policy extension before the npm package loads — its "is it already registered?" probe always misses, so both copies register and pi aborts with a fatal tool-name conflict at extension load time, killing every session at startup. The provider is now decided at launch: when the shared npm package is installed (TUI and GUI must share one implementation), Desktop sets a flag so its bundled copy stands down; if the package is declared but missing on disk, the bundled copy still loads (fail-open) so the checklist tool is never absent. Package registration bookkeeping now also dedupes by package name, so the same plugin is no longer appended twice in different version-range spellings (which had polluted `settings.json`).
+
+### 中文
+
+#### 修复
+
+- **v0.1.47 无法启动任何会话（"Cannot read properties of null (reading 'id')"）：任务清单工具被双注册**。v0.1.47 把共用的任务清单插件（`pi-plan-tool`）列入必选内置包，但 Desktop 自带的同名工具副本（`desktop_update_plan`）由最先加载的策略扩展注册——它「探测同名工具是否已注册」发生在 npm 包加载之前，必然落空，于是两份都注册，pi 在扩展加载阶段抛同名冲突直接退出，每个会话都起不来。现在提供方在启动层判定：装了共用 npm 包（TUI 与 GUI 必须共用同一份实现）时，Desktop 置标记让内置副本让位；包声明了但没装上时内置副本仍然兜底（fail-open），清单工具永不缺席。包注册簿记同时改为按包名去重，同一插件不会再以「带版本范围/裸名」两种写法被追加两遍（此前已污染 `settings.json`）。
+
 ## [0.1.49] - 2026-11-10
 
 ### English
