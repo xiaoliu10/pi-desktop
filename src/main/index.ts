@@ -44,6 +44,13 @@ import { createBotActions } from './pi/bot/actions';
 import { startUpdateChecker, downloadUpdateZip, type UpdateChecker, type UpdateStatus } from './update-check';
 import { swapAppBundle, cleanupOldBundle } from './update-apply';
 import type { PiEvent } from '../shared/pi';
+import { ensureGuiPath } from './path-env';
+
+// 必须在任何子进程 spawn 之前执行：Finder/Dock 启动的 GUI 进程只有系统最小 PATH
+//（实测 /usr/bin:/bin:/usr/sbin:/sbin），pi-lens 按 `#!/usr/bin/env node` 拉起
+// typescript-language-server 等语言服务器会因找不到 node 而全程 unavailable。
+// 补齐后 process.env.PATH 被所有 pi RPC / utility worker / 包管理子进程继承。
+ensureGuiPath();
 
 const APP_ICON = path.join(app.getAppPath(), 'resources/icon.png');
 const remote = new RemoteServer({
