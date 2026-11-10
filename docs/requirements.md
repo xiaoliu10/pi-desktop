@@ -608,3 +608,17 @@
 **状态**：满足（2026-11-09 修复 v0.1.47 双注册回归：launch 层探测 + 环境变量传递，与 `detectThirdPartyAsk` 同模式；真实 pi 进程探针验证修前冲突退出、修后 npm 包唯一注册）。
 
 **回归触发**：改 `plan-package.ts`、`extensions/desktop-policy/plan.mjs` 的 `registerDesktopPlan`、backend launch 的 env 注入、`package-spec.ts` 的 `packageNameOf`。测试：`tests/plan-tool-provider.test.ts`（探测/让位/env 传递）、`tests/packages-repair.test.ts`（按名去重/折叠）、`tests/builtin-packages.test.ts`（幂等去重）。
+
+### R-env-01　GUI 启动的子进程继承可用 PATH（语言服务器/包管理不依赖启动方式）
+
+**需求**：从 Finder/Dock/系统会话恢复启动的 Electron 只继承系统最小 PATH（macOS 实测 `/usr/bin:/bin:/usr/sbin:/sbin`，无 `/opt/homebrew/bin`）。pi-lens 等组件按 `#!/usr/bin/env node` shebang 拉起 `typescript-language-server` 等语言服务器，PATH 缺 node 目录 → spawn 即 `env: node: No such file or directory`，所有 TS/JS 文件的 LSP 诊断全程 unavailable（2026-11-10 实测：09:03 Finder 启动后全天 `ready=0/5`）。主进程必须在任何子进程 spawn 前把磁盘上真实存在的常见 node/bin 目录补进 `process.env.PATH`，使 pi RPC、utility worker、语言服务器、npm 包管理统一继承，不依赖启动方式。
+
+**验收**：
+- darwin：最小 Finder PATH 下，存在的 `/opt/homebrew/bin`、`/opt/homebrew/sbin`、`/usr/local/bin`、`~/.local/bin`、`/opt/local/bin` 被追加，系统目录保持在前；不存在的目录绝不追加；重复调用幂等不产生重复项。
+- 非 darwin（linux/win32）原样返回 PATH，不改动。
+- PATH 未设置（undefined）时仍能产出可用 PATH；单个候选 stat 失败不影响其余目录。
+- 补齐发生在主进程模块加载早期、任何 spawn 之前；backend spawn 的子进程 env（`{...process.env}` 组装）含补录目录。
+
+**状态**：满足（2026-11-10，纯函数 `src/main/path-env.ts` + `src/main/index.ts` 入口调用）。
+
+**回归触发**：改 `path-env.ts` 的候选目录/存在性判定、`index.ts` 里 `ensureGuiPath()` 的调用位置（不得晚于首个子进程 spawn）、backend/rpc-client/worker 的 env 组装。测试：`tests/path-env.test.ts`（8 条：最小 PATH 追加、不存在跳过、幂等、完整 PATH 不动、PATH 缺失、非 darwin 透传、stat 失败隔离、ensureGuiPath 写回 process.env 的子进程继承）。

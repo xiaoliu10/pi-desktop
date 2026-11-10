@@ -3,6 +3,20 @@
 所有重要变更记录在本文件。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 README 只保留最近版本摘要；本文件为完整记录。
 
+## [Unreleased]
+
+### English
+
+#### Fixed
+
+- **Language server diagnostics no longer stay unavailable when the app is launched from Finder/Dock**: a GUI-launched Electron process only inherits the minimal system `PATH` (`/usr/bin:/bin:/usr/sbin:/sbin`) without Homebrew's bin directories, so shebang-based tools spawned by pi-lens (e.g. `typescript-language-server` via `#!/usr/bin/env node`) failed with `env: node: No such file or directory` and every TypeScript/JavaScript file reported “LSP unavailable” for the whole session. The main process now augments `PATH` once at startup, appending only the common node/bin directories that actually exist on disk (`/opt/homebrew/bin`, `/usr/local/bin`, `~/.local/bin`, …); the change is idempotent, leaves non-macOS platforms untouched, and is inherited by every child process (pi RPC, utility worker, language servers, npm package management). Verified by 8 new unit tests covering minimal-PATH augmentation, missing-directory skipping, idempotency and child-process inheritance.
+
+### 中文
+
+#### 修复
+
+- **从 Finder/程序坞启动时，语言服务器诊断不再全程不可用**：GUI 启动的 Electron 只继承系统最小 `PATH`（`/usr/bin:/bin:/usr/sbin:/sbin`），不含 Homebrew 的 bin 目录，导致 pi-lens 以 `#!/usr/bin/env node` shebang 拉起的工具（如 `typescript-language-server`）报 `env: node: No such file or directory`，整个会话里每个 TypeScript/JavaScript 文件都提示“LSP 不可用”。主进程现在在启动时一次性补齐 `PATH`，仅追加磁盘上真实存在的常见 node/bin 目录（`/opt/homebrew/bin`、`/usr/local/bin`、`~/.local/bin` 等）；操作幂等、不影响非 macOS 平台，并被所有子进程（pi RPC、utility worker、语言服务器、npm 包管理）继承。新增 8 条单测覆盖最小 PATH 补齐、缺失目录跳过、幂等性与子进程继承。
+
 ## [0.1.50] - 2026-11-10
 
 ### English
