@@ -3,6 +3,20 @@
 所有重要变更记录在本文件。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 README 只保留最近版本摘要；本文件为完整记录。
 
+## [0.1.48] - 2026-11-10
+
+### English
+
+#### Changed
+
+- **Bundled pi upgraded to 1.5.1** (upstream released 2026-11-09). Highlights: shell credential commands (`pi auth login/logout`), idle prompt cache warming that keeps eligible caches warm up to 30 minutes between runs, Anthropic message threads that send only new messages per request (fewer tokens on api.anthropic.com), and several gateway compatibility flags in `models.json`. Two upstream breaking changes (grep context-line callback deprecation, omitted empty `tools` array) were reviewed and do not affect any Desktop code path — the compatibility check suite is fully green (2004 tests passed, RPC smoke verified against the bundled 1.5.1 runtime).
+
+### 中文
+
+#### 变更
+
+- **内置 pi 升级到 1.5.1**（上游 2026-11-09 发布）。主要内容：shell 凭据命令（`pi auth login/logout`）、空闲期提示缓存保温（两次运行之间最长 30 分钟）、Anthropic 消息线程（每次请求只发新消息，api.anthropic.com 上显著省 token）、以及若干 `models.json` 网关兼容开关。上游两条 breaking change（grep 上下文行回调废弃、不再发送空 `tools` 数组）逐条核对，均不涉及 Desktop 侧代码路径——兼容验证全绿（2004 项测试通过，RPC 冒烟对内置 1.5.1 runtime 实测）。
+
 ## [0.1.47] - 2026-11-09
 
 ### English
