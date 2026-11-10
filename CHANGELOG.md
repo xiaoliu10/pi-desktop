@@ -3,6 +3,20 @@
 所有重要变更记录在本文件。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 README 只保留最近版本摘要；本文件为完整记录。
 
+## [0.1.49] - 2026-11-10
+
+### English
+
+#### Fixed
+
+- **Subagent internal sessions no longer flood the session list**: since v0.1.41, pi-subagents child sessions whose headers carry a `parentSession` pointer (pi's branched-session semantics) escaped the index's `subagentOf` marker, so hundreds of internal child sessions (e.g. `subagent-code-reviewer-…`) leaked into the desktop sidebar and the phone remote view as fake projects. The nested-path layout now always wins: a session living under `<owner>/<childId>/run-N/` is marked `subagentOf` regardless of its header. The layout inference also now reaches the CLI layout (`<sessions>/--project--/<owner>/<childId>/run-N/`), where the owner file lives inside the project directory instead of the scan root. Your own branched/forked/edited-resend sessions (top-level files with a header `parentSession`) stay visible, unchanged from v0.1.41's intent. Regression: `tests/nested-subagent-session.test.ts` (3 new cases, red on 0.1.47 code).
+
+### 中文
+
+#### 修复
+
+- **子代理内部会话不再成批漏进会话列表**：v0.1.41 起，pi-subagents 子会话的 header 自带 `parentSession`（pi 的 branched-session 语义），导致索引的 `subagentOf` 标记被抹掉，数百个内部子会话（形如 `subagent-code-reviewer-…`）以假项目形式漏进桌面侧栏与手机远控。现在嵌套路径布局无条件优先：凡位于 `<主会话>/<childId>/run-N/` 下的会话一律标记 `subagentOf`，header 不再抵消。路径推断同时覆盖 CLI 布局（`<sessions>/--项目目录--/<主会话>/<childId>/run-N/`，宿主文件在项目目录内而非扫描根下）。你自己顶层的分支/fork/编辑重发会话（header 带 `parentSession`）保持可见，与 v0.1.41 的设计意图一致。回归：`tests/nested-subagent-session.test.ts`（新增 3 条，0.1.47 代码上先红）。
+
 ## [0.1.48] - 2026-11-10
 
 ### English

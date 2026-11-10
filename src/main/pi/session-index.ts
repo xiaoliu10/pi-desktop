@@ -60,20 +60,17 @@ export function branchEntries(entries: PiEntry[], leaf?: string): PiEntry[] {
   return out.reverse();
 }
 /**
- * 从嵌套会话路径推断其宿主主会话文件：pi-subagents async 布局为
- * <root>/<主会话名>/<childId>/run-N/session.jsonl——路径中第一段等于某主会话目录名
- * （即根下存在同名 <主会话名>.jsonl）时，返回该主会话文件路径。
+ * 从嵌套会话路径推断其宿主主会话文件：凡是「<X>.jsonl 会话文件 + <X>/ 子目录」并存的层，
+ * 子目录下的 session.jsonl 都归 <X>.jsonl 所有。覆盖两种真实布局：
+ *  - Desktop：  <root>/<主会话名>/<childId>/run-N/session.jsonl（同名 .jsonl 在根下）
+ *  - CLI：      <root>/--项目目录--/<主会话名>/<childId>/run-N/session.jsonl（同名 .jsonl
+ *               在项目目录内）—— 逐级向根走，每个目录层都查同名兄弟文件。
  */
-function inferParentFromNestedPath(dir: string, rootReal: Set<string>, files: Map<string, string>): string | undefined {
+function inferParentFromNestedPath(dir: string, files: Map<string, string>): string | undefined {
   let cur = dir;
   for (;;) {
-    const parent = path.dirname(cur);
-    if (rootReal.has(parent)) {
-      // cur 是根下的第一层目录（主会话专属目录）
-      const candidate = path.join(parent, path.basename(cur) + '.jsonl');
-      if (files.has(candidate)) return candidate;
-      // Overlapping roots may contain a more distant owning session. Keep walking.
-    }
+    const sibling = path.join(path.dirname(cur), path.basename(cur) + '.jsonl');
+    if (files.has(sibling)) return sibling;
     const next = path.dirname(cur);
     if (next === cur) return undefined;
     cur = next;
@@ -243,9 +240,14 @@ export class SessionIndex {
     //     不进用户列表。这类才用 subagentOf 标记。
     // 2026-11-02 实测：VE 会话因编辑重发带上 header.parentSession，被侧栏与远控同时
     // 过滤掉，用户在手机上完全看不到它（而桌面侧栏靠活跃 run 的别名还能显示，口径不一致）。
+    // 2026-11-10 实测回归：pi-subagents 的子会话 header 同样带 parentSession（pi 的
+    // branched-session 语义），二者叠加时不能让 a) 抹掉 b) 的 subagentOf —— 否则侧栏
+    // 与远控按 subagentOf 的过滤全部失效，子代理会话成批漏进用户列表（0.1.41–0.1.47）。
+    // 判定优先级：嵌套布局是身份证据（在这个路径下 = 子代理内部会话），header 只是
+    // 展示语义；顶层的 header parentSession（真正的用户分支会话）不受影响。
     const headerParent = typeof header.parentSession === 'string' ? header.parentSession : undefined;
     const nestedParent = this.nestedParents.get(file);
-    const session: PiSession = { key, id: header.id, path: file, cwd: header.cwd, name: String(name || title || '未命名 pi 会话').slice(0, 180), updatedAt: stat.mtimeMs, size: stat.size, warnings, owned: file.startsWith(canonical(this.ownedRoot) + path.sep), parentSession: headerParent ?? nestedParent, subagentOf: headerParent ? undefined : nestedParent, sidecarOf: path.basename(file).startsWith('sidecar_') ? '' : undefined };
+    const session: PiSession = { key, id: header.id, path: file, cwd: header.cwd, name: String(name || title || '未命名 pi 会话').slice(0, 180), updatedAt: stat.mtimeMs, size: stat.size, warnings, owned: file.startsWith(canonical(this.ownedRoot) + path.sep), parentSession: headerParent ?? nestedParent, subagentOf: nestedParent, sidecarOf: path.basename(file).startsWith('sidecar_') ? '' : undefined };
     // parsedBytes = buf.length：全部字节已读；尾部未成行字节保存在 pendingTail（原始
     // Buffer，解码无损），增量时与新 chunk 拼接后再统一解码——撕裂多字节在字节层面
     // 补齐后才能正确解码，任何字符串层面的提前处理都会经 U+FFFD 永久丢字节。
@@ -365,11 +367,10 @@ export class SessionIndex {
     // 头部没有 parentSession/sidecarOf 标记 → 递归扫描会把它当独立会话收进侧栏/远控。
     // 按路径判定：凡不在会话根目录顶层、且位于某个主会话专属目录下的，推回其父主会话标记
     // （侧栏与远控的既有 parentSession 过滤随即生效）。
-    const rootReal = new Set(this.roots.map(r => { try { return canonical(r); } catch { return r; } }));
     const previousParents = new Map(this.nestedParents);
     this.nestedParents.clear();
     for (const [file, dir] of files) {
-      const parent = inferParentFromNestedPath(dir, rootReal, files);
+      const parent = inferParentFromNestedPath(dir, files);
       if (parent) this.nestedParents.set(file, parent);
     }
     for (const [key, { history }] of this.cache) {
@@ -777,7 +778,6 @@ export class SessionIndex {
         const dirsScan = this.pendingDirsScan; this.pendingDirsScan = false;
         // 已知文件的 stat 增量：watch 漏事件兜底（watch 报告的文件走 refreshTargets
         // 定向路径，不依赖这里）。全表 stat（数百文件）磁盘忙时单次数百 ms，限频 2s。
-        let sawChange = false;
         const statSweepNow = Date.now();
         // 30s 低频兜底：watch 健康（FSEvents 正常报告文件事件）时全表 stat 只是
         // 漏事件保险——此前 2s 一轮，磁盘忙时一轮几百 ms（772 个 statSync）就是
@@ -788,10 +788,9 @@ export class SessionIndex {
           for (const file of [...this.fileDirs.keys()]) {
             const key = fileKey(file);
             const stamped = this.stampOf(file);
-            if (!stamped) { this.refreshOne(file, this.fileDirs.get(file) ?? ''); sawChange = true; continue; }
+            if (!stamped) { this.refreshOne(file, this.fileDirs.get(file) ?? ''); continue; }
             if ((this.cache.get(key)?.stamp ?? this.rejected.get(file)) === stamped.stamp) continue;
             this.refreshOne(file, this.fileDirs.get(file) ?? '');
-            sawChange = true;
           }
         }
         // 已知目录顶层 readdir：发现新会话文件（watch 失效时的轮询兜底，~20ms）
@@ -806,7 +805,6 @@ export class SessionIndex {
             if (this.fileDirs.has(real)) continue;
             this.fileDirs.set(real, this.roots.find(r => real.startsWith(canonical(r))) ?? '');
             this.refreshOne(real, this.fileDirs.get(real)!);
-            sawChange = true;
           }
         }
         // 已知目录的浅层发现（含新子目录一层）：纯轮询拍或 root 级事件拍才做。
@@ -838,7 +836,6 @@ export class SessionIndex {
               if (this.fileDirs.has(real)) continue;
               this.fileDirs.set(real, this.roots.find(r => real.startsWith(canonical(r))) ?? '');
               this.refreshOne(real, this.fileDirs.get(real)!);
-              sawChange = true;
             }
           }
         }
