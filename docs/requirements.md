@@ -622,3 +622,16 @@
 **状态**：满足（2026-11-10，纯函数 `src/main/path-env.ts` + `src/main/index.ts` 入口调用）。
 
 **回归触发**：改 `path-env.ts` 的候选目录/存在性判定、`index.ts` 里 `ensureGuiPath()` 的调用位置（不得晚于首个子进程 spawn）、backend/rpc-client/worker 的 env 组装。测试：`tests/path-env.test.ts`（8 条：最小 PATH 追加、不存在跳过、幂等、完整 PATH 不动、PATH 缺失、非 darwin 透传、stat 失败隔离、ensureGuiPath 写回 process.env 的子进程继承）。
+
+### R-run-01　run 状态双向对账：假 idle（agent_start 丢失）必须自愈，侧栏菊花不失明
+
+**需求**：backend 的 run 状态以 pi 本体为权威做双向对账。假 running（结算事件丢失、pi 已空闲）方向已有 watchdog + `get_state` 拉直（forceSettle）；假 idle（`agent_start` 事件丢失/连接窗口竞态，run 卡 idle 而 pi 实际在跑整个回合）方向此前是盲区——侧栏菊花消失、计时与停止失效、用户误以为会话挂了（2026-11-11 用户实报：165MB 会话连续工作 3+ 小时侧栏无菊花）。watchdog 扫描必须同时覆盖 idle run：会话文件仍在增长（pi 活跃时才会写转写）即发起 `get_state` 核实，`isStreaming || isCompacting || pendingMessageCount > 0`（`isStreaming` = 整个 agent 回合含工具执行全程）即按 `agent_start` 同语义拉直为 running 并广播；真空闲不动作。
+
+**验收**：
+- run 卡 idle 且会话文件 mtime 在静默窗内时，watchdog 单个周期（30s）内拉直为 running，并发出带 `timing.startedAt` 的 run 事件（侧栏菊花、计时、停止随之恢复）。
+- 文件新鲜但 pi 真空闲（`get_state` 全假）时保持 idle，不产生 running 事件。
+- 拉直后 pi 仍在跑期间不被翻回 idle；`stopUnconfirmed`/`retryUncertain`/结算握手中/待审批/核实中的 run 不被探针打扰。
+
+**状态**：满足（2026-11-11，`backend.ts` stuckScan/verifyStuckRun 双向对账）。
+
+**回归触发**：改 `backend.ts` 的 `stuckScan`/`verifyStuckRun`/`forceSettle`、`STUCK_SILENCE_MS` 语义、pi `get_state` 的 `isStreaming` 语义（现为 `_isAgentRunActive`，覆盖工具执行）。测试：`tests/run-selfheal.test.ts`（假 idle 自愈拉直 + 真空闲不误翻；假 running 方向既有用例保持绿）。
