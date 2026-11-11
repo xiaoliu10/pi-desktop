@@ -215,3 +215,49 @@ it('agent_end 后 pi 仍在 streaming（真在跑）时不收口', async () => {
   await new Promise(r => setTimeout(r, 800));
   expect((backend as any).active.get(view.key)?.view.status).toBe('running');
 });
+
+it('假 idle 自愈：agent_start 丢失 run 卡 idle 而 pi 实际在跑（转写在增长）→ get_state 拉直为 running（2026-11-11 用户实报：侧栏无菊花/停止与计时全失效）', async () => {
+  const { backend, events } = setup();
+  const view = await backend.connect({ cwd: process.cwd(), trustProject: false, permission: 'ask' });
+  await backend.prompt(view.key, '/long', 'followUp');
+  const run = await waitStatus(backend, view.key, 'running');
+  // 模拟事件丢失：Desktop 错过本轮 agent_start，状态卡回 idle（pi 与转写都在真实推进）。
+  run.view.status = 'idle';
+  run.view.timing = undefined;
+  // 会话文件仍在增长（pi 持续写转写）→ 满足 idle 对账探针的文件活跃门槛。
+  fs.appendFileSync(view.file, JSON.stringify({ type: 'message', id: 'probe', timestamp: new Date().toISOString(), message: { role: 'assistant', stopReason: 'toolUse', content: [{ type: 'toolCall', name: 'bash' }] } }) + '\n');
+  // 生产中 watchdog 每 30s 重扫；测试手动补扫，覆盖「探针被在途事件打断即放弃」的
+  // 正常退避（verifyStuckRun 对任何新事件都放弃当次结论，防误判）。
+  for (let i = 0; i < 6 && (backend as any).active.get(view.key).view.status !== 'running'; i++) {
+    (backend as any).stuckScan();
+    await new Promise(r => setTimeout(r, 150));
+  }
+  // 断言真实不变量（侧栏读的正是 view.status）：探针在途时事件流可能有旧快照，
+  // 以落定后的稳定值为准。
+  await vi.waitFor(() => {
+    expect((backend as any).active.get(view.key).view.status).toBe('running');
+    expect(runEvents(events).some(e => e.run.status === 'running' && e.run.timing?.startedAt)).toBe(true);
+  }, { timeout: 8000, interval: 25 });
+  // 探针收尾后必须保持 running（get_state isStreaming=true 期间不得被再次对账翻回）。
+  await new Promise(r => setTimeout(r, 300));
+  expect((backend as any).active.get(view.key).view.status).toBe('running');
+  expect(run.view.timing?.startedAt).toBeGreaterThan(0);
+});
+
+it('idle 对账不误翻：文件新鲜但 pi 真空闲（get_state isStreaming=false）保持 idle', async () => {
+  const { backend, events } = setup();
+  const view = await backend.connect({ cwd: process.cwd(), trustProject: false, permission: 'ask' });
+  await backend.prompt(view.key, '/endnosettle', 'followUp');
+  await vi.waitFor(() => {
+    const last = runEvents(events).at(-1)!;
+    expect(last.run.status).toBe('idle');
+  }, { timeout: 8000, interval: 50 });
+  const mark = events.length;
+  // 模拟扩展/历史落盘导致 mtime 新鲜，但 pi 并未在跑：探针不得翻 running。
+  fs.appendFileSync(view.file, '{"type":"custom"}\n');
+  (backend as any).stuckScan();
+  await new Promise(r => setTimeout(r, 400));
+  expect((backend as any).active.get(view.key).view.status).toBe('idle');
+  const statuses = runEvents(events.slice(mark)).map(e => e.run.status);
+  expect(statuses.filter(s => s === 'running').length).toBe(0);
+});

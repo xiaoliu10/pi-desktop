@@ -3,6 +3,20 @@
 所有重要变更记录在本文件。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 README 只保留最近版本摘要；本文件为完整记录。
 
+## [Unreleased]
+
+### English
+
+#### Fixed
+
+- **Sidebar spinner no longer goes blind for the whole turn when the run gets stuck showing idle**: if the `agent_start` event is missed (event loss or connection-window race), the run stayed "idle" for the entire working turn — no spinner in the sidebar, elapsed time and Stop both broken, while the agent was actually working the whole time (real-world report 2026-11-11: a 165 MB session worked for 3+ hours with no spinner). The stuck-run watchdog now reconciles both directions: an idle run whose session file is still growing is verified against `get_state` (authoritative for the whole turn including long tool executions) and corrected back to running. Genuinely idle sessions are never flipped.
+
+### 中文
+
+#### 修复
+
+- **run 卡「空闲」时侧栏菊花整回合失明的问题已修复**：`agent_start` 事件丢失（事件丢失或连接窗口竞态）后，run 会卡在 idle 状态横跨整个工作回合——侧栏无菊花、计时与停止全失效，而 agent 实际一直在工作（2026-11-11 用户实报：165MB 会话连续工作 3 小时以上无菊花）。卡死看门狗现在做双向对账：会话文件仍在增长的 idle 会话会向 pi 发起 `get_state` 核实（该判据覆盖包含长工具执行在内的整个回合），确在运行即拉直为 running。真空闲的会话绝不误翻。
+
 ## [0.1.52] - 2026-11-11
 
 ### English

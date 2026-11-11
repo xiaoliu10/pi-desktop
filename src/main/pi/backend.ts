@@ -581,8 +581,21 @@ export class PiBackend {
       // 等待期间来过任何事件（真活动）或 run 已被关闭/重连/进入停止流程 → 放弃本次结论。
       if (run.eventCount !== eventsAtCheck) return;
       if (this.active.get(key) !== run || run.view.generation !== generation) return;
-      if (run.view.status !== 'running' || run.stopUnconfirmed) return;
-      if (state.isStreaming || state.isCompacting || (Number(state.pendingMessageCount) || 0) > 0) {
+      if (run.stopUnconfirmed) return;
+      const piActive = state.isStreaming || state.isCompacting || (Number(state.pendingMessageCount) || 0) > 0;
+      if (run.view.status === 'idle') {
+        // 假 idle 自愈：pi 活跃（回合进行中/压缩中/有排队）而 Desktop 认为空闲 → 按 agent_start
+        // 同语义拉直为 running 并广播（侧栏菊花、计时、停止随之恢复）。真空闲不动。
+        if (!piActive) return;
+        run.lastEventAt = Date.now();
+        if (!run.view.timing || run.view.timing.endedAt !== undefined) run.view.timing = { startedAt: Date.now() };
+        run.view.status = 'running';
+        run.view.planReady = false;
+        this.emit({ type: 'run', run: { ...run.view } });
+        return;
+      }
+      if (run.view.status !== 'running') return;
+      if (piActive) {
         run.lastEventAt = Date.now();
         return;
       }
@@ -1670,12 +1683,24 @@ export class PiBackend {
   private stuckScan() {
     const now = Date.now();
     for (const run of this.active.values()) {
-      if (run.view.status !== 'running' || run.verifying) continue;
+      if (run.verifying) continue;
       if (run.stopUnconfirmed || run.retryUncertain || run.settlement) continue;
       if (run.dialogs.size > 0) continue;
-      const silence = run.retry.holding ? RETRY_HOLDING_SILENCE_MS : STUCK_SILENCE_MS;
-      if (now - run.lastEventAt < silence) continue;
-      void this.verifyStuckRun(run);
+      if (run.view.status === 'running') {
+        const silence = run.retry.holding ? RETRY_HOLDING_SILENCE_MS : STUCK_SILENCE_MS;
+        if (now - run.lastEventAt < silence) continue;
+        void this.verifyStuckRun(run);
+        continue;
+      }
+      // 假 idle 对账（2026-11-11 用户实报）：agent_start 事件丢失后 run 卡 idle 整个回合——
+      // 侧栏无菊花、计时/停止全失效，而假 running 方向早有自愈，idle 方向是盲区。
+      // 只探测「会话文件仍在增长」的 idle run（pi 活跃时才会写转写）；get_state 权威判据
+      // isStreaming 覆盖工具执行全程（长 bash 期间也为 true），不会误伤真空闲。
+      if (run.view.status === 'idle') {
+        try { if (now - fs.statSync(run.input.file).mtimeMs >= STUCK_SILENCE_MS) continue; }
+        catch { continue; }
+        void this.verifyStuckRun(run);
+      }
     }
   }
   dispose() {
