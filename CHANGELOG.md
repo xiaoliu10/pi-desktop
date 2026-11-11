@@ -3,6 +3,32 @@
 所有重要变更记录在本文件。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 README 只保留最近版本摘要；本文件为完整记录。
 
+## [0.1.52] - 2026-11-11
+
+### English
+
+#### Changed
+
+- Bundled pi runtime upgraded from 1.5.1 to **1.5.2** (upstream release 2026-11-10, no breaking changes; the two breaking changes shipped in 1.5.1 were already covered in v0.1.48).
+
+#### Fixed (upstream)
+
+- When a session's working folder was moved or deleted, startup/`/resume`/`/import` now offer **Continue / Fork / Cancel** instead of only continuing: `Fork` copies the session into the current folder as a new session with a new ID, so later resumes no longer ask again.
+- Fixed `/import` of a session whose folder no longer exists leaving duplicate copies (`s.jsonl` and `s-1.jsonl`) in the session directory.
+- Fixed Anthropic OAuth requests reporting an outdated Claude Code version.
+
+### 中文
+
+#### 变更
+
+- 内置 pi 运行时从 1.5.1 升级到 **1.5.2**（上游 2026-11-10 发布，无 breaking change；1.5.1 携带的两项 breaking change 已在 v0.1.48 处理）。
+
+#### 修复（上游）
+
+- 当会话的工作目录被移动或删除时，启动 / `/resume` / `/import` 现在提供 **继续 / 分叉 / 取消** 三个选项而不是只能继续：选择「分叉」会把会话复制到当前目录并生成新 ID，以后恢复不再反复询问。
+- 修复导入工作目录已不存在的会话时，会话目录里残留重复副本（`s.jsonl` 与 `s-1.jsonl`）的问题。
+- 修复 Anthropic OAuth 请求上报过期 Claude Code 版本号的问题。
+
 ## [0.1.51] - 2026-11-10
 
 ### English
