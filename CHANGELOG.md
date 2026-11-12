@@ -3,6 +3,20 @@
 所有重要变更记录在本文件。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 README 只保留最近版本摘要；本文件为完整记录。
 
+## [Unreleased]
+
+### English
+
+#### Fixed
+
+- **Tunnel failures now show the actual reason instead of a perpetual "Connecting" badge**: when the relay rejects the device (e.g. the saved relay key is no longer valid after a server redeploy), the client retried forever with zero feedback. The per-attempt failure (such as "relay key rejected") is now surfaced in the tunnel status detail, next to the state badge.
+
+### 中文
+
+#### 修复
+
+- **隧道失败现在显示真实原因，而不是永远「连接 relay 中」**：relay 拒绝设备时（例如服务器重新部署后保存的 relay key 已失效），客户端此前会无限重试且零反馈。每次连接失败的具体原因（如「relay key 被拒绝」）现在会显示在隧道状态徽标旁的详情里。
+
 ## [0.1.53] - 2026-11-11
 
 ### English
