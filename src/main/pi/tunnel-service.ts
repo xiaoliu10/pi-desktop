@@ -128,6 +128,13 @@ export class TunnelService {
         if (s === 'error') this.lastError = '连接失败，正在重试';
       });
       this.client.on('relay-error', (code: string) => { this.lastError = `relay 错误：${code}`; });
+      // client 每次 attempt 失败（注册 401「relay key 被拒绝」、网络失败等）都会 emit
+      // 'error'；不接线的话 lastError 永远为空，UI 永远停在「连接 relay 中」——
+      // 2026-11-11 用户实报：key 失效后无任何失败原因可见。
+      this.client.on('error', (e: unknown) => {
+        this.lastError = String((e as Error).message ?? e);
+        this.deps.log?.(`[tunnel] ${this.lastError}`);
+      });
       await this.client.start().catch(e => {
         this.lastError = String((e as Error).message ?? e);
         this.deps.log?.(`[tunnel] start failed: ${this.lastError}`);

@@ -83,4 +83,27 @@ describe('TunnelService 启动恢复', () => {
     const status = await service.status();
     expect(status.state).toBe('connecting'); // relay 照常连接；LAN 失败只影响转发
   });
+
+// 回归（2026-11-11 用户实报）：relay key 失效后注册被拒，client 每次 attempt 的
+// 'error' 事件没有监听者，lastError 永远为空 → UI 永远显示「连接 relay 中」，
+// 用户得不到任何失败原因。错误详情必须透出到 status.error。
+it('注册被拒（key 失效）时状态必须带错误详情，而不是永远「连接中」', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tunnel-err-'));
+  tmpDirs.push(dir);
+  writeConfig(dir, { enabled: true, relayUrl: 'https://relay.example.com', keyEncrypted: 'k-enc', deviceName: 'mbp' });
+  const failFetch = vi.fn(async () => new Response(JSON.stringify({ code: -1, msg: 'bad relay key' }), { status: 401 }));
+  const service = new TunnelService(path.join(dir, 'tunnel.json'), {
+    localBase: () => 'http://127.0.0.1:1',
+    localToken: () => 'tok',
+    ensureLocal: () => {},
+    relayFetch: failFetch as unknown as typeof fetch,
+    wsFactory: () => ({ send: () => {}, close: () => {}, on: () => {} }) as never,
+  });
+  await service.startup();
+  await vi.waitFor(async () => {
+    const status = await service.status();
+    expect(String(status.error ?? '')).toContain('relay key');
+  }, { timeout: 8000, interval: 50 });
+  service.stop();
+});
 });
