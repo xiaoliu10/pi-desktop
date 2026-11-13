@@ -45,6 +45,7 @@ import { composerOwnerKeyOf, readComposerLiveDraft, writeComposerDraftText } fro
 import { replicaLabels } from '../replica/i18n';
 import { Sidebar } from '../replica/shell/Sidebar';
 import { ResizeHandle, usePanelWidth } from '../replica/shell/ResizeHandle';
+import { panelMaxForWindow } from '../replica/shell/panel-width';
 import { TopBar } from '../replica/shell/TopBar';
 import { ChatView, Composer, HomeView } from '../replica/chat/ChatView';
 import { VoiceInputButton } from './VoiceInputButton';
@@ -505,7 +506,16 @@ export default function PiReplicaApp() {
   );
   const [, setFilePreviewVersion] = useState(0);
   const [sidebarWidth, setSidebarWidth, resetSidebarWidth] = usePanelWidth('pi.sidebarWidth', 366, 220, 520);
-  const [workbenchWidth, setWorkbenchWidth, resetWorkbenchWidth] = usePanelWidth('pi.workbenchWidth', 415, 300, 700);
+  // 工作面板上限随窗口走（R-render-11）：宽窗口给浏览器等桌面网页留足宽度，缩窗回钳。
+  const [windowWidth, setWindowWidth] = useState(() => window.innerWidth);
+  useEffect(() => {
+    const onResize = () => setWindowWidth(window.innerWidth);
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+  const workbenchMax = panelMaxForWindow(windowWidth);
+  const [workbenchWidth, setWorkbenchWidth, resetWorkbenchWidth] = usePanelWidth('pi.workbenchWidth', 415, 300, workbenchMax);
+  useEffect(() => { if (workbenchWidth > workbenchMax) setWorkbenchWidth(workbenchMax); }, [workbenchMax, workbenchWidth, setWorkbenchWidth]);
   // 右侧三个互叠的侧板（子代理/计划/终端）同样可拖宽，ZCode 侧板均带 col-resize。
   const [sidecarWidth, setSidecarWidth, resetSidecarWidth] = usePanelWidth('pi.sidecarWidth', 380, 300, 720);
   const [subagentWidth, setSubagentWidth, resetSubagentWidth] = usePanelWidth('pi.subagentWidth', 440, 300, 720);
@@ -1134,7 +1144,7 @@ export default function PiReplicaApp() {
               {s.view==='chat' && planOpen && <ResizeHandle side="right" width={planWidth} min={320} max={720} onChange={setPlanWidth} onReset={resetPlanWidth} label="计划面板宽度" />}
               {s.view==='chat' && planOpen && <PlanViewer key={s.selectedKey||'draft'} doc={effectivePlanDoc} synthesized={!planDoc&&!!synthesizedPlan} checklist={planChecklist} lang={s.lang} running={Boolean(run&&['running','stopping'].includes(run.status))} planMode={run?.accessMode==='plan'} focusIndex={planFocus ?? undefined} onClose={()=>{setPlanOpen(false);setPlanFocus(null);}} onExecute={s.executePlan}/>}
               {s.view === 'chat' && !sidecarOpen && !s.workbenchOpen && !subagentPanel && !planOpen && <ConversationStatusPanel key={s.selectedKey || 'draft'} cwd={cwd} messages={messages} running={Boolean(run && ['running','stopping'].includes(run.status))} stats={run?.stats} onReview={()=>{setFilePreview(null);s.selectWorkbenchTab('review');}} onRequest={text=>{const base=readComposerLiveDraft(s.draftText);s.setDraftText(base ? `${base}\n\n${text}` : text);}} onOpenPlan={()=>{setPlanFocus(null);setPlanOpen(true);}} onOpenPlanStep={index=>{setPlanFocus(index);setPlanOpen(true);}} planAvailable={Boolean(planDoc||planChecklist.length)} planTitle={effectivePlanDoc?.title} planFallback={s.history?.plan} subagents={subagents} onOpenSubagent={callId=>setSubagentPanel({callId})} onDismissSubagent={s.dismissSubagent} onDismissFinishedSubagents={s.dismissFinishedSubagents} onOpenTerminal={()=>setTerminalOpen(true)} terminalOpen={terminalOpen} contextUsage={run?.contextUsage} outputPerformance={run?.outputPerformance} />}
-              {s.workbenchOpen && (s.view === 'chat' || s.view === 'home') && <ResizeHandle side="right" width={workbenchWidth} min={300} max={700} onChange={setWorkbenchWidth} onReset={resetWorkbenchWidth} label="工作面板宽度" />}
+              {s.workbenchOpen && (s.view === 'chat' || s.view === 'home') && <ResizeHandle side="right" width={workbenchWidth} min={300} max={workbenchMax} onChange={setWorkbenchWidth} onReset={resetWorkbenchWidth} label="工作面板宽度" />}
               <WorkbenchPanel
                 cwd={cwd}
                 open={s.workbenchOpen && (s.view === 'chat' || s.view === 'home')}
