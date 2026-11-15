@@ -39,16 +39,42 @@ describe('嵌套子会话（pi-subagents async 布局）', () => {
     expect(child.parentSession).toBe(fs.realpathSync(path.join(root, '1791817610336_main.jsonl')));
     expect(all.find(s => path.basename(s.path) === '1791817610336_main.jsonl')?.parentSession).toBeUndefined();
   });
+  it('宿主文件被删后，run-N 子会话仍按布局隐藏（孤儿目录不再泄漏）', () => {
+    // 用户实报（2026-11-15）：主会话 .jsonl 已删、同名目录里的 run-N 子会话漏进侧栏，
+    // 名字形如 subagent-code-reviewer-…。run-N 布局是 pi-subagents 专属指纹，
+    // 宿主文件不在也应按子会话隐藏（parentSession 指向已删除的宿主路径）。
+    writeSession(path.join(root, '1791855242457_main', '1617c5d3', 'run-0', 'session.jsonl'), { cwd: '/w' });
+    // 宿主 .jsonl 从未存在/已被删，仅剩同名目录与子会话
+    const idx = new SessionIndex([root], root);
+    const child = idx.scan(true).find(s => s.path.includes('run-0'))!;
+    expect(child).toBeTruthy();
+    const orphanOwner = path.join(fs.realpathSync(root), '1791855242457_main.jsonl');
+    expect(child.subagentOf).toBe(orphanOwner);
+    expect(child.parentSession).toBe(orphanOwner);
+  });
+  it('无 run-N 的普通孤儿目录仍保持可见（不误标，2026-11-02 口径不变）', () => {
+    writeSession(path.join(root, 'orphan2', 'plain', 'session.jsonl'), { cwd: '/w' });
+    const idx = new SessionIndex([root], root);
+    const s = idx.scan(true).find(x => x.path.includes('plain'))!;
+    expect(s).toBeTruthy();
+    expect(s.subagentOf).toBeUndefined();
+    expect(s.parentSession).toBeUndefined();
+  });
   it('updates cached parent metadata when the owning file is created and removed', () => {
     const parent = path.join(root, 'main.jsonl');
     writeSession(path.join(root, 'main', 'child', 'run-0', 'session.jsonl'), {});
     const idx = new SessionIndex([root], root);
     const child = () => idx.scan(true).find(s => s.path.includes('run-0'))!;
-    expect(child().parentSession).toBeUndefined();
+    // 2026-11-15 口径：宿主文件未建/已删时，run-N 子会话也按布局隐藏
+    // （parentSession/subagentOf 指向宿主路径，文件可以不存在），不再回到可见——
+    // 否则孤儿子会话成批漏进侧栏。
+    const orphanOwner = path.join(fs.realpathSync(root), 'main.jsonl');
+    expect(child().parentSession).toBe(orphanOwner);
     writeSession(parent, {});
     expect(child().parentSession).toBe(fs.realpathSync(parent));
     fs.unlinkSync(parent);
-    expect(child().parentSession).toBeUndefined();
+    expect(child().parentSession).toBe(orphanOwner);
+    expect(child().subagentOf).toBe(orphanOwner);
   });
   it('finds the owner through overlapping scan roots', () => {
     writeSession(path.join(root, 'main.jsonl'), {});

@@ -68,13 +68,32 @@ export function branchEntries(entries: PiEntry[], leaf?: string): PiEntry[] {
  */
 function inferParentFromNestedPath(dir: string, files: Map<string, string>): string | undefined {
   let cur = dir;
+  // 宿主主会话 .jsonl 被删除后（侧栏删会话只删文件、不碰同名子目录），run-N 子会话
+  // 会因推断失败成批漏进侧栏（用户实报 2026-11-15：subagent-code-reviewer-… 假会话）。
+  // 上溯途中记住第一个「紧邻子层有 run-N」的孤儿宿主候选：若整条上溯都没找到存活的
+  // 宿主文件，回退到它——子会话仍隐藏，parentSession 指向已删除的宿主路径。指纹
+  // （紧邻子层 run-N）保证不误标：普通无 run-N 的孤儿目录口径不变。
+  let orphanFallback: string | undefined;
   for (;;) {
     const sibling = path.join(path.dirname(cur), path.basename(cur) + '.jsonl');
     if (files.has(sibling)) return sibling;
+    if (orphanFallback === undefined && dirHasImmediateRunLayout(cur, files)) orphanFallback = sibling;
     const next = path.dirname(cur);
-    if (next === cur) return undefined;
+    if (next === cur) return orphanFallback;
     cur = next;
   }
+}
+
+/** pi-subagents 子会话目录的专属指纹：dir 的**紧邻子目录**下挂 run-N/
+ *  （<dir>/<childId>/run-N/session.jsonl）。用于宿主 .jsonl 被删后仍认出孤儿宿主层，
+ *  区别于更深的 childId 层与更浅的项目目录层（它们的紧邻子层都不是 run-N）。 */
+function dirHasImmediateRunLayout(dir: string, files: Map<string, string>): boolean {
+  const prefix = dir.endsWith(path.sep) ? dir : dir + path.sep;
+  for (const f of files.keys()) {
+    if (!f.startsWith(prefix)) continue;
+    if (/^[^/]+\/run-\d+\//.test(f.slice(prefix.length))) return true;
+  }
+  return false;
 }
 
 export class SessionIndex {

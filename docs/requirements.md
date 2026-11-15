@@ -534,6 +534,7 @@
 
 **可见性口径（2026-11-02 补，2026-11-10 扩）**：手机端会话列表必须与桌面侧栏一致。过滤只看**真 subagent 标记**（`subagentOf`，索引从嵌套布局 `…/<主会话>/<childId>/run-N/session.jsonl` 推断）与副驾 `sidecarOf`；**`parentSession`（pi 的分支/fork 语义，编辑重发/compact/fork）不参与过滤**——混同会把用户正在用的会话从手机端与侧栏一起抹掉（实测 VE 会话）。
 **2026-11-10 回归（用户实测）**：pi-subagents 子会话的 header 同样带 `parentSession`（pi 的 branched-session 语义），v0.1.41–0.1.47 里 header 优先抹掉 `subagentOf`，数百个内部子会话（`subagent-code-reviewer-…` 等）漏进侧栏/远控成为假项目。修复后：嵌套布局是身份证据，无条件标 `subagentOf`，header 只保留 `parentSession` 的展示语义；推断同时逐级查「同名兄弟 .jsonl」覆盖 CLI 项目目录布局（`<sessions>/--项目--/<主会话>/<childId>/run-N/`）。顶层带 header `parentSession` 的用户分支会话不受影响。回归：`tests/remote-visibility.test.ts`、`tests/project-order.test.ts`、`tests/remote-server.test.ts`、`tests/nested-subagent-session.test.ts`（含 2026-11-10 新增 3 条，修前红）。
+**2026-11-15 回归（用户实测）**：侧栏删除主会话只删 `.jsonl` 文件、不碰同名子目录，宿主文件被删后孤儿子会话推断失败又成批漏进侧栏（同一 ashare 宿主目录下 4 条 `subagent-code-reviewer-…`，属 #196 第二变体）。修复后：推断回退到上溯途中第一个「紧邻子目录含 run-N/ 层」的孤儿宿主候选（pi-subagents 专属指纹），孤儿子会话保持隐藏、`parentSession` 指向已删除的宿主路径；无 run-N 的普通孤儿目录仍可见（不误标口径不变）；冷启动快照首帧短暂可见后由 `coldRescan` 修正并回写快照。已对真实会话目录验证（孤儿子会话全标记、顶层零误标）。回归：`tests/nested-subagent-session.test.ts`（新增孤儿 run-N 用例，修前红）。
 
 **状态**：已实现（含 Go relay 仓库），随远程隧道 PR 发版；ECS 部署后需真机验证。
 
