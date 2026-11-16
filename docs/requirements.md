@@ -526,6 +526,8 @@
 
 **回归触发**：改 `tunnel-client.ts` 帧协议、`tunnel-service.ts` 存储结构（keyEncrypted 语义）、`pi-tunnel-relay` 契约（路由/token 形状）；改 `remote-server.ts` 的 `lanEndpoint`。
 
+- **错误必须可见（2026-11-11 补充）**：client 每次连接尝试失败（注册 401「relay key 被拒绝」、网络失败等）的原因必须透出到 `status.error`（状态徽标旁详情），不得停留在「连接 relay 中」零反馈——relay 11-01 重部署换 key 后，Desktop 端 key 失效被静默吞掉 3 天。回归：`tests/tunnel-service-startup.test.ts`（注册 401 → status.error 含「relay key」）。
+
 ### R-remote-03　移动端项目列表：有运行中任务的项目置顶
 
 **需求**：远控页项目卡片列表不能只按最近更新时间排序。任一会话 `running`/`starting` 的项目必须置顶（live 内部仍按最近更新排序），其余项目保持原口径；SSE run 状态变化后列表实时重排，状态徽标/高亮逻辑不变。
