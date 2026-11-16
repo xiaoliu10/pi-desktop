@@ -15,6 +15,8 @@ README 只保留最近版本摘要；本文件为完整记录。
 
 - **Tunnel failures now show the actual reason instead of a perpetual "Connecting" badge**: when the relay rejects the device (e.g. the saved relay key is no longer valid after a server redeploy), the client retried forever with zero feedback. The per-attempt failure (such as "relay key rejected") is now surfaced in the tunnel status detail, next to the state badge.
 
+- **Subagent sessions no longer leak into the sidebar when their host session file has been deleted**: deleting a main session from the sidebar removes only the `.jsonl` file — the same-named directory with its pi-subagents child runs (`<主会话>/<childId>/run-N/session.jsonl`) stays on disk. The nested-layout parent inference required the sibling `.jsonl` to exist, so orphaned children failed inference and appeared as fake sessions in the sidebar (real-world report 2026-11-15: four `subagent-code-reviewer-…` sessions under a deleted ashare host). Inference now falls back to the first directory on the way up whose immediate subdirectories contain a `run-N/` layer — the pi-subagents fingerprint — so orphaned children stay hidden with `parentSession` pointing at the deleted host path. Plain orphan directories without `run-N` are unaffected (no-mislabeling rule unchanged). Verified against the real sessions directory: all orphan children flagged, zero false positives on top-level sessions.
+
 ### 中文
 
 #### 变更
@@ -24,6 +26,8 @@ README 只保留最近版本摘要；本文件为完整记录。
 #### 修复
 
 - **隧道失败现在显示真实原因，而不是永远「连接 relay 中」**：relay 拒绝设备时（例如服务器重新部署后保存的 relay key 已失效），客户端此前会无限重试且零反馈。每次连接失败的具体原因（如「relay key 被拒绝」）现在会显示在隧道状态徽标旁的详情里。
+
+- **宿主主会话文件被删后，子代理会话不再漏进侧栏**：从侧栏删除主会话只删 `.jsonl` 文件——同名目录里的 pi-subagents 子会话运行目录（`<主会话>/<childId>/run-N/session.jsonl`）留在磁盘上。嵌套布局的父会话推断要求同名兄弟 `.jsonl` 存在，孤儿子会话推断失败后被当成独立会话漏进侧栏（2026-11-15 用户实报：已删 ashare 宿主目录下四个 `subagent-code-reviewer-…` 假会话）。推断现在回退到上溯途中第一个「紧邻子目录含 run-N/ 层」的目录——pi-subagents 专属指纹——孤儿子会话保持隐藏，`parentSession` 指向已删除的宿主路径。无 run-N 的普通孤儿目录不受影响（不误标口径不变）。已对真实会话目录验证：孤儿子会话全部标记、顶层正常会话零误标。
 
 ## [0.1.53] - 2026-11-11
 
