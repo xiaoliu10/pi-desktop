@@ -396,7 +396,20 @@
 
 **状态**：已修复，单测红→绿 + 破坏性验证通过，待发版验收。
 
-**回归触发**：改 `backend.ts` 的 `compaction_start`/`compaction_end` 分支、`settleAfterCompact`、`compact()` 的异常分支；pi 改为手动压缩也发 `agent_settled` 时可简化但不得删除收口。### R-ui-01　错误提示是输入框上方的小横幅，且会话恢复后自动消失
+**回归触发**：改 `backend.ts` 的 `compaction_start`/`compaction_end` 分支、`settleAfterCompact`、`compact()` 的异常分支；pi 改为手动压缩也发 `agent_settled` 时可简化但不得删除收口。### R-render-11　工作面板宽度上限随窗口宽度，浏览器放得下桌面版网页
+
+**需求**：工作面板（变更/文件/浏览器/辅助对话/会议共用的右侧面板）宽度上限不再写死 700px——1920 宽窗口下面板拖到 700 就到头，桌面版网页（min-width 1000+，如百度）在浏览器 tab 必然横向溢出（用户 2026-11-13 报「浏览器大小不对」）。上限改为 `max(700, 60% 窗口宽)`，随窗口 resize 动态生效；窗口缩小时已保存宽度自动回钳，对话区不被挤没（≤1180px 时 workbench 为绝对定位浮层，不受挤压）。
+
+**验收**：
+- 1920×989 视口：拖拽把手可把面板加宽到 1152px（60%），不再是 700。
+- 视口缩到 1000：面板宽度自动回钳到保底 700，`localStorage` 持久化值同步。
+- 拖拽下限 300 与双击复位行为不变；其余面板（侧栏/子代理/计划/sidecar）上限不变。
+
+**回归**：`tests/panel-width.test.ts`（上限映射）、`tests/workbench-width.browser.cjs`（真实浏览器拖拽越旧上限 + 缩窗回钳）。
+
+**回归触发**：改 `panel-width.ts`、`PiReplicaApp` 的 workbench 宽度接线（`workbenchMax`/resize 监听/回钳 effect）、`ResizeHandle` 的钳制逻辑时必须同步本条。
+
+### R-ui-01　错误提示是输入框上方的小横幅，且会话恢复后自动消失
 
 ---
 

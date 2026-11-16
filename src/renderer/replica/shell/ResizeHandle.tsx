@@ -1,5 +1,7 @@
 import { useCallback, useRef, useState } from 'react';
 
+export { panelMaxForWindow } from './panel-width';
+
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
 
 /** Width state persisted in localStorage; returns [width, update, reset]. */

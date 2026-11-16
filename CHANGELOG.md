@@ -7,11 +7,19 @@ README 只保留最近版本摘要；本文件为完整记录。
 
 ### English
 
+#### Changed
+
+- **The workbench panel can now be dragged much wider on large windows** (the browser tab especially needs width for desktop websites): the width cap used to be a fixed 700px, so on a 1920px-wide window the built-in browser topped out at ~699px and desktop sites (min-width 1000px+) always overflowed horizontally. The cap now follows the window: `max(700, 60% of window width)` (1152px at 1920), shrinking windows clamp the saved width back down so the chat area is never squeezed away.
+
 #### Fixed
 
 - **Tunnel failures now show the actual reason instead of a perpetual "Connecting" badge**: when the relay rejects the device (e.g. the saved relay key is no longer valid after a server redeploy), the client retried forever with zero feedback. The per-attempt failure (such as "relay key rejected") is now surfaced in the tunnel status detail, next to the state badge.
 
 ### 中文
+
+#### 变更
+
+- **大窗口下工作面板可以拖得宽得多**（浏览器 tab 尤其需要宽度放桌面版网页）：宽度上限此前写死 700px，1920 宽的窗口里内置浏览器最多约 699px，桌面版网页（min-width 1000+）必然出现横向滚动。上限改为随窗口走：`max(700, 窗口宽的 60%)`（1920 时为 1152），窗口缩小时已保存的宽度自动回钳，对话区不会被挤没。
 
 #### 修复
 
