@@ -369,19 +369,20 @@
 
 ## 会话协作域（collaboration）
 
-### R-render-09　/skill 命令消息不出现重复气泡
+### R-render-09　/skill 命令消息不出现重复气泡，展开全文默认折叠
 
-**需求**：用户发送 `/skill:<name> <正文>` 时，对话区只显示**一条**用户消息——pi 落盘的展开版（技能 chip + 正文），不能同时挂着 Desktop 的原始输入气泡（用户 2026-10-28 反馈）。
+**需求**：用户发送 `/skill:<name> <正文>` 时，对话区只显示**一条**用户消息——pi 落盘的展开版（技能 chip + 正文），不能同时挂着 Desktop 的原始输入气泡（用户 2026-10-28 反馈）；pi 展开的 `<skill>…</skill>` 全文在任何阶段都默认折叠为一行摘要，点开才可见（用户 2026-11-17 反馈：运行中全文摊开）。
 
 **验收**：
 - `confirmSends` 能把 `/skill:` 命令的乐观气泡认领到其展开落盘条目（`<skill name="<名>"` 出现 + 命令后正文完整包含）；不同技能名的展开条目不得误认领。
 - 认领后标记 `diverged`：气泡渲染落盘的展开版（`技能 · <名>` chip + 正文），不渲染原始命令文本。
+- **运行中窗口（received send 未确认）**：pi 推回 `message_start`(user) 展开全文后、历史刷新确认前，乐观渲染分支同样走 `splitUserMeta` 剥离——技能全文折叠为 skill part（`details` 默认收起），用户指令可见，不得把 `<skill>` XML 摊进正文（`tests/pi-send-boundaries.test.ts` received 场景 + `tests/skill-fold-optimistic.browser.cjs` 真实浏览器：chip 存在/无 XML 泄漏/点开全文可见/多拍稳定）。
 - 未确认/确认前仍显示原始输入（发送即见的既有行为不变）；无附件场景图片门不拦截。
-- 回归：`tests/pi-send-boundaries.test.ts`（认领/分叉标记/渲染不含命令文本/异名不误领）、`tests/pi-send-boundaries.browser.cjs`（真实浏览器：确认后正文仅出现一次、chip 保留、原始命令文本消失）。
+- 回归：`tests/pi-send-boundaries.test.ts`（认领/分叉标记/渲染不含命令文本/异名不误领/运行中折叠）、`tests/pi-send-boundaries.browser.cjs`（真实浏览器：确认后正文仅出现一次、chip 保留、原始命令文本消失）、`tests/skill-fold-optimistic.browser.cjs`（运行中未确认窗口折叠）。
 
 **状态**：实现与浏览器验证通过，待发版验收。
 
-**回归触发**：改 `confirmSends` 认领匹配、`sentConversationMessages` 确认气泡渲染分支、pi 侧 skill 展开落盘格式时必须同步本条。
+**回归触发**：改 `confirmSends` 认领匹配、`sentConversationMessages` 乐观/received 渲染分支、pi 侧 skill 展开落盘格式时必须同步本条。
 
 ### R-session-07　手动压缩结束后会话必须回到空闲（不得假转圈 / 计时永续）
 

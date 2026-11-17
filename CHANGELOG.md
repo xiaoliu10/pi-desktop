@@ -3,6 +3,20 @@
 所有重要变更记录在本文件。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 README 只保留最近版本摘要；本文件为完整记录。
 
+## [Unreleased]
+
+### English
+
+#### Fixed
+
+- **A skill's full text no longer splays open in the chat while a task is running**: when a `/skill` command is sent, pi expands it into the full `<skill>…</skill>` text and echoes it back before the history refresh confirms the send. During that window the optimistic bubble used to render the raw XML as plain text — pages of SKILL.md flooding the conversation (the folded chip only appeared after reopening the session). The optimistic/received rendering path now applies the same projection as persisted history: the skill text folds into a one-line chip (click to expand) and only the user's instruction stays visible.
+
+### 中文
+
+#### 修复
+
+- **运行中任务不再把技能全文摊在对话里**：发送 `/skill` 命令后，pi 会把它展开成 `<skill>…</skill>` 全文并在历史刷新确认前回推；这个窗口内乐观气泡此前把原始 XML 当普通文本渲染——整页 SKILL.md 刷屏（折叠 chip 只在重新打开会话后出现）。乐观/received 渲染分支现在与落盘投影同一套剥离口径：技能全文折叠为一行摘要（点开可查），用户指令保持可见。
+
 ## [0.1.54] - 2026-11-16
 
 ### English
