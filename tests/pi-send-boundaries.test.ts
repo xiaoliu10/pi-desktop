@@ -411,3 +411,29 @@ it('unconfirmed send bubbles anchor to its baseline position, not the chat botto
   // B 的回复在最下面
   expect(ids.at(-1)).toBe('reply2');
 });
+
+it('folds an expanded /skill user message while its received send is still unconfirmed (no raw XML leak)', async () => {
+  // pi 会把 /skill 命令展开成 <skill>…</skill> 全文后推 message_start；历史刷新确认前
+  // received send 直接渲染 text 会把整段 XML 摊在对话里（2026-11-17 用户实测泄漏）。
+  const skillText = '<skill name="auto-research" location="/Users/jason/.agents/skills/auto-research/SKILL.MD">\nReferences are relative to /Users/jason/.agents/skills/auto-research.\n\n# Auto Research\n\n技能正文段落。\n</skill>\n\n火山agent plan 可以查到用量信息吗？';
+  // beforeEach 里 history mock 已 reject：refreshHistory 失败，send 保持未确认——正是泄漏窗口。
+  rpc({ type: 'message_start', message: { role: 'user', content: skillText } });
+  const last = messages().at(-1)!;
+  expect(last.role).toBe('user');
+  expect(last.meta).toBe('skill');
+  const textParts = last.parts.filter(p => p.kind === 'text') as Array<{ kind: 'text'; text: string }>;
+  // 技能 XML 全文不得作为普通文本渲染
+  expect(textParts.some(p => p.text.includes('<skill'))).toBe(false);
+  // 技能全文走折叠 part，用户指令保持可见
+  expect(last.parts.some(p => p.kind === 'skill' && (p as any).name === 'auto-research')).toBe(true);
+  expect(textParts.some(p => p.text.includes('火山agent plan'))).toBe(true);
+  // 落盘后投影接管，同样折叠（不回归成两份）
+  api.history.mockReturnValueOnce(Promise.resolve(history([entry('old-user', 'user', 'old'), entry('skill-user', 'user', skillText)])));
+  await vi.advanceTimersByTimeAsync(400);
+  const confirmed = usePiStore.getState().sends!.at(-1)!;
+  expect(confirmed.confirmedId).toBe('skill-user');
+  const folded = messages().find(m => m.id === 'skill-user')!;
+  expect(folded.meta).toBe('skill');
+  expect(folded.parts.some(p => p.kind === 'skill')).toBe(true);
+  expect(messages().filter(m => m.role === 'user').length).toBe(2);
+});

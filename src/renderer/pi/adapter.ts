@@ -835,10 +835,18 @@ function sentConversationMessagesInner(branch: PiEntry[], live: Record<string, R
     const end = at >= cursor ? at : anchor >= cursor ? anchor : branch.length;
     out.push(...segment(branch.slice(cursor, end), sends[i - 1]?.id));
     if ((send.id.startsWith('history:') || send.received || send.diverged) && at >= 0) out.push(...historyToMessages([branch[at]]));
-    else out.push({ id: send.id, role: 'user', timestamp: send.at, parts: [
-      { kind: 'text', id: `${send.id}-text`, text: send.text },
-      ...send.images.map((image, n) => ({ ...image, kind: 'image' as const, id: `${send.id}-image-${n}` })),
-    ] });
+    else {
+      // pi 会把 /skill 命令展开成 <skill>…</skill> 全文后推 message_start（user）；历史刷新
+      // 确认（confirmedId）前，received send 走这里渲染——直接把 send.text 当正文会把整段
+      // XML 摊在对话里（2026-11-17 用户实测泄漏）。与落盘投影同一套 splitUserMeta 口径：
+      // 技能全文折叠成 skill part，用户指令保持可见；确认后由投影接管，口径不变。
+      const split = splitUserMeta(send.text);
+      out.push({ id: send.id, role: 'user', timestamp: send.at, meta: split.meta, parts: [
+        ...(split.text ? [{ kind: 'text' as const, id: `${send.id}-text`, text: split.text }] : []),
+        ...(split.skill ? [{ kind: 'skill' as const, id: `${send.id}-skill`, name: split.skill.name, text: split.skill.text }] : []),
+        ...send.images.map((image, n) => ({ ...image, kind: 'image' as const, id: `${send.id}-image-${n}` })),
+      ] });
+    }
     cursor = at >= cursor ? at + 1 : end;
   }
   out.push(...segment(branch.slice(cursor), sends.at(-1)?.id));
