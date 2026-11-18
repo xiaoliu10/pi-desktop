@@ -3,6 +3,20 @@
 所有重要变更记录在本文件。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 README 只保留最近版本摘要；本文件为完整记录。
 
+## [Unreleased]
+
+### English
+
+#### Fixed
+
+- The macOS Dock badge counts each background session with a completion once until you return to the app. Multiple completed turns in the same session no longer inflate the badge count.
+
+### 中文
+
+#### 修复
+
+- macOS Dock 角标按有待查看结果的后台会话计数，回到应用前每个会话只计一次，同一会话完成多轮也不会把数字刷高。
+
 ## [0.1.55] - 2026-11-18
 
 ### English
