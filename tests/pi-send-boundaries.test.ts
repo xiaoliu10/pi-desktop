@@ -212,6 +212,32 @@ it('confirms a /skill command send against its expanded <skill> history entry', 
   expect(confirmSends([{ ...sends[0]! }], history([entry('e-other', 'user', other)]), run.key)[0].confirmedId).toBeUndefined();
 });
 
+it('reconciles a local skill command with its expanded start and subsequent history', async () => {
+  const prompt = deferred(); api.prompt.mockReturnValueOnce(prompt.promise);
+  usePiStore.getState().send('/skill:demo check quota');
+  const id = usePiStore.getState().sends![0].id;
+  const message = { role: 'user', timestamp: 551, content: [{ type: 'text', text: '<skill name="demo">instructions</skill>\n\ncheck quota' }] };
+  rpc({ type: 'message_start', message });
+  rpc({ type: 'message_start', message });
+  const current = () => messages().filter(m => m.role === 'user' && m.id !== 'old-user');
+  expect(current()).toHaveLength(1);
+  expect(current()[0]).toMatchObject({ id, parts: [{ kind: 'text', text: 'check quota' }, { kind: 'skill', name: 'demo' }] });
+  const disk = [...usePiStore.getState().history!.branch, { id: 'skill-ack', type: 'message', message } as PiEntry];
+  api.history.mockResolvedValue(history(disk));
+  prompt.resolve(); await vi.advanceTimersByTimeAsync(600);
+  expect(current()).toHaveLength(1);
+  expect(current()[0]).toMatchObject({ id: 'skill-ack', meta: 'skill' });
+  rpc({ type: 'message_start', message: { ...message, timestamp: 552 } });
+  expect(current()).toHaveLength(2);
+});
+
+it('matches the instruction after the skill wrapper, even when the skill body quotes the pending request', () => {
+  const typed = '/skill:demo check quota';
+  const sends = [{ id: 'send-demo', at: 1, key: run.key, images: [], baseline: [], text: typed }];
+  const other = '<skill name="demo">examples: check quota</skill>\n\na different request';
+  expect(confirmSends(sends, history([entry('other', 'user', other)]), run.key)[0].confirmedId).toBeUndefined();
+});
+
 it('routes a late old-tool update by persisted call identity even after progress retirement', () => {
   const branch = [entry('old', 'assistant', [{ type: 'toolCall', id: 'old-call', name: 'read', arguments: {} }]), entry('new', 'user', 'next')];
   const sends = [{ id: 'send-next', key: run.key, at: 1, text: 'next', images: [], baseline: ['old'], confirmedId: 'new' }];
