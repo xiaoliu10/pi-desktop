@@ -109,7 +109,7 @@ let terminals: TerminalService;
 let voice: VoiceService;
 let meetings: MeetingService;
 let meetingPowerBlocker: number | null = null;
-// Dock 角标：后台任务完成时显示累计数字（ZCode 式提示），用户回到窗口自动清零。
+// Each background session with a completion contributes one badge until the user returns.
 const dockBadge = createDockBadge(text => {
   try { app.setBadgeCount(text ? Number(text) : 0); } catch { /* 未 ready 或平台不支持时忽略 */ }
 });
@@ -136,7 +136,7 @@ function broadcast(event: PiEvent) {
     : event.type === 'run' ? event.run.sidecarOf !== undefined
     : event.type === 'closed' ? event.sidecarOf !== undefined
     : (host?.backend.runs().some(r => r.key === eventKey && r.sidecarOf !== undefined) ?? false);
-  // 一轮 agent 运行结束（权威信号 agent_settled；排除 desktop-wait-for-idle 合成事件）→ Dock 角标 +1。
+  // Mark sessions on agent settlement, excluding synthetic idle checks.
   if (!isSidecar && event.type === 'rpc'
     && (event.event as { type?: string }).type === 'agent_settled'
     && (event.event as { source?: string }).source !== 'desktop-wait-for-idle') {

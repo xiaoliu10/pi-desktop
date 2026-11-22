@@ -10,12 +10,14 @@ README 只保留最近版本摘要；本文件为完整记录。
 #### Fixed
 
 - Sending a skill command now shows one user message with one folded skill chip, both while the task runs and after chat history refreshes.
+- The macOS Dock badge counts each background session with a completion once until you return to the app. Multiple completed turns in the same session no longer inflate the badge count.
 
 ### 中文
 
 #### 修复
 
 - 发送技能命令后，任务运行中和历史刷新后均只显示一条用户消息，气泡内保留一个可展开的技能标记。
+- macOS Dock 角标按有待查看结果的后台会话计数，回到应用前每个会话只计一次，同一会话完成多轮也不会把数字刷高。
 
 ## [0.1.55] - 2026-11-18
 
