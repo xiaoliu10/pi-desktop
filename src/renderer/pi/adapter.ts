@@ -660,6 +660,17 @@ const userMessageIdentity = (message: Record<string, unknown>): string | undefin
   return identity == null ? undefined : String(identity);
 };
 
+/** Match a runtime expansion by skill name and the instruction following its wrapper. */
+function matchesSkillExpansion(send: OptimisticSend, text: string): boolean {
+  if (!send.text.startsWith('/skill')) return false;
+  const command = /^\/skill[:\s]+(\S+)\s*([\s\S]*)$/.exec(send.text);
+  if (!command) return false;
+  const expanded = splitUserMeta(text);
+  const args = command[2].trim();
+  return expanded.skill?.name === command[1] && (expanded.text === args ||
+    (send.images.length > 0 && expanded.text.startsWith(args ? args + '\n\n[Image:' : '[Image:')));
+}
+
 /** Never acknowledge against a pre-send entry (including identical text/timestamps). */
 export function confirmSends(sends: OptimisticSend[], history: PiHistory, key: string): OptimisticSend[] {
   const claimed = new Set(sends.flatMap(s => s.key === key && s.confirmedId ? [s.confirmedId] : []));
@@ -676,20 +687,12 @@ export function confirmSends(sends: OptimisticSend[], history: PiHistory, key: s
       // 原文前缀 + 图片数量；claimed/baseline 已防跨条目误认领。
       const text = contentText(content);
       if (s.received) return text === s.text && images.every((image: any, i: number) => image.data === s.images[i].data && image.mimeType === s.images[i].mimeType);
-      // /skill 命令会被 pi 展开成 <skill name="…">…</skill> + 原正文 落盘——展开文本与输入
-      // 既不相等也不是前缀，走不到下面的匹配，乐观气泡永挂成第二条重复用户消息
-      //（2026-10-28 用户实测）。按「技能名出现 + 原正文完整包含」认领；claimed/baseline
-      // 已防跨条目误认领，同名技能的多条历史也不会错认（正文必须同时包含）。
-      const skill = /\/skill[:\s]+([^\s]+)\s*([\s\S]*)$/.exec(s.text);
-      if (skill) {
-        const rest = skill[2]!.trim();
-        if (text.includes(`<skill name="${skill[1]}"`) && (rest === '' || text.includes(rest))) return true;
-      }
+      if (matchesSkillExpansion(s, text)) return true;
       return text === s.text || (s.text.length > 0 && text.startsWith(s.text));
     });
     if (!entry?.id) return s;
     claimed.add(entry.id);
-    const skillClaimed = /\/skill[:\s]+([^\s]+)\s*([\s\S]*)$/.test(s.text) && contentText(entry.message?.content) !== s.text;
+    const skillClaimed = matchesSkillExpansion(s, contentText(entry.message?.content));
     return { ...s, confirmedId: entry.id, diverged: s.diverged || skillClaimed, messageIdentity: s.messageIdentity ?? userMessageIdentity(entry.message!) };
   });
 }
@@ -1495,11 +1498,15 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
       // starts are distinct consumed inputs. Never reuse an old confirmed send by text.
       const observed = messageIdentity === undefined ? undefined : sends.find(s => s.key === key && s.messageIdentity === messageIdentity);
       const pending = sends.find(s => s.key === key && isAwaitingSend(s) && !s.userStarted && s.messageIdentity === undefined
-        && s.images.length === images.length && (s.text === text || (s.images.length > 0 && text.startsWith(`${s.text}\n\n[Image:`))));
+        && s.images.length === images.length && (s.text === text || matchesSkillExpansion(s, text)
+          || (s.images.length > 0 && text.startsWith(`${s.text}\n\n[Image:`))));
       const saved = messageIdentity === undefined || state.selectedKey !== key ? undefined
         : state.history?.branch.find(e => e.message?.role === 'user' && userMessageIdentity(e.message) === messageIdentity);
       const existing = observed ?? (saved ? sends.find(s => s.key === key && s.confirmedId === saved.id) : pending);
-      const boundary: OptimisticSend = existing ? { ...existing, messageIdentity, userStarted: true } : {
+      const boundary: OptimisticSend = existing ? {
+        ...existing, messageIdentity, userStarted: true,
+        ...(existing === pending && matchesSkillExpansion(existing, text) ? { text, diverged: true } : {}),
+      } : {
         id: `received-${crypto.randomUUID()}`, key, at: Date.now(), text, images, received: true, messageIdentity,
         baseline: [...new Set([
           ...(state.selectedKey === key ? state.history?.branch ?? [] : []).flatMap(e => e.id ? [e.id] : []),

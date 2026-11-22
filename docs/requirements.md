@@ -387,6 +387,7 @@
 
 **验收**：
 - `confirmSends` 能把 `/skill:` 命令的乐观气泡认领到其展开落盘条目（`<skill name="<名>"` 出现 + 命令后正文完整包含）；不同技能名的展开条目不得误认领。
+- 本地发送 `/skill` 后收到已展开的 `message_start(user)`，复用同一条发送记录。确认前后均只显示一个气泡和一个折叠技能标记。真实的第二次同文请求仍独立显示。匹配技能名及标签之后的用户指令，技能说明里出现的例文不能用来认领。
 - 认领后标记 `diverged`：气泡渲染落盘的展开版（`技能 · <名>` chip + 正文），不渲染原始命令文本。
 - **运行中窗口（received send 未确认）**：pi 推回 `message_start`(user) 展开全文后、历史刷新确认前，乐观渲染分支同样走 `splitUserMeta` 剥离——技能全文折叠为 skill part（`details` 默认收起），用户指令可见，不得把 `<skill>` XML 摊进正文（`tests/pi-send-boundaries.test.ts` received 场景 + `tests/skill-fold-optimistic.browser.cjs` 真实浏览器：chip 存在/无 XML 泄漏/点开全文可见/多拍稳定）。
 - 未确认/确认前仍显示原始输入（发送即见的既有行为不变）；无附件场景图片门不拦截。

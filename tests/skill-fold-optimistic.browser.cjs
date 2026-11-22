@@ -25,26 +25,29 @@ async (page) => {
     const { executionTurns } = await import('/replica/chat/execution.ts');
     const { TurnArticle } = await import('/replica/chat/ChatView.tsx');
     window.__emit = null;
-    // 历史永远失败：received send 停留在未确认窗口——正是修复前 XML 全文泄漏的窗口。
+    // Hold history back until the live skill bubble has been inspected.
     window.localPi = {
       settingsSnapshot: () => Promise.reject('mock'), environment: () => Promise.reject('mock'),
       sessions: async () => [], runs: async () => [], archivedSessions: async () => [],
       onEvent: fn => { window.__emit = fn; return () => {}; },
-      prompt: () => new Promise(() => {}), history: () => Promise.reject(new Error('history unavailable')),
+      prompt: () => new Promise(() => {}), history: () => new Promise(resolve => { window.__resolveHistory = resolve; }),
     };
     const key = 'skill-fold-run';
     usePiStore.getState().init();
     await new Promise(r => setTimeout(r, 600));
     usePiStore.setState({
       selectedKey: key,
-      runs: [{ key, generation: 'g1', cwd: '/mock', file: '/mock/session', status: 'running', models: [], commands: [], pending: 0 }],
+      runs: [{ key, generation: 'g1', cwd: '/mock', file: '/mock/session', status: 'idle', models: [], commands: [], pending: 0 }],
       history: { branch: [{ id: 'old-user', type: 'message', message: { role: 'user', content: 'old' } }] },
       sends: [], pendingPrompt: undefined, pendingPromptAt: undefined, sentAt: undefined,
       pendingSteer: {}, live: {}, toolProgress: {}, contextItems: [], draftText: '',
       connecting: false, changingAccessMode: false, error: undefined,
     });
     const skillText = '<skill name="auto-research" location="/Users/jason/.agents/skills/auto-research/SKILL.md">\nReferences are relative to /Users/jason/.agents/skills/auto-research.\n\n# Auto Research → 设计与判断\n\n技能正文段落，很长的一段说明文字。\n</skill>\n\n火山agent plan 可以查到用量信息吗？';
-    window.__emit({ type: 'rpc', key, generation: 'g1', event: { type: 'message_start', message: { role: 'user', content: skillText } } });
+    usePiStore.getState().send('/skill:auto-research 火山agent plan 可以查到用量信息吗？');
+    const message = { role: 'user', timestamp: 551, content: skillText };
+    window.__emit({ type: 'rpc', key, generation: 'g1', event: { type: 'message_start', message } });
+    window.__confirm = () => window.__resolveHistory({ branch: [...usePiStore.getState().history.branch, { type: 'message', id: 'skill-ack', message }] });
     await new Promise(r => setTimeout(r, 300));
     const labels = {
       you: '你', assistant: '助手', simulatedRun: '模拟', toolRunning: '运行中', toolDone: '完成',
@@ -71,6 +74,7 @@ async (page) => {
   // 断言 1：折叠 chip 存在、含技能名与提示文案
   const chip = page.locator('details.pi-msg__skill');
   await chip.waitFor({ timeout: 5000 });
+  assert(await page.locator('article.pi-msg--user').count() === 2, 'expected the old message and exactly one new skill message');
   const chipText = await chip.locator('summary').textContent();
   assert(chipText && chipText.includes('auto-research') && chipText.includes('点开查看全文'), `chip 文案不符: ${chipText}`);
   // 断言 2：默认折叠（details 无 open），正文 XML 不可见
@@ -92,6 +96,11 @@ async (page) => {
   const late = await page.locator('.pi-chat__inner').innerText();
   assert(!late.includes('<skill name='), '后续渲染拍出现 XML 泄漏');
   assert((await page.locator('details.pi-msg__skill').count()) === 1, '折叠卡数量应为 1');
+  await page.waitForFunction(() => typeof window.__resolveHistory === 'function');
+  await page.evaluate(() => window.__confirm());
+  await page.locator('article[data-msg="skill-ack"]').waitFor();
+  assert(await page.locator('article.pi-msg--user').count() === 2, 'duplicate user message after history confirmation');
+  assert(await chip.count() === 1, 'expected one skill chip after confirmation');
   assert(errors.length === 0, `pageerror: ${errors.join(' | ')}`);
   await page.screenshot({ path: 'output/playwright/skill-fold-optimistic.png' });
   await page.evaluate(() => window.__unsub && window.__unsub());
