@@ -3,9 +3,13 @@
 所有重要变更记录在本文件。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 README 只保留最近版本摘要；本文件为完整记录。
 
-## [Unreleased]
+## [0.1.56] - 2026-11-22
 
 ### English
+
+#### Changed
+
+- Bundled pi runtime upgraded from 1.5.2 to **1.6.0** (upstream release 2026-11-20). New GPT-6.2 Astra/Sol models on the `openai`, `azure` and `openai-codex` providers (GPT-6.2 Sol becomes their default), the find tool's path patterns now resolve relative to the search directory, and extension component `render()` output became read-only arrays — only TUI extensions that mutate render output in place are affected, and none of Desktop's bundled extensions do. The local-CLI compatibility window widened to `[0.85.1, 1.7.0)`, so a locally installed pi 1.6.x is accepted. Also carries the upstream `undici` 8.12.4 security updates.
 
 #### Fixed
 
@@ -13,6 +17,10 @@ README 只保留最近版本摘要；本文件为完整记录。
 - The macOS Dock badge counts each background session with a completion once until you return to the app. Multiple completed turns in the same session no longer inflate the badge count.
 
 ### 中文
+
+#### 变更
+
+- 内置 pi 运行时从 1.5.2 升级到 **1.6.0**（上游 2026-11-20 发布）。`openai`/`azure`/`openai-codex` 提供商新增 GPT-6.2 Astra/Sol 模型（GPT-6.2 Sol 成为默认），find 工具的路径模式改为相对搜索目录解析，扩展组件 `render()` 输出改为只读数组——只有会原地修改渲染结果的 TUI 扩展受影响，Desktop 自带扩展均不受影响。本机 CLI 兼容窗口放宽到 `[0.85.1, 1.7.0)`，本机安装的 pi 1.6.x 现在也会被接受。同时包含上游 `undici` 8.12.4 安全更新。
 
 #### 修复
 
