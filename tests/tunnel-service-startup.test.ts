@@ -106,4 +106,52 @@ it('注册被拒（key 失效）时状态必须带错误详情，而不是永远
   }, { timeout: 8000, interval: 50 });
   service.stop();
 });
+
+// 回归（2026-11-22 用户实报）：网络瞬断导致注册请求 fetch failed 后，client 自动重连
+// 成功（徽标回到「已连 relay，等待终端」），但 #199 透出的错误文案从不清理 —— 状态徽标
+// 与陈旧错误详情同时挂着。恢复确认（waiting/paired）后上一次失败已过时，必须清除。
+it('重连恢复后必须清除上一次的错误详情（fetch failed 不残留）', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tunnel-rec-'));
+  tmpDirs.push(dir);
+  writeConfig(dir, { enabled: true, relayUrl: 'https://relay.example.com', keyEncrypted: 'k-enc', deviceName: 'mbp' });
+  let attempts = 0;
+  const flakyFetch = vi.fn(async () => {
+    attempts++;
+    if (attempts === 1) throw new TypeError('fetch failed');
+    return new Response(JSON.stringify({ code: 0, data: { device_sid: `sid-${attempts}`, token: 'tok', expires_in: 60 } }), { status: 200 });
+  });
+  let fireOpen: (() => void) | null = null;
+  const service = new TunnelService(path.join(dir, 'tunnel.json'), {
+    localBase: () => 'http://127.0.0.1:1',
+    localToken: () => 'tok',
+    ensureLocal: () => {},
+    relayFetch: flakyFetch as unknown as typeof fetch,
+    wsFactory: () => {
+      const ls: Record<string, ((...a: unknown[]) => void)[]> = {};
+      const ws = {
+        send: (data: string) => {
+          const frame = JSON.parse(data) as { type: string };
+          if (frame.type === 'auth_init') setImmediate(() => ls.message?.forEach(cb => cb(Buffer.from(JSON.stringify({ type: 'auth_ack', pair_status: 'waiting', server_ts: Math.floor(Date.now() / 1000) })))));
+        },
+        close: () => {},
+        on: (ev: string, cb: never) => {
+          (ls[ev] ??= []).push(cb as (...a: unknown[]) => void);
+          if (ev === 'open') fireOpen = () => ls.open?.forEach(cb => cb());
+        },
+      };
+      // client 在工厂返回后同步挂 open/message 监听，nextTick 再触发才不会丢事件
+      setImmediate(() => fireOpen?.());
+      return ws as never;
+    },
+  });
+  await service.startup();
+  await vi.waitFor(async () => {
+    const status = await service.status();
+    expect(status.state).toBe('waiting');
+  }, { timeout: 12_000, interval: 50 });
+  expect(attempts).toBeGreaterThanOrEqual(2); // 确实经历了一次失败重试
+  const status = await service.status();
+  expect(status.error).toBeUndefined(); // 恢复后错误详情必须消失
+  service.stop();
+});
 });

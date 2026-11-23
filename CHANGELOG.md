@@ -3,6 +3,20 @@
 所有重要变更记录在本文件。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 README 只保留最近版本摘要；本文件为完整记录。
 
+## [Unreleased]
+
+### English
+
+#### Fixed
+
+- **The tunnel card no longer shows stale errors after the connection recovers**: a transient network blip during the relay handshake surfaced as `fetch failed` under the status badge — and the text stayed there even after the tunnel had reconnected successfully (badge "Connected to relay, waiting for terminal"). The error detail is now cleared as soon as the tunnel reaches a healthy state, same policy as model errors: only show failures that have not recovered.
+
+### 中文
+
+#### 修复
+
+- **隧道卡片不再在恢复后残留旧错误**：relay 握手期间的网络瞬断会以 `fetch failed` 显示在状态徽标下方——隧道重连成功（徽标「已连 relay，等待终端」）后这行字却一直挂着。现在隧道一回到健康状态就清除错误详情，与模型错误同一口径：只显示尚未恢复的失败。
+
 ## [0.1.56] - 2026-11-22
 
 ### English
