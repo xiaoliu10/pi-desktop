@@ -3,6 +3,16 @@
 所有重要变更记录在本文件。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 README 只保留最近版本摘要；本文件为完整记录。
 
+## [Unreleased]
+
+### English
+
+- Collapsing the project sidebar now gives its width back to the conversation. Use the title-bar button to restore the sidebar at its previous width.
+
+### 中文
+
+- 折叠项目侧栏后，聊天区会占用腾出的宽度。点击标题栏的展开按钮即可恢复侧栏原宽。
+
 ## [0.1.56] - 2026-11-22
 
 ### English

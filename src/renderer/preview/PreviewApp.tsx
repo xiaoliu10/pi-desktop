@@ -39,7 +39,7 @@ export function PreviewApp() {
   const s = useDemoStore();
   const t = replicaLabels(s.lang);
   const isDark = s.theme === 'dark';
-  const rootClass = `pireplica ${isDark ? 'pireplica--dark' : ''}`;
+  const rootClass = `pireplica ${isDark ? 'pireplica--dark' : ''} ${s.sidebarCollapsed ? 'pireplica--sidebar-collapsed' : ''}`;
   const meta = activeSessionMeta(s);
   const title = sessionTitle(s, s.activeSessionId);
   const demoLabel = t.composer.demoBadge;
@@ -125,7 +125,7 @@ export function PreviewApp() {
   const fontFamily =
     s.font === 'Serif' ? 'Georgia, "Songti SC", serif' : s.font === 'Mono' ? 'ui-monospace, SFMono-Regular, Menlo, monospace' : undefined;
 
-  const showTopBar = s.view === 'home' || s.view === 'chat';
+  const showTopBar = s.view === 'home' || s.view === 'chat' || s.sidebarCollapsed;
 
   const searchSelect = (item: SearchItem) => {
     if (item.kind === 'page') {
@@ -206,6 +206,7 @@ export function PreviewApp() {
             {showTopBar && (
               <TopBar
                 title={title || demoLabel}
+                onExpandSidebar={s.sidebarCollapsed ? s.toggleSidebar : undefined}
                 labels={t.topbar}
                 onNewSession={s.newSession}
                 onOpenSearch={() => s.setSearchOpen(true)}

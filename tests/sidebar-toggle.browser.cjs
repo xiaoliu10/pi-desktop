@@ -21,40 +21,35 @@ async (page) => {
     const { __React: React, __createRoot: createRoot, __Sidebar: Sidebar, __TopBar: TopBar } = window;
     const root = document.getElementById('root');
     const labels = { newSession: '新建任务', search: '搜索' };
-    const sidebarBase = { projects: [], projectMenu: () => null, temporarySessions: [], collapsed: true, onToggleCollapse: () => {}, zh: true, labels };
-    window.__mount = (topbarProps) => {
-      root.innerHTML = '';
-      createRoot(root).render(React.createElement('main', { className: 'pireplica pireplica--mac pireplica--sidebar-collapsed', style: { display: 'flex', flexDirection: 'column', height: '100vh' } },
-        React.createElement(Sidebar, sidebarBase),
-        React.createElement('div', { style: { flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 } },
-          React.createElement(TopBar, { title: 'PI Desktop', labels, onNewSession: () => {}, onOpenSearch: () => {}, ...topbarProps }),
-          React.createElement('div', { style: { flex: 1 } })),
-      ));
-    };
+    function Shell() {
+      const [collapsed, setCollapsed] = React.useState(false);
+      const toggle = () => setCollapsed(value => !value);
+      return React.createElement('main', {
+        className: 'pireplica pireplica--mac' + (collapsed ? ' pireplica--sidebar-collapsed' : ''),
+        style: { display: 'flex', height: '100vh', '--pi-sidebar-width': '280px' },
+      }, React.createElement(Sidebar, {
+        projects: [], temporarySessions: [], labels, collapsed, onToggleCollapse: toggle,
+      }), React.createElement('section', { id: 'chat', style: { flex: 1 } },
+        React.createElement(TopBar, { title: 'PI Desktop', labels, onExpandSidebar: collapsed ? toggle : undefined })));
+    }
+    createRoot(root).render(React.createElement(Shell));
   });
 
-  // ① 折叠态 Sidebar 不渲染任何展开按钮（死按钮已移除）
-  await page.evaluate(() => window.__mount({}));
-  await page.waitForTimeout(80);
-  const deadBtns = await page.$$eval('.pi-sidebar--collapsed button', els => els.length);
-  assert(deadBtns === 0, `折叠态不应再有窄条按钮，实际 ${deadBtns} 个`);
-
-  // ② TopBar onExpandSidebar 存在 → 渲染展开按钮，点击触发回调
-  await page.evaluate(() => { window.__expanded = 0; window.__mount({ onExpandSidebar: () => { window.__expanded += 1; } }); });
-  await page.waitForSelector('.pi-topbar__expand', { timeout: 5000 });
-  const btn = page.locator('.pi-topbar__expand');
-  const box = await btn.boundingBox();
-  assert(box && box.width > 0, '展开按钮不可见');
-  await btn.click();
-  await page.waitForFunction(() => window.__expanded === 1, { timeout: 3000 });
-  // 坐标命中自检：点击坐标处就是按钮（无遮挡）
-  const hitIn = await page.evaluate(([x, y]) => { const el = document.elementFromPoint(x, y); return !!el && !!el.closest('.pi-topbar'); }, [box.x + box.width / 2, box.y + box.height / 2]);
-  assert(hitIn, '按钮坐标命中异常（不在 topbar 内）');
-
-  // ③ onExpandSidebar 缺省 → 不渲染按钮（展开态无冗余图标）
-  await page.evaluate(() => window.__mount({}));
-  await page.waitForTimeout(80);
-  assert(await page.$('.pi-topbar__expand') === null, '未传 onExpandSidebar 不应渲染展开按钮');
-
+  const sidebar = page.locator('aside.pi-sidebar');
+  const collapse = page.getByRole('button', { name: 'Collapse sidebar', exact: true });
+  const expand = page.getByRole('button', { name: '展开侧边栏', exact: true });
+  await collapse.waitFor();
+  const chat = page.locator('#chat');
+  const initialChat = await chat.boundingBox();
+  const initialSidebar = await sidebar.boundingBox();
+  assert(initialSidebar.width > 0 && await expand.count() === 0, '展开态应显示侧栏和单个折叠按钮');
+  await collapse.click();
+  await expand.waitFor();
+  assert(await sidebar.count() === 0, '折叠后完整项目侧栏仍在页面上');
+  const foldedChat = await chat.boundingBox();
+  assert(Math.abs(foldedChat.width - initialChat.width - initialSidebar.width) <= 1, '聊天区应收回侧栏宽度');
+  await expand.click();
+  await collapse.waitFor();
+  assert(await expand.count() === 0 && (await chat.boundingBox()).width === initialChat.width, '再次展开应恢复初始布局');
   console.log('SIDEBAR TOGGLE OK');
 }
