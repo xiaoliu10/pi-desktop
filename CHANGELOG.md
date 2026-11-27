@@ -3,9 +3,13 @@
 所有重要变更记录在本文件。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 README 只保留最近版本摘要；本文件为完整记录。
 
-## [Unreleased]
+## [0.1.57] - 2026-11-27
 
 ### English
+
+#### Changed
+
+- Bundled pi is now 1.6.1. After saving settings in 1.6.1 and returning to 1.6.0, turn cache-miss notices back on if you previously enabled them.
 
 #### Fixed
 
@@ -13,6 +17,10 @@ README 只保留最近版本摘要；本文件为完整记录。
 - Collapsing the project sidebar gives its width back to the conversation. The title-bar button restores it at its previous width.
 
 ### 中文
+
+#### 变更
+
+- 内置 pi 升至 1.6.1。如果你之前开启了缓存未命中提示，用 1.6.1 保存设置后退回 1.6.0，需要手动重新开启该提示。
 
 #### 修复
 
