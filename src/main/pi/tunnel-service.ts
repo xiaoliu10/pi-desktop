@@ -126,6 +126,10 @@ export class TunnelService {
       this.client.on('state', (s: TunnelState) => {
         this.deps.log?.(`[tunnel] state → ${s}`);
         if (s === 'error') this.lastError = '连接失败，正在重试';
+        // 恢复确认（等待终端/已配对）即视为上一次失败已过时：清掉错误文案，
+        // 避免徽标「已连 relay」与陈旧错误详情同时挂着（2026-11-22 用户实报
+        // fetch failed 残留；与模型错误「确认恢复成功后隐藏」同一口径）。
+        else if (s === 'waiting' || s === 'paired') this.lastError = '';
       });
       this.client.on('relay-error', (code: string) => { this.lastError = `relay 错误：${code}`; });
       // client 每次 attempt 失败（注册 401「relay key 被拒绝」、网络失败等）都会 emit
