@@ -563,6 +563,7 @@
 **回归触发**：改 `tunnel-client.ts` 帧协议、`tunnel-service.ts` 存储结构（keyEncrypted 语义）、`pi-tunnel-relay` 契约（路由/token 形状）；改 `remote-server.ts` 的 `lanEndpoint`。
 
 - **错误必须可见（2026-11-11 补充）**：client 每次连接尝试失败（注册 401「relay key 被拒绝」、网络失败等）的原因必须透出到 `status.error`（状态徽标旁详情），不得停留在「连接 relay 中」零反馈——relay 11-01 重部署换 key 后，Desktop 端 key 失效被静默吞掉 3 天。回归：`tests/tunnel-service-startup.test.ts`（注册 401 → status.error 含「relay key」）。
+- **恢复后错误必须消失（2026-11-22 补充）**：重连成功进入 `waiting`/`paired`（徽标「已连 relay，等待终端」/「已接入」）时，上一次 attempt 的错误详情必须清除，不得让状态徽标与陈旧错误同时挂着（用户实报：网络瞬断的 `fetch failed` 在重连成功后残留）。与模型错误展示同一口径：只显示未恢复的失败，确认恢复即隐藏。回归：`tests/tunnel-service-startup.test.ts`（首次 fetch 失败 → 重连 → waiting 且 status.error 为空，修前红）。
 
 ### R-remote-03　移动端项目列表：有运行中任务的项目置顶
 

@@ -7,10 +7,16 @@ README 只保留最近版本摘要；本文件为完整记录。
 
 ### English
 
-- Collapsing the project sidebar now gives its width back to the conversation. Use the title-bar button to restore the sidebar at its previous width.
+#### Fixed
+
+- The tunnel card clears the previous connection error when the relay reconnects.
+- Collapsing the project sidebar gives its width back to the conversation. The title-bar button restores it at its previous width.
 
 ### 中文
 
+#### 修复
+
+- 隧道重新连上 relay 后，隧道卡片会清除上一次连接失败的提示。
 - 折叠项目侧栏后，聊天区会占用腾出的宽度。点击标题栏的展开按钮即可恢复侧栏原宽。
 
 ## [0.1.56] - 2026-11-22
