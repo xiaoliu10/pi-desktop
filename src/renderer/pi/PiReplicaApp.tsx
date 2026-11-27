@@ -789,7 +789,7 @@ export default function PiReplicaApp() {
 
   const fontFamily = s.font === 'Serif' ? 'Georgia, "Songti SC", serif' : s.font === 'Mono' ? 'ui-monospace, SFMono-Regular, Menlo, monospace' : undefined;
 
-  const showTopBar = s.view === 'home' || s.view === 'chat';
+  const showTopBar = s.view === 'home' || s.view === 'chat' || (s.sidebarCollapsed && s.view !== 'settings');
 
   // 模型配置：供应商表单状态 + 真实保存/编辑/删除（写入 pi 的 models.json）。
   const providerSaving = useRef(false);

@@ -12,6 +12,7 @@ import { buildSidebarLists, formatSessionTime, SIDEBAR_SESSION_LIMIT, visibleSes
 import './sidebar.css';
 
 export function Sidebar(props: SidebarProps) {
+  if (props.collapsed) return null;
   const lists = buildSidebarLists(props.temporarySessions, props.projects, '');
 
   const zh = props.labels.projects === '项目';
@@ -32,11 +33,6 @@ export function Sidebar(props: SidebarProps) {
     </button>
     {/* 插件市场入口已移至设置菜单（SettingsPage → 插件市场）；侧边栏不再重复展示 */}
   </nav>;
-
-  // 折叠态不渲染浮动窄条：它的展开按钮（absolute + z-index）会被 .pi-topbar 的
-  // app-region:drag 原生层吞掉点击（原生命中无视 CSS z-index，见 sidebar.css 顶部
-  // 注释），用户只能靠快捷键切回。展开入口收敛到 TopBar 内的 no-drag 按钮
-  //（TopBarProps.onExpandSidebar）。
 
   return (
     <aside className="pi-sidebar">

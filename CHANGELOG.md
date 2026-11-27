@@ -9,13 +9,15 @@ README 只保留最近版本摘要；本文件为完整记录。
 
 #### Fixed
 
-- **The tunnel card no longer shows stale errors after the connection recovers**: a transient network blip during the relay handshake surfaced as `fetch failed` under the status badge — and the text stayed there even after the tunnel had reconnected successfully (badge "Connected to relay, waiting for terminal"). The error detail is now cleared as soon as the tunnel reaches a healthy state, same policy as model errors: only show failures that have not recovered.
+- The tunnel card clears the previous connection error when the relay reconnects.
+- Collapsing the project sidebar gives its width back to the conversation. The title-bar button restores it at its previous width.
 
 ### 中文
 
 #### 修复
 
-- **隧道卡片不再在恢复后残留旧错误**：relay 握手期间的网络瞬断会以 `fetch failed` 显示在状态徽标下方——隧道重连成功（徽标「已连 relay，等待终端」）后这行字却一直挂着。现在隧道一回到健康状态就清除错误详情，与模型错误同一口径：只显示尚未恢复的失败。
+- 隧道重新连上 relay 后，隧道卡片会清除上一次连接失败的提示。
+- 折叠项目侧栏后，聊天区会占用腾出的宽度。点击标题栏的展开按钮即可恢复侧栏原宽。
 
 ## [0.1.56] - 2026-11-22
 
