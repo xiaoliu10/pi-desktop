@@ -198,6 +198,8 @@ export interface ComposerProps {
   /** Null on the home screen = "ask anything" placeholder variant. */
   sessionActive: boolean;
   modelId: string;
+  /** 模型值徽标（如「项目默认」）：显示当前模型来源，只读展示，不参与交互。 */
+  modelBadge?: string;
   modelGroups: ModelGroup[];
   reasoning: ReasoningLevel;
   agentMode: AgentMode;

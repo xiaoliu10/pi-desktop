@@ -271,6 +271,8 @@ export interface LocalPiApi extends importSettingsApi {
   onTerminalExit(listener: (event: import('./terminal').TerminalExitEvent) => void): () => void;
   /** Shared-config writes: pi reads the same settings.json / models.json. */
   modelDefaultSave(input: { provider?: string; model?: string }): Promise<PiModelCatalog>;
+  /** 项目级默认模型（<cwd>/.pi/settings.json 的 defaultProvider/defaultModel），只读；无则 undefined。 */
+  modelProjectDefault(cwd: string): Promise<{ provider: string; model: string } | undefined>;
   modelProviderSave(provider: PiModelProviderDraft): Promise<PiModelCatalog>;
   modelProviderAuthSave(input: { id: string; apiKey?: string; clear?: boolean }): Promise<PiModelCatalog>;
   modelProviderRemove(id: string): Promise<PiModelCatalog>;

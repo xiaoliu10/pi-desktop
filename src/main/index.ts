@@ -444,6 +444,7 @@ function registerIpc() {
   handle('planQuota', provider => host.accounts.quota(String(provider)));
   handle('imageGenerate', (provider, model, prompt) => host.accounts.generate(String(provider), String(model), String(prompt)));
   handle('modelDefaultSave', input => host.modelDefaultSave(input));
+  handle('modelProjectDefault', cwd => host.modelProjectDefault(cwd));
   handle('modelProviderSave', draft => host.modelProviderSave(draft));
   handle('modelProviderAuthSave', input => host.modelProviderAuthSave(input));
   handle('modelProviderRemove', id => host.modelProviderRemove(id));

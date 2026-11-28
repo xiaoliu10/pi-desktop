@@ -81,6 +81,22 @@ describe('draftModels 按会话隔离', () => {
     expect(model).toHaveBeenCalledWith('new-run', 'prov', 'm3');
   });
 
+  it('新任务页的模型草稿是一次性的：下发给新建会话后即清空，后续新会话不再沿用', async () => {
+    usePiStore.setState({ selectedKey: null, draftCwd: '/proj', runs: [] } as never);
+    usePiStore.getState().pickModel('prov/m7');
+    usePiStore.getState().send('hi');
+    await vi.waitFor(() => expect(model).toHaveBeenCalled());
+    expect(model).toHaveBeenCalledWith('new-run', 'prov', 'm7');
+    // 草稿已被消费：不留粘滞值（否则之后每个新会话都被静默顶掉 pi 的项目级默认）。
+    expect((usePiStore.getState().draftModels ?? {})['home:/proj']).toBeUndefined();
+    // 回到新任务页再建一个会话：不再下发模型，交给 pi 按项目级/全局默认解析。
+    model.mockClear(); prompt.mockClear(); connect.mockClear();
+    usePiStore.setState({ selectedKey: null, draftCwd: '/proj', runs: [] } as never);
+    usePiStore.getState().send('again');
+    await vi.waitFor(() => expect(prompt).toHaveBeenCalledTimes(1));
+    expect(model).not.toHaveBeenCalled();
+  });
+
   it('运行中选择：下发 set_model 的同时同步草稿（腾位重连后沿用最近选择）', () => {
     const run = { key: 'kC', generation: 'g', cwd: '/tmp', file: '/c.jsonl', status: 'idle' as const, models: [], pending: 0, timing: { startedAt: 1 } };
     usePiStore.setState({ selectedKey: 'kC', runs: [run] } as never);

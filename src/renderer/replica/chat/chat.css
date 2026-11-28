@@ -1064,6 +1064,20 @@
   font-size: var(--pi-font-size-sm);
 }
 
+/* 模型值徽标（「项目默认」）：与设置页默认徽标同款药丸，防把同名模型认错供应商。 */
+.pireplica .pi-composer__modelbadge {
+  flex-shrink: 0;
+  white-space: nowrap;
+  padding: 1px 6px;
+  border: 1px solid var(--pi-border-strong);
+  border-radius: var(--pi-radius-pill);
+  background: var(--pi-bg-active);
+  color: var(--pi-text);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 18px;
+}
+
 /* 模型菜单：顶部筛选框（openrouter 级长列表的快速定位）与截断/空态提示。 */
 .pireplica .pi-composer__menuinput {
   display: block;

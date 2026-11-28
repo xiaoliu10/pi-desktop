@@ -122,6 +122,7 @@ const localPi: LocalPiApi = {
   memoryEnableDefault: () => invoke('memoryEnableDefault'),
   cleanupSubagents: (key: string) => invoke('cleanupSubagents', key),
   modelCatalog: () => invoke('modelCatalog'),
+  modelProjectDefault: (cwd) => invoke('modelProjectDefault', cwd),
   planQuota: provider => invoke('planQuota', provider),
   imageGenerate: (provider, model, prompt) => invoke('imageGenerate', provider, model, prompt),
   accountLogin: provider => invoke('accountLogin',provider),

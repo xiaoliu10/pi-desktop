@@ -175,6 +175,24 @@
 
 **回归触发**：改 `src/shared/model-output.ts`、`retry-groups.ts`、`model-retry.ts`；pi 流式事件形态变化。测试：`tests/model-output.test.ts`、`tests/retry-groups{,-backend,-renderer}.test.ts`、`tests/retry-groups-ui.browser.cjs`。
 
+### R-model-05　项目级默认供应商不被桌面层静默覆盖
+
+**需求**：项目在 `<cwd>/.pi/settings.json` 配置 `defaultProvider`/`defaultModel` 时，由 Desktop 新建/发送的会话使用 pi 按该配置解析出的模型；桌面渲染层不得把全局默认或粘滞的旧选择顶到项目级默认之上，除非用户对**当次**新建显式选择了模型。
+
+**背景（2026-11 ashare-quant-agent 事故）**：项目级供应商 `ccr-project-…` 被两个新建会话在创建 ~1.5s 后 `set_model` 成全局 `ccr/ccr-opus`（渲染层 `draftModels[home:cwd]` 粘滞 + 发送路径无条件下发），且 pi 把错模型记进会话恢复链，重启/续接仍回不来；输入框新任务页显示的又是全局默认，用户无从察觉。
+
+**验收**：
+- 新任务页未显式选模型时，显示与 pi 解析同序的默认：项目级（带「项目默认」徽标）→ 全局；已选会话不受项目级默认外溢。
+- 新任务页显式选择的模型只作用于**由它创建的那一个会话**（下发后草稿即清）；会话键草稿的腾位重连语义不变（PR #163）。
+- Desktop 不下发模型时，pi 按项目级配置解析（内核既有行为，`projectTrusted` 默认 true）。
+- `<cwd>/.pi/settings.json` 缺失/损坏/字段非字符串时静默回退全局默认显示，不报错不阻塞会话。
+
+**状态**：满足（本 PR；待发版验收）。
+
+**上游依赖**：pi 内核 SettingsManager 项目级合并语义不变。
+
+**回归触发**：改 `src/renderer/pi/adapter.ts` 的 `composerModelId`/发送路径模型下发/`refreshProjectDefault`、`src/main/pi/model-catalog.ts` 的 `readProjectDefaultModel`、`src/renderer/pi/PiReplicaApp.tsx` 的显示与拉取。测试：`tests/model-project-default.test.ts`、`tests/draft-model-scope.test.ts`（one-shot 用例）。
+
 ---
 
 ## 计划域（plan）

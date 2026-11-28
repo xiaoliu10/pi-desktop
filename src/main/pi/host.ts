@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import type { PiEnvironment, PiEvent, PiModelProviderDraft, PiPreferences } from '../../shared/pi';
 import { discoverPi, expand } from './environment';
-import { readModelCatalog, mergeModelCatalog, writeDefaultModel, writeModelProvider, removeModelProvider, writeProviderApiKey, fetchProviderModels } from './model-catalog';
+import { readModelCatalog, mergeModelCatalog, writeDefaultModel, writeModelProvider, removeModelProvider, writeProviderApiKey, fetchProviderModels, readProjectDefaultModel } from './model-catalog';
 import { mergeRuntimeProviders, packagesFromSettings, runtimeModelsFromRuns } from './provider-registry';
 import { UsageStatsService } from './usage-stats';
 import type { IndexPort } from './index-port';
@@ -181,6 +181,7 @@ export class PiHost {
     } catch { return []; }
   }
   modelDefaultSave(input: { provider?: string; model?: string }) { return writeDefaultModel(this.environment.agentDir, input); }
+  modelProjectDefault(cwd: string) { return readProjectDefaultModel(cwd); }
   /** Persistence succeeds independently of connected-session adoption; never claim both on failure. */
   private async adoptModelConfiguration(catalog: import('../../shared/pi').PiModelCatalog) {
     const sessionRefresh = await this.backend.refreshModelConfiguration();
