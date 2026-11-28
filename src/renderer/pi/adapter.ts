@@ -2287,12 +2287,17 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
             // pi 的扩展命令（如 /plan 无参 toggle）吞掉全部文字且不产生任何 run 事件——
             // 不收场的话乐观气泡 + 计时器会永远挂着（用户看到「只有计时器没有过程」）。
             // 撤队口径与 catch 路径逐字一致（includes 守卫 + queue.length 权威重算）。
+            // 'handled' 有两种来源：① 命令把文字吞掉且不产生回合（/plan 无参 toggle）——必须撤乐观
+            // 气泡、退回文字；② 命令自己 sendUserMessage 启动了回合（pi-goal-x 的 /goal）——agent_start
+            // 已到或紧随其后，原文已作为该回合的种子；再退回就是「发出后输入框还留着原文」（用户实报）。
+            // 判据：本会话当前回合归属就是这次发送（agent_start 在 handled 应答之前到达）。
             const current = get();
+            const startedOwnTurn = activeTurn.get(run.key) === send.id;
             set({
-              sends: current.sends?.filter(s => s.id !== send.id || !!s.confirmedId),
-              ...(current.sentAt?.key === run.key && current.sentAt.at === send.at ? { sentAt: undefined } : {}),
-              ...(current.pendingPromptAt === send.at ? { pendingPrompt: undefined, pendingPromptAt: undefined } : {}),
-              ...(queuedItem ? { runs: current.runs.map(r => {
+              sends: current.sends?.filter(s => s.id !== send.id || !!s.confirmedId || startedOwnTurn),
+              ...(current.sentAt?.key === run.key && current.sentAt.at === send.at && !startedOwnTurn ? { sentAt: undefined } : {}),
+              ...(current.pendingPromptAt === send.at && !startedOwnTurn ? { pendingPrompt: undefined, pendingPromptAt: undefined } : {}),
+              ...(queuedItem && !startedOwnTurn ? { runs: current.runs.map(r => {
                 if (r.key !== run.key || !r.queue?.includes(queuedItem!)) return r;
                 const queue = r.queue.filter(q => q !== queuedItem);
                 return { ...r, queue, pending: queue.length };
@@ -2300,6 +2305,7 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
             });
             // 草稿恢复对齐 catch 三重守卫：只还给归属会话、不覆盖用户新输入、附件一并还原。
             // await 期间用户切走时 stash 给原 owner，绝不写当前选中的其它会话。
+            if (startedOwnTurn) return;
             const restoreOwner = targetKey ?? sentOwner;
             if (restoreOwner !== null && composerKeyOf(current) === restoreOwner && !current.draftText && !current.contextItems.length) {
               set({ draftText: text, contextItems: state.contextItems });

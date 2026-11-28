@@ -418,7 +418,20 @@
 
 **状态**：已修复，单测红→绿 + 破坏性验证通过，待发版验收。
 
-**回归触发**：改 `backend.ts` 的 `compaction_start`/`compaction_end` 分支、`settleAfterCompact`、`compact()` 的异常分支；pi 改为手动压缩也发 `agent_settled` 时可简化但不得删除收口。### R-render-11　工作面板宽度上限随窗口宽度，浏览器放得下桌面版网页
+**回归触发**：改 `backend.ts` 的 `compaction_start`/`compaction_end` 分支、`settleAfterCompact`、`compact()` 的异常分支；pi 改为手动压缩也发 `agent_settled` 时可简化但不得删除收口。
+
+### R-session-08　扩展命令启动了自己的回合时，输入框不残留已发出的原文
+
+**需求**：pi 对扩展命令（`/goal`、`/plan` 等）执行后统一回 `disposition: handled`，但语义分两种：① 命令把文字吞掉且不产生回合（`/plan` 无参 toggle），文字应退回输入框供修改；② 命令自己 `sendUserMessage` 启动了回合（pi-goal-x 的 `/goal`：把需求写进草稿并开启规划），原文已经是该回合的种子，再退回就是「goal 发出去了，输入框里还留着原文」（用户 2026-11-28 截图实报）。
+
+**验收**：
+- `handled` 应答到达时，若本会话当前回合归属就是这次发送（`agent_start` 先于 `handled` 到达），输入框与 store 草稿保持为空，不提示「文字已退回输入框」，计时与乐观气泡保留交给真实回合收口。
+- 命令未启动回合时既有行为不变：撤乐观气泡与计时，原文与附件退回归属会话的输入框并提示。
+- 回归：`tests/slash-command-handled.test.ts`（store 层两种来源）、`tests/goal-draft-cleared.browser.cjs`（真实 Composer：`/goal` 发送后输入框为空，`/plan` 仍退回文字）。
+
+**状态**：已修复，单测与真实浏览器红→绿，待发版验收。
+
+**回归触发**：改 `adapter.ts` 的 `send()` 中 `disposition === 'handled'` 分支；pi 改变扩展命令的 `disposition` 约定，或 pi-goal-x 改变 `/goal` 的启动方式（不再 `sendUserMessage`）时重新判定两种来源。### R-render-11　工作面板宽度上限随窗口宽度，浏览器放得下桌面版网页
 
 **需求**：工作面板（变更/文件/浏览器/辅助对话/会议共用的右侧面板）宽度上限不再写死 700px——1920 宽窗口下面板拖到 700 就到头，桌面版网页（min-width 1000+，如百度）在浏览器 tab 必然横向溢出（用户 2026-11-13 报「浏览器大小不对」）。上限改为 `max(700, 60% 窗口宽)`，随窗口 resize 动态生效；窗口缩小时已保存宽度自动回钳，对话区不被挤没（≤1180px 时 workbench 为绝对定位浮层，不受挤压）。
 

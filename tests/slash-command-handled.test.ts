@@ -8,6 +8,9 @@ import { PiRpcClient } from '../src/main/pi/rpc-client';
 import { SessionIndex } from '../src/main/pi/session-index';
 import type { PiHistory, PiRun } from '../src/shared/pi';
 
+// 'handled' 有两种：命令把文字吞掉且不产生任何回合（/plan 无参 toggle），以及命令自己
+// sendUserMessage 启动了回合（pi-goal-x 的 /goal）。只有前者才把文字退回输入框。
+
 /**
  * 斜杠扩展命令的 disposition='handled' 收场（plan-mode「只有计时器没有过程」根因）：
  * pi 对 / 开头的输入先执行扩展命令（/plan 是无参 toggle）并把全部参数吞掉——不产生
@@ -50,6 +53,31 @@ describe('slash command disposition=handled settles the optimistic send', () => 
     expect(after.pendingPrompt).toBeUndefined();
     expect(after.draftText).toBe('/plan 把配置页面都改到左下角齿轮'); // 文字退回输入框供修改
     expect(usePiStore.getState().notifications.some(n => n.title.includes('/plan'))).toBe(true);
+  });
+
+  it('keeps the draft cleared when the handled command starts its own turn (/goal seeds a drafting prompt)', async () => {
+    api.prompt.mockReturnValueOnce(async () => {
+      // pi-goal-x's /goal handler calls pi.sendUserMessage(...) before the command returns,
+      // so agent_start is already on the wire (or arrives right after) when Desktop learns 'handled'.
+      emit({ type: 'agent_start', key: run.key, generation: run.generation });
+      return 'handled';
+    });
+    usePiStore.getState().send('/goal 完善 AQA 自动量化交易工作台，让我能在对话中提交自己的策略脚本');
+    await vi.advanceTimersByTimeAsync(50);
+    const after = usePiStore.getState();
+    expect(after.draftText).toBe(''); // 原文不得退回输入框：命令已启动自己的回合
+    expect(after.sentAt).toBeDefined(); // 计时保留：这一轮已由命令启动，交给真实回合收口
+    expect(after.sends).toHaveLength(1); // 乐观气泡保留到历史刷新带回真实用户条目
+    expect(after.notifications.some(n => n.title.includes('文字已退回输入框'))).toBe(false);
+  });
+
+  it('restores the draft for a handled command that starts no turn (/plan toggle)', async () => {
+    api.prompt.mockResolvedValueOnce('handled');
+    usePiStore.getState().send('/plan 把配置页面都改到左下角齿轮');
+    await vi.advanceTimersByTimeAsync(50);
+    const after = usePiStore.getState();
+    expect(after.draftText).toBe('/plan 把配置页面都改到左下角齿轮');
+    expect(after.notifications.some(n => n.title.includes('文字已退回输入框'))).toBe(true);
   });
 
   it('does not treat started as handled (normal run path unchanged)', async () => {
