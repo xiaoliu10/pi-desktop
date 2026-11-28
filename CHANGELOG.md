@@ -3,6 +3,20 @@
 所有重要变更记录在本文件。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 README 只保留最近版本摘要；本文件为完整记录。
 
+## [Unreleased]
+
+### English
+
+#### Fixed
+
+- **A failed in-app update can no longer damage the copy you are actually running**: when the update flow hit an error, it used to unpack the downloaded archive straight into the folder that holds the running app, so a partial extraction could erase the installed copy — on this machine it left only `Contents/Resources` behind (758 MB → 493 MB) and reported `ENOTDIR … rmdir app.asar`. The archive is now unpacked into its own temporary staging folder, the new bundle is checked for `Info.plist` and the `Contents/MacOS` executable before anything is swapped, and any failure leaves the installed version untouched with a readable "extraction failed (your current version is unaffected)" message. Leftover staging folders from earlier attempts are cleaned up at launch, and the failure dialog now offers a button to open the release page.
+
+### 中文
+
+#### 修复
+
+- **自动更新失败不会再损坏你正在用的那份应用**：此前更新流程把下载的更新包直接解压到「运行中应用所在的目录」，所以一旦解压中途出错，损坏就发生在现役旧版本里——本机实测旧包被删到只剩 `Contents/Resources`（758MB → 493MB），并报出 `ENOTDIR … rmdir app.asar`。现在解压改到独立的临时暂存目录，换包前先校验新包是否带有 `Info.plist` 与 `Contents/MacOS` 可执行文件，任何失败都不动现役版本，并给出可读的「解压更新包失败（旧版本未受影响）」提示。历史遗留的暂存目录会在启动时清理，失败弹窗也新增了「打开 release 页」按钮。
+
 ## [0.1.57] - 2026-11-27
 
 ### English

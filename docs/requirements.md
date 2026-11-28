@@ -604,6 +604,29 @@
 
 ---
 
+## 更新域（update）
+
+### R-update-01　自动换包不得损坏正在使用的旧版本；解压只在独立暂存目录进行
+
+**需求**：应用内更新（mac 自动换包）失败时，磁盘上正在运行的旧版本必须一个字节都不变；解压必须发生在与旧包隔离的暂存目录，换包前先校验新包结构完整，换位失败回滚旧包。
+
+**背景（2026-11-08 实机事故）**：0.1.46 自动更新弹「更新失败」，伴随 `ENOTDIR: not a directory, rmdir '…/PI Desktop.app.update-old/Contents/Resources/app.asar'`。旧实现把更新 zip **直接解到 `dirname(bundle)`**——也就是正在使用的 `release/mac-arm64/`；ditto 的目录合并一旦发生错误（权限、校验、磁盘、压缩流异常），错误就地发生在现役旧包里，本机实测旧包被删到只剩 `Contents/Resources`（758MB → 493MB）。同时旧工作目录命名不匹配启动清理的前缀，残留无人清理。
+
+**验收**：
+- 解压在系统临时目录的独立暂存目录完成（`os.tmpdir()`），**绝不落在 bundle 父目录内**；解压失败时旧包目录列表与内容完全不变，且不产生 `.update-old`。
+- 解压失败必须抛出可读的「解压更新包失败（旧版本未受影响）：<ditto 首行>」，不再把原始 errno 直接甩给用户。
+- 换包前校验新包结构：缺 `Contents/Info.plist` 或缺 `Contents/MacOS` 可执行文件 → 判为不完整包，拒绝换包并保留旧包。
+- 换位失败回滚旧包（既有行为）；旧包挪走用原子 rename。
+- 启动清理同时清掉历史版本在 bundle 父目录留下的 `.pi-update-work-*` 残留。
+- 失败弹窗提供「打开 release 页」按钮（有可用 release url 时），不必只能关闭。
+- 回归：`tests/update-swap-isolation.test.ts`（解压错误不碰旧包、不完整包拒绝、暂存不在旧包目录、残留清理）、`tests/update-apply.test.ts`（正常换位/无 bundle/回滚/旧包残留）。
+
+**状态**：本 PR 修复，待发版验收。
+
+**回归触发**：改 `update-apply.ts` 的解压目标、暂存目录位置、完整性校验、换位/回滚顺序；改 `index.ts` 的 `updateApply` 流程或 `cleanupOldBundle`/`cleanupSwapResidue` 调用点；升级 Electron 或 macOS 时重跑 `tests/update-swap-isolation.test.ts`（ditto 行为随系统变化）。
+
+---
+
 ## 升级回归总表
 
 升级 pi / pi-subagents / CCR / Electron 前，按下表核对相关需求：
@@ -617,6 +640,7 @@
 | Electron | 全部渲染/IO 需求 | 进程模型、IPC 行为 |
 | Electron / 改 CSP | R-render-02, R-render-01 | webSecurity 与 img-src 处理变化（blob URL 图片会静默裂图） |
 | Electron / 改 getUserMedia/权限 | R-meeting-01 | MediaRecorder、麦克风权限与 keep-alive 插槽行为 |
+| macOS（ditto/解压行为） | R-update-01 | 解压合并语义、ENOTDIR 路径随系统变化；换包安全依赖独立暂存目录与完整性校验 |
 
 **升级前必做**：读本文 → 对照"上游依赖"列出的 issue 状态 → 若上游已发新版，先在本机隔离测相关需求 → 通过才合并到 Desktop。
 

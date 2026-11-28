@@ -42,7 +42,7 @@ import { ImBot } from './pi/im-bot';
 import { TunnelService } from './pi/tunnel-service';
 import { createBotActions } from './pi/bot/actions';
 import { startUpdateChecker, downloadUpdateZip, type UpdateChecker, type UpdateStatus } from './update-check';
-import { swapAppBundle, cleanupOldBundle } from './update-apply';
+import { swapAppBundle, cleanupOldBundle, cleanupSwapResidue } from './update-apply';
 import type { PiEvent } from '../shared/pi';
 import { ensureGuiPath } from './path-env';
 
@@ -280,12 +280,13 @@ function registerIpc() {
       app.quit();
     } catch (e) {
       try {
-        await dialog.showMessageBox(mainWindow, {
+        const failure = await dialog.showMessageBox(mainWindow, {
           type: 'error',
           message: '更新失败',
           detail: `${String((e as Error).message || e)}\n当前版本不受影响；可稍后重试，或到 release 页手动下载。`,
-          buttons: ['好'], defaultId: 0,
+          buttons: ['好', ...(updateUrl ? ['打开 release 页'] : [])], defaultId: 0, cancelId: 0,
         });
+        if (updateUrl && failure.response === 1) await shell.openExternal(updateUrl);
       } catch { /* 窗口已关 */ }
     } finally {
       updateInFlight = false;
@@ -867,7 +868,12 @@ void app.whenReady().then(async () => {
   }
   if(!process.env.PI_SMOKE)automations.start();
   // 上次更新中断残留的旧 bundle 兜底清理（正常换包已自删；延迟避让启动 IO）。
-  if (!process.env.PI_SMOKE) setTimeout(() => cleanupOldBundle(path.resolve(app.getPath('exe'), '..', '..', '..')), 10_000).unref();
+  // 同时清掉历史版本留在 bundle 父目录里的 `.pi-update-work-*` 暂存残渣。
+  if (!process.env.PI_SMOKE) setTimeout(() => {
+    const bundlePath = path.resolve(app.getPath('exe'), '..', '..', '..');
+    cleanupOldBundle(bundlePath);
+    cleanupSwapResidue(bundlePath);
+  }, 10_000).unref();
   setTimeout(archiveCleanupPass, 15_000).unref(); // 启动后先扫一次
   setInterval(archiveCleanupPass, 30 * 60 * 1000).unref(); // 每 30 分钟定时扫描
   // resume a configured two-way bot。此前 .catch(() => undefined) 把启动期
