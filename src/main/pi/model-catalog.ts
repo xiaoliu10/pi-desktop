@@ -34,6 +34,18 @@ function writeJson(file: string, doc: Record<string, unknown>, secret = false): 
   if (secret && fs.existsSync(file)) fs.chmodSync(file, 0o600);
 }
 
+/** 项目级 pi 默认模型（<cwd>/.pi/settings.json 的 defaultProvider/defaultModel），只读解析。
+ *  pi 内核创建会话时会把项目级设置 merge 进全局设置（projectTrusted 默认 true）；
+ *  Desktop 输入框据此把「新任务」显示的默认模型对齐到 pi 真实会用的那一个，
+ *  避免显示全局默认误导用户（或被误点）把会话顶到全局供应商。 */
+export function readProjectDefaultModel(cwd: string): { provider: string; model: string } | undefined {
+  const doc = readJson(path.join(cwd, '.pi', 'settings.json'));
+  const provider = doc?.defaultProvider;
+  const model = doc?.defaultModel;
+  if (typeof provider !== 'string' || !provider || typeof model !== 'string' || !model) return undefined;
+  return { provider, model };
+}
+
 export function readModelCatalog(agentDir: string): PiModelCatalog {
   const settings = readJson(path.join(agentDir, 'settings.json')) ?? {};
   const modelsDoc = readJson(path.join(agentDir, 'models.json')) ?? {};

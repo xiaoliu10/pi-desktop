@@ -937,6 +937,8 @@ export interface PiReplicaState {
    *  与文字草稿的 composerDrafts 同语义；运行中 pickModel 也同步草稿，腾位重连后
    *  沿用用户最近一次选择。 */
   draftModels?: Record<string, string>;
+  /** 项目级 .pi/settings.json 默认模型（cwd → {provider, model}）；新任务页显示用。 */
+  projectDefaultModels?: Record<string, { provider: string; model: string } | undefined>;
   draftThinking?: ThinkingLevel;
   pendingPrompt?: string;
   /** Client identities survive IPC acknowledgement and history replacement. */
@@ -1033,6 +1035,7 @@ export interface PiReplicaActions {
   /** Recall a queued prompt into the composer (text + image attachments) for editing. */
   queueRecall: (index: number) => void;
   pickModel: (combinedId: string) => void;
+  refreshProjectDefault: (cwd: string) => void;
   pickThinking: (level: ThinkingLevel) => void;
   addContext: (items: ContextItem[]) => void;
   removeContext: (id: string) => void;
@@ -1114,6 +1117,20 @@ function composerKeyOf(state: { selectedKey: string | null; draftCwd?: string })
 /** 输入归属键：会话 key；新任务 = home:cwd。PiReplicaApp 用它给 Composer 绑定防抖归属。 */
 export function composerOwnerKeyOf(state: { selectedKey: string | null; draftCwd?: string }): string | null {
   return composerKeyOf(state);
+}
+
+/** 输入框模型显示的取值顺序（新任务页）：本次显式草稿 → 项目级 .pi/settings.json 默认 → 全局默认。
+ *  pi 内核解析新会话模型时项目级默认优先于全局（SettingsManager merge），显示层必须同序，
+ *  否则用户看到的「默认模型」与 pi 实际用的不同，误点即把会话固定到全局供应商。 */
+export function composerModelId(
+  state: { selectedKey: string | null; draftCwd?: string; draftModels?: Record<string, string>; catalog?: { defaultProvider?: string; defaultModel?: string } },
+  projectDefault?: { provider: string; model: string },
+): string {
+  const draft = state.draftModels?.[composerKeyOf(state) ?? ''];
+  if (draft) return draft;
+  if (!state.selectedKey && projectDefault) return `${projectDefault.provider}/${projectDefault.model}`;
+  if (state.catalog?.defaultProvider && state.catalog?.defaultModel) return `${state.catalog.defaultProvider}/${state.catalog.defaultModel}`;
+  return '';
 }
 function stashComposerDraft(key: string, draft: ComposerDraft) {
   composerDrafts.delete(key);
@@ -2266,7 +2283,19 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
             // Do not pull the user back if they navigated elsewhere during startup.
             if (get().selectedKey === state.selectedKey) get().selectSession(run.key);
             const modelDraft = state.draftModels?.[composerKeyOf(state) ?? ''];
-            if (modelDraft) { const slash = modelDraft.indexOf('/'); await window.localPi!.model(run.key, modelDraft.slice(0,slash), modelDraft.slice(slash+1)); }
+            if (modelDraft) {
+              const slash = modelDraft.indexOf('/');
+              await window.localPi!.model(run.key, modelDraft.slice(0,slash), modelDraft.slice(slash+1));
+              // home 草稿是一次性的：只作用于「由它新建的这个会话」。留下粘滞值会让之后每个
+              // 新会话都被静默顶掉 pi 的项目级/全局默认（ashare-quant-agent 事故：新建会话
+              // 创建 ~1.5s 后即被 set_model 成全局供应商，且 pi 会把该模型记进会话恢复链）。
+              const draftOwner = composerKeyOf(state);
+              if (draftOwner !== null && draftOwner.startsWith('home:')) {
+                const drafts = { ...(get().draftModels ?? {}) };
+                delete drafts[draftOwner];
+                set({ draftModels: drafts });
+              }
+            }
             const thinking = state.draftThinking ?? state.desktopPreferences?.defaultThinkingLevel;
             // pi 会将不支持的等级自动钳制到模型能力（非推理模型为 off），因此始终下发，避免代理模型漏报 max 时固化值失效。
             if (thinking && thinking !== 'off') await window.localPi!.thinking(run.key, thinking);
@@ -2463,6 +2492,19 @@ export const usePiStore = create<PiReplicaStore>((set, get) => {
       if (state.draftModels?.[ownerKey] !== combinedId) set({ draftModels: { ...state.draftModels, [ownerKey]: combinedId } });
     },
 
+    refreshProjectDefault: (cwd) => {
+      // 新任务页显示「项目级默认模型」用；幂等（已在表里就不再请求），失败静默（显示层兜底全局默认）。
+      const existing = get().projectDefaultModels;
+      if (existing && cwd in existing) return;
+      // ?. 双保险：旧 mock/浏览器测试夹具可能没实现该 IPC，缺方法静默跳过而不是抛错。
+      const request = window.localPi?.modelProjectDefault?.(cwd);
+      if (!request) return;
+      void request.then(def => {
+        const current = get().projectDefaultModels;
+        if ((current?.[cwd]) === def) return;
+        set({ projectDefaultModels: { ...(current ?? {}), [cwd]: def } });
+      }).catch(() => { set({ projectDefaultModels: { ...(get().projectDefaultModels ?? {}), [cwd]: undefined } }); });
+    },
     addContext: items => set(state => ({contextItems: [...new Map([...state.contextItems,...items].map(item=>[item.id,item])).values()]})),
     removeContext: id => set(state => ({contextItems:state.contextItems.filter(item=>item.id!==id)})),
     pickThinking: level => {

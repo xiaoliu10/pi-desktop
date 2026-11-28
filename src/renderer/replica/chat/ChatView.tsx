@@ -1566,6 +1566,7 @@ function ComposerImpl(props: ComposerProps) {
             <span>{props.labels.model}</span>
             <span className="pi-composer__menuvalue">
               {menu === 'model' ? (activeModel?.name ?? props.labels.model) : props.labels.model}
+              {props.modelBadge && <span className="pi-composer__modelbadge" title={props.modelBadge}>{props.modelBadge}</span>}
               <Icon name="chevron-right" size={13} />
             </span>
           </button>

@@ -3,6 +3,20 @@
 所有重要变更记录在本文件。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 README 只保留最近版本摘要；本文件为完整记录。
 
+## [Unreleased]
+
+### English
+
+#### Fixed
+
+- **New sessions no longer silently fall back to the global provider in projects that configure their own**: if a project sets `defaultProvider`/`defaultModel` in `<project>/.pi/settings.json`, pi itself honors it — but the composer used to display the global default for a new task, and any model picked there stuck to that project for the rest of the app's lifetime, getting pushed over pi's project default on every new session (a live project got switched to the global provider this way and kept running on it until manually fixed). The composer now shows the project-level default (with a small "project default" badge, same lookup order as pi), and a model picked on the new-task page applies only to the session it creates instead of every future one.
+
+### 中文
+
+#### 修复
+
+- **配置了项目级供应商的项目，新建会话不再被静默切到全局供应商**：项目在 `<项目>/.pi/settings.json` 里配置 `defaultProvider`/`defaultModel` 时，pi 内核本来就会遵循；但输入框此前给新任务显示的是全局默认，且在那里选过一次的模型会在应用的整个生命周期里粘住，之后每个新建会话都会被下发、顶掉 pi 的项目级默认（实际项目就这样被切到全局供应商并一直错用，直到手工切回）。现在输入框按与 pi 相同的顺序显示项目级默认（带「项目默认」小徽标），新任务页选的模型只作用于由它创建的那个会话，不再粘滞。
+
 ## [0.1.57] - 2026-11-27
 
 ### English

@@ -41,7 +41,7 @@ import { toDataUrlForDownload } from '../../shared/image-download';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Icon } from '../replica/Icons';
 import { loadWorkspacePromptHistory, recordWorkspacePrompt, workspacePromptHistory } from '../replica/workspace-prompt-history';
-import { composerOwnerKeyOf, readComposerLiveDraft, writeComposerDraftText } from './adapter';
+import { composerModelId, composerOwnerKeyOf, readComposerLiveDraft, writeComposerDraftText } from './adapter';
 import { replicaLabels } from '../replica/i18n';
 import { Sidebar } from '../replica/shell/Sidebar';
 import { ResizeHandle, usePanelWidth } from '../replica/shell/ResizeHandle';
@@ -403,13 +403,21 @@ export default function PiReplicaApp() {
     void loadWorkspacePromptHistory(composerCwd ?? '').then(entries => { if (active) setPromptHistory(entries); });
     return () => { active = false; };
   }, [composerCwd]);
+  // 新任务页的项目级默认模型：cwd 变了就拉一次（幂等缓存）；失败静默回退全局默认显示。
+  useEffect(() => {
+    if (composerCwd && !s.selectedKey) s.refreshProjectDefault(composerCwd);
+  }, [composerCwd, s.selectedKey, s.refreshProjectDefault]);
   const onComposerSend = useCallback((text: string) => {
     const items = usePiStore.getState().contextItems;
     setPromptHistory(recordWorkspacePrompt(composerCwd ?? '', { text, items }));
     s.send(text);
   }, [composerCwd, s.send]);
-  const draftModelId = s.draftModels?.[composerOwnerKeyOf(s) ?? ''] ?? (s.catalog?.defaultProvider && s.catalog?.defaultModel ? `${s.catalog.defaultProvider}/${s.catalog.defaultModel}` : '');
+  // 显示顺序与 pi 解析新会话模型同序：本次草稿 → 项目级 .pi/settings.json 默认 → 全局默认。
+  // home（新任务）才用项目级默认；已选会话以自身历史为准，项目级默认不外溢。
+  const projectDefault = composerCwd && !s.selectedKey ? s.projectDefaultModels?.[composerCwd] : undefined;
+  const draftModelId = composerModelId(s, projectDefault);
   const draftModel = s.catalog?.providers.flatMap(p=>p.models.map(m=>({...m,combinedId:`${p.id}/${m.id}`}))).find(m=>m.combinedId===draftModelId);
+  const draftModelBadge = !s.selectedKey && !s.draftModels?.[composerOwnerKeyOf(s) ?? ''] && projectDefault ? (s.lang === 'zh' ? '项目默认' : 'project default') : undefined;
   const [filePreview, setFilePreview] = useState<ReturnType<typeof toolFilePreview>>(null);
   // ↑↓ 历史浏览前的未发草稿快照：退出浏览态时原样还原（文字+附件不被 recall 清掉）
   const historySnapshotRef = useRef<{ owner: string | null; text: string; items: import('../../shared/composer').ContextItem[] } | null>(null);
@@ -641,6 +649,7 @@ export default function PiReplicaApp() {
       onPaste={pasteAttachments}
       sessionActive={Boolean(s.selectedKey)}
       modelId={run?.model ? `${run.model.provider}/${run.model.id}` : draftModelId}
+      modelBadge={draftModelBadge}
       modelGroups={modelGroups}
       reasoning="off"
       agentMode="agent"
