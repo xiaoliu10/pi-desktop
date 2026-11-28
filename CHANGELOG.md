@@ -3,6 +3,20 @@
 所有重要变更记录在本文件。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 README 只保留最近版本摘要；本文件为完整记录。
 
+## [Unreleased]
+
+### English
+
+#### Fixed
+
+- **Sending `/goal` no longer leaves the original text in the composer**: the command starts its own drafting turn, yet the composer still got the text back as if the command had swallowed it. The text now stays cleared when a command starts a turn of its own; commands that swallow the text without starting a turn (such as a bare `/plan`) still return it for editing.
+
+### 中文
+
+#### 修复
+
+- **发送 `/goal` 后输入框不再残留原文**：`/goal` 会自行启动一轮目标起草，但输入框仍按「命令吞掉了文字」把原文退了回去。现在命令自己启动回合时输入框保持清空；吞掉文字却不启动回合的命令（如无参 `/plan`）仍照旧把文字退回供修改。
+
 ## [0.1.57] - 2026-11-27
 
 ### English
